@@ -1,0 +1,10 @@
+release/
+tests/core-tests
+__pycache__/
+*.pfx
+*.pem
+build/
+dist/
+*.o
+*.p12
+*.key

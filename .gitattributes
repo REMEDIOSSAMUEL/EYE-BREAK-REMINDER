@@ -1,0 +1,11 @@
+* text=auto
+*.cpp text eol=lf
+*.hpp text eol=lf
+*.py text eol=lf
+*.nsi text eol=lf
+*.md text eol=lf
+*.rc text eol=lf
+*.manifest text eol=lf
+*.ico binary
+*.png binary
+*.wav binary
