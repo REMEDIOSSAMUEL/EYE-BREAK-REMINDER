@@ -41,3 +41,13 @@ A Linux MinGW-w64 cross-compiler was used successfully; no genuine Windows 11 ru
 - Disable resume-on-reopen, exit and relaunch: verify full work time and no corrupt-data warning. Enable it and verify normal restart recovery.
 - Check rounded buttons, selected tabs, checkbox ticks, editable number fields, keyboard focus, disabled controls and accelerator cues under light/dark/system themes and high contrast.
 - Repeat Settings scrolling, focus and multiline text checks at 100%, 150%, 200% display scaling and enlarged Windows text.
+
+## Scrolling and completion alarm (1.0.4)
+
+Automated checks for these were run on Windows 11 and are recorded in `docs/VERIFICATION.md`. A person should still confirm the feel and the cases that could not be scripted:
+
+- Scroll Settings, History and a shortened break window with a real mouse wheel, a precision touchpad and a high-resolution wheel. Scrolling should feel smooth, stop promptly when input stops, and never flicker, leave blank areas or misplace controls. Repeat at 100%, 150% and 200% scaling, with enlarged Windows text, and on a second monitor with different scaling.
+- Turn Windows animations off (Settings, Accessibility, Visual effects). Scrolling must jump straight to the destination.
+- Drag the scroll bar thumb, click the arrows and track, and use Tab and Shift+Tab. Click controls while and just after scrolling.
+- Let a real break finish with the window visible, minimized and hidden in the tray: exactly one completion alarm, using the selected sound and volume. Confirm no completion alarm after Skip, "I'm back", Pause, Reset or Snooze, with the alarm muted, and after sleeping, locking or restarting during a break.
+- Install 1.0.4 over 1.0.3 and confirm the countdown, preferences and history carry over.

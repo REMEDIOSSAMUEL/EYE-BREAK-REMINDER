@@ -1,4 +1,4 @@
-# Verification — Linux cross-compiled Windows release 1.0.3
+# Verification — Windows x64 release 1.0.4 (earlier releases cross-compiled from Linux)
 
 This deliverable uses **C++17 / native Win32**, replacing the earlier WinUI/.NET implementation at the user's request to compile from Linux.
 
@@ -26,3 +26,17 @@ The user supplied a screenshot showing the native tray context menu partially co
 The earlier uninstaller intentionally preserved all application data, including `timer.dat`. Version 1.0.3 deletes that checkpoint during uninstall, and on a fresh install before copying the application. Direct upgrades preserve it. Preferences and history are retained. Turning off resume-on-reopen skips restoration without treating that choice as corrupt data. Two additional core assertions cover opt-out of restoration and the resulting fresh work state. Windows install/uninstall execution is still pending.
 
 Native buttons and checkboxes now use common-controls custom drawing, keeping native input and accessibility behavior. Rounded push buttons, visible selected navigation, blue primary actions, softer palettes, clearer settings headings, compact label spacing and padded number fields are implemented. Native rendering is retained for buttons in high contrast. Visual/DPI/accessibility checks on Windows are still pending. Source layout, contribution and manual release documentation were prepared. Repository publication is separate from Windows runtime verification and uses the owner's signed-in GitHub account. Publishing source and release assets does not establish Windows runtime correctness.
+
+## Smooth scrolling and break-completion alarm (1.0.4)
+
+Build: MSYS2 `mingw64` GCC 15.2 (msvcrt, `-Werror`) and NSIS 3.11 (i686, x86 bootstrap) on Windows 11, with the overrides documented in README.md. **94 core assertions** and **81 binary/package assertions** passed. The 36 new core assertions cover the `breakCompleted` event (natural completion fires once and identifies the finished break; skip, early "I'm back", reset, pause, snooze, sleep expiry, lock pause, restart recovery and repeated ticks do not fire it) and the `ScrollModel` (wheel accumulation of high-resolution deltas, bounds, immediate retargeting and reversal, settling without overshoot or queued movement, range clamping, thumb dragging and DPI rescaling).
+
+Runtime checks performed on Windows 11 build 26300 at 150% scaling with the built executable, using scripted Win32 input and screenshots (no person operated the UI):
+
+- Alarm, measured with the app's own Windows audio-session peak meter: with a 5 s break, the break-start alarm played at about 3.0-5.2 s and exactly one further alarm at 8.0-10.2 s, with the main window visible and with it hidden in the tray. No completion alarm after Skip, "I'm back", Pause, Reset or Snooze 1 min; none at all with the alarm disabled; none after restoring a saved interrupted break; with Repeat on, the break-start alarm repeated until the break ended and the completion alarm played once, then silence.
+- Settings scrolling: one wheel notch eased from 0 to 90 px in about 0.2 s; ten wheel events of 12 units accumulated to the same one notch; reversing mid-animation retargeted at once; the bottom stop equalled the scroll bar maximum; a scroll bar thumb drag followed the pointer exactly; a track click eased one page; Tab through all 33 non-dropdown controls kept each focused control inside the page; wheel-scrolling away from a focused control did not snap back; enlarging and shrinking the window kept the position within the new range with no blank area (screenshots); with Windows animations turned off the page moved immediately.
+- History: a notch stepped 0 to 3 rows within 0.1 s, accumulated fractional input, stopped within one row after input ceased, stopped at the last row, and stayed in sync after a scroll bar drag.
+- Break window: wheel, bottom bound and Tab navigation inside a shortened window.
+- Mid-animation screenshot frames showed no blank bands. A single early frame showed a transient stale button edge; it was not present in settled frames.
+
+Not tested: the installer (installing would overwrite the registration of an existing installation on the test machine), 100% and 200% scaling, multiple monitors, a trackpad, sleep and lock transitions (covered only by core tests), screen readers, and an unscripted manual pass of `docs/WINDOWS-TESTING.md`. The unsigned build is otherwise as described above.

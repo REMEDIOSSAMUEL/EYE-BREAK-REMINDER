@@ -1,4 +1,4 @@
-# Eye Break Reminder 1.0.3 — Windows 11 x64
+# Eye Break Reminder 1.0.4 — Windows 11 x64
 
 A native Windows desktop eye-break utility, compiled from Linux with C++17 and MinGW-w64. It uses Win32 system controls, Windows common dialogs, native title bars, native tray integration, and a custom timer dial. It has no browser, console, .NET dependency or external assets at runtime.
 
@@ -20,7 +20,7 @@ Closing/minimizing hides the main window to the tray by default. First close exp
 
 Normal break windows are the default. Compact and explicitly selected fullscreen modes can use the active, primary or selected display. A disconnected selection falls back to the primary display. The app requests attention once per break and does not keep itself topmost. Shell notifications provide click-to-open when hidden/minimized, with no duplicate notification sound; Windows may suppress them. They are not actionable toast notifications and do not promise Notification Center persistence.
 
-Alarm choices are Gentle, Bell, Chime, Clear and Soft. Volume scales this app's PCM samples, leaving global Windows volume alone. Preview and Stop preview are provided. Optional repeat lasts until the break ends or is acknowledged; pause also stops the sound. Audio uses the default Windows output.
+Alarm choices are Gentle, Bell, Chime, Clear and Soft. Volume scales this app's PCM samples, leaving global Windows volume alone. Preview and Stop preview are provided. Optional repeat lasts until the break ends or is acknowledged; pause also stops the sound. The same alarm plays once more when a break runs to zero by itself, also while the app is hidden in the tray; skipping, acknowledging early, snoozing, resetting, pausing, and recovery after sleep, lock or restart do not play it, and turning the alarm off silences both. Audio uses the default Windows output.
 
 Light, dark and system themes set app surfaces and the native title bar. Buttons use rounded surfaces, blue primary actions and a selected-tab outline. Checkboxes and input colors follow the app palette; section headings, input padding and compact labels make Settings easier to scan. Native control behavior is retained, and high contrast falls back to Windows button rendering. Dropdowns, sliders and scrollbars retain their native Windows presentation. Native controls, high contrast, Windows text scaling and per-monitor DPI are supported in source but need the Windows runtime checks below.
 
@@ -46,6 +46,16 @@ Data stays in `%LOCALAPPDATA%\EyeBreakReminder`: `settings.ini`, `timer.dat` and
 
 See [CHANGELOG.md](CHANGELOG.md) for releases and [CONTRIBUTING.md](CONTRIBUTING.md) for development and commit attribution.
 
+## Build on Windows (MSYS2)
+
+The 1.0.4 release was built on Windows 11 with MSYS2 instead of Linux. The `mingw64` (msvcrt) toolchain is required: `ucrt64` links `api-ms-win-crt-*` DLLs and fails the import check in `scripts/verify.py`. Install `mingw-w64-x86_64-gcc`, `mingw-w64-x86_64-binutils`, `make` and, for the installer, `mingw-w64-i686-nsis`, whose x86 stubs give the 32-bit bootstrap (the `ucrt64` NSIS package has only amd64 stubs). Compared with the Linux commands below:
+
+- pass `WINDRES=windres PYTHON=python` and `CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00'` (MSYS2 headers default to an older Windows target and omit `GetDpiForWindow`);
+- make `x86_64-w64-mingw32-strip` resolvable (the Makefile hardcodes that name; a copy of `strip.exe` under that name on `PATH` works);
+- pass `TMP=C:/msys64/tmp TEMP=C:/msys64/tmp` to `make`, because MSYS `sh` drops them and native GCC then cannot create temporary files;
+- native `makensis` needs backslashes in the `File` and `OutFile` paths of `installer/setup.nsi`; build the installer from a backslash-converted copy, run from the repository root with `-NOCD`, then run `make package`;
+- run Python with `PYTHONUTF8=1` for `scripts/set-version.py`.
+
 ## Build from Linux
 
 On Ubuntu/Debian, install `g++`, `make`, `python3`, `g++-mingw-w64-x86-64`, `binutils-mingw-w64-x86-64`, and `nsis`. From this folder:
@@ -65,7 +75,7 @@ For a legitimate signing certificate, sign the app before installer packaging, t
 
 ## Verification boundary
 
-The executable and installer are compiled from Linux, with actual core test execution and binary/resource checks. **They have not been launched, installed or manually tested on genuine Windows 11.** Successful compilation does not establish runtime correctness. See `docs/VERIFICATION.md` and `docs/WINDOWS-TESTING.md` for the actual evidence and open checks.
+The executable and installer are compiled with MinGW-w64 and NSIS, with actual core test execution and binary/resource checks. Release 1.0.4 was also launched on a real Windows 11 x64 machine and exercised with scripted input and audio-session measurements (see `docs/VERIFICATION.md`). **The installer has not been run, and the interactive UI checklist in `docs/WINDOWS-TESTING.md` has not been completed by a person.** Successful compilation does not establish runtime correctness. See `docs/VERIFICATION.md` and `docs/WINDOWS-TESTING.md` for the actual evidence and open checks.
 
 ## Publishing releases
 

@@ -45,9 +45,13 @@ class Engine {
     }
     void record(bool completed) {if(ended)ended({utc(),completed,std::clamp(duration-nowRemaining(),0.0,duration)});}
     void startBreak() {begin(Phase::Break,settings.breakSeconds);if(due)due(cycle,settings.alarm);}
+    // Only a countdown that reaches zero while running announces completion. The callback follows begin(), so the
+    // finished break's UI teardown has already happened and the completion alarm is not stopped by it.
+    void completeBreak() {auto finished=cycle;finish(true);if(breakCompleted)breakCompleted(finished,settings.alarm);}
 public:
     std::function<void()> changed;
     std::function<void(std::uint64_t,bool)> due;
+    std::function<void(std::uint64_t,bool)> breakCompleted;
     std::function<void(Record)> ended;
     Engine(Settings s,std::function<double()> mono,std::function<std::int64_t()> wall):settings(s),monotonic(std::move(mono)),utc(std::move(wall)) {
         settings.validate(); remaining=duration=settings.workMinutes*60; paused=!settings.autoStart;anchor=monotonic();
@@ -55,7 +59,7 @@ public:
     void configure(Settings s) {s.validate();settings=s;}
     Snapshot snapshot()const{return{phase,paused||lockPause,nowRemaining(),duration,cycle};}
     bool isSuspended()const{return suspended;}
-    void tick() {if(paused||suspended||nowRemaining()>0)return;if(phase==Phase::Break)finish(true);else startBreak();}
+    void tick() {if(paused||suspended||nowRemaining()>0)return;if(phase==Phase::Break)completeBreak();else startBreak();}
     void pause() {if(paused)return;remaining=nowRemaining();anchor=monotonic();paused=true;if(changed)changed();}
     void resume() {if(!paused)return;anchor=monotonic();paused=false;if(changed)changed();tick();}
     void reset() {if(phase==Phase::Break)record(false);begin(Phase::Work,settings.workMinutes*60,paused);}
@@ -134,4 +138,34 @@ inline Stats statistics(const std::vector<Record>&records,int today,int monday,c
     int count=s.todayCompleted+s.todaySkipped;s.completion=count?100.0*s.todayCompleted/count:0;
     int cursor=completedDays.count(today)?today:today-1;while(completedDays.count(cursor--))++s.streak;return s;
 }
+// Scroll position with a wheel accumulator and a short ease-out animation. Units are the caller's (pixels or list rows).
+// Input moves the target immediately and is never queued: the position closes on the target and stops when it arrives.
+class ScrollModel {
+    double current=0, goal=0, limit=0, snap=1;
+    double bounded(double value) const {return std::clamp(value,0.0,limit);}
+public:
+    static constexpr double settleSeconds=0.045; // time constant: about 0.2 s to settle after one wheel notch
+    explicit ScrollModel(double snapDistance=1) : snap(snapDistance) {}
+    void setRange(double maximum) {limit=std::max(0.0,maximum);current=bounded(current);goal=bounded(goal);}
+    void rescale(double factor) {if(factor>0&&std::isfinite(factor)){current*=factor;goal*=factor;}}
+    // delta is in wheel units (120 per notch, smaller for high-resolution wheels and trackpads); the fractional
+    // remainder stays in the target, so small deltas accumulate instead of being dropped.
+    void wheel(int delta,double amountPerNotch,bool animate) {scrollTo(goal-double(delta)*amountPerNotch/120.0,animate);}
+    void scrollBy(double amount,bool animate) {scrollTo(goal+amount,animate);}
+    void scrollTo(double value,bool animate) {goal=bounded(value);if(!animate)current=goal;}
+    void jump(double value) {current=goal=bounded(value);}
+    void finish() {current=goal;}
+    // Advances the animation; returns true while more steps are needed.
+    bool step(double seconds) {
+        if(current==goal)return false;
+        current+=(goal-current)*(1-std::exp(-std::max(0.0,seconds)/settleSeconds));
+        if(std::fabs(goal-current)<snap)current=goal;
+        return current!=goal;
+    }
+    bool animating() const {return current!=goal;}
+    double position() const {return current;}
+    double target() const {return goal;}
+    double maximum() const {return limit;}
+    int pixel() const {return int(std::lround(current));}
+};
 }

@@ -9,8 +9,9 @@ constexpr wchar_t TRAY_MENU_CLASS[]=L"EyeBreakReminder.TrayMenu";
 constexpr UINT TRAY_MESSAGE=WM_APP+1, ENGINE_MESSAGE=WM_APP+2;
 constexpr int NAV_TIMER=10,NAV_HISTORY=11,NAV_SETTINGS=12,PAUSE=20,RESET=21,TAKE_BREAK=22,COMPLETE=23,SKIP=24,SNOOZE1=25,SNOOZE3=26,SNOOZE5=27;
 constexpr int COUNTDOWN=40,TIMER_STATE=41,COUNT_CAPTION=42,BREAK_TITLE=43,BREAK_INSTRUCTION=44,BREAK_GUIDANCE=45,HISTORY_TOGGLE=30,CLEAR_HISTORY=31,ALARM_TOGGLE=32,WORK=100,BREAK_SECONDS=101,SOUND=102,VOLUME=103,MODE=104,MONITOR=105,THEME=106,REPEAT=107,NOTIFY=108,SNOOZE=109,AUTO_START=110,STARTUP=111,TRAY=112,RESTORE=113,PAUSE_LOCK=114,SELECT_MONITOR=115,PREVIEW=116,STOP_AUDIO=117,RESET_SETTINGS=118;
-constexpr UINT_PTR RENDER=1,CHECKPOINT=2;
-struct Control {HWND handle{};int id=0;int page=0;int height=36;bool full=false;HWND buddySpin{};bool heading=false;};
+constexpr UINT_PTR RENDER=1,CHECKPOINT=2,SCROLL=3;
+struct Control {HWND handle{};int id=0;int page=0;int height=36;bool full=false;HWND buddySpin{};bool heading=false;int x=0,y=0,w=0,h=0,spinWidth=0,rowHeight=0;};
+struct Placement {HWND handle{};int x=0,y=0,w=0,h=0;};
 struct Colors {COLORREF background=RGB(247,248,250),surface=RGB(255,255,255),hover=RGB(239,243,249),foreground=RGB(24,30,42),secondary=RGB(93,103,119),line=RGB(215,222,232),accent=RGB(37,99,235);bool dark=false,contrast=false;};
 class Application {
 public:
@@ -18,7 +19,8 @@ public:
  Settings settings;std::unique_ptr<Engine> engine;std::unique_ptr<Audio> audio;std::vector<Record> history;
  std::vector<Control> controls;std::array<HWND,3> nav{};HWND historyList{},settingsPane{};std::vector<Monitor> displays;
  Colors colors;std::wstring directory;UINT dpi=96;double textScale=1;bool hidden=false,locked=false,sleeping=false,quitting=false,quietBreak=false,loading=false,trayAdded=false,dirtySettings=false,saveWarned=false;
- int page=0,settingsScroll=0,settingsHeight=0,breakScroll=0,breakHeight=0;std::uint64_t notifiedCycle=0;NOTIFYICONDATAW trayData{};
+ int page=0,settingsHeight=0,breakHeight=0,settingsApplied=INT_MIN,breakApplied=INT_MIN,historyApplied=0;std::uint64_t notifiedCycle=0,alarmedCycle=0;NOTIFYICONDATAW trayData{};
+ ScrollModel settingsScroller,breakScroller,historyScroller{0.05};std::vector<Placement> breakItems;bool scrollTimer=false;double scrollClock=0;
  HANDLE dueEvent{},stopEvent{};HANDLE worker{};UINT activateMessage=RegisterWindowMessageW(L"EyeBreakReminder.Activate.Native.1");UINT quitMessage=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");UINT explorerMessage=RegisterWindowMessageW(L"TaskbarCreated");
  double deadline=0;CRITICAL_SECTION deadlineLock{};RECT normalBounds{};bool haveNormalBounds=false;
  static Application* app;
@@ -130,7 +132,7 @@ public:
   checkbox(L"Resume countdown when reopening the app",RESTORE,2,settings.restore,settingsPane);label(L"Reinstalling after uninstall starts a fresh work interval. Preferences and history are kept.",2,settingsPane);checkbox(L"Pause while workstation is locked",PAUSE_LOCK,2,settings.pauseLocked,settingsPane);
   label(L"Sleep counts as elapsed work time. Wake shows at most one reminder. Paused timers stay paused.",2,settingsPane);
   label(L"Accessibility",2,settingsPane,true);label(L"Uses Windows text scaling, high contrast and keyboard focus. Ctrl+R: Reset. Ctrl+Shift+B: Take break. Ctrl+comma: Settings.",2,settingsPane);
-  label(L"About",2,settingsPane,true);label(L"Eye Break Reminder\nVersion 1.0.3 · x64\nWindows 11",2,settingsPane);
+  label(L"About",2,settingsPane,true);label(L"Eye Break Reminder\nVersion 1.0.4 · x64\nWindows 11",2,settingsPane);
   label(L"All data stays on this device. No internet, telemetry, account, camera or microphone.",2,settingsPane);
   control(L"BUTTON",L"Reset all settings",BS_PUSHBUTTON,RESET_SETTINGS,2,36,settingsPane);loading=false;layout();
  }
@@ -144,7 +146,7 @@ public:
   checkbox(L"Save history on this device",HISTORY_TOGGLE,1,settings.history,main);control(L"BUTTON",L"Clear history",BS_PUSHBUTTON,CLEAR_HISTORY,1);
   settingsPane=CreateWindowExW(WS_EX_CONTROLPARENT,L"EyeBreakReminder.Settings",L"Settings",WS_CHILD|WS_VSCROLL|WS_CLIPCHILDREN,0,0,1,1,main,nullptr,instance,nullptr);buildSettings();switchPage(0);
  }
- void switchPage(int next){page=next;for(int i=0;i<3;++i){SendMessageW(nav[i],BM_SETCHECK,i==page?BST_CHECKED:BST_UNCHECKED,0);InvalidateRect(nav[i],nullptr,TRUE);}
+ void switchPage(int next){page=next;settleScroll();for(int i=0;i<3;++i){SendMessageW(nav[i],BM_SETCHECK,i==page?BST_CHECKED:BST_UNCHECKED,0);InvalidateRect(nav[i],nullptr,TRUE);}
   for(auto&c:controls)if(c.page!=2)ShowWindow(c.handle,c.page==page?SW_SHOW:SW_HIDE);
   ShowWindow(settingsPane,page==2?SW_SHOW:SW_HIDE);ShowWindow(historyList,page==1?SW_SHOW:SW_HIDE);if(page==1)updateHistory();layout();updateRenderTimer();InvalidateRect(main,nullptr,TRUE);}
  void layout(){
@@ -161,15 +163,102 @@ public:
    int size=std::min(px(56*std::sqrt(textScale)),diameter/4);if(size!=countSize){HFONT previous=countFont;countSize=size;countFont=CreateFontW(-size,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable");SendMessageW(find(COUNTDOWN),WM_SETFONT,reinterpret_cast<WPARAM>(countFont),TRUE);if(previous)DeleteObject(previous);}
   }
   if(page==1){int listTop=top+px(135)*int(std::ceil(textScale));int listHeight=std::max(px(80),h-listTop-pad-bh-gap);MoveWindow(historyList,pad,listTop,w-2*pad,listHeight,TRUE);MoveWindow(find(HISTORY_TOGGLE),pad,listTop+listHeight+gap,std::max(px(240),w-2*pad-px(150)),bh,TRUE);MoveWindow(find(CLEAR_HISTORY),w-pad-px(140),listTop+listHeight+gap,px(140),bh,TRUE);}
-  MoveWindow(settingsPane,pad,top,w-2*pad,h-top-pad,TRUE);
+  MoveWindow(settingsPane,pad,top,w-2*pad,h-top-pad,TRUE);layoutSettings();
+ }
+ // Computes content-space geometry once per layout; scrolling only re-applies the offset (positionSettings).
+ void layoutSettings(){
   RECT pane{};GetClientRect(settingsPane,&pane);int inset=px(12),y=px(8);int width=std::max(100,int(pane.right)-2*inset);
   for(auto&c:controls)if(c.page==2){if(c.heading&&y>px(8))y+=px(16);int height=px(int(c.height*textScale));if(c.id==-1){wchar_t content[1024]{};GetWindowTextW(c.handle,content,1024);HDC dc=GetDC(c.handle);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(c.handle,WM_GETFONT,0,0)));RECT measured{0,0,width,0};DrawTextW(dc,content,-1,&measured,DT_CALCRECT|DT_WORDBREAK);SelectObject(dc,previous);ReleaseDC(c.handle,dc);height=std::max(height,int(measured.bottom)+px(8));}int controlWidth=c.full?width:std::min(width,px(420));
-   wchar_t cls[64]{};GetClassNameW(c.handle,cls,64);int nativeHeight=wcscmp(cls,WC_COMBOBOXW)==0?height+px(220):height;int spinWidth=c.buddySpin?px(24):0;MoveWindow(c.handle,inset,y-settingsScroll,controlWidth-spinWidth,nativeHeight,TRUE);if(c.buddySpin)SetWindowPos(c.buddySpin,nullptr,inset+controlWidth-spinWidth,y-settingsScroll,spinWidth,height,SWP_NOZORDER);
+   wchar_t cls[64]{};GetClassNameW(c.handle,cls,64);int nativeHeight=wcscmp(cls,WC_COMBOBOXW)==0?height+px(220):height;int spinWidth=c.buddySpin?px(24):0;
+   c.x=inset;c.y=y;c.w=controlWidth-spinWidth;c.h=nativeHeight;c.spinWidth=spinWidth;c.rowHeight=height;
    y+=height+px(c.id==-1?4:12);}
-  settingsHeight=y;SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS,0,settingsHeight,UINT(std::max(1L,pane.bottom)),settingsScroll,0};SetScrollInfo(settingsPane,SB_VERT,&info,TRUE);
+  settingsHeight=y;settingsScroller.setRange(std::max(0,settingsHeight-int(pane.bottom)));positionSettings(true);
  }
- void scroll(int amount){RECT r{};GetClientRect(settingsPane,&r);settingsScroll=std::clamp(settingsScroll+amount,0,std::max(0,settingsHeight-int(r.bottom)));layout();InvalidateRect(settingsPane,nullptr,TRUE);}
- void ensureFocused(HWND h){if(page!=2||GetParent(h)!=settingsPane)return;RECT r{};GetWindowRect(h,&r);MapWindowPoints(nullptr,settingsPane,reinterpret_cast<POINT*>(&r),2);RECT client{};GetClientRect(settingsPane,&client);if(r.top<0)scroll(r.top-px(8));else if(r.bottom>client.bottom)scroll(r.bottom-client.bottom+px(8));}
+ // Moves every settings control to its cached position minus the scroll offset in one batch and syncs the scroll bar.
+ void positionSettings(bool force=false){
+  if(!settingsPane)return;
+  int offset=settingsScroller.pixel();if(!force&&offset==settingsApplied)return;settingsApplied=offset;
+  std::vector<Placement> items;for(auto&c:controls)if(c.page==2){items.push_back({c.handle,c.x,c.y-offset,c.w,c.h});if(c.buddySpin)items.push_back({c.buddySpin,c.x+c.w,c.y-offset,c.spinWidth,c.rowHeight});}
+  moveAll(items);RECT pane{};GetClientRect(settingsPane,&pane);
+  SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS|SIF_DISABLENOSCROLL,0,std::max(0,settingsHeight-1),UINT(std::max(1L,pane.bottom)),offset,0};SetScrollInfo(settingsPane,SB_VERT,&info,TRUE);
+ }
+ static void moveAll(const std::vector<Placement>&items){
+  if(items.empty())return;
+  HDWP batch=BeginDeferWindowPos(int(items.size()));
+  for(auto&i:items){if(!batch)break;batch=DeferWindowPos(batch,i.handle,nullptr,i.x,i.y,i.w,i.h,SWP_NOZORDER|SWP_NOACTIVATE);}
+  if(batch){EndDeferWindowPos(batch);return;}
+  for(auto&i:items)SetWindowPos(i.handle,nullptr,i.x,i.y,i.w,i.h,SWP_NOZORDER|SWP_NOACTIVATE);
+ }
+ static bool animationsOn(){BOOL on=TRUE;SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&on,0);return on!=FALSE;}
+ // Windows' "lines per wheel notch" setting; WHEEL_PAGESCROLL means one page per notch.
+ static double wheelAmount(double pageAmount,double unit){UINT lines=3;SystemParametersInfoW(SPI_GETWHEELSCROLLLINES,0,&lines,0);return lines==WHEEL_PAGESCROLL?pageAmount:double(lines)*unit;}
+ void startScroll(){if(scrollTimer||!main)return;scrollClock=monotonic();scrollTimer=SetTimer(main,SCROLL,16,nullptr)!=0;}
+ // One timer serves every active animation and stops as soon as all of them have reached their targets.
+ void stepScroll(){
+  double now=monotonic(),elapsed=now-scrollClock;scrollClock=now;bool more=false;
+  if(settingsScroller.animating()){bool again=settingsScroller.step(elapsed);positionSettings();more=more||again;}
+  if(breakScroller.animating()){bool again=breakScroller.step(elapsed);positionBreak();more=more||again;}
+  if(historyScroller.animating()){bool again=historyScroller.step(elapsed);applyHistory();more=more||again;}
+  if(!more){KillTimer(main,SCROLL);scrollTimer=false;}
+ }
+ void settleScroll(){settingsScroller.finish();breakScroller.finish();historyScroller.finish();positionSettings();positionBreak();applyHistory();if(scrollTimer){KillTimer(main,SCROLL);scrollTimer=false;}}
+ void settingsMoved(){positionSettings();if(settingsScroller.animating())startScroll();}
+ void breakMoved(){positionBreak();if(breakScroller.animating())startScroll();}
+ void historyMoved(){applyHistory();if(historyScroller.animating())startScroll();}
+ // Native scroll bar messages: arrows, track clicks and keys ease briefly; dragging the thumb follows the pointer exactly.
+ bool barScroll(ScrollModel&model,HWND hwnd,WORD code,int line){
+  SCROLLINFO info{sizeof(info),SIF_ALL,0,0,0,0,0};GetScrollInfo(hwnd,SB_VERT,&info);bool animate=animationsOn();
+  switch(code){case SB_LINEUP:model.scrollBy(-line,animate);break;case SB_LINEDOWN:model.scrollBy(line,animate);break;case SB_PAGEUP:model.scrollBy(-double(info.nPage),animate);break;case SB_PAGEDOWN:model.scrollBy(double(info.nPage),animate);break;
+   case SB_TOP:model.scrollTo(0,animate);break;case SB_BOTTOM:model.scrollTo(model.maximum(),animate);break;case SB_THUMBTRACK:case SB_THUMBPOSITION:model.jump(info.nTrackPos);break;default:return false;}
+  return true;
+ }
+ void wheelSettings(int delta){RECT r{};GetClientRect(settingsPane,&r);settingsScroller.wheel(delta,wheelAmount(r.bottom*0.9,px(20)),animationsOn());settingsMoved();}
+ void wheelBreak(int delta){if(!breakWindow)return;RECT r{};GetClientRect(breakWindow,&r);int unit=MulDiv(20,int(GetDpiForWindow(breakWindow)),96);breakScroller.wheel(delta,wheelAmount(r.bottom*0.9,unit),animationsOn());breakMoved();}
+ // The list view scrolls in whole rows (a Win32 limit), so its model counts rows and fractional wheel input accumulates.
+ int historyRowHeight(){RECT r{};if(historyList&&ListView_GetItemCount(historyList)>0&&ListView_GetItemRect(historyList,0,&r,LVIR_BOUNDS))return std::max(1,int(r.bottom-r.top));return 0;}
+ void applyHistory(){
+  int rows=historyRowHeight();if(!rows)return;int want=historyScroller.pixel(),top=ListView_GetTopIndex(historyList);
+  if(want!=top)ListView_Scroll(historyList,0,(want-top)*rows);
+  historyApplied=ListView_GetTopIndex(historyList);if(want>top&&historyApplied<want)historyScroller.setRange(historyApplied);
+ }
+ void wheelHistory(int delta){
+  if(!historyList)return;
+  int count=ListView_GetItemCount(historyList),perPage=ListView_GetCountPerPage(historyList);if(count<=0)return;
+  historyScroller.setRange(std::max(0,count-perPage));int top=ListView_GetTopIndex(historyList);if(top!=historyApplied)historyScroller.jump(top);
+  historyScroller.wheel(delta,wheelAmount(std::max(1,perPage-1),1.0),animationsOn());historyMoved();
+ }
+ // True when the wheel message was consumed. Windows delivers wheel input to the focused window, so the target is chosen by
+ // pointer position; an open drop-down list keeps its own wheel handling.
+ bool handleWheel(const MSG&m){
+  int delta=GET_WHEEL_DELTA_WPARAM(m.wParam);
+  if(!delta||!m.hwnd)return false;
+  wchar_t name[32]{};GetClassNameW(m.hwnd,name,32);
+  if(wcscmp(name,L"ComboBox")==0&&SendMessageW(m.hwnd,CB_GETDROPPEDSTATE,0,0))return false;
+  if(breakWindow&&(m.hwnd==breakWindow||IsChild(breakWindow,m.hwnd))){wheelBreak(delta);return true;}
+  if(m.hwnd!=main&&!IsChild(main,m.hwnd))return false;
+  POINT point{GET_X_LPARAM(m.lParam),GET_Y_LPARAM(m.lParam)};
+  auto over=[&](HWND window){RECT r{};return window&&IsWindowVisible(window)&&GetWindowRect(window,&r)&&PtInRect(&r,point);};
+  if(page==2&&over(settingsPane)){wheelSettings(delta);return true;}
+  if(page==1&&over(historyList)){wheelHistory(delta);return true;}
+  return false;
+ }
+ // Keyboard focus changes bring the focused control into view, relative to the scroll target.
+ void ensureFocused(HWND h){
+  if(page!=2||!h||!settingsPane)return;
+  RECT client{};GetClientRect(settingsPane,&client);
+  for(auto&c:controls)if(c.page==2&&(c.handle==h||c.buddySpin==h||IsChild(c.handle,h))){
+   double top=c.y-px(8),bottom=c.y+c.rowHeight+px(8),view=client.bottom;
+   if(top<settingsScroller.target())settingsScroller.scrollTo(top,animationsOn());else if(bottom>settingsScroller.target()+view)settingsScroller.scrollTo(bottom-view,animationsOn());else return;
+   settingsMoved();return;}
+ }
+ void ensureBreakVisible(HWND h){
+  if(!breakWindow||!h||!IsChild(breakWindow,h))return;
+  RECT client{};GetClientRect(breakWindow,&client);int margin=MulDiv(8,int(GetDpiForWindow(breakWindow)),96);
+  for(auto&i:breakItems)if(i.handle==h){
+   double top=i.y-margin,bottom=i.y+i.h+margin,view=client.bottom;
+   if(top<breakScroller.target())breakScroller.scrollTo(top,animationsOn());else if(bottom>breakScroller.target()+view)breakScroller.scrollTo(bottom-view,animationsOn());else return;
+   breakMoved();return;}
+ }
  void text(HDC dc,const std::wstring&str,RECT area,HFONT font,COLORREF color,UINT flags=DT_LEFT|DT_WORDBREAK){SelectObject(dc,font);SetTextColor(dc,color);SetBkMode(dc,TRANSPARENT);DrawTextW(dc,str.c_str(),int(str.size()),&area,flags);}
  void paint(HWND hwnd,bool isBreak){
   PAINTSTRUCT ps{};HDC target=BeginPaint(hwnd,&ps);RECT r{};GetClientRect(hwnd,&r);HDC dc=CreateCompatibleDC(target);HBITMAP bitmap=CreateCompatibleBitmap(target,std::max(1L,r.right),std::max(1L,r.bottom));auto previous=SelectObject(dc,bitmap);FillRect(dc,&r,backgroundBrush);auto snap=engine->snapshot();
@@ -194,7 +283,7 @@ public:
   BitBlt(target,0,0,r.right,r.bottom,dc,0,0,SRCCOPY);SelectObject(dc,previous);DeleteObject(bitmap);DeleteDC(dc);EndPaint(hwnd,&ps);
  }
  void updateAccessibleTimer(){auto snap=engine->snapshot();auto set=[&](int id,const std::wstring&value){HWND h=find(id);if(!h)return;wchar_t old[160]{};GetWindowTextW(h,old,160);if(value!=old)SetWindowTextW(h,value.c_str());};set(COUNTDOWN,timeText(snap.remaining));set(COUNT_CAPTION,snap.phase==Phase::Break?L"Eye break":L"Next eye break");set(TIMER_STATE,snap.paused?L"Paused":snap.phase==Phase::Break?L"Rest your eyes":snap.phase==Phase::Snooze?L"Snoozed — next reminder below":L"Running");}
- void updateHistory(){if(!historyList)return;ListView_DeleteAllItems(historyList);int row=0;for(auto it=history.rbegin();it!=history.rend()&&row<100;++it,++row){auto date=formatDate(it->at);LVITEMW item{};item.mask=LVIF_TEXT;item.iItem=row;item.pszText=date.data();ListView_InsertItem(historyList,&item);ListView_SetItemText(historyList,row,1,const_cast<LPWSTR>(it->completed?L"Completed":L"Skipped"));auto seconds=std::to_wstring(int(std::round(it->seconds)));ListView_SetItemText(historyList,row,2,seconds.data());}InvalidateRect(main,nullptr,TRUE);}
+ void updateHistory(){if(!historyList)return;ListView_DeleteAllItems(historyList);historyScroller.jump(0);historyApplied=0;int row=0;for(auto it=history.rbegin();it!=history.rend()&&row<100;++it,++row){auto date=formatDate(it->at);LVITEMW item{};item.mask=LVIF_TEXT;item.iItem=row;item.pszText=date.data();ListView_InsertItem(historyList,&item);ListView_SetItemText(historyList,row,1,const_cast<LPWSTR>(it->completed?L"Completed":L"Skipped"));auto seconds=std::to_wstring(int(std::round(it->seconds)));ListView_SetItemText(historyList,row,2,seconds.data());}InvalidateRect(main,nullptr,TRUE);}
  void addTray(){trayData={};trayData.cbSize=sizeof(trayData);trayData.hWnd=main;trayData.uID=1;trayData.uFlags=NIF_ICON|NIF_MESSAGE|NIF_TIP|NIF_SHOWTIP;trayData.uCallbackMessage=TRAY_MESSAGE;trayData.hIcon=icon;wcscpy_s(trayData.szTip,L"Eye Break Reminder");trayAdded=Shell_NotifyIconW(NIM_ADD,&trayData)!=0;if(trayAdded){trayData.uVersion=NOTIFYICON_VERSION_4;Shell_NotifyIconW(NIM_SETVERSION,&trayData);}}
  void updateTray(){auto s=engine->snapshot();auto status=s.paused?L"Paused":s.phase==Phase::Break?L"Rest your eyes":s.phase==Phase::Snooze?L"Snoozed":L"Running";auto tip=L"Eye Break Reminder — "+std::wstring(status);wcsncpy_s(trayData.szTip,tip.c_str(),_TRUNCATE);trayData.uFlags=NIF_TIP|NIF_SHOWTIP;if(trayAdded)Shell_NotifyIconW(NIM_MODIFY,&trayData);}
  void clearNotification(){if(!trayAdded)return;trayData.uFlags=NIF_INFO;trayData.szInfo[0]=0;Shell_NotifyIconW(NIM_MODIFY,&trayData);}
@@ -252,7 +341,10 @@ public:
  static DWORD WINAPI work(LPVOID context){auto self=static_cast<Application*>(context);HANDLE events[]={self->stopEvent,self->dueEvent};for(;;){EnterCriticalSection(&self->deadlineLock);double when=self->deadline;LeaveCriticalSection(&self->deadlineLock);DWORD timeout=when<=0?INFINITE:DWORD(std::clamp(std::ceil((when-monotonic())*1000),1.0,double(MAXDWORD-1)));DWORD result=WaitForMultipleObjects(2,events,FALSE,timeout);if(result==WAIT_OBJECT_0||result==WAIT_FAILED)return 0;if(result==WAIT_TIMEOUT){EnterCriticalSection(&self->deadlineLock);if(self->deadline==when)self->deadline=0;LeaveCriticalSection(&self->deadlineLock);PostMessageW(self->main,ENGINE_MESSAGE,0,0);}}}
  void changed(){updateAccessibleTimer();if(engine->snapshot().phase!=Phase::Break)dismissBreak();SetWindowTextW(find(PAUSE),engine->snapshot().paused?L"Resume":L"Pause");schedule();saveTimer();updateTray();updateRenderTimer();InvalidateRect(main,nullptr,TRUE);if(breakWindow){SetWindowTextW(GetDlgItem(breakWindow,BREAK_GUIDANCE),engine->snapshot().paused?L"Break paused. Resume from the main window.":L"Keep looking into the distance.");InvalidateRect(breakWindow,nullptr,TRUE);}}
  void breakDue(std::uint64_t cycle,bool alarm){if(locked||sleeping||engine->isSuspended())return;if(alarm&&!audio->play(settings))error(L"The alarm couldn't play. Check your Windows audio output.");if(hidden||IsIconic(main))notify(cycle);showBreak();}
- void dismissBreak(){audio->stop();clearNotification();if(breakWindow){quietBreak=true;HWND old=breakWindow;breakWindow=nullptr;DestroyWindow(old);quietBreak=false;if(breakFont){DeleteObject(breakFont);breakFont=nullptr;}if(breakTitleFont){DeleteObject(breakTitleFont);breakTitleFont=nullptr;}if(breakCountFont){DeleteObject(breakCountFont);breakCountFont=nullptr;}}updateRenderTimer();}
+ // The completion alarm reuses the selected sound, volume and mute setting. It is asynchronous (waveOut) and keyed to the
+ // finished break, so repeated timer messages, repaints, window restores and recovery cannot play it twice.
+ void breakCompleted(std::uint64_t cycle,bool alarm){if(!alarm||locked||sleeping||engine->isSuspended()||alarmedCycle==cycle)return;alarmedCycle=cycle;if(!audio->play(settings))error(L"The alarm couldn't play. Check your Windows audio output.");}
+ void dismissBreak(){audio->stop();clearNotification();if(breakWindow){quietBreak=true;HWND old=breakWindow;breakWindow=nullptr;DestroyWindow(old);breakItems.clear();quietBreak=false;if(breakFont){DeleteObject(breakFont);breakFont=nullptr;}if(breakTitleFont){DeleteObject(breakTitleFont);breakTitleFont=nullptr;}if(breakCountFont){DeleteObject(breakCountFont);breakCountFont=nullptr;}}updateRenderTimer();}
  void showBreak(){
   if(breakWindow||engine->snapshot().phase!=Phase::Break||locked||sleeping||engine->isSuspended())return;
   auto monitor=preferred(settings,GetForegroundWindow());RECT work=monitor.work;UINT monitorDpi=dpi;
@@ -260,7 +352,7 @@ public:
   DWORD style=settings.mode==2?WS_POPUP|WS_CLIPCHILDREN:WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_CLIPCHILDREN;
   breakWindow=CreateWindowExW(WS_EX_APPWINDOW,BREAK_CLASS,L"Rest your eyes — Eye Break Reminder",style|WS_VSCROLL,work.left,work.top,100,100,nullptr,nullptr,instance,nullptr);
   if(!breakWindow){error(L"The break reminder couldn't open. Please rest your eyes for 20 seconds.");return;}
-  monitorDpi=GetDpiForWindow(breakWindow);breakScroll=0;
+  monitorDpi=GetDpiForWindow(breakWindow);breakScroller=ScrollModel();breakApplied=INT_MIN;breakItems.clear();
   auto makeFont=[&](double height,int weight){return CreateFontW(-int(height*monitorDpi/96),0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable");};
   breakFont=makeFont(14*textScale,FW_NORMAL);breakTitleFont=makeFont(25*textScale,FW_SEMIBOLD);breakCountFont=makeFont(56*std::sqrt(textScale),FW_SEMIBOLD);
   int w=int((settings.mode==1?440:580)*monitorDpi/96),h=int((settings.mode==1?500:580)*monitorDpi/96);
@@ -272,36 +364,42 @@ public:
   caption(L"Rest your eyes",BREAK_TITLE,breakTitleFont);caption(L"Look at something at least 20 feet / 6 metres away.",BREAK_INSTRUCTION,breakFont);caption(timeText(engine->snapshot().remaining).c_str(),COUNTDOWN,breakCountFont);caption(L"Keep looking into the distance.",BREAK_GUIDANCE,breakFont);
   layoutBreak();applyTheme();ShowWindow(breakWindow,SW_SHOW);SetForegroundWindow(breakWindow);FLASHWINFO flash{sizeof(flash),breakWindow,FLASHW_TRAY,3,0};FlashWindowEx(&flash);SetFocus(GetDlgItem(breakWindow,COMPLETE));updateRenderTimer();
  }
- void scrollBreak(int amount){if(!breakWindow)return;RECT r{};GetClientRect(breakWindow,&r);breakScroll=std::clamp(breakScroll+amount,0,std::max(0,breakHeight-int(r.bottom)));layoutBreak();}
  void layoutBreak(){
   if(!breakWindow)return;
   RECT r{};GetClientRect(breakWindow,&r);int scale=int(GetDpiForWindow(breakWindow));auto bpx=[&](double n){return int(n*scale/96.0);};
   int pad=bpx(28),gap=bpx(12),bh=bpx(40*textScale),width=std::min(bpx(380),int(r.right)-2*pad),x=(r.right-width)/2,y=pad;
-  auto place=[&](int id,int height){MoveWindow(GetDlgItem(breakWindow,id),x,y-breakScroll,width,height,TRUE);y+=height+gap;};
+  breakItems.clear();
+  auto place=[&](int id,int height){breakItems.push_back({GetDlgItem(breakWindow,id),x,y,width,height});y+=height+gap;};
   place(BREAK_TITLE,bpx(42*textScale));place(BREAK_INSTRUCTION,bpx(48*textScale));place(COUNTDOWN,bpx(96*std::sqrt(textScale)));place(BREAK_GUIDANCE,bpx(48*textScale));place(COMPLETE,bh);
-  int skipWidth=settings.snooze?width/4:width;MoveWindow(GetDlgItem(breakWindow,SKIP),x,y-breakScroll,skipWidth-4,bh,TRUE);
-  if(settings.snooze){int widths[3]={width/3,width/5,width-width/4-width/3-width/5};int left=x+width/4;int ids[3]={SNOOZE1,SNOOZE3,SNOOZE5};for(int i=0;i<3;++i){MoveWindow(GetDlgItem(breakWindow,ids[i]),left,y-breakScroll,widths[i]-4,bh,TRUE);left+=widths[i];}}
-  breakHeight=y+bh+pad;SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS,0,breakHeight,UINT(std::max(1L,r.bottom)),breakScroll,0};SetScrollInfo(breakWindow,SB_VERT,&info,TRUE);InvalidateRect(breakWindow,nullptr,TRUE);
+  int skipWidth=settings.snooze?width/4:width;breakItems.push_back({GetDlgItem(breakWindow,SKIP),x,y,skipWidth-4,bh});
+  if(settings.snooze){int widths[3]={width/3,width/5,width-width/4-width/3-width/5};int left=x+width/4;int ids[3]={SNOOZE1,SNOOZE3,SNOOZE5};for(int i=0;i<3;++i){breakItems.push_back({GetDlgItem(breakWindow,ids[i]),left,y,widths[i]-4,bh});left+=widths[i];}}
+  breakHeight=y+bh+pad;breakScroller.setRange(std::max(0,breakHeight-int(r.bottom)));positionBreak(true);InvalidateRect(breakWindow,nullptr,TRUE);
+ }
+ void positionBreak(bool force=false){
+  if(!breakWindow)return;
+  int offset=breakScroller.pixel();if(!force&&offset==breakApplied)return;breakApplied=offset;
+  std::vector<Placement> items;for(auto&i:breakItems)items.push_back({i.handle,i.x,i.y-offset,i.w,i.h});moveAll(items);
+  RECT r{};GetClientRect(breakWindow,&r);SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS,0,std::max(0,breakHeight-1),UINT(std::max(1L,r.bottom)),offset,0};SetScrollInfo(breakWindow,SB_VERT,&info,TRUE);
  }
  void suspend(bool isLock){engine->suspend(isLock);dismissBreak();schedule();saveTimer();}
  void wake(){if(locked||sleeping)return;engine->wake();schedule();if(engine->snapshot().phase==Phase::Break)showBreak();}
  void exit(){if(quitting)return;quitting=true;saveSettings();saveTimer();dismissBreak();DestroyWindow(main);}
  LRESULT color(HDC dc,HWND child=nullptr,bool input=false){SetBkColor(dc,input?colors.surface:colors.background);COLORREF ink=colors.foreground;if(child&&reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0))==headingFont&&!colors.contrast)ink=colors.accent;SetTextColor(dc,ink);return reinterpret_cast<LRESULT>(input?surfaceBrush:backgroundBrush);}
- static LRESULT CALLBACK paneProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;case WM_HSCROLL:if(reinterpret_cast<HWND>(l)==a.find(VOLUME)){a.settings.volume=int(SendMessageW(a.find(VOLUME),TBM_GETPOS,0,0));a.settingsChanged();if(LOWORD(w)==TB_ENDTRACK)a.saveSettings();}return 0;case WM_VSCROLL:{SCROLLINFO info{sizeof(info),SIF_ALL,0,0,0,0,0};GetScrollInfo(hwnd,SB_VERT,&info);int n=LOWORD(w);if(n==SB_LINEUP)a.scroll(-a.px(40));else if(n==SB_LINEDOWN)a.scroll(a.px(40));else if(n==SB_PAGEUP)a.scroll(-int(info.nPage));else if(n==SB_PAGEDOWN)a.scroll(int(info.nPage));else if(n==SB_THUMBTRACK)a.scroll(info.nTrackPos-a.settingsScroll);return 0;}case WM_MOUSEWHEEL:a.scroll(-GET_WHEEL_DELTA_WPARAM(w)*a.px(60)/WHEEL_DELTA);return 0;case WM_ERASEBKGND:{RECT r{};GetClientRect(hwnd,&r);FillRect(reinterpret_cast<HDC>(w),&r,a.backgroundBrush);return 1;}case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);}return DefWindowProcW(hwnd,msg,w,l);}
+ static LRESULT CALLBACK paneProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;case WM_HSCROLL:if(reinterpret_cast<HWND>(l)==a.find(VOLUME)){a.settings.volume=int(SendMessageW(a.find(VOLUME),TBM_GETPOS,0,0));a.settingsChanged();if(LOWORD(w)==TB_ENDTRACK)a.saveSettings();}return 0;case WM_VSCROLL:if(a.barScroll(a.settingsScroller,hwnd,LOWORD(w),a.px(40)))a.settingsMoved();return 0;case WM_MOUSEWHEEL:a.wheelSettings(GET_WHEEL_DELTA_WPARAM(w));return 0;case WM_ERASEBKGND:{RECT r{};GetClientRect(hwnd,&r);FillRect(reinterpret_cast<HDC>(w),&r,a.backgroundBrush);return 1;}case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);}return DefWindowProcW(hwnd,msg,w,l);}
  static LRESULT CALLBACK breakProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_PAINT:a.paint(hwnd,true);return 0;case WM_ERASEBKGND:return 1;case WM_SIZE:a.layoutBreak();return 0;case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;
-  case WM_VSCROLL:{SCROLLINFO info{sizeof(info),SIF_ALL,0,0,0,0,0};GetScrollInfo(hwnd,SB_VERT,&info);int n=LOWORD(w);if(n==SB_LINEUP)a.scrollBreak(-40);else if(n==SB_LINEDOWN)a.scrollBreak(40);else if(n==SB_PAGEUP)a.scrollBreak(-int(info.nPage));else if(n==SB_PAGEDOWN)a.scrollBreak(int(info.nPage));else if(n==SB_THUMBTRACK)a.scrollBreak(info.nTrackPos-a.breakScroll);return 0;}
-  case WM_MOUSEWHEEL:a.scrollBreak(-GET_WHEEL_DELTA_WPARAM(w)*60/WHEEL_DELTA);return 0;
-  case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CLOSE:if(!a.quietBreak){a.engine->finish(false);return 0;}break;case WM_DPICHANGED:{auto r=reinterpret_cast<RECT*>(l);SetWindowPos(hwnd,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);a.layoutBreak();return 0;}}return DefWindowProcW(hwnd,msg,w,l);}
+  case WM_VSCROLL:if(a.barScroll(a.breakScroller,hwnd,LOWORD(w),MulDiv(40,int(GetDpiForWindow(hwnd)),96)))a.breakMoved();return 0;
+  case WM_MOUSEWHEEL:a.wheelBreak(GET_WHEEL_DELTA_WPARAM(w));return 0;
+  case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CLOSE:if(!a.quietBreak){a.engine->finish(false);return 0;}break;case WM_DPICHANGED:{a.breakScroller.rescale(double(HIWORD(w))/GetDpiForWindow(hwnd));auto r=reinterpret_cast<RECT*>(l);SetWindowPos(hwnd,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);a.layoutBreak();return 0;}}return DefWindowProcW(hwnd,msg,w,l);}
  static LRESULT CALLBACK mainProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;
   if(msg==a.activateMessage){a.showMain();return 0;}if(msg==a.quitMessage){a.exit();return 0;}if(msg==a.explorerMessage){a.addTray();a.updateTray();return 0;}
   switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_PAINT:if(a.engine)a.paint(hwnd,false);else {PAINTSTRUCT p{};BeginPaint(hwnd,&p);EndPaint(hwnd,&p);}return 0;case WM_ERASEBKGND:return 1;
    case WM_SIZE:if(a.engine){if(w==SIZE_MINIMIZED){if(a.settings.tray)PostMessageW(hwnd,WM_APP+4,0,0);a.updateRenderTimer();}else {a.layout();a.updateRenderTimer();}}return 0;
    case WM_GETMINMAXINFO:{auto size=reinterpret_cast<MINMAXINFO*>(l);size->ptMinTrackSize={a.px(520),a.px(480)};return 0;}
-   case WM_DPICHANGED:{a.dpi=HIWORD(w);auto r=reinterpret_cast<RECT*>(l);SetWindowPos(hwnd,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);a.createFonts();a.layout();return 0;}
+   case WM_DPICHANGED:{a.settingsScroller.rescale(double(HIWORD(w))/a.dpi);a.dpi=HIWORD(w);auto r=reinterpret_cast<RECT*>(l);SetWindowPos(hwnd,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);a.createFonts();a.layout();return 0;}
    case WM_SETTINGCHANGE:case WM_THEMECHANGED:if(a.engine){a.createFonts();a.applyTheme();a.layout();a.layoutBreak();a.updateRenderTimer();}return 0;
    case WM_DISPLAYCHANGE:if(a.page==2)a.buildSettings();return 0;
    case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;
-   case WM_TIMER:if(w==RENDER){a.engine->tick();a.updateAccessibleTimer();if(!a.hidden&&a.page==0)InvalidateRect(hwnd,nullptr,FALSE);if(a.breakWindow){auto time=timeText(a.engine->snapshot().remaining);wchar_t previous[32]{};GetWindowTextW(GetDlgItem(a.breakWindow,COUNTDOWN),previous,32);if(time!=previous)SetWindowTextW(GetDlgItem(a.breakWindow,COUNTDOWN),time.c_str());InvalidateRect(a.breakWindow,nullptr,FALSE);}}else if(w==CHECKPOINT){a.saveTimer();if(a.dirtySettings)a.saveSettings();}return 0;
+   case WM_TIMER:if(w==RENDER){a.engine->tick();a.updateAccessibleTimer();if(!a.hidden&&a.page==0)InvalidateRect(hwnd,nullptr,FALSE);if(a.breakWindow){auto time=timeText(a.engine->snapshot().remaining);wchar_t previous[32]{};GetWindowTextW(GetDlgItem(a.breakWindow,COUNTDOWN),previous,32);if(time!=previous)SetWindowTextW(GetDlgItem(a.breakWindow,COUNTDOWN),time.c_str());InvalidateRect(a.breakWindow,nullptr,FALSE);}}else if(w==CHECKPOINT){a.saveTimer();if(a.dirtySettings)a.saveSettings();}else if(w==SCROLL)a.stepScroll();return 0;
    case ENGINE_MESSAGE:if(!a.quitting){a.engine->tick();a.schedule();}return 0;
    case WM_APP+3:a.error(L"Eye Break Reminder couldn't load some saved data. Defaults or a fresh timer have been restored.");return 0;
    case WM_APP+4:a.hideMain();return 0;
@@ -312,7 +410,7 @@ public:
    case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);
    case WM_QUERYENDSESSION:if(a.engine){a.saveSettings();a.saveTimer();}return TRUE;
    case WM_CLOSE:a.closeMain();return 0;
-   case WM_DESTROY:a.quitting=true;KillTimer(hwnd,RENDER);KillTimer(hwnd,CHECKPOINT);if(a.stopEvent)SetEvent(a.stopEvent);if(a.worker){WaitForSingleObject(a.worker,3000);CloseHandle(a.worker);a.worker=nullptr;}if(a.trayAdded)Shell_NotifyIconW(NIM_DELETE,&a.trayData);WTSUnRegisterSessionNotification(hwnd);if(a.trayMenuOwner){DestroyWindow(a.trayMenuOwner);a.trayMenuOwner=nullptr;}PostQuitMessage(0);return 0;
+   case WM_DESTROY:a.quitting=true;KillTimer(hwnd,RENDER);KillTimer(hwnd,CHECKPOINT);KillTimer(hwnd,SCROLL);if(a.stopEvent)SetEvent(a.stopEvent);if(a.worker){WaitForSingleObject(a.worker,3000);CloseHandle(a.worker);a.worker=nullptr;}if(a.trayAdded)Shell_NotifyIconW(NIM_DELETE,&a.trayData);WTSUnRegisterSessionNotification(hwnd);if(a.trayMenuOwner){DestroyWindow(a.trayMenuOwner);a.trayMenuOwner=nullptr;}PostQuitMessage(0);return 0;
   }return DefWindowProcW(hwnd,msg,w,l);
  }
  int run(HINSTANCE h,int show){instance=h;app=this;InitializeCriticalSection(&deadlineLock);stopEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);dueEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!stopEvent||!dueEvent)throw std::runtime_error("Timer scheduler unavailable");
@@ -324,12 +422,12 @@ public:
   auto list=monitors();Monitor selected=preferred(settings,main);for(auto&m:list)if(settings.x>=m.work.left&&settings.x<m.work.right&&settings.y>=m.work.top&&settings.y<m.work.bottom)selected=m;RECT work=selected.work;
   int width=std::min(px(settings.width),int(work.right-work.left)),height=std::min(px(settings.height),int(work.bottom-work.top));int x=settings.x==-32000?work.left+(work.right-work.left-width)/2:std::clamp(settings.x,int(work.left),int(work.right-width));int y=settings.y==-32000?work.top+(work.bottom-work.top-height)/2:std::clamp(settings.y,int(work.top),int(work.bottom-height));SetWindowPos(main,nullptr,x,y,width,height,SWP_NOZORDER);
   createControls();applyTheme();addTray();WTSRegisterSessionNotification(main,NOTIFY_FOR_THIS_SESSION);
-  engine->changed=[this]{changed();};engine->due=[this](auto cycle,bool alarm){breakDue(cycle,alarm);};engine->ended=[this](Record record){if(settings.history){history.push_back(record);if(history.size()>10000)history.erase(history.begin());saveHistory();updateHistory();}};
+  engine->changed=[this]{changed();};engine->due=[this](auto cycle,bool alarm){breakDue(cycle,alarm);};engine->breakCompleted=[this](auto cycle,bool alarm){breakCompleted(cycle,alarm);};engine->ended=[this](Record record){if(settings.history){history.push_back(record);if(history.size()>10000)history.erase(history.begin());saveHistory();updateHistory();}};
   worker=CreateThread(nullptr,0,Application::work,this,0,nullptr);if(!worker)throw std::runtime_error("Timer worker unavailable");changed();SetTimer(main,CHECKPOINT,30000,nullptr);ShowWindow(main,show);UpdateWindow(main);updateRenderTimer();SetFocus(nav[0]);
-  MSG message{};while(GetMessageW(&message,nullptr,0,0)>0){if(message.message==WM_KEYDOWN&&GetKeyState(VK_CONTROL)<0){if(message.wParam=='R'){engine->reset();continue;}if(message.wParam=='B'&&GetKeyState(VK_SHIFT)<0){engine->takeBreak();continue;}if(message.wParam==VK_OEM_COMMA){showMain();switchPage(2);continue;}}
+  HWND lastFocus=nullptr;MSG message{};while(GetMessageW(&message,nullptr,0,0)>0){if(message.message==WM_MOUSEWHEEL&&handleWheel(message))continue;if(message.message==WM_KEYDOWN&&GetKeyState(VK_CONTROL)<0){if(message.wParam=='R'){engine->reset();continue;}if(message.wParam=='B'&&GetKeyState(VK_SHIFT)<0){engine->takeBreak();continue;}if(message.wParam==VK_OEM_COMMA){showMain();switchPage(2);continue;}}
    if(message.message==WM_KEYDOWN&&message.wParam==VK_RETURN){HWND focus=GetFocus();wchar_t clsName[32]{};GetClassNameW(focus,clsName,32);if(wcscmp(clsName,L"Button")==0){SendMessageW(focus,BM_CLICK,0,0);continue;}}
    if(message.message==WM_KEYDOWN&&message.wParam==VK_ESCAPE&&breakWindow){engine->finish(false);continue;}
-   HWND dialog=breakWindow&&IsChild(breakWindow,GetFocus())?breakWindow:main;if(!IsDialogMessageW(dialog,&message)){TranslateMessage(&message);DispatchMessageW(&message);}HWND focus=GetFocus();if(focus)ensureFocused(focus);if(breakWindow&&IsChild(breakWindow,focus)){RECT child{},view{};GetWindowRect(focus,&child);MapWindowPoints(nullptr,breakWindow,reinterpret_cast<POINT*>(&child),2);GetClientRect(breakWindow,&view);if(child.top<0)scrollBreak(child.top-8);else if(child.bottom>view.bottom)scrollBreak(child.bottom-view.bottom+8);}}
+   HWND dialog=breakWindow&&IsChild(breakWindow,GetFocus())?breakWindow:main;if(!IsDialogMessageW(dialog,&message)){TranslateMessage(&message);DispatchMessageW(&message);}HWND focus=GetFocus();if(focus!=lastFocus){lastFocus=focus;ensureFocused(focus);ensureBreakVisible(focus);}}
   audio.reset();if(backgroundBrush)DeleteObject(backgroundBrush);if(surfaceBrush)DeleteObject(surfaceBrush);if(normalFont)DeleteObject(normalFont);
   if(headingFont)DeleteObject(headingFont);
   if(titleFont)DeleteObject(titleFont);

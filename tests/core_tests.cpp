@@ -4,8 +4,8 @@
 using namespace eye;
 static int checks=0;
 void expect(bool condition,const char* name){if(!condition){std::cerr<<"FAIL: "<<name<<'\n';std::exit(1);}++checks;}
-struct Fixture {double mono=0;std::int64_t wall=1791288000;Settings s;Engine e;int reminders=0,alarms=0;std::vector<Record>records;
- Fixture(Settings value={}):s(value),e(s,[this]{return mono;},[this]{return wall;}){e.due=[this](auto,bool sound){++reminders;if(sound)++alarms;};e.ended=[this](Record r){records.push_back(r);};}
+struct Fixture {double mono=0;std::int64_t wall=1791288000;Settings s;Engine e;int reminders=0,alarms=0,completions=0,completionAlarms=0;std::uint64_t completedCycle=0;std::vector<Record>records;
+ Fixture(Settings value={}):s(value),e(s,[this]{return mono;},[this]{return wall;}){e.due=[this](auto,bool sound){++reminders;if(sound)++alarms;};e.ended=[this](Record r){records.push_back(r);};e.breakCompleted=[this](std::uint64_t cycle,bool sound){++completions;completedCycle=cycle;if(sound)++completionAlarms;};}
  void advance(double seconds){mono+=seconds;wall+=static_cast<std::int64_t>(seconds);} };
 int main(){
  {Fixture f;f.advance(397);expect(f.e.snapshot().remaining==803,"elapsed countdown after UI stall");f.wall+=86400;expect(f.e.snapshot().remaining==803,"wall correction does not change work");}
@@ -38,5 +38,28 @@ int main(){
  {Fixture f;f.advance(100);f.e.suspend(true);f.advance(100);f.e.suspend(false);f.advance(3600);f.e.wake();expect(f.e.snapshot().remaining==1100,"lock then sleep preserves lock pause");}
  {Fixture f;f.e.takeBreak();f.e.pause();Fixture g;g.e.restore(f.e.save());expect(g.e.snapshot().paused&&g.e.snapshot().phase==Phase::Work,"paused interrupted break restores paused work");}
  {Fixture old;old.advance(480);Settings s;s.restore=false;Fixture fresh(s);expect(!fresh.e.restore(old.e.save()),"resume opt-out ignores previous countdown");expect(fresh.e.snapshot().phase==Phase::Work&&fresh.e.snapshot().remaining==1200&&!fresh.e.snapshot().paused,"resume opt-out starts fresh work");}
+
+ // Break completion alarm: only a break that runs to zero announces completion, exactly once.
+ {Fixture f;f.advance(1200);f.e.tick();auto breakCycle=f.e.snapshot().cycle;f.advance(19.9);f.e.tick();expect(f.completions==0,"no completion before the break reaches zero");f.advance(0.1);f.e.tick();f.e.tick();f.e.tick();expect(f.completions==1&&f.completionAlarms==1,"natural completion announced once");expect(f.completedCycle==breakCycle&&f.e.snapshot().cycle!=breakCycle,"completion identifies the finished break");expect(f.records.size()==1&&f.records[0].completed&&f.e.snapshot().phase==Phase::Work,"completion still recorded and work restarts");f.advance(5);f.e.tick();expect(f.completions==1,"no repeat while the next work interval runs");}
+ {Settings s;s.alarm=false;Fixture f(s);f.e.takeBreak();f.advance(20);f.e.tick();expect(f.completions==1&&f.completionAlarms==0,"muted alarm reports completion without sound");}
+ {Fixture f;f.e.takeBreak();f.advance(5);f.e.finish(false);expect(f.completions==0,"skip is not a completion alarm");}
+ {Fixture f;f.e.takeBreak();f.advance(5);f.e.finish(true);f.advance(30);f.e.tick();expect(f.completions==0,"acknowledging a break early is not a natural completion");}
+ {Fixture f;f.e.takeBreak();f.advance(5);f.e.reset();f.advance(30);f.e.tick();expect(f.completions==0,"reset during a break plays no completion alarm");}
+ {Fixture f;f.e.takeBreak();f.advance(5);f.e.pause();f.advance(600);f.e.tick();expect(f.completions==0&&f.e.snapshot().phase==Phase::Break,"pause holds the break without completion");f.e.resume();f.advance(14.9);f.e.tick();expect(f.completions==0,"resumed break not yet complete");f.advance(0.1);f.e.tick();expect(f.completions==1,"resumed break completes once");}
+ {Fixture f;f.e.takeBreak();f.e.snooze(1);f.advance(60);f.e.tick();expect(f.completions==0&&f.reminders==2,"snooze never announces completion");}
+ {Fixture f;f.e.takeBreak();f.e.suspend(false);f.advance(1800);f.e.tick();f.e.wake();f.e.tick();expect(f.completions==0&&f.records.size()==1&&!f.records[0].completed,"break expiring during sleep is skipped without an alarm");}
+ {Fixture f;f.e.takeBreak();f.e.suspend(true);f.advance(3600);f.e.tick();expect(f.completions==0,"no completion while locked");f.e.wake();expect(f.completions==0&&f.e.snapshot().phase==Phase::Break,"lock pause preserves the break without completion");f.advance(20);f.e.tick();expect(f.completions==1,"break completes after unlock");}
+ {Fixture f;f.e.takeBreak();auto saved=f.e.save();f.advance(100);Fixture g;g.wall=f.wall;g.e.restore(saved);g.advance(100);g.e.tick();expect(g.completions==0,"restart recovery of an interrupted break plays no completion alarm");}
+ {Fixture f;f.e.takeBreak();f.advance(20);f.e.tick();f.advance(1200);f.e.tick();auto second=f.e.snapshot().cycle;f.advance(20);f.e.tick();expect(f.completions==2&&f.completedCycle==second,"each completed break announces separately");}
+ // Scrolling model: wheel accumulation, bounded targets, short animation.
+ {ScrollModel m;m.setRange(500);for(int i=0;i<10;++i)m.wheel(-12,60,false);expect(m.position()==60&&m.target()==60,"ten high-resolution wheel events accumulate exactly one notch");}
+ {ScrollModel m;m.setRange(500);m.wheel(-120,60,false);m.wheel(-120,60,false);m.wheel(120,60,false);expect(m.target()==60,"reversing the wheel moves the target immediately");}
+ {ScrollModel m(0.05);m.setRange(100);for(int i=0;i<7;++i)m.wheel(-40,3,false);expect(std::fabs(m.target()-7.0)<1e-9&&m.pixel()==7,"fractional row deltas accumulate across events");}
+ {ScrollModel m;m.setRange(100);m.wheel(120,60,false);expect(m.position()==0,"wheel cannot scroll above the top");m.wheel(-120*10,60,false);expect(m.position()==100&&m.target()==100,"wheel cannot scroll beyond the bottom");}
+ {ScrollModel m;m.setRange(1000);m.wheel(-120,60,true);expect(m.position()==0&&m.target()==60&&m.animating(),"animated wheel input updates the target at once");double last=0;int steps=0;bool monotonic=true;while(m.step(1.0/60)){if(m.position()<last||m.position()>60)monotonic=false;last=m.position();++steps;}expect(monotonic&&m.position()==60&&!m.animating(),"animation settles on the target without overshoot");expect(steps<=20,"one notch settles within about a third of a second");expect(!m.step(1.0/60)&&m.position()==60,"no movement after the target is reached");}
+ {ScrollModel m;m.setRange(1000);m.wheel(-120,60,true);m.step(0.03);double before=m.position();m.wheel(-120,60,true);expect(m.target()==120&&m.position()==before,"new input retargets without restarting or queueing movement");m.wheel(120*5,60,true);expect(m.target()==0,"opposite input reverses direction immediately");while(m.step(1.0/60)){}expect(m.position()==0,"reversed animation ends at the new target");}
+ {ScrollModel m;m.setRange(1000);m.jump(700);m.setRange(300);expect(m.position()==300&&m.target()==300,"shrinking content clamps position and target together");m.setRange(1000);expect(m.position()==300,"growing content keeps the position");}
+ {ScrollModel m;m.setRange(1000);m.scrollTo(400,true);m.jump(250);expect(!m.animating()&&m.position()==250&&m.target()==250,"scrollbar dragging jumps without animation");m.rescale(1.5);expect(m.position()==375&&m.target()==375,"DPI change rescales position and target");}
+ {ScrollModel m;m.setRange(0);m.wheel(-120,60,true);expect(!m.animating()&&m.position()==0,"content that fits cannot scroll");}
  std::cout<<"PASS: "<<checks<<" core assertions executed.\n";
 }
