@@ -10,14 +10,15 @@ constexpr UINT TRAY_MESSAGE=WM_APP+1, ENGINE_MESSAGE=WM_APP+2;
 constexpr int NAV_TIMER=10,NAV_HISTORY=11,NAV_SETTINGS=12,PAUSE=20,RESET=21,TAKE_BREAK=22,COMPLETE=23,SKIP=24,SNOOZE1=25,SNOOZE3=26,SNOOZE5=27;
 constexpr int COUNTDOWN=40,TIMER_STATE=41,COUNT_CAPTION=42,BREAK_TITLE=43,BREAK_INSTRUCTION=44,BREAK_GUIDANCE=45,HISTORY_TOGGLE=30,CLEAR_HISTORY=31,ALARM_TOGGLE=32,WORK=100,BREAK_SECONDS=101,SOUND=102,VOLUME=103,MODE=104,MONITOR=105,THEME=106,REPEAT=107,NOTIFY=108,SNOOZE=109,AUTO_START=110,STARTUP=111,TRAY=112,RESTORE=113,PAUSE_LOCK=114,SELECT_MONITOR=115,PREVIEW=116,STOP_AUDIO=117,RESET_SETTINGS=118;
 constexpr UINT_PTR RENDER=1,CHECKPOINT=2,SCROLL=3;
-struct Control {HWND handle{};int id=0;int page=0;int height=36;bool full=false;HWND buddySpin{};bool heading=false;int x=0,y=0,w=0,h=0,spinWidth=0,rowHeight=0;};
+constexpr int SECTION_BASE=130,SECTION_COUNT=5;
+struct Control {HWND handle{};int id=0;int page=0;int height=36;bool full=false;HWND buddySpin{};bool heading=false;int x=0,y=0,w=0,h=0,spinWidth=0,rowHeight=0,section=0;};
 struct Placement {HWND handle{};int x=0,y=0,w=0,h=0;};
 struct Colors {COLORREF background=RGB(247,248,250),surface=RGB(255,255,255),hover=RGB(239,243,249),foreground=RGB(24,30,42),secondary=RGB(93,103,119),line=RGB(215,222,232),accent=RGB(37,99,235);bool dark=false,contrast=false;};
 class Application {
 public:
  HINSTANCE instance{};HWND main{},breakWindow{},trayMenuOwner{};HICON icon{};HFONT normalFont{},headingFont{},titleFont{},countFont{},breakFont{},breakTitleFont{},breakCountFont{};int countSize=0;HBRUSH backgroundBrush{},surfaceBrush{};
  Settings settings;std::unique_ptr<Engine> engine;std::unique_ptr<Audio> audio;std::vector<Record> history;
- std::vector<Control> controls;std::array<HWND,3> nav{};HWND historyList{},settingsPane{};std::vector<Monitor> displays;
+ std::vector<Control> controls;std::array<HWND,3> nav{};std::array<HWND,5> sectionNav{};int settingsSection=0,buildSection=0;HWND historyList{},settingsPane{};std::vector<Monitor> displays;
  Colors colors;std::wstring directory;UINT dpi=96;double textScale=1;bool hidden=false,locked=false,sleeping=false,quitting=false,quietBreak=false,loading=false,trayAdded=false,dirtySettings=false,saveWarned=false;
  int page=0,settingsHeight=0,breakHeight=0,settingsApplied=INT_MIN,breakApplied=INT_MIN,historyApplied=0;std::uint64_t notifiedCycle=0,alarmedCycle=0;NOTIFYICONDATAW trayData{};
  ScrollModel settingsScroller,breakScroller,historyScroller{0.05};std::vector<Placement> breakItems;bool scrollTimer=false;double scrollClock=0;
@@ -51,7 +52,7 @@ public:
   }
   wchar_t caption[512]{};GetWindowTextW(button,caption,512);RECT textRect=rect;InflateRect(&textRect,-bpx(12),-bpx(4));if(checkbox)textRect.left=rect.left+bpx(32);
   int saved=SaveDC(draw->hdc);SelectObject(draw->hdc,reinterpret_cast<HFONT>(SendMessageW(button,WM_GETFONT,0,0)));
-  UINT flags=checkbox?DT_LEFT|DT_WORDBREAK:DT_CENTER|DT_VCENTER|DT_SINGLELINE;LRESULT cues=SendMessageW(button,WM_QUERYUISTATE,0,0);if(cues&UISF_HIDEACCEL)flags|=DT_HIDEPREFIX;
+  UINT flags=checkbox?DT_LEFT|DT_WORDBREAK:DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS;LRESULT cues=SendMessageW(button,WM_QUERYUISTATE,0,0);if(cues&UISF_HIDEACCEL)flags|=DT_HIDEPREFIX;
   if(checkbox){RECT measured=textRect;DrawTextW(draw->hdc,caption,-1,&measured,flags|DT_CALCRECT);int height=measured.bottom-measured.top;textRect.top=rect.top+std::max(0,(int(rect.bottom-rect.top)-height)/2);}
   SetTextColor(draw->hdc,ink);SetBkMode(draw->hdc,TRANSPARENT);DrawTextW(draw->hdc,caption,-1,&textRect,flags);
   if((draw->uItemState&CDIS_FOCUS)&&!(cues&UISF_HIDEFOCUS)){RECT focus=rect;InflateRect(&focus,-bpx(5),-bpx(5));DrawFocusRect(draw->hdc,&focus);}RestoreDC(draw->hdc,saved);
@@ -79,6 +80,7 @@ public:
   titleFont=CreateFontW(fontHeight(19),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI Variable");
   for(auto&c:controls)SendMessageW(c.handle,WM_SETFONT,reinterpret_cast<WPARAM>(c.heading?headingFont:normalFont),TRUE);
   for(auto h:nav)if(h)SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);
+  for(auto h:sectionNav)if(h)SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);
   if(historyList)SendMessageW(historyList,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);
  }
  void applyTheme(){
@@ -95,6 +97,7 @@ public:
   if(breakWindow){DwmSetWindowAttribute(breakWindow,20,&dark,sizeof(dark));DwmSetWindowAttribute(breakWindow,33,&rounded,sizeof(rounded));}
   for(auto&c:controls){wchar_t clsName[32]{};GetClassNameW(c.handle,clsName,32);if(wcscmp(clsName,L"Button")==0)SetWindowTheme(c.handle,nullptr,nullptr);InvalidateRect(c.handle,nullptr,TRUE);}
   for(auto h:nav)if(h)InvalidateRect(h,nullptr,TRUE);
+  for(auto h:sectionNav)if(h)InvalidateRect(h,nullptr,TRUE);
   if(historyList){ListView_SetBkColor(historyList,colors.background);ListView_SetTextBkColor(historyList,colors.background);ListView_SetTextColor(historyList,colors.foreground);}
   InvalidateRect(main,nullptr,TRUE);if(settingsPane)InvalidateRect(settingsPane,nullptr,TRUE);if(breakWindow)InvalidateRect(breakWindow,nullptr,TRUE);
  }
@@ -102,37 +105,37 @@ public:
   // The settings pane controls inherit page visibility from their parent.
   HWND h=CreateWindowExW((wcscmp(cls,L"EDIT")==0)?WS_EX_CLIENTEDGE:0,cls,text,WS_CHILD|WS_VISIBLE|(wcscmp(cls,L"STATIC")==0?0:WS_TABSTOP)|style,0,0,1,1,parent?parent:main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);
   if(!h)throw std::runtime_error("Could not create native control");
-  SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);controls.push_back({h,id,onPage,height,false});return h;
+  SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);controls.push_back({h,id,onPage,height,false});controls.back().section=buildSection;return h;
  }
  HWND label(const wchar_t*text,int onPage,HWND parent=nullptr,bool heading=false){HWND h=control(L"STATIC",text,SS_LEFT,-1,onPage,heading?44:28,parent);auto&c=controls.back();c.full=true;c.heading=heading;SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(heading?headingFont:normalFont),TRUE);return h;}
  void checkbox(const wchar_t*text,int id,int onPage,bool checked,HWND parent){HWND h=control(L"BUTTON",text,BS_AUTOCHECKBOX|BS_MULTILINE,id,onPage,40,parent);SendMessageW(h,BM_SETCHECK,checked?BST_CHECKED:BST_UNCHECKED,0);controls.back().full=true;}
  void combo(const wchar_t*labelText,int id,const std::vector<std::wstring>&items,int selected){
-  label(labelText,2,settingsPane);HWND h=control(WC_COMBOBOXW,L"",CBS_DROPDOWNLIST|WS_VSCROLL,id,2,36,settingsPane);for(auto&s:items)SendMessageW(h,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(s.c_str()));SendMessageW(h,CB_SETCURSEL,selected,0);
+  label(labelText,2,settingsPane);HWND h=control(WC_COMBOBOXW,L"",CBS_DROPDOWNLIST|WS_VSCROLL,id,2,36,settingsPane);for(auto&s:items)SendMessageW(h,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(s.c_str()));SendMessageW(h,CB_SETMINVISIBLE,8,0);SendMessageW(h,CB_SETCURSEL,selected,0);
  }
  void number(const wchar_t*labelText,int id,int value,int low,int high){label(labelText,2,settingsPane);HWND h=control(L"EDIT",std::to_wstring(value).c_str(),ES_NUMBER|ES_AUTOHSCROLL,id,2,36,settingsPane);SendMessageW(h,EM_SETLIMITTEXT,3,0);SendMessageW(h,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELPARAM(px(10),px(10)));
   HWND spin=CreateWindowExW(0,UPDOWN_CLASSW,L"",WS_CHILD|WS_VISIBLE|UDS_ALIGNRIGHT|UDS_SETBUDDYINT|UDS_ARROWKEYS,0,0,0,0,settingsPane,nullptr,instance,nullptr);if(!spin)throw std::runtime_error("Could not create number control");controls.back().buddySpin=spin;SendMessageW(spin,UDM_SETBUDDY,reinterpret_cast<WPARAM>(h),0);SendMessageW(spin,UDM_SETRANGE32,low,high);SendMessageW(spin,UDM_SETPOS32,0,value);}
  HWND find(int id){for(auto&c:controls)if(c.id==id)return c.handle;return nullptr;}
  void buildSettings(){
-  loading=true;for(auto it=controls.begin();it!=controls.end();){if(it->page==2){DestroyWindow(it->handle);it=controls.erase(it);}else ++it;}
+  loading=true;buildSection=0;for(auto it=controls.begin();it!=controls.end();){if(it->page==2){DestroyWindow(it->handle);it=controls.erase(it);}else ++it;}
   // Buddy spin controls are recreated with their edits.
   EnumChildWindows(settingsPane,[](HWND child,LPARAM)->BOOL{wchar_t name[64]{};GetClassNameW(child,name,64);if(wcscmp(name,UPDOWN_CLASSW)==0)DestroyWindow(child);return TRUE;},0);
   label(L"Timer",2,settingsPane,true);number(L"Work interval (minutes)",WORK,settings.workMinutes,1,180);number(L"Break duration (seconds)",BREAK_SECONDS,settings.breakSeconds,5,300);
   label(L"Changes apply to the next cycle. Reset starts a fresh work interval.",2,settingsPane);
-  label(L"Alarm",2,settingsPane,true);checkbox(L"Alarm enabled",ALARM_TOGGLE,2,settings.alarm,settingsPane);
+  buildSection=1;label(L"Alarm",2,settingsPane,true);checkbox(L"Alarm enabled",ALARM_TOGGLE,2,settings.alarm,settingsPane);
   combo(L"Alarm sound",SOUND,{L"Gentle",L"Bell",L"Chime",L"Clear",L"Soft"},settings.sound);
   label(L"Alarm volume",2,settingsPane);HWND volume=control(TRACKBAR_CLASSW,L"",TBS_AUTOTICKS|TBS_TOOLTIPS,VOLUME,2,40,settingsPane);SendMessageW(volume,TBM_SETRANGE,TRUE,MAKELONG(0,100));SendMessageW(volume,TBM_SETPOS,TRUE,settings.volume);SetWindowTextW(volume,L"Alarm volume, percent");
   checkbox(L"Repeat until the break ends or is acknowledged",REPEAT,2,settings.repeat,settingsPane);
   control(L"BUTTON",L"Preview alarm",BS_PUSHBUTTON,PREVIEW,2,36,settingsPane);control(L"BUTTON",L"Stop preview",BS_PUSHBUTTON,STOP_AUDIO,2,36,settingsPane);
-  label(L"Reminders",2,settingsPane,true);checkbox(L"Windows notifications",NOTIFY,2,settings.notifications,settingsPane);checkbox(L"Allow snooze (1, 3 or 5 minutes)",SNOOZE,2,settings.snooze,settingsPane);
+  buildSection=2;label(L"Reminders",2,settingsPane,true);checkbox(L"Windows notifications",NOTIFY,2,settings.notifications,settingsPane);checkbox(L"Allow snooze (1, 3 or 5 minutes)",SNOOZE,2,settings.snooze,settingsPane);
   combo(L"Break presentation",MODE,{L"Normal window",L"Compact reminder",L"Fullscreen reminder (opt in)"},settings.mode);combo(L"Preferred monitor",MONITOR,{L"Active display",L"Primary display",L"Selected display"},settings.monitor);
   displays=monitors();std::vector<std::wstring> names;int chosen=0;for(std::size_t i=0;i<displays.size();++i){names.push_back(L"Display "+std::to_wstring(i+1)+(displays[i].primary?L" (primary)":L""));if(utf8(displays[i].device)==settings.selectedMonitor)chosen=int(i);}combo(L"Selected display",SELECT_MONITOR,names,chosen);
-  label(L"Appearance",2,settingsPane,true);combo(L"Theme",THEME,{L"Use system setting",L"Light",L"Dark"},settings.theme);
+  buildSection=3;label(L"Appearance",2,settingsPane,true);combo(L"Theme",THEME,{L"Use system setting",L"Light",L"Dark"},settings.theme);
   label(L"Behaviour",2,settingsPane,true);checkbox(L"Start timer automatically on launch",AUTO_START,2,settings.autoStart,settingsPane);checkbox(L"Start with Windows",STARTUP,2,settings.startup,settingsPane);
   label(L"Open Eye Break Reminder automatically when you sign in.",2,settingsPane);checkbox(L"Minimize to system tray",TRAY,2,settings.tray,settingsPane);label(L"Closing keeps reminders active. Choose Exit in the tray menu to quit.",2,settingsPane);
   checkbox(L"Resume countdown when reopening the app",RESTORE,2,settings.restore,settingsPane);label(L"Reinstalling after uninstall starts a fresh work interval. Preferences and history are kept.",2,settingsPane);checkbox(L"Pause while workstation is locked",PAUSE_LOCK,2,settings.pauseLocked,settingsPane);
   label(L"Sleep counts as elapsed work time. Wake shows at most one reminder. Paused timers stay paused.",2,settingsPane);
-  label(L"Accessibility",2,settingsPane,true);label(L"Uses Windows text scaling, high contrast and keyboard focus. Ctrl+R: Reset. Ctrl+Shift+B: Take break. Ctrl+comma: Settings.",2,settingsPane);
-  label(L"About",2,settingsPane,true);label(L"Eye Break Reminder\nVersion 1.0.4 · x64\nWindows 11",2,settingsPane);
+  buildSection=4;label(L"Accessibility",2,settingsPane,true);label(L"Uses Windows text scaling, high contrast and keyboard focus. Ctrl+R: Reset. Ctrl+Shift+B: Take break. Ctrl+comma: Settings.",2,settingsPane);
+  label(L"About",2,settingsPane,true);label(L"Eye Break Reminder\nVersion 1.0.5 · x64\nWindows 11",2,settingsPane);
   label(L"All data stays on this device. No internet, telemetry, account, camera or microphone.",2,settingsPane);
   control(L"BUTTON",L"Reset all settings",BS_PUSHBUTTON,RESET_SETTINGS,2,36,settingsPane);loading=false;layout();
  }
@@ -144,9 +147,17 @@ public:
   historyList=CreateWindowExW(WS_EX_CLIENTEDGE,WC_LISTVIEWW,L"Eye break history",WS_CHILD|WS_TABSTOP|LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS,0,0,1,1,main,reinterpret_cast<HMENU>(200),instance,nullptr);ListView_SetExtendedListViewStyle(historyList,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
   for(int i=0;i<3;++i){LVCOLUMNW col{};col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_SUBITEM;col.pszText=const_cast<LPWSTR>(i==0?L"Date":i==1?L"Break":L"Seconds");col.cx=px(i==0?240:140);col.iSubItem=i;ListView_InsertColumn(historyList,i,&col);}
   checkbox(L"Save history on this device",HISTORY_TOGGLE,1,settings.history,main);control(L"BUTTON",L"Clear history",BS_PUSHBUTTON,CLEAR_HISTORY,1);
-  settingsPane=CreateWindowExW(WS_EX_CONTROLPARENT,L"EyeBreakReminder.Settings",L"Settings",WS_CHILD|WS_VSCROLL|WS_CLIPCHILDREN,0,0,1,1,main,nullptr,instance,nullptr);buildSettings();switchPage(0);
+  {const wchar_t*names[SECTION_COUNT]={L"Intervals",L"Alarm",L"Reminders",L"General",L"About"};
+   for(int i=0;i<SECTION_COUNT;++i){sectionNav[i]=CreateWindowExW(0,L"BUTTON",names[i],WS_CHILD|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(SECTION_BASE+i)),instance,nullptr);SendMessageW(sectionNav[i],WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);}}
+  settingsPane=CreateWindowExW(WS_EX_CONTROLPARENT,L"EyeBreakReminder.Settings",L"Settings",WS_CHILD|WS_VSCROLL|WS_CLIPCHILDREN|WS_GROUP,0,0,1,1,main,nullptr,instance,nullptr);buildSettings();selectSection(0);switchPage(0);
  }
- void switchPage(int next){page=next;settleScroll();for(int i=0;i<3;++i){SendMessageW(nav[i],BM_SETCHECK,i==page?BST_CHECKED:BST_UNCHECKED,0);InvalidateRect(nav[i],nullptr,TRUE);}
+ // Settings show one section at a time; each section's controls are laid out and scrolled on their own.
+ void selectSection(int index){
+  settingsSection=std::clamp(index,0,SECTION_COUNT-1);
+  for(int i=0;i<SECTION_COUNT;++i){SendMessageW(sectionNav[i],BM_SETCHECK,i==settingsSection?BST_CHECKED:BST_UNCHECKED,0);InvalidateRect(sectionNav[i],nullptr,TRUE);}
+  settingsScroller.jump(0);layoutSettings();
+ }
+ void switchPage(int next){page=next;settleScroll();for(auto h:sectionNav)ShowWindow(h,page==2?SW_SHOW:SW_HIDE);for(int i=0;i<3;++i){SendMessageW(nav[i],BM_SETCHECK,i==page?BST_CHECKED:BST_UNCHECKED,0);InvalidateRect(nav[i],nullptr,TRUE);}
   for(auto&c:controls)if(c.page!=2)ShowWindow(c.handle,c.page==page?SW_SHOW:SW_HIDE);
   ShowWindow(settingsPane,page==2?SW_SHOW:SW_HIDE);ShowWindow(historyList,page==1?SW_SHOW:SW_HIDE);if(page==1)updateHistory();layout();updateRenderTimer();InvalidateRect(main,nullptr,TRUE);}
  void layout(){
@@ -163,13 +174,18 @@ public:
    int size=std::min(px(56*std::sqrt(textScale)),diameter/4);if(size!=countSize){HFONT previous=countFont;countSize=size;countFont=CreateFontW(-size,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable");SendMessageW(find(COUNTDOWN),WM_SETFONT,reinterpret_cast<WPARAM>(countFont),TRUE);if(previous)DeleteObject(previous);}
   }
   if(page==1){int listTop=top+px(135)*int(std::ceil(textScale));int listHeight=std::max(px(80),h-listTop-pad-bh-gap);MoveWindow(historyList,pad,listTop,w-2*pad,listHeight,TRUE);MoveWindow(find(HISTORY_TOGGLE),pad,listTop+listHeight+gap,std::max(px(240),w-2*pad-px(150)),bh,TRUE);MoveWindow(find(CLEAR_HISTORY),w-pad-px(140),listTop+listHeight+gap,px(140),bh,TRUE);}
-  MoveWindow(settingsPane,pad,top,w-2*pad,h-top-pad,TRUE);layoutSettings();
+  int sectionTop=px(16)+bh+px(14),paneTop=sectionTop+bh+px(10),sectionGap=px(8),sectionWidth=std::max(px(60),(w-2*pad-(SECTION_COUNT-1)*sectionGap)/SECTION_COUNT);
+  for(int i=0;i<SECTION_COUNT;++i)MoveWindow(sectionNav[i],pad+i*(sectionWidth+sectionGap),sectionTop,sectionWidth,bh,TRUE);
+  MoveWindow(settingsPane,pad,paneTop,w-2*pad,std::max(px(40),h-paneTop-pad),TRUE);layoutSettings();
  }
  // Computes content-space geometry once per layout; scrolling only re-applies the offset (positionSettings).
  void layoutSettings(){
   RECT pane{};GetClientRect(settingsPane,&pane);int inset=px(12),y=px(8);int width=std::max(100,int(pane.right)-2*inset);
-  for(auto&c:controls)if(c.page==2){if(c.heading&&y>px(8))y+=px(16);int height=px(int(c.height*textScale));if(c.id==-1){wchar_t content[1024]{};GetWindowTextW(c.handle,content,1024);HDC dc=GetDC(c.handle);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(c.handle,WM_GETFONT,0,0)));RECT measured{0,0,width,0};DrawTextW(dc,content,-1,&measured,DT_CALCRECT|DT_WORDBREAK);SelectObject(dc,previous);ReleaseDC(c.handle,dc);height=std::max(height,int(measured.bottom)+px(8));}int controlWidth=c.full?width:std::min(width,px(420));
-   wchar_t cls[64]{};GetClassNameW(c.handle,cls,64);int nativeHeight=wcscmp(cls,WC_COMBOBOXW)==0?height+px(220):height;int spinWidth=c.buddySpin?px(24):0;
+  for(auto&c:controls)if(c.page==2){bool inSection=c.section==settingsSection;ShowWindow(c.handle,inSection?SW_SHOW:SW_HIDE);if(c.buddySpin)ShowWindow(c.buddySpin,inSection?SW_SHOW:SW_HIDE);
+   if(!inSection)continue;
+   if(c.heading&&y>px(8)){y+=px(16);}
+   int height=px(int(c.height*textScale));if(c.id==-1){wchar_t content[1024]{};GetWindowTextW(c.handle,content,1024);HDC dc=GetDC(c.handle);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(c.handle,WM_GETFONT,0,0)));RECT measured{0,0,width,0};DrawTextW(dc,content,-1,&measured,DT_CALCRECT|DT_WORDBREAK);SelectObject(dc,previous);ReleaseDC(c.handle,dc);height=std::max(height,int(measured.bottom)+px(8));}int controlWidth=c.full?width:std::min(width,px(420));
+   int nativeHeight=height;int spinWidth=c.buddySpin?px(24):0;
    c.x=inset;c.y=y;c.w=controlWidth-spinWidth;c.h=nativeHeight;c.spinWidth=spinWidth;c.rowHeight=height;
    y+=height+px(c.id==-1?4:12);}
   settingsHeight=y;settingsScroller.setRange(std::max(0,settingsHeight-int(pane.bottom)));positionSettings(true);
@@ -178,7 +194,7 @@ public:
  void positionSettings(bool force=false){
   if(!settingsPane)return;
   int offset=settingsScroller.pixel();if(!force&&offset==settingsApplied)return;settingsApplied=offset;
-  std::vector<Placement> items;for(auto&c:controls)if(c.page==2){items.push_back({c.handle,c.x,c.y-offset,c.w,c.h});if(c.buddySpin)items.push_back({c.buddySpin,c.x+c.w,c.y-offset,c.spinWidth,c.rowHeight});}
+  std::vector<Placement> items;for(auto&c:controls)if(c.page==2&&c.section==settingsSection){items.push_back({c.handle,c.x,c.y-offset,c.w,c.h});if(c.buddySpin)items.push_back({c.buddySpin,c.x+c.w,c.y-offset,c.spinWidth,c.rowHeight});}
   moveAll(items);RECT pane{};GetClientRect(settingsPane,&pane);
   SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS|SIF_DISABLENOSCROLL,0,std::max(0,settingsHeight-1),UINT(std::max(1L,pane.bottom)),offset,0};SetScrollInfo(settingsPane,SB_VERT,&info,TRUE);
  }
@@ -320,6 +336,7 @@ public:
   if(loading)return;
   if(code==EN_SETFOCUS||code==CBN_SETFOCUS||code==BN_SETFOCUS)ensureFocused(find(id));
   if(id>=NAV_TIMER&&id<=NAV_SETTINGS&&code==BN_CLICKED){switchPage(id-NAV_TIMER);return;}
+  if(id>=SECTION_BASE&&id<SECTION_BASE+SECTION_COUNT&&code==BN_CLICKED){selectSection(id-SECTION_BASE);return;}
   if(code==BN_CLICKED){switch(id){case PAUSE:togglePause();return;case RESET:engine->reset();return;case TAKE_BREAK:engine->takeBreak();return;case COMPLETE:engine->finish(true);return;case SKIP:engine->finish(false);return;case SNOOZE1:engine->snooze(1);return;case SNOOZE3:engine->snooze(3);return;case SNOOZE5:engine->snooze(5);return;
    case CLEAR_HISTORY:if(confirm(main,L"Clear all history?",L"This removes every eye break recorded on this device.")){history.clear();saveHistory();updateHistory();}return;
    case PREVIEW:if(!audio->play(settings,true))error(L"The alarm couldn't play. Check your Windows audio output.");return;

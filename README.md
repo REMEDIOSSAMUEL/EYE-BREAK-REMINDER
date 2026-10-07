@@ -1,4 +1,4 @@
-# Eye Break Reminder 1.0.4 — Windows 11 x64
+# Eye Break Reminder 1.0.5 — Windows 11 x64
 
 A native Windows desktop eye-break utility, compiled from Linux with C++17 and MinGW-w64. It uses Win32 system controls, Windows common dialogs, native title bars, native tray integration, and a custom timer dial. It has no browser, console, .NET dependency or external assets at runtime.
 
@@ -14,7 +14,7 @@ A native Windows desktop eye-break utility, compiled from Linux with C++17 and M
 
 The default schedule is 20 minutes of work followed by 20 seconds looking roughly 20 feet / 6 metres away. Use Pause/Resume, Reset and Take a break now. The break window offers I'm back, Skip and snooze for 1, 3 or 5 minutes. A completed countdown automatically begins new work. Closing a break or Escape records a skip. Snooze is not counted as completed or skipped. Duration changes take effect in the next cycle; Reset applies the new work interval immediately.
 
-Timer, History and Settings are available through native navigation buttons. Ctrl+R resets; Ctrl+Shift+B starts a break; Ctrl+comma opens Settings. Standard Tab/Shift+Tab, Enter, Space and native arrow-key behaviour apply. Timer/break text uses native STATIC controls for accessibility; settings use native buttons, checkboxes, spin edits, combos and a volume slider. History is a native list view.
+Timer, History and Settings are available through native navigation buttons. Ctrl+R resets; Ctrl+Shift+B starts a break; Ctrl+comma opens Settings. Standard Tab/Shift+Tab, Enter, Space and native arrow-key behaviour apply. Timer/break text uses native STATIC controls for accessibility; Settings are split into Intervals, Alarm, Reminders, General and About sections, and use native buttons, checkboxes, spin edits, combos and a volume slider. History is a native list view.
 
 Closing/minimizing hides the main window to the tray by default. First close explains this. Left-click opens; right-click provides timer, alarm, settings and Exit commands. Exit stops the process. If the tray is unavailable, the main window stays accessible. Startup at sign-in is explicitly opt-in and can be disabled in Settings. Disable startup before moving/deleting a portable executable.
 
@@ -48,7 +48,7 @@ See [CHANGELOG.md](CHANGELOG.md) for releases and [CONTRIBUTING.md](CONTRIBUTING
 
 ## Build on Windows (MSYS2)
 
-The 1.0.4 release was built on Windows 11 with MSYS2 instead of Linux. The `mingw64` (msvcrt) toolchain is required: `ucrt64` links `api-ms-win-crt-*` DLLs and fails the import check in `scripts/verify.py`. Install `mingw-w64-x86_64-gcc`, `mingw-w64-x86_64-binutils`, `make` and, for the installer, `mingw-w64-i686-nsis`, whose x86 stubs give the 32-bit bootstrap (the `ucrt64` NSIS package has only amd64 stubs). Compared with the Linux commands below:
+The 1.0.5 release was built on Windows 11 with MSYS2 instead of Linux. The `mingw64` (msvcrt) toolchain is required: `ucrt64` links `api-ms-win-crt-*` DLLs and fails the import check in `scripts/verify.py`. Install `mingw-w64-x86_64-gcc`, `mingw-w64-x86_64-binutils`, `make` and, for the installer, `mingw-w64-i686-nsis`, whose x86 stubs give the 32-bit bootstrap (the `ucrt64` NSIS package has only amd64 stubs). Compared with the Linux commands below:
 
 - pass `WINDRES=windres PYTHON=python` and `CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00'` (MSYS2 headers default to an older Windows target and omit `GetDpiForWindow`);
 - make `x86_64-w64-mingw32-strip` resolvable (the Makefile hardcodes that name; a copy of `strip.exe` under that name on `PATH` works);
@@ -75,7 +75,7 @@ For a legitimate signing certificate, sign the app before installer packaging, t
 
 ## Verification boundary
 
-The executable and installer are compiled with MinGW-w64 and NSIS, with actual core test execution and binary/resource checks. Release 1.0.4 was also launched on a real Windows 11 x64 machine and exercised with scripted input and audio-session measurements (see `docs/VERIFICATION.md`). **The installer has not been run, and the interactive UI checklist in `docs/WINDOWS-TESTING.md` has not been completed by a person.** Successful compilation does not establish runtime correctness. See `docs/VERIFICATION.md` and `docs/WINDOWS-TESTING.md` for the actual evidence and open checks.
+The executable and installer are compiled with MinGW-w64 and NSIS, with actual core test execution and binary/resource checks. Release 1.0.5 was also launched on a real Windows 11 x64 machine and exercised with scripted input and audio-session measurements (see `docs/VERIFICATION.md`). **The installer has not been run, and the interactive UI checklist in `docs/WINDOWS-TESTING.md` has not been completed by a person.** Successful compilation does not establish runtime correctness. See `docs/VERIFICATION.md` and `docs/WINDOWS-TESTING.md` for the actual evidence and open checks.
 
 ## Publishing releases
 

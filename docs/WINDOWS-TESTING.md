@@ -51,3 +51,10 @@ Automated checks for these were run on Windows 11 and are recorded in `docs/VERI
 - Drag the scroll bar thumb, click the arrows and track, and use Tab and Shift+Tab. Click controls while and just after scrolling.
 - Let a real break finish with the window visible, minimized and hidden in the tray: exactly one completion alarm, using the selected sound and volume. Confirm no completion alarm after Skip, "I'm back", Pause, Reset or Snooze, with the alarm muted, and after sleeping, locking or restarting during a break.
 - Install 1.0.4 over 1.0.3 and confirm the countdown, preferences and history carry over.
+
+## Settings sections and dropdowns (1.0.5)
+
+- Switch between Intervals, Alarm, Reminders, General and About with the mouse and with Tab and the arrow keys. Only that section's controls may appear; changing a setting in one section and returning must show it unchanged.
+- Shrink the window until a section scrolls, then check the wheel, scroll bar and keyboard focus in each section. Repeat at 100%, 150% and 200% scaling, with enlarged Windows text, in light, dark and high-contrast themes.
+- Open every dropdown: the whole list must be visible, selectable by mouse and keyboard, and must not leave an invisible area that blocks controls beneath it. The wheel over a closed dropdown must scroll the page, not change the value.
+- Check section button captions at large text sizes: they must truncate with an ellipsis, not clip.

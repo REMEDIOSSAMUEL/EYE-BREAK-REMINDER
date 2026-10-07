@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.5
+
+- Settings are grouped into five sections (Intervals, Alarm, Reminders, General, About) chosen from a row of buttons above the page, so far less scrolling is needed. Each section scrolls on its own when the window is small, and Tab, arrow keys and the scroll position stay inside the visible section.
+- Dropdowns no longer carry 220 px of hidden window height. They use their real height and ask Windows for eight visible rows, which removes an invisible area that overlapped the controls below. The mouse wheel scrolls the page over a closed dropdown instead of changing its value, and still scrolls the list while it is open.
+- Long push-button captions end in an ellipsis instead of being clipped at large text sizes.
+- Layout was re-checked at 100% and 150% scaling.
+
 ## 1.0.4
 
 - Smoother scrolling in Settings, History and the break window. Mouse wheel and high-resolution wheel or trackpad input accumulate instead of being dropped, and a short ease-out animation follows the pointer. New input moves the target immediately, so nothing is queued after you stop. Windows' "lines per wheel notch" setting is honoured, and the animation is skipped when Windows animations are turned off.

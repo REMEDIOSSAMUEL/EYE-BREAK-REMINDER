@@ -40,3 +40,14 @@ Runtime checks performed on Windows 11 build 26300 at 150% scaling with the buil
 - Mid-animation screenshot frames showed no blank bands. A single early frame showed a transient stale button edge; it was not present in settled frames.
 
 Not tested: the installer (installing would overwrite the registration of an existing installation on the test machine), 100% and 200% scaling, multiple monitors, a trackpad, sleep and lock transitions (covered only by core tests), screen readers, and an unscripted manual pass of `docs/WINDOWS-TESTING.md`. The unsigned build is otherwise as described above.
+
+## Settings sections and dropdown sizing (1.0.5)
+
+Core tests are unchanged (94 assertions; no timer logic changed) and the binary/package verification passed again. Runtime checks on Windows 11 build 26300 with scripted input and screenshots (no person operated the UI), at 150% (native) and at 100% (the executable run under the Windows DPI-unaware compatibility layer, which gives it a 96 DPI layout):
+
+- All five sections showed only their own controls, with none outside the page horizontally. At a 1230x1080 window only General needed scrolling (68 px at 150%, 47 px at 100%); in a shortened window it scrolled with the same wheel, scroll bar, Tab and animation behaviour measured for 1.0.4.
+- Tab and Shift+Tab stayed inside the visible section with each focused control in view; the chosen section survived a Timer to Settings round trip.
+- Dropdown windows measured their real height (33 px at 150%) instead of the former +220 px; the open list was fully visible with all five alarm sounds. A wheel notch over a focused closed dropdown left the selection unchanged; with the list open, the wheel changed the selection within the list.
+- The 1.0.4 scrolling and alarm checks were repeated on this build.
+
+Not tested: 200% scaling (the 100% run emulates the 96 DPI layout, not a real 100% monitor), multiple monitors, enlarged Windows text, screen readers, and the installer. Section buttons use the same custom drawing as the main navigation, so high-contrast and focus-ring rendering for them has only been inspected in the default and dark themes.
