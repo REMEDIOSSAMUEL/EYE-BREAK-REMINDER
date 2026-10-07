@@ -58,3 +58,11 @@ Automated checks for these were run on Windows 11 and are recorded in `docs/VERI
 - Shrink the window until a section scrolls, then check the wheel, scroll bar and keyboard focus in each section. Repeat at 100%, 150% and 200% scaling, with enlarged Windows text, in light, dark and high-contrast themes.
 - Open every dropdown: the whole list must be visible, selectable by mouse and keyboard, and must not leave an invisible area that blocks controls beneath it. The wheel over a closed dropdown must scroll the page, not change the value.
 - Check section button captions at large text sizes: they must truncate with an ellipsis, not clip.
+
+## Settings layout and live resizing (1.0.6)
+
+- Drag the window edge and corners slowly and quickly, in and out of the smallest size, on Timer, History and every Settings section. No duplicated tab, ring fragment, split text or leftover button edge may remain once the drag stops, and nothing may flash white or black during it. Repeat at 100%, 150% and 200% scaling.
+- On Settings, the Timer/History/Settings tab bar, the section buttons, the page heading and the form must share the same left and right edges at every window width; the scroll bar must appear inside that column, beside the content, and not at the far window edge.
+- Narrow the window until the section buttons wrap to a second row and the form moves captions above their fields; both must stay readable and aligned. Repeat with enlarged Windows text.
+- Alarm section: the dropdown must be dark in the dark theme and its whole list visible; the volume slider and its percentage must line up with the other fields; Preview alarm plays the selected sound, Stop preview is enabled only while it plays and stops it, and focus never lands on a disabled Stop button.
+- Check high-contrast themes for the tab bar, section buttons, slider and focus rings; these use custom drawing that has not been inspected in high contrast.

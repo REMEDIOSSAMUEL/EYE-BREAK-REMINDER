@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.6
+
+Changed
+
+- Settings has a redesigned layout. The top-level tabs (Timer, History, Settings) and the section buttons (Intervals, Alarm, Reminders, General, About) are now visibly different levels: the tabs form a bar with an accent underline on the selected tab, and the section buttons are smaller, quieter segments that wrap onto a second row instead of being clipped.
+- The tab bar, section buttons, page heading, form, History list and divider share one centred column (at most 640 logical px wide), so they line up on the same left and right edges at every window size. The Settings scroll bar sits inside that column, at the right edge of the content, instead of at the far edge of the window.
+- Settings forms use a shared grid: a caption sits beside its field when the column is wide enough and above it when it is not, fields run to the same right edge, and spacing is more consistent between headings, hints, checkboxes and buttons.
+- The alarm dropdown and number fields use dark styling that matches the rest of the page. The volume slider is redrawn as a thin track with a round thumb and has a percentage readout aligned to the right edge.
+- "Preview alarm" is the main action and "Stop preview" sits beside it; Stop is enabled only while a sound is playing.
+- Layout calculations use the window's DPI and the Windows text-size setting more consistently, so the page reflows at larger scales and text sizes instead of overlapping.
+
+Fixed
+
+- Stale or ghosted pixels while resizing the window (a duplicated tab, fragments of the timer ring, split text, leftover button edges) no longer remain. The main and Settings windows now repaint when their size changes, and controls are repositioned in one batch that repaints them completely, instead of moving old pixels along with them. Scrolling keeps its cheaper repaint.
+- Dropdown, scrolling and focus behaviour from 1.0.5 is preserved in the new layout: dropdown lists use their real height, the mouse wheel over a closed dropdown scrolls the page, and keyboard focus stays within the visible section.
+
+Also
+
+- Added core tests for the new layout geometry (the shared column, tab and section rows, and form placement across DPI scales and window widths); 5807 core assertions in total. Release verification and its limits are recorded in `docs/VERIFICATION.md`.
+
 ## 1.0.5
 
 - Settings are grouped into five sections (Intervals, Alarm, Reminders, General, About) chosen from a row of buttons above the page, so far less scrolling is needed. Each section scrolls on its own when the window is small, and Tab, arrow keys and the scroll position stay inside the visible section.

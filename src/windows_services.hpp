@@ -63,9 +63,9 @@ inline void inform(HWND parent,const wchar_t*title,const wchar_t*message){TaskDi
 class Audio {
  HWAVEOUT device=nullptr;WAVEHDR header{};std::vector<BYTE> pcm;bool prepared=false;HWND window=nullptr;
 public:
- bool playing=false,preview=false;
+ bool playing=false,preview=false;std::function<void()> changed; // notified when playback starts or stops
  explicit Audio(HWND hwnd):window(hwnd){}
- void stop(){playing=false;if(device){waveOutReset(device);if(prepared)waveOutUnprepareHeader(device,&header,sizeof(header));waveOutClose(device);device=nullptr;}prepared=false;pcm.clear();header={};}
+ void stop(){playing=false;if(device){waveOutReset(device);if(prepared)waveOutUnprepareHeader(device,&header,sizeof(header));waveOutClose(device);device=nullptr;}prepared=false;pcm.clear();header={};if(changed)changed();}
  bool play(const Settings&s,bool isPreview=false){
   stop();preview=isPreview;if(!s.alarm&&!preview)return true;
   auto resource=FindResourceW(nullptr,MAKEINTRESOURCEW(101+s.sound),RT_RCDATA);if(!resource)return false;auto loaded=LoadResource(nullptr,resource);auto bytes=static_cast<const BYTE*>(LockResource(loaded));DWORD length=SizeofResource(nullptr,resource);
@@ -79,9 +79,9 @@ public:
   if(waveOutOpen(&device,WAVE_MAPPER,&format,reinterpret_cast<DWORD_PTR>(window),0,CALLBACK_WINDOW)!=MMSYSERR_NOERROR){device=nullptr;return false;}
   header.lpData=reinterpret_cast<LPSTR>(pcm.data());header.dwBufferLength=DWORD(pcm.size());
   if(waveOutPrepareHeader(device,&header,sizeof(header))!=MMSYSERR_NOERROR){stop();return false;}prepared=true;
-  if(waveOutWrite(device,&header,sizeof(header))!=MMSYSERR_NOERROR){stop();return false;}playing=true;return true;
+  if(waveOutWrite(device,&header,sizeof(header))!=MMSYSERR_NOERROR){stop();return false;}playing=true;if(changed)changed();return true;
  }
- bool done(WPARAM handle,LPARAM buffer){if(reinterpret_cast<HWAVEOUT>(handle)!=device||reinterpret_cast<WAVEHDR*>(buffer)!=&header||!(header.dwFlags&WHDR_DONE))return false;playing=false;return true;}
- ~Audio(){stop();}
+ bool done(WPARAM handle,LPARAM buffer){if(reinterpret_cast<HWAVEOUT>(handle)!=device||reinterpret_cast<WAVEHDR*>(buffer)!=&header||!(header.dwFlags&WHDR_DONE))return false;playing=false;if(changed)changed();return true;}
+ ~Audio(){changed=nullptr;stop();}
 };
 }

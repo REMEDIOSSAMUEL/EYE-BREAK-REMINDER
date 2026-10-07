@@ -6,31 +6,33 @@ namespace {
 constexpr wchar_t CLASS[]=L"EyeBreakReminder.Native";
 constexpr wchar_t BREAK_CLASS[]=L"EyeBreakReminder.Break";
 constexpr wchar_t TRAY_MENU_CLASS[]=L"EyeBreakReminder.TrayMenu";
-constexpr UINT TRAY_MESSAGE=WM_APP+1, ENGINE_MESSAGE=WM_APP+2;
+constexpr UINT TRAY_MESSAGE=WM_APP+1, ENGINE_MESSAGE=WM_APP+2, PREVIEW_REFRESH=WM_APP+5;
 constexpr int NAV_TIMER=10,NAV_HISTORY=11,NAV_SETTINGS=12,PAUSE=20,RESET=21,TAKE_BREAK=22,COMPLETE=23,SKIP=24,SNOOZE1=25,SNOOZE3=26,SNOOZE5=27;
-constexpr int COUNTDOWN=40,TIMER_STATE=41,COUNT_CAPTION=42,BREAK_TITLE=43,BREAK_INSTRUCTION=44,BREAK_GUIDANCE=45,HISTORY_TOGGLE=30,CLEAR_HISTORY=31,ALARM_TOGGLE=32,WORK=100,BREAK_SECONDS=101,SOUND=102,VOLUME=103,MODE=104,MONITOR=105,THEME=106,REPEAT=107,NOTIFY=108,SNOOZE=109,AUTO_START=110,STARTUP=111,TRAY=112,RESTORE=113,PAUSE_LOCK=114,SELECT_MONITOR=115,PREVIEW=116,STOP_AUDIO=117,RESET_SETTINGS=118;
+constexpr int COUNTDOWN=40,TIMER_STATE=41,COUNT_CAPTION=42,BREAK_TITLE=43,BREAK_INSTRUCTION=44,BREAK_GUIDANCE=45,HISTORY_TOGGLE=30,CLEAR_HISTORY=31,ALARM_TOGGLE=32,WORK=100,BREAK_SECONDS=101,SOUND=102,VOLUME=103,MODE=104,MONITOR=105,THEME=106,REPEAT=107,NOTIFY=108,SNOOZE=109,AUTO_START=110,STARTUP=111,TRAY=112,RESTORE=113,PAUSE_LOCK=114,SELECT_MONITOR=115,PREVIEW=116,STOP_AUDIO=117,RESET_SETTINGS=118,VOLUME_VALUE=119;
 constexpr UINT_PTR RENDER=1,CHECKPOINT=2,SCROLL=3;
 constexpr int SECTION_BASE=130,SECTION_COUNT=5;
-struct Control {HWND handle{};int id=0;int page=0;int height=36;bool full=false;HWND buddySpin{};bool heading=false;int x=0,y=0,w=0,h=0,spinWidth=0,rowHeight=0,section=0;};
+// Settings controls are typed so one layout engine can place them on a shared grid.
+using Kind=geometry::FormKind;
+struct Control {HWND handle{};int id=0;int page=0;Kind kind=Kind::Plain;HWND buddySpin{};int x=0,y=0,w=0,h=0,spinWidth=0,rowHeight=0,section=0;bool sameRow=false,indent=false;};
 struct Placement {HWND handle{};int x=0,y=0,w=0,h=0;};
 struct Colors {COLORREF background=RGB(247,248,250),surface=RGB(255,255,255),hover=RGB(239,243,249),foreground=RGB(24,30,42),secondary=RGB(93,103,119),line=RGB(215,222,232),accent=RGB(37,99,235);bool dark=false,contrast=false;};
 class Application {
 public:
- HINSTANCE instance{};HWND main{},breakWindow{},trayMenuOwner{};HICON icon{};HFONT normalFont{},headingFont{},titleFont{},countFont{},breakFont{},breakTitleFont{},breakCountFont{};int countSize=0;HBRUSH backgroundBrush{},surfaceBrush{};
+ HINSTANCE instance{};HWND main{},breakWindow{},trayMenuOwner{};HICON icon{};HFONT normalFont{},headingFont{},tabFont{},smallFont{},titleFont{},countFont{},breakFont{},breakTitleFont{},breakCountFont{};int countSize=0;HBRUSH backgroundBrush{},surfaceBrush{};
  Settings settings;std::unique_ptr<Engine> engine;std::unique_ptr<Audio> audio;std::vector<Record> history;
  std::vector<Control> controls;std::array<HWND,3> nav{};std::array<HWND,5> sectionNav{};int settingsSection=0,buildSection=0;HWND historyList{},settingsPane{};std::vector<Monitor> displays;
  Colors colors;std::wstring directory;UINT dpi=96;double textScale=1;bool hidden=false,locked=false,sleeping=false,quitting=false,quietBreak=false,loading=false,trayAdded=false,dirtySettings=false,saveWarned=false;
  int page=0,settingsHeight=0,breakHeight=0,settingsApplied=INT_MIN,breakApplied=INT_MIN,historyApplied=0;std::uint64_t notifiedCycle=0,alarmedCycle=0;NOTIFYICONDATAW trayData{};
- ScrollModel settingsScroller,breakScroller,historyScroller{0.05};std::vector<Placement> breakItems;bool scrollTimer=false;double scrollClock=0;
+ ScrollModel settingsScroller,breakScroller,historyScroller{0.05};std::vector<Placement> breakItems;bool scrollTimer=false,previewRefreshPosted=false;double scrollClock=0;
  HANDLE dueEvent{},stopEvent{};HANDLE worker{};UINT activateMessage=RegisterWindowMessageW(L"EyeBreakReminder.Activate.Native.1");UINT quitMessage=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");UINT explorerMessage=RegisterWindowMessageW(L"TaskbarCreated");
  double deadline=0;CRITICAL_SECTION deadlineLock{};RECT normalBounds{};bool haveNormalBounds=false;
  static Application* app;
- int px(double value)const{return int(std::round(value*dpi/96.0));}
+ int px(double value)const{return geometry::scaled(value,int(dpi));}
  int fontHeight(int points)const{return -int(std::round(points*dpi/72.0*textScale));}
  void error(const wchar_t* message){inform(main,L"Eye Break Reminder",message);}
  LRESULT drawButton(NMHDR* notification){
   if(!notification||notification->code!=NM_CUSTOMDRAW||colors.contrast)return CDRF_DODEFAULT;
-  HWND button=notification->hwndFrom;wchar_t name[32]{};GetClassNameW(button,name,32);if(wcscmp(name,L"Button")!=0)return CDRF_DODEFAULT;
+  HWND button=notification->hwndFrom;wchar_t name[32]{};GetClassNameW(button,name,32);if(wcscmp(name,TRACKBAR_CLASSW)==0)return drawTrackbar(reinterpret_cast<NMCUSTOMDRAW*>(notification));if(wcscmp(name,L"Button")!=0)return CDRF_DODEFAULT;
   auto draw=reinterpret_cast<NMCUSTOMDRAW*>(notification);if(draw->dwDrawStage!=CDDS_PREPAINT)return CDRF_DODEFAULT;
   DWORD style=DWORD(GetWindowLongPtrW(button,GWL_STYLE)),type=style&BS_TYPEMASK;
   bool checkbox=type==BS_AUTOCHECKBOX;
@@ -38,7 +40,8 @@ public:
   int id=GetDlgCtrlID(button),scale=int(GetDpiForWindow(button));auto bpx=[&](int n){return std::max(1,n*scale/96);};
   bool enabled=IsWindowEnabled(button)!=FALSE,pressed=(draw->uItemState&CDIS_SELECTED)!=0;
   bool selected=SendMessageW(button,BM_GETCHECK,0,0)==BST_CHECKED,hot=(draw->uItemState&CDIS_HOT)!=0;
-  bool primary=id==TAKE_BREAK||id==COMPLETE;
+  if((id>=NAV_TIMER&&id<=NAV_SETTINGS)||(id>=SECTION_BASE&&id<SECTION_BASE+SECTION_COUNT))return drawTab(draw,button,id,selected,hot,pressed);
+  bool primary=id==TAKE_BREAK||id==COMPLETE||id==PREVIEW;
   COLORREF fill=checkbox?colors.background:(primary?colors.accent:(selected||hot?colors.hover:colors.surface));
   COLORREF ink=enabled?colors.foreground:colors.secondary;if(primary)ink=colors.dark?RGB(15,28,46):RGB(255,255,255);
   if(pressed&&!checkbox)fill=colors.hover;
@@ -74,13 +77,17 @@ public:
   DWORD scale=100,size=sizeof(scale);if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Accessibility",L"TextScaleFactor",RRF_RT_REG_DWORD,nullptr,&scale,&size)!=ERROR_SUCCESS)scale=100;textScale=std::clamp(scale/100.0,1.0,2.25);
   if(normalFont)DeleteObject(normalFont);
   if(headingFont)DeleteObject(headingFont);
+  if(tabFont)DeleteObject(tabFont);
+  if(smallFont)DeleteObject(smallFont);
   if(titleFont)DeleteObject(titleFont);
   normalFont=CreateFontW(fontHeight(11),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI Variable");
-  headingFont=CreateFontW(fontHeight(15),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI Variable");
+  headingFont=CreateFontW(fontHeight(13),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI Variable");
+  tabFont=CreateFontW(fontHeight(12),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI Variable");
+  smallFont=CreateFontW(fontHeight(10),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI Variable");
   titleFont=CreateFontW(fontHeight(19),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI Variable");
-  for(auto&c:controls)SendMessageW(c.handle,WM_SETFONT,reinterpret_cast<WPARAM>(c.heading?headingFont:normalFont),TRUE);
-  for(auto h:nav)if(h)SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);
-  for(auto h:sectionNav)if(h)SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);
+  for(auto&c:controls)SendMessageW(c.handle,WM_SETFONT,reinterpret_cast<WPARAM>(c.kind==Kind::Heading?headingFont:normalFont),TRUE);
+  for(auto h:nav)if(h)SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(tabFont),TRUE);
+  for(auto h:sectionNav)if(h)SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(smallFont),TRUE);
   if(historyList)SendMessageW(historyList,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);
  }
  void applyTheme(){
@@ -95,60 +102,166 @@ public:
   surfaceBrush=CreateSolidBrush(colors.surface);
   BOOL dark=colors.dark&&!colors.contrast;DwmSetWindowAttribute(main,20,&dark,sizeof(dark));int rounded=2;DwmSetWindowAttribute(main,33,&rounded,sizeof(rounded));int backdrop=colors.contrast?1:2;DwmSetWindowAttribute(main,38,&backdrop,sizeof(backdrop));
   if(breakWindow){DwmSetWindowAttribute(breakWindow,20,&dark,sizeof(dark));DwmSetWindowAttribute(breakWindow,33,&rounded,sizeof(rounded));}
-  for(auto&c:controls){wchar_t clsName[32]{};GetClassNameW(c.handle,clsName,32);if(wcscmp(clsName,L"Button")==0)SetWindowTheme(c.handle,nullptr,nullptr);InvalidateRect(c.handle,nullptr,TRUE);}
+  for(auto&c:controls){themeControl(c.handle);if(c.buddySpin)themeControl(c.buddySpin);InvalidateRect(c.handle,nullptr,TRUE);}
+  {bool darkUi=colors.dark&&!colors.contrast;if(settingsPane)SetWindowTheme(settingsPane,darkUi?L"DarkMode_Explorer":nullptr,nullptr);if(historyList)SetWindowTheme(historyList,darkUi?L"DarkMode_Explorer":nullptr,nullptr);}
   for(auto h:nav)if(h)InvalidateRect(h,nullptr,TRUE);
   for(auto h:sectionNav)if(h)InvalidateRect(h,nullptr,TRUE);
   if(historyList){ListView_SetBkColor(historyList,colors.background);ListView_SetTextBkColor(historyList,colors.background);ListView_SetTextColor(historyList,colors.foreground);}
   InvalidateRect(main,nullptr,TRUE);if(settingsPane)InvalidateRect(settingsPane,nullptr,TRUE);if(breakWindow)InvalidateRect(breakWindow,nullptr,TRUE);
  }
- HWND control(const wchar_t*cls,const wchar_t*text,DWORD style,int id,int onPage,int height=36,HWND parent=nullptr){
+// ---- measuring and metrics ------------------------------------------------------------------------------------
+ static std::wstring windowText(HWND h){wchar_t text[1024]{};GetWindowTextW(h,text,1024);return text;}
+ int measureWidth(HWND h,const std::wstring&text){HDC dc=GetDC(h);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));RECT r{0,0,0,0};DrawTextW(dc,text.c_str(),-1,&r,DT_CALCRECT|DT_SINGLELINE|DT_NOPREFIX);SelectObject(dc,previous);ReleaseDC(h,dc);return int(r.right-r.left);}
+ int measureHeight(HWND h,const std::wstring&text,int width){HDC dc=GetDC(h);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));RECT r{0,0,std::max(1,width),0};DrawTextW(dc,text.c_str(),-1,&r,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);SelectObject(dc,previous);ReleaseDC(h,dc);return int(r.bottom-r.top);}
+ int tabHeight()const{return px(std::max(40.0,31.0*textScale));}
+ int pillHeight()const{return px(std::max(28.0,21.0*textScale));}
+ int fieldHeight()const{return px(std::max(32.0,21.0*textScale));}
+ int navBottom()const{return px(16)+tabHeight();}
+ // One content column (the Settings shell) shared by the tab bar, the section row, the page heading, the scroll viewport and the
+ // History list. The settings scroll bar lives inside this column, at its right edge.
+ using Column=geometry::Column;
+ Column column(int clientWidth)const{return geometry::contentColumn(clientWidth,int(dpi));}
+ static COLORREF mix(COLORREF base,COLORREF tint,int tintPercent){auto channel=[&](int b,int t){return (b*(100-tintPercent)+t*tintPercent)/100;};return RGB(channel(GetRValue(base),GetRValue(tint)),channel(GetGValue(base),GetGValue(tint)),channel(GetBValue(base),GetBValue(tint)));}
+ static void roundedRect(Gdiplus::GraphicsPath&path,float x,float y,float w,float h,float d){d=std::min(d,std::min(w,h));path.AddArc(x,y,d,d,180,90);path.AddArc(x+w-d,y,d,d,270,90);path.AddArc(x+w-d,y+h-d,d,d,0,90);path.AddArc(x,y+h-d,d,d,90,90);path.CloseFigure();}
+ // Primary navigation is a compact tab strip (accent underline on the selected tab); section navigation is a segmented row.
+ LRESULT drawTab(NMCUSTOMDRAW*draw,HWND button,int id,bool selected,bool hot,bool pressed){
+  int scale=int(GetDpiForWindow(button));auto bpx=[&](int n){return std::max(1,n*scale/96);};bool tab=id<SECTION_BASE;
+  RECT rect=draw->rc;FillRect(draw->hdc,&rect,backgroundBrush);auto rgba=[](COLORREF c){return Gdiplus::Color(255,GetRValue(c),GetGValue(c),GetBValue(c));};COLORREF ink;
+  {Gdiplus::Graphics g(draw->hdc);g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+   if(tab){
+    // Primary navigation: a tab bar that spans the content column. The selected tab is filled, set in the strongest text
+    // colour and underlined with a full-width accent bar sitting on the bar's baseline.
+    float x=float(rect.left),y=float(rect.top+bpx(2)),w=float(rect.right-rect.left),h=float(rect.bottom-rect.top-bpx(2)),d=float(bpx(16));
+    if(selected||hot||pressed){Gdiplus::GraphicsPath path;path.AddArc(x,y,d,d,180,90);path.AddArc(x+w-d,y,d,d,270,90);path.AddLine(x+w,y+h,x,y+h);path.CloseFigure();Gdiplus::SolidBrush brush(rgba(selected?colors.surface:colors.hover));g.FillPath(&brush,&path);}
+    {RECT rule{rect.left,rect.bottom-bpx(1),rect.right,rect.bottom};HBRUSH lineBrush=CreateSolidBrush(colors.line);FillRect(draw->hdc,&rule,lineBrush);DeleteObject(lineBrush);}
+    if(selected){RECT bar{rect.left,rect.bottom-bpx(3),rect.right,rect.bottom};HBRUSH accentBrush=CreateSolidBrush(colors.accent);FillRect(draw->hdc,&bar,accentBrush);DeleteObject(accentBrush);}
+    ink=selected||hot?colors.foreground:colors.secondary;
+   }else{
+    // Secondary navigation: shorter, smaller text, quiet inactive segments, a tinted (never solid) selection.
+    COLORREF quiet=mix(colors.background,colors.surface,55),quietBorder=mix(colors.background,colors.line,65);
+    COLORREF fill=selected?mix(colors.surface,colors.accent,22):(hot||pressed?colors.hover:quiet);ink=selected||hot?colors.foreground:colors.secondary;
+    Gdiplus::GraphicsPath path;roundedRect(path,float(rect.left+1),float(rect.top+1),float(rect.right-rect.left-2),float(rect.bottom-rect.top-2),float(bpx(10)));Gdiplus::SolidBrush brush(rgba(fill));Gdiplus::Pen border(rgba(selected?colors.accent:quietBorder),float(bpx(1)));g.FillPath(&brush,&path);g.DrawPath(&border,&path);
+   }
+  }
+  wchar_t caption[64]{};GetWindowTextW(button,caption,64);int saved=SaveDC(draw->hdc);
+  SelectObject(draw->hdc,reinterpret_cast<HFONT>(SendMessageW(button,WM_GETFONT,0,0)));
+  UINT flags=DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS;LRESULT cues=SendMessageW(button,WM_QUERYUISTATE,0,0);if(cues&UISF_HIDEACCEL)flags|=DT_HIDEPREFIX;
+  RECT text=rect;InflateRect(&text,-bpx(tab?8:5),0);if(tab)text.bottom-=bpx(3);
+  SetTextColor(draw->hdc,ink);SetBkMode(draw->hdc,TRANSPARENT);DrawTextW(draw->hdc,caption,-1,&text,flags);
+  if((draw->uItemState&CDIS_FOCUS)&&!(cues&UISF_HIDEFOCUS)){RECT focus=rect;InflateRect(&focus,-bpx(4),-bpx(4));DrawFocusRect(draw->hdc,&focus);}
+  RestoreDC(draw->hdc,saved);return CDRF_SKIPDEFAULT;
+ }
+ // The volume slider is custom drawn so it matches the rest of the page: a thin track with an accent fill and a round thumb.
+ LRESULT drawTrackbar(NMCUSTOMDRAW*draw){
+  if(draw->dwDrawStage==CDDS_PREPAINT)return CDRF_NOTIFYITEMDRAW;
+  if(draw->dwDrawStage!=CDDS_ITEMPREPAINT)return CDRF_DODEFAULT;
+  HWND bar=draw->hdr.hwndFrom;int scale=int(GetDpiForWindow(bar));auto bpx=[&](int n){return std::max(1,n*scale/96);};
+  RECT thumb{};SendMessageW(bar,TBM_GETTHUMBRECT,0,reinterpret_cast<LPARAM>(&thumb));int thumbX=(thumb.left+thumb.right)/2;
+  auto rgba=[](COLORREF c){return Gdiplus::Color(255,GetRValue(c),GetGValue(c),GetBValue(c));};
+  Gdiplus::Graphics g(draw->hdc);g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+  if(draw->dwItemSpec==TBCD_CHANNEL){RECT channel=draw->rc,whole{};GetClientRect(bar,&whole);float t=float(bpx(4)),y=float((channel.top+channel.bottom)/2)-t/2,x0=float(whole.left),x1=float(whole.right);
+   Gdiplus::GraphicsPath track;roundedRect(track,x0,y,x1-x0,t,t);Gdiplus::SolidBrush line(rgba(colors.line));g.FillPath(&line,&track);
+   if(thumbX>x0){Gdiplus::GraphicsPath filled;roundedRect(filled,x0,y,float(thumbX)-x0,t,t);Gdiplus::SolidBrush accent(rgba(colors.accent));g.FillPath(&accent,&filled);}
+   return CDRF_SKIPDEFAULT;}
+  if(draw->dwItemSpec==TBCD_THUMB){float d=float(bpx(16)),cx=float((thumb.left+thumb.right)/2),cy=float((thumb.top+thumb.bottom)/2);
+   Gdiplus::SolidBrush ring(rgba(colors.background));g.FillEllipse(&ring,cx-d/2-float(bpx(2)),cy-d/2-float(bpx(2)),d+float(bpx(4)),d+float(bpx(4)));
+   Gdiplus::SolidBrush accent(rgba(colors.accent));g.FillEllipse(&accent,cx-d/2,cy-d/2,d,d);return CDRF_SKIPDEFAULT;}
+  return CDRF_SKIPDEFAULT;
+ }
+ void themeControl(HWND h){
+  wchar_t name[32]{};GetClassNameW(h,name,32);bool dark=colors.dark&&!colors.contrast;
+  if(wcscmp(name,L"Button")==0)SetWindowTheme(h,nullptr,nullptr);
+  else if(wcscmp(name,L"ComboBox")==0)SetWindowTheme(h,dark?L"DarkMode_CFD":nullptr,nullptr);
+  else if(wcscmp(name,UPDOWN_CLASSW)==0)SetWindowTheme(h,dark?L"DarkMode_Explorer":nullptr,nullptr);
+ }
+ // Number fields draw their own 1 px frame and centre the text vertically; the native client edge is light and top-aligned.
+ static LRESULT CALLBACK editProc(HWND h,UINT msg,WPARAM w,LPARAM l,UINT_PTR,DWORD_PTR){
+  auto&a=*app;
+  switch(msg){
+   case WM_NCCALCSIZE:if(w){auto*params=reinterpret_cast<NCCALCSIZE_PARAMS*>(l);RECT&r=params->rgrc[0];int border=std::max(1,a.px(1));
+     HDC dc=GetDC(h);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));TEXTMETRICW tm{};GetTextMetricsW(dc,&tm);SelectObject(dc,previous);ReleaseDC(h,dc);
+     int vertical=std::max(border,int((r.bottom-r.top-tm.tmHeight)/2));r.left+=border;r.right-=border;r.top+=vertical;r.bottom-=vertical;return 0;}break;
+   case WM_NCPAINT:{HDC dc=GetWindowDC(h);RECT window{};GetWindowRect(h,&window);OffsetRect(&window,-window.left,-window.top);int border=std::max(1,a.px(1));bool focused=GetFocus()==h;
+     FillRect(dc,&window,a.surfaceBrush);HPEN pen=CreatePen(PS_SOLID,border,focused?a.colors.accent:a.colors.line);auto oldPen=SelectObject(dc,pen);auto oldBrush=SelectObject(dc,GetStockObject(NULL_BRUSH));
+     Rectangle(dc,window.left,window.top,window.right,window.bottom);SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(pen);ReleaseDC(h,dc);return 0;}
+   case WM_SETFOCUS:case WM_KILLFOCUS:{LRESULT result=DefSubclassProc(h,msg,w,l);RedrawWindow(h,nullptr,nullptr,RDW_FRAME|RDW_INVALIDATE);return result;}
+   case WM_NCDESTROY:RemoveWindowSubclass(h,editProc,1);break;
+  }
+  return DefSubclassProc(h,msg,w,l);
+ }
+ // ---- settings content ----------------------------------------------------------------------------------------------
+ HWND control(const wchar_t*cls,const wchar_t*text,DWORD style,int id,int onPage,Kind kind=Kind::Plain,HWND parent=nullptr){
   // The settings pane controls inherit page visibility from their parent.
-  HWND h=CreateWindowExW((wcscmp(cls,L"EDIT")==0)?WS_EX_CLIENTEDGE:0,cls,text,WS_CHILD|WS_VISIBLE|(wcscmp(cls,L"STATIC")==0?0:WS_TABSTOP)|style,0,0,1,1,parent?parent:main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);
+  HWND h=CreateWindowExW(0,cls,text,WS_CHILD|WS_VISIBLE|(wcscmp(cls,L"STATIC")==0?0:WS_TABSTOP)|style,0,0,1,1,parent?parent:main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);
   if(!h)throw std::runtime_error("Could not create native control");
-  SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);controls.push_back({h,id,onPage,height,false});controls.back().section=buildSection;return h;
+  if(wcscmp(cls,L"EDIT")==0)SetWindowSubclass(h,editProc,1,0);
+  SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);Control c;c.handle=h;c.id=id;c.page=onPage;c.kind=kind;c.section=buildSection;controls.push_back(c);themeControl(h);return h;
  }
- HWND label(const wchar_t*text,int onPage,HWND parent=nullptr,bool heading=false){HWND h=control(L"STATIC",text,SS_LEFT,-1,onPage,heading?44:28,parent);auto&c=controls.back();c.full=true;c.heading=heading;SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(heading?headingFont:normalFont),TRUE);return h;}
- void checkbox(const wchar_t*text,int id,int onPage,bool checked,HWND parent){HWND h=control(L"BUTTON",text,BS_AUTOCHECKBOX|BS_MULTILINE,id,onPage,40,parent);SendMessageW(h,BM_SETCHECK,checked?BST_CHECKED:BST_UNCHECKED,0);controls.back().full=true;}
+ HWND label(const wchar_t*text,Kind kind=Kind::Plain,bool indent=false){
+  DWORD style=(kind==Kind::Value?SS_RIGHT:SS_LEFT)|SS_NOPREFIX|(kind==Kind::Caption||kind==Kind::Value?SS_CENTERIMAGE:0); // the value readout is right-aligned so it ends on the column edge
+  HWND h=control(L"STATIC",text,style,-1,2,kind,settingsPane);controls.back().indent=indent;if(kind==Kind::Hint)SetWindowLongPtrW(h,GWLP_USERDATA,1);
+  SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(kind==Kind::Heading?headingFont:normalFont),TRUE);return h;
+ }
+ void hint(const wchar_t*text,bool indent=false){label(text,Kind::Hint,indent);}
+ void checkbox(const wchar_t*text,int id,int onPage,bool checked,HWND parent){HWND h=control(L"BUTTON",text,BS_AUTOCHECKBOX|BS_MULTILINE,id,onPage,Kind::Check,parent);SendMessageW(h,BM_SETCHECK,checked?BST_CHECKED:BST_UNCHECKED,0);}
  void combo(const wchar_t*labelText,int id,const std::vector<std::wstring>&items,int selected){
-  label(labelText,2,settingsPane);HWND h=control(WC_COMBOBOXW,L"",CBS_DROPDOWNLIST|WS_VSCROLL,id,2,36,settingsPane);for(auto&s:items)SendMessageW(h,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(s.c_str()));SendMessageW(h,CB_SETMINVISIBLE,8,0);SendMessageW(h,CB_SETCURSEL,selected,0);
+  label(labelText,Kind::Caption);HWND h=control(WC_COMBOBOXW,L"",CBS_DROPDOWNLIST|WS_VSCROLL,id,2,Kind::Field,settingsPane);for(auto&s:items)SendMessageW(h,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(s.c_str()));
+  SendMessageW(h,CB_SETMINVISIBLE,8,0);SendMessageW(h,CB_SETITEMHEIGHT,WPARAM(-1),LPARAM(fieldHeight()-px(6)));SendMessageW(h,CB_SETCURSEL,selected,0);
  }
- void number(const wchar_t*labelText,int id,int value,int low,int high){label(labelText,2,settingsPane);HWND h=control(L"EDIT",std::to_wstring(value).c_str(),ES_NUMBER|ES_AUTOHSCROLL,id,2,36,settingsPane);SendMessageW(h,EM_SETLIMITTEXT,3,0);SendMessageW(h,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELPARAM(px(10),px(10)));
-  HWND spin=CreateWindowExW(0,UPDOWN_CLASSW,L"",WS_CHILD|WS_VISIBLE|UDS_ALIGNRIGHT|UDS_SETBUDDYINT|UDS_ARROWKEYS,0,0,0,0,settingsPane,nullptr,instance,nullptr);if(!spin)throw std::runtime_error("Could not create number control");controls.back().buddySpin=spin;SendMessageW(spin,UDM_SETBUDDY,reinterpret_cast<WPARAM>(h),0);SendMessageW(spin,UDM_SETRANGE32,low,high);SendMessageW(spin,UDM_SETPOS32,0,value);}
+ void number(const wchar_t*labelText,int id,int value,int low,int high){label(labelText,Kind::Caption);HWND h=control(L"EDIT",std::to_wstring(value).c_str(),ES_NUMBER|ES_AUTOHSCROLL,id,2,Kind::Field,settingsPane);SendMessageW(h,EM_SETLIMITTEXT,3,0);SendMessageW(h,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELPARAM(px(10),px(10)));
+  HWND spin=CreateWindowExW(0,UPDOWN_CLASSW,L"",WS_CHILD|WS_VISIBLE|UDS_ALIGNRIGHT|UDS_SETBUDDYINT|UDS_ARROWKEYS,0,0,0,0,settingsPane,nullptr,instance,nullptr);if(!spin)throw std::runtime_error("Could not create number control");controls.back().buddySpin=spin;themeControl(spin);SendMessageW(spin,UDM_SETBUDDY,reinterpret_cast<WPARAM>(h),0);SendMessageW(spin,UDM_SETRANGE32,low,high);SendMessageW(spin,UDM_SETPOS32,0,value);}
  HWND find(int id){for(auto&c:controls)if(c.id==id)return c.handle;return nullptr;}
+ void updateVolumeLabel(){HWND v=find(VOLUME_VALUE);if(v)SetWindowTextW(v,(std::to_wstring(settings.volume)+L"%").c_str());}
+ // Stop is only useful while something is playing. The audio object only posts a request (never touches the UI itself), so
+ // alarm playback never runs UI code; the request is coalesced and evaluated once the audio call has returned.
+ void postPreviewRefresh(){if(previewRefreshPosted||!main)return;previewRefreshPosted=true;PostMessageW(main,PREVIEW_REFRESH,0,0);}
+ void refreshPreview(){
+  HWND stop=find(STOP_AUDIO);if(!stop||!IsWindow(stop))return;
+  bool playing=audio&&audio->playing;if((IsWindowEnabled(stop)!=FALSE)==playing)return;
+  if(!playing&&GetFocus()==stop){HWND preview=find(PREVIEW);if(preview)SetFocus(preview);}
+  EnableWindow(stop,playing?TRUE:FALSE);InvalidateRect(stop,nullptr,TRUE);
+ }
+#pragma GCC diagnostic push
+// GCC 15 reports a false "free-nonheap-object" for the temporary string vectors passed to combo() below.
+#pragma GCC diagnostic ignored "-Wfree-nonheap-object"
  void buildSettings(){
   loading=true;buildSection=0;for(auto it=controls.begin();it!=controls.end();){if(it->page==2){DestroyWindow(it->handle);it=controls.erase(it);}else ++it;}
   // Buddy spin controls are recreated with their edits.
   EnumChildWindows(settingsPane,[](HWND child,LPARAM)->BOOL{wchar_t name[64]{};GetClassNameW(child,name,64);if(wcscmp(name,UPDOWN_CLASSW)==0)DestroyWindow(child);return TRUE;},0);
-  label(L"Timer",2,settingsPane,true);number(L"Work interval (minutes)",WORK,settings.workMinutes,1,180);number(L"Break duration (seconds)",BREAK_SECONDS,settings.breakSeconds,5,300);
-  label(L"Changes apply to the next cycle. Reset starts a fresh work interval.",2,settingsPane);
-  buildSection=1;label(L"Alarm",2,settingsPane,true);checkbox(L"Alarm enabled",ALARM_TOGGLE,2,settings.alarm,settingsPane);
+  label(L"Work and break intervals",Kind::Heading);number(L"Work interval (minutes)",WORK,settings.workMinutes,1,180);number(L"Break duration (seconds)",BREAK_SECONDS,settings.breakSeconds,5,300);
+  hint(L"Changes apply to the next cycle. Reset starts a fresh work interval.");
+  buildSection=1;label(L"Alarm",Kind::Heading);checkbox(L"Alarm enabled",ALARM_TOGGLE,2,settings.alarm,settingsPane);
   combo(L"Alarm sound",SOUND,{L"Gentle",L"Bell",L"Chime",L"Clear",L"Soft"},settings.sound);
-  label(L"Alarm volume",2,settingsPane);HWND volume=control(TRACKBAR_CLASSW,L"",TBS_AUTOTICKS|TBS_TOOLTIPS,VOLUME,2,40,settingsPane);SendMessageW(volume,TBM_SETRANGE,TRUE,MAKELONG(0,100));SendMessageW(volume,TBM_SETPOS,TRUE,settings.volume);SetWindowTextW(volume,L"Alarm volume, percent");
+  label(L"Alarm volume",Kind::Caption);HWND volume=control(TRACKBAR_CLASSW,L"",TBS_NOTICKS|TBS_BOTH,VOLUME,2,Kind::Slider,settingsPane);SendMessageW(volume,TBM_SETRANGE,TRUE,MAKELONG(0,100));SendMessageW(volume,TBM_SETPOS,TRUE,settings.volume);SetWindowTextW(volume,L"Alarm volume, percent");
+  label((std::to_wstring(settings.volume)+L"%").c_str(),Kind::Value);controls.back().id=VOLUME_VALUE;controls.back().sameRow=true;
   checkbox(L"Repeat until the break ends or is acknowledged",REPEAT,2,settings.repeat,settingsPane);
-  control(L"BUTTON",L"Preview alarm",BS_PUSHBUTTON,PREVIEW,2,36,settingsPane);control(L"BUTTON",L"Stop preview",BS_PUSHBUTTON,STOP_AUDIO,2,36,settingsPane);
-  buildSection=2;label(L"Reminders",2,settingsPane,true);checkbox(L"Windows notifications",NOTIFY,2,settings.notifications,settingsPane);checkbox(L"Allow snooze (1, 3 or 5 minutes)",SNOOZE,2,settings.snooze,settingsPane);
+  control(L"BUTTON",L"Preview alarm",BS_PUSHBUTTON,PREVIEW,2,Kind::Button,settingsPane);control(L"BUTTON",L"Stop preview",BS_PUSHBUTTON,STOP_AUDIO,2,Kind::Button,settingsPane);controls.back().sameRow=true;
+  buildSection=2;label(L"Break reminders",Kind::Heading);checkbox(L"Windows notifications",NOTIFY,2,settings.notifications,settingsPane);checkbox(L"Allow snooze (1, 3 or 5 minutes)",SNOOZE,2,settings.snooze,settingsPane);
+  label(L"Break window",Kind::Heading);
   combo(L"Break presentation",MODE,{L"Normal window",L"Compact reminder",L"Fullscreen reminder (opt in)"},settings.mode);combo(L"Preferred monitor",MONITOR,{L"Active display",L"Primary display",L"Selected display"},settings.monitor);
   displays=monitors();std::vector<std::wstring> names;int chosen=0;for(std::size_t i=0;i<displays.size();++i){names.push_back(L"Display "+std::to_wstring(i+1)+(displays[i].primary?L" (primary)":L""));if(utf8(displays[i].device)==settings.selectedMonitor)chosen=int(i);}combo(L"Selected display",SELECT_MONITOR,names,chosen);
-  buildSection=3;label(L"Appearance",2,settingsPane,true);combo(L"Theme",THEME,{L"Use system setting",L"Light",L"Dark"},settings.theme);
-  label(L"Behaviour",2,settingsPane,true);checkbox(L"Start timer automatically on launch",AUTO_START,2,settings.autoStart,settingsPane);checkbox(L"Start with Windows",STARTUP,2,settings.startup,settingsPane);
-  label(L"Open Eye Break Reminder automatically when you sign in.",2,settingsPane);checkbox(L"Minimize to system tray",TRAY,2,settings.tray,settingsPane);label(L"Closing keeps reminders active. Choose Exit in the tray menu to quit.",2,settingsPane);
-  checkbox(L"Resume countdown when reopening the app",RESTORE,2,settings.restore,settingsPane);label(L"Reinstalling after uninstall starts a fresh work interval. Preferences and history are kept.",2,settingsPane);checkbox(L"Pause while workstation is locked",PAUSE_LOCK,2,settings.pauseLocked,settingsPane);
-  label(L"Sleep counts as elapsed work time. Wake shows at most one reminder. Paused timers stay paused.",2,settingsPane);
-  buildSection=4;label(L"Accessibility",2,settingsPane,true);label(L"Uses Windows text scaling, high contrast and keyboard focus. Ctrl+R: Reset. Ctrl+Shift+B: Take break. Ctrl+comma: Settings.",2,settingsPane);
-  label(L"About",2,settingsPane,true);label(L"Eye Break Reminder\nVersion 1.0.5 · x64\nWindows 11",2,settingsPane);
-  label(L"All data stays on this device. No internet, telemetry, account, camera or microphone.",2,settingsPane);
-  control(L"BUTTON",L"Reset all settings",BS_PUSHBUTTON,RESET_SETTINGS,2,36,settingsPane);loading=false;layout();
+  buildSection=3;label(L"Appearance",Kind::Heading);combo(L"Theme",THEME,{L"Use system setting",L"Light",L"Dark"},settings.theme);
+  label(L"Behaviour",Kind::Heading);checkbox(L"Start timer automatically on launch",AUTO_START,2,settings.autoStart,settingsPane);checkbox(L"Start with Windows",STARTUP,2,settings.startup,settingsPane);
+  hint(L"Open Eye Break Reminder automatically when you sign in.",true);checkbox(L"Minimize to system tray",TRAY,2,settings.tray,settingsPane);hint(L"Closing keeps reminders active. Choose Exit in the tray menu to quit.",true);
+  checkbox(L"Resume countdown when reopening the app",RESTORE,2,settings.restore,settingsPane);hint(L"Reinstalling after uninstall starts a fresh work interval. Preferences and history are kept.",true);checkbox(L"Pause while workstation is locked",PAUSE_LOCK,2,settings.pauseLocked,settingsPane);
+  hint(L"Sleep counts as elapsed work time. Wake shows at most one reminder. Paused timers stay paused.",true);
+  buildSection=4;label(L"About",Kind::Heading);label(L"Eye Break Reminder");hint(L"Version 1.0.6 · x64 · Windows 11");
+  hint(L"All data stays on this device. No internet, telemetry, account, camera or microphone.");
+  label(L"Accessibility",Kind::Heading);hint(L"Uses Windows text scaling, high contrast and keyboard focus.");
+  hint(L"Ctrl+R: Reset · Ctrl+Shift+B: Take break · Ctrl+comma: Settings");
+  control(L"BUTTON",L"Reset all settings",BS_PUSHBUTTON,RESET_SETTINGS,2,Kind::Button,settingsPane);loading=false;refreshPreview();layout();
  }
+#pragma GCC diagnostic pop
  void createControls(){
   dpi=GetDpiForWindow(main);createFonts();
-  for(int i=0;i<3;++i){nav[i]=CreateWindowExW(0,L"BUTTON",i==0?L"&Timer":i==1?L"&History":L"&Settings",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(NAV_TIMER+i)),instance,nullptr);SendMessageW(nav[i],WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);}
+  for(int i=0;i<3;++i){nav[i]=CreateWindowExW(0,L"BUTTON",i==0?L"&Timer":i==1?L"&History":L"&Settings",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(NAV_TIMER+i)),instance,nullptr);SendMessageW(nav[i],WM_SETFONT,reinterpret_cast<WPARAM>(tabFont),TRUE);}
   control(L"STATIC",L"Running",SS_CENTER|SS_CENTERIMAGE,TIMER_STATE,0);control(L"STATIC",L"Next eye break",SS_CENTER|SS_CENTERIMAGE,COUNT_CAPTION,0);control(L"STATIC",L"20:00",SS_CENTER|SS_CENTERIMAGE,COUNTDOWN,0);
   control(L"BUTTON",L"Take a break now",BS_DEFPUSHBUTTON,TAKE_BREAK,0);control(L"BUTTON",L"Pause",BS_PUSHBUTTON,PAUSE,0);control(L"BUTTON",L"Reset",BS_PUSHBUTTON,RESET,0);
   historyList=CreateWindowExW(WS_EX_CLIENTEDGE,WC_LISTVIEWW,L"Eye break history",WS_CHILD|WS_TABSTOP|LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS,0,0,1,1,main,reinterpret_cast<HMENU>(200),instance,nullptr);ListView_SetExtendedListViewStyle(historyList,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
   for(int i=0;i<3;++i){LVCOLUMNW col{};col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_SUBITEM;col.pszText=const_cast<LPWSTR>(i==0?L"Date":i==1?L"Break":L"Seconds");col.cx=px(i==0?240:140);col.iSubItem=i;ListView_InsertColumn(historyList,i,&col);}
   checkbox(L"Save history on this device",HISTORY_TOGGLE,1,settings.history,main);control(L"BUTTON",L"Clear history",BS_PUSHBUTTON,CLEAR_HISTORY,1);
   {const wchar_t*names[SECTION_COUNT]={L"Intervals",L"Alarm",L"Reminders",L"General",L"About"};
-   for(int i=0;i<SECTION_COUNT;++i){sectionNav[i]=CreateWindowExW(0,L"BUTTON",names[i],WS_CHILD|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(SECTION_BASE+i)),instance,nullptr);SendMessageW(sectionNav[i],WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);}}
+   for(int i=0;i<SECTION_COUNT;++i){sectionNav[i]=CreateWindowExW(0,L"BUTTON",names[i],WS_CHILD|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(SECTION_BASE+i)),instance,nullptr);SendMessageW(sectionNav[i],WM_SETFONT,reinterpret_cast<WPARAM>(smallFont),TRUE);}}
   settingsPane=CreateWindowExW(WS_EX_CONTROLPARENT,L"EyeBreakReminder.Settings",L"Settings",WS_CHILD|WS_VSCROLL|WS_CLIPCHILDREN|WS_GROUP,0,0,1,1,main,nullptr,instance,nullptr);buildSettings();selectSection(0);switchPage(0);
  }
  // Settings show one section at a time; each section's controls are laid out and scrolled on their own.
@@ -162,48 +275,69 @@ public:
   ShowWindow(settingsPane,page==2?SW_SHOW:SW_HIDE);ShowWindow(historyList,page==1?SW_SHOW:SW_HIDE);if(page==1)updateHistory();layout();updateRenderTimer();InvalidateRect(main,nullptr,TRUE);}
  void layout(){
   if(!main||!settingsPane)return;
+  std::vector<Placement> moves;auto move=[&](HWND window,int x,int y,int w,int h){if(window)moves.push_back({window,x,y,w,h});};
   RECT client{};GetClientRect(main,&client);int w=client.right,h=client.bottom,pad=px(28),gap=px(12),bh=px(std::max(36.0,30.0*textScale));
-  int navWidth=std::max(px(110),std::min(px(148),(w-2*pad-2*gap)/3));for(int i=0;i<3;++i)MoveWindow(nav[i],pad+i*(navWidth+gap),px(16),navWidth,bh,TRUE);
-  int top=px(16)+bh+px(28);
-  if(page==0){int y=std::max(top+px(285),h-px(150)-2*bh-gap);int buttonWidth=std::min(w-2*pad,px(280*std::sqrt(textScale)));MoveWindow(find(TAKE_BREAK),(w-buttonWidth)/2,y,buttonWidth,bh,TRUE);int secondWidth=(buttonWidth-gap)/2;MoveWindow(find(PAUSE),(w-buttonWidth)/2,y+bh+gap,secondWidth,bh,TRUE);MoveWindow(find(RESET),(w-buttonWidth)/2+secondWidth+gap,y+bh+gap,secondWidth,bh,TRUE);
-   int timerTop=px(16)+bh+px(22),stateBottom=timerTop+px(88);
+  Column col=column(w);int tabTop=px(16),tabHeightNow=tabHeight();
+  {std::vector<int> natural;for(int i=0;i<3;++i){std::wstring text=windowText(nav[i]);text.erase(std::remove(text.begin(),text.end(),L'&'),text.end());natural.push_back(measureWidth(nav[i],text)+px(40));}
+   for(auto&segment:geometry::segmentRows(natural,col.x,col.width,0,px(60),false))move(nav[segment.index],segment.x,tabTop,segment.width,tabHeightNow);}
+  int top=navBottom()+px(28);
+  if(page==0){int y=std::max(top+px(285),h-px(150)-2*bh-gap);int buttonWidth=std::min(w-2*pad,px(280*std::sqrt(textScale)));move(find(TAKE_BREAK),(w-buttonWidth)/2,y,buttonWidth,bh);int secondWidth=(buttonWidth-gap)/2;move(find(PAUSE),(w-buttonWidth)/2,y+bh+gap,secondWidth,bh);move(find(RESET),(w-buttonWidth)/2+secondWidth+gap,y+bh+gap,secondWidth,bh);
+   int timerTop=navBottom()+px(22),stateBottom=timerTop+px(88);
    int diameter=std::min({px(272),w-px(100),std::max(px(160),y-stateBottom-px(18))});int left=(w-diameter)/2,ty=stateBottom+px(8);
-   MoveWindow(find(TIMER_STATE),pad,timerTop+px(50),w-2*pad,px(38),TRUE);
-   MoveWindow(find(COUNTDOWN),left,ty+diameter/3,diameter,diameter/3,TRUE);
-   MoveWindow(find(COUNT_CAPTION),left,ty+diameter*2/3,diameter,px(40),TRUE);
+   move(find(TIMER_STATE),pad,timerTop+px(50),w-2*pad,px(38));
+   move(find(COUNTDOWN),left,ty+diameter/3,diameter,diameter/3);
+   move(find(COUNT_CAPTION),left,ty+diameter*2/3,diameter,px(40));
    int size=std::min(px(56*std::sqrt(textScale)),diameter/4);if(size!=countSize){HFONT previous=countFont;countSize=size;countFont=CreateFontW(-size,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable");SendMessageW(find(COUNTDOWN),WM_SETFONT,reinterpret_cast<WPARAM>(countFont),TRUE);if(previous)DeleteObject(previous);}
   }
-  if(page==1){int listTop=top+px(135)*int(std::ceil(textScale));int listHeight=std::max(px(80),h-listTop-pad-bh-gap);MoveWindow(historyList,pad,listTop,w-2*pad,listHeight,TRUE);MoveWindow(find(HISTORY_TOGGLE),pad,listTop+listHeight+gap,std::max(px(240),w-2*pad-px(150)),bh,TRUE);MoveWindow(find(CLEAR_HISTORY),w-pad-px(140),listTop+listHeight+gap,px(140),bh,TRUE);}
-  int sectionTop=px(16)+bh+px(14),paneTop=sectionTop+bh+px(10),sectionGap=px(8),sectionWidth=std::max(px(60),(w-2*pad-(SECTION_COUNT-1)*sectionGap)/SECTION_COUNT);
-  for(int i=0;i<SECTION_COUNT;++i)MoveWindow(sectionNav[i],pad+i*(sectionWidth+sectionGap),sectionTop,sectionWidth,bh,TRUE);
-  MoveWindow(settingsPane,pad,paneTop,w-2*pad,std::max(px(40),h-paneTop-pad),TRUE);layoutSettings();
+  if(page==1){int listTop=top+px(135)*int(std::ceil(textScale));int listHeight=std::max(px(80),h-listTop-pad-bh-gap);move(historyList,col.x,listTop,col.width,listHeight);move(find(HISTORY_TOGGLE),col.x,listTop+listHeight+gap,std::max(px(240),col.width-px(150)),bh);move(find(CLEAR_HISTORY),col.x+col.width-px(140),listTop+listHeight+gap,px(140),bh);}
+  int pillTop=navBottom()+px(22),pillHeightNow=pillHeight(),pillGap=px(4);
+  int pillRows=1;
+  {std::vector<int> natural;for(int i=0;i<SECTION_COUNT;++i)natural.push_back(measureWidth(sectionNav[i],windowText(sectionNav[i]))+px(22));
+   for(auto&segment:geometry::segmentRows(natural,col.x,col.width,pillGap,px(40))){pillRows=std::max(pillRows,segment.row+1);move(sectionNav[segment.index],segment.x,pillTop+segment.row*(pillHeightNow+pillGap),segment.width,pillHeightNow);}}
+  int paneTop=pillTop+pillRows*pillHeightNow+(pillRows-1)*pillGap+px(8);move(settingsPane,col.x,paneTop,col.width,std::max(px(40),h-paneTop-px(12)));
+  moveAll(moves,true);layoutSettings();
+  // Everything the parent paints itself (ring, headings, hint text, divider) depends on the size, so the whole client area is repainted.
+  RedrawWindow(main,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN);
  }
  // Computes content-space geometry once per layout; scrolling only re-applies the offset (positionSettings).
+ // Rows: headings and hints span the content width; a caption and its field sit side by side when the column is wide
+ // enough for every caption in the section, otherwise the caption stacks above its field.
  void layoutSettings(){
-  RECT pane{};GetClientRect(settingsPane,&pane);int inset=px(12),y=px(8);int width=std::max(100,int(pane.right)-2*inset);
-  for(auto&c:controls)if(c.page==2){bool inSection=c.section==settingsSection;ShowWindow(c.handle,inSection?SW_SHOW:SW_HIDE);if(c.buddySpin)ShowWindow(c.buddySpin,inSection?SW_SHOW:SW_HIDE);
-   if(!inSection)continue;
-   if(c.heading&&y>px(8)){y+=px(16);}
-   int height=px(int(c.height*textScale));if(c.id==-1){wchar_t content[1024]{};GetWindowTextW(c.handle,content,1024);HDC dc=GetDC(c.handle);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(c.handle,WM_GETFONT,0,0)));RECT measured{0,0,width,0};DrawTextW(dc,content,-1,&measured,DT_CALCRECT|DT_WORDBREAK);SelectObject(dc,previous);ReleaseDC(c.handle,dc);height=std::max(height,int(measured.bottom)+px(8));}int controlWidth=c.full?width:std::min(width,px(420));
-   int nativeHeight=height;int spinWidth=c.buddySpin?px(24):0;
-   c.x=inset;c.y=y;c.w=controlWidth-spinWidth;c.h=nativeHeight;c.spinWidth=spinWidth;c.rowHeight=height;
-   y+=height+px(c.id==-1?4:12);}
-  settingsHeight=y;settingsScroller.setRange(std::max(0,settingsHeight-int(pane.bottom)));positionSettings(true);
+  if(!settingsPane)return;
+  RECT paneWindow{},pane{};GetWindowRect(settingsPane,&paneWindow);GetClientRect(settingsPane,&pane);
+  const int inset=0,shellWidth=int(paneWindow.right-paneWindow.left);
+  std::vector<Control*> items;
+  for(auto&c:controls)if(c.page==2){bool inSection=c.section==settingsSection;ShowWindow(c.handle,inSection?SW_SHOW:SW_HIDE);if(c.buddySpin)ShowWindow(c.buddySpin,inSection?SW_SHOW:SW_HIDE);if(inSection)items.push_back(&c);}
+  std::vector<geometry::FormItem> form;
+  for(auto*item:items){geometry::FormItem f;f.kind=item->kind;std::wstring text=windowText(item->handle);f.textWidth=measureWidth(item->handle,text);
+   f.textHeight=[this,handle=item->handle,text](int width){return measureHeight(handle,text,width);};f.sameRow=item->sameRow;f.indent=item->indent;f.spin=item->buddySpin!=nullptr;form.push_back(std::move(f));}
+  // Pass 1 lays the form out across the whole shell. Only if it is taller than the viewport does a scroll bar appear (inside the
+  // shell, at its right edge) and the form is laid out again in the narrower client area. A taller form can never need less, so
+  // there is no flip-flop.
+  auto placed=geometry::layoutForm(form,std::max(px(200),shellWidth),inset,int(dpi),textScale);
+  int y=placed.height;
+  {SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE,0,std::max(0,y+px(16)-1),UINT(std::max(1L,pane.bottom)),0,0};SetScrollInfo(settingsPane,SB_VERT,&info,TRUE);}
+  RECT afterBar{};GetClientRect(settingsPane,&afterBar);
+  if(afterBar.right!=shellWidth){placed=geometry::layoutForm(form,std::max(px(200),int(afterBar.right)),inset,int(dpi),textScale);y=placed.height;}
+  for(std::size_t i=0;i<items.size();++i){auto&c=*items[i];auto&b=placed.boxes[i];c.x=b.x;c.y=b.y;c.w=b.w;c.h=b.h;c.rowHeight=b.h;c.spinWidth=b.spinWidth;}
+  settingsHeight=y+px(16);settingsScroller.setRange(std::max(0,settingsHeight-int(pane.bottom)));positionSettings(true);
  }
  // Moves every settings control to its cached position minus the scroll offset in one batch and syncs the scroll bar.
  void positionSettings(bool force=false){
   if(!settingsPane)return;
   int offset=settingsScroller.pixel();if(!force&&offset==settingsApplied)return;settingsApplied=offset;
   std::vector<Placement> items;for(auto&c:controls)if(c.page==2&&c.section==settingsSection){items.push_back({c.handle,c.x,c.y-offset,c.w,c.h});if(c.buddySpin)items.push_back({c.buddySpin,c.x+c.w,c.y-offset,c.spinWidth,c.rowHeight});}
-  moveAll(items);RECT pane{};GetClientRect(settingsPane,&pane);
-  SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS|SIF_DISABLENOSCROLL,0,std::max(0,settingsHeight-1),UINT(std::max(1L,pane.bottom)),offset,0};SetScrollInfo(settingsPane,SB_VERT,&info,TRUE);
+  moveAll(items,force);RECT pane{};GetClientRect(settingsPane,&pane);
+  SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS,0,std::max(0,settingsHeight-1),UINT(std::max(1L,pane.bottom)),offset,0};SetScrollInfo(settingsPane,SB_VERT,&info,TRUE);
  }
- static void moveAll(const std::vector<Placement>&items){
+ // `fresh` = a real layout change (size or position changed): the windows are repainted completely at their new places. Scrolling passes
+ // keep the cheaper copy-bits behaviour.
+ static void moveAll(const std::vector<Placement>&items,bool fresh=false){
   if(items.empty())return;
   HDWP batch=BeginDeferWindowPos(int(items.size()));
-  for(auto&i:items){if(!batch)break;batch=DeferWindowPos(batch,i.handle,nullptr,i.x,i.y,i.w,i.h,SWP_NOZORDER|SWP_NOACTIVATE);}
+  for(auto&i:items){if(!batch)break;batch=DeferWindowPos(batch,i.handle,nullptr,i.x,i.y,i.w,i.h,SWP_NOZORDER|SWP_NOACTIVATE|(fresh?SWP_NOCOPYBITS:0));}
   if(batch){EndDeferWindowPos(batch);return;}
-  for(auto&i:items)SetWindowPos(i.handle,nullptr,i.x,i.y,i.w,i.h,SWP_NOZORDER|SWP_NOACTIVATE);
+  for(auto&i:items)SetWindowPos(i.handle,nullptr,i.x,i.y,i.w,i.h,SWP_NOZORDER|SWP_NOACTIVATE|(fresh?SWP_NOCOPYBITS:0));
  }
  static bool animationsOn(){BOOL on=TRUE;SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&on,0);return on!=FALSE;}
  // Windows' "lines per wheel notch" setting; WHEEL_PAGESCROLL means one page per notch.
@@ -278,9 +412,10 @@ public:
  void text(HDC dc,const std::wstring&str,RECT area,HFONT font,COLORREF color,UINT flags=DT_LEFT|DT_WORDBREAK){SelectObject(dc,font);SetTextColor(dc,color);SetBkMode(dc,TRANSPARENT);DrawTextW(dc,str.c_str(),int(str.size()),&area,flags);}
  void paint(HWND hwnd,bool isBreak){
   PAINTSTRUCT ps{};HDC target=BeginPaint(hwnd,&ps);RECT r{};GetClientRect(hwnd,&r);HDC dc=CreateCompatibleDC(target);HBITMAP bitmap=CreateCompatibleBitmap(target,std::max(1L,r.right),std::max(1L,r.bottom));auto previous=SelectObject(dc,bitmap);FillRect(dc,&r,backgroundBrush);auto snap=engine->snapshot();
+  if(!isBreak){Column col=column(r.right);int rule=std::max(1,px(1));RECT line{col.x,navBottom()-rule,col.x+col.width,navBottom()};HBRUSH lineBrush=CreateSolidBrush(colors.line);FillRect(dc,&line,lineBrush);DeleteObject(lineBrush);}
   if(isBreak){ // Native STATIC controls render all break content.
   }else if(page==0){
-   int top=px(16)+px(std::max(36.0,30.0*textScale))+px(22);RECT title{px(28),top,r.right-px(28),top+px(44)};text(dc,L"Timer",title,titleFont,colors.foreground);
+   int top=navBottom()+px(22);Column col=column(r.right);RECT title{col.x,top,col.x+col.width,top+px(44)};text(dc,L"Timer",title,titleFont,colors.foreground);
    std::wstring state=snap.paused?L"Paused":snap.phase==Phase::Break?L"Rest your eyes":snap.phase==Phase::Snooze?L"Snoozed — next reminder below":L"Running";RECT status{px(28),top+px(50),r.right-px(28),top+px(88)};text(dc,state,status,normalFont,colors.secondary,DT_CENTER|DT_SINGLELINE);
    RECT button{};GetWindowRect(find(TAKE_BREAK),&button);MapWindowPoints(nullptr,main,reinterpret_cast<POINT*>(&button),2);int diameter=std::min({px(272),int(r.right)-px(100),std::max(px(160),int(button.top-status.bottom)-px(18))});int left=(r.right-diameter)/2,ty=status.bottom+px(8);
    Gdiplus::Graphics graphics(dc);graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);Gdiplus::Pen track(Gdiplus::Color(255,GetRValue(colors.line),GetGValue(colors.line),GetBValue(colors.line)),float(px(4)));Gdiplus::Pen accent(Gdiplus::Color(255,GetRValue(colors.accent),GetGValue(colors.accent),GetBValue(colors.accent)),float(px(4)));
@@ -291,10 +426,10 @@ public:
    std::wstring explanation=L"20 min · Work      20 ft · Look away      20 sec · Rest\nEvery 20 minutes, look around 20 feet / 6 metres away for at least 20 seconds.";
    if(settings.workMinutes!=20||settings.breakSeconds!=20)explanation+=L"\nYour schedule: "+std::to_wstring(settings.workMinutes)+L" min work, "+std::to_wstring(settings.breakSeconds)+L" sec rest.";
    text(dc,explanation,rule,normalFont,colors.secondary,DT_CENTER|DT_WORDBREAK);
-  }else if(page==1){int top=px(16)+px(std::max(36.0,30.0*textScale))+px(28);RECT title{px(28),top,r.right-px(28),top+px(42)};text(dc,L"History",title,titleFont,colors.foreground);
+  }else if(page==1){int top=navBottom()+px(28);Column col=column(r.right);RECT title{col.x,top,col.x+col.width,top+px(42)};text(dc,L"History",title,titleFont,colors.foreground);
    std::time_t stamp=std::time_t(utc());std::tm tm{};localtime_s(&tm,&stamp);int today=calendarDay(stamp);auto stats=statistics(history,today,today-(tm.tm_wday+6)%7,calendarDay);
    std::wstring summary=history.empty()?L"No breaks recorded yet.\nCompleted eye breaks will appear here.":L"Today: "+std::to_wstring(stats.todayCompleted)+L" completed · "+std::to_wstring(stats.todaySkipped)+L" skipped · "+std::to_wstring(int(std::round(stats.completion)))+L"% completed\nThis week: "+std::to_wstring(stats.weekCompleted)+L" completed · "+std::to_wstring(stats.streak)+L" day streak\nTotal retained: "+std::to_wstring(stats.totalCompleted)+L" completed";
-   RECT area{px(28),title.bottom+px(8),r.right-px(28),title.bottom+px(100)*int(std::ceil(textScale))};text(dc,summary,area,normalFont,colors.secondary);
+   RECT area{col.x,title.bottom+px(8),col.x+col.width,title.bottom+px(100)*int(std::ceil(textScale))};text(dc,summary,area,normalFont,colors.secondary);
   }
   BitBlt(target,0,0,r.right,r.bottom,dc,0,0,SRCCOPY);SelectObject(dc,previous);DeleteObject(bitmap);DeleteDC(dc);EndPaint(hwnd,&ps);
  }
@@ -395,14 +530,14 @@ public:
  void positionBreak(bool force=false){
   if(!breakWindow)return;
   int offset=breakScroller.pixel();if(!force&&offset==breakApplied)return;breakApplied=offset;
-  std::vector<Placement> items;for(auto&i:breakItems)items.push_back({i.handle,i.x,i.y-offset,i.w,i.h});moveAll(items);
+  std::vector<Placement> items;for(auto&i:breakItems)items.push_back({i.handle,i.x,i.y-offset,i.w,i.h});moveAll(items,force);
   RECT r{};GetClientRect(breakWindow,&r);SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS,0,std::max(0,breakHeight-1),UINT(std::max(1L,r.bottom)),offset,0};SetScrollInfo(breakWindow,SB_VERT,&info,TRUE);
  }
  void suspend(bool isLock){engine->suspend(isLock);dismissBreak();schedule();saveTimer();}
  void wake(){if(locked||sleeping)return;engine->wake();schedule();if(engine->snapshot().phase==Phase::Break)showBreak();}
  void exit(){if(quitting)return;quitting=true;saveSettings();saveTimer();dismissBreak();DestroyWindow(main);}
- LRESULT color(HDC dc,HWND child=nullptr,bool input=false){SetBkColor(dc,input?colors.surface:colors.background);COLORREF ink=colors.foreground;if(child&&reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0))==headingFont&&!colors.contrast)ink=colors.accent;SetTextColor(dc,ink);return reinterpret_cast<LRESULT>(input?surfaceBrush:backgroundBrush);}
- static LRESULT CALLBACK paneProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;case WM_HSCROLL:if(reinterpret_cast<HWND>(l)==a.find(VOLUME)){a.settings.volume=int(SendMessageW(a.find(VOLUME),TBM_GETPOS,0,0));a.settingsChanged();if(LOWORD(w)==TB_ENDTRACK)a.saveSettings();}return 0;case WM_VSCROLL:if(a.barScroll(a.settingsScroller,hwnd,LOWORD(w),a.px(40)))a.settingsMoved();return 0;case WM_MOUSEWHEEL:a.wheelSettings(GET_WHEEL_DELTA_WPARAM(w));return 0;case WM_ERASEBKGND:{RECT r{};GetClientRect(hwnd,&r);FillRect(reinterpret_cast<HDC>(w),&r,a.backgroundBrush);return 1;}case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);}return DefWindowProcW(hwnd,msg,w,l);}
+ LRESULT color(HDC dc,HWND child=nullptr,bool input=false){SetBkColor(dc,input?colors.surface:colors.background);COLORREF ink=colors.foreground;if(child&&!colors.contrast){if(reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0))==headingFont)ink=colors.accent;else if(GetWindowLongPtrW(child,GWLP_USERDATA)==1)ink=colors.secondary;}SetTextColor(dc,ink);return reinterpret_cast<LRESULT>(input?surfaceBrush:backgroundBrush);}
+ static LRESULT CALLBACK paneProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;case WM_HSCROLL:if(reinterpret_cast<HWND>(l)==a.find(VOLUME)){a.settings.volume=int(SendMessageW(a.find(VOLUME),TBM_GETPOS,0,0));a.updateVolumeLabel();a.settingsChanged();if(LOWORD(w)==TB_ENDTRACK)a.saveSettings();}return 0;case WM_VSCROLL:if(a.barScroll(a.settingsScroller,hwnd,LOWORD(w),a.px(40)))a.settingsMoved();return 0;case WM_MOUSEWHEEL:a.wheelSettings(GET_WHEEL_DELTA_WPARAM(w));return 0;case WM_ERASEBKGND:{RECT r{};GetClientRect(hwnd,&r);FillRect(reinterpret_cast<HDC>(w),&r,a.backgroundBrush);return 1;}case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);}return DefWindowProcW(hwnd,msg,w,l);}
  static LRESULT CALLBACK breakProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_PAINT:a.paint(hwnd,true);return 0;case WM_ERASEBKGND:return 1;case WM_SIZE:a.layoutBreak();return 0;case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;
   case WM_VSCROLL:if(a.barScroll(a.breakScroller,hwnd,LOWORD(w),MulDiv(40,int(GetDpiForWindow(hwnd)),96)))a.breakMoved();return 0;
   case WM_MOUSEWHEEL:a.wheelBreak(GET_WHEEL_DELTA_WPARAM(w));return 0;
@@ -420,6 +555,7 @@ public:
    case ENGINE_MESSAGE:if(!a.quitting){a.engine->tick();a.schedule();}return 0;
    case WM_APP+3:a.error(L"Eye Break Reminder couldn't load some saved data. Defaults or a fresh timer have been restored.");return 0;
    case WM_APP+4:a.hideMain();return 0;
+   case PREVIEW_REFRESH:a.previewRefreshPosted=false;a.refreshPreview();return 0;
    case TRAY_MESSAGE:{UINT event=LOWORD(l);if(event==WM_LBUTTONUP||event==NIN_SELECT||event==NIN_KEYSELECT||event==NIN_BALLOONUSERCLICK)a.showMain();else if(event==WM_CONTEXTMENU||event==WM_RBUTTONUP)a.trayMenu({GET_X_LPARAM(w),GET_Y_LPARAM(w)});return 0;}
    case MM_WOM_DONE:if(a.audio&&a.audio->done(w,l)&&!a.audio->preview&&a.settings.repeat&&a.settings.alarm&&a.engine->snapshot().phase==Phase::Break&&!a.locked&&!a.sleeping)a.audio->play(a.settings);return 0;
    case WM_POWERBROADCAST:if(w==PBT_APMSUSPEND){a.sleeping=true;a.suspend(false);}else if(w==PBT_APMRESUMEAUTOMATIC||w==PBT_APMRESUMESUSPEND){a.sleeping=false;a.wake();}return TRUE;
@@ -432,10 +568,10 @@ public:
  }
  int run(HINSTANCE h,int show){instance=h;app=this;InitializeCriticalSection(&deadlineLock);stopEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);dueEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!stopEvent||!dueEvent)throw std::runtime_error("Timer scheduler unavailable");
   INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES|ICC_LISTVIEW_CLASSES|ICC_UPDOWN_CLASS|ICC_BAR_CLASSES};InitCommonControlsEx(&common);icon=LoadIconW(instance,MAKEINTRESOURCEW(1));
-  WNDCLASSEXW cls{};cls.cbSize=sizeof(cls);cls.hInstance=instance;cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.hIcon=cls.hIconSm=icon;cls.lpfnWndProc=mainProc;cls.lpszClassName=CLASS;RegisterClassExW(&cls);cls.lpfnWndProc=breakProc;cls.lpszClassName=BREAK_CLASS;RegisterClassExW(&cls);cls.lpfnWndProc=paneProc;cls.lpszClassName=L"EyeBreakReminder.Settings";RegisterClassExW(&cls);
+  WNDCLASSEXW cls{};cls.cbSize=sizeof(cls);cls.hInstance=instance;cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.hIcon=cls.hIconSm=icon;cls.style=CS_HREDRAW|CS_VREDRAW;cls.lpfnWndProc=mainProc;cls.lpszClassName=CLASS;RegisterClassExW(&cls);cls.style=0;cls.lpfnWndProc=breakProc;cls.lpszClassName=BREAK_CLASS;RegisterClassExW(&cls);cls.style=CS_HREDRAW|CS_VREDRAW;cls.lpfnWndProc=paneProc;cls.lpszClassName=L"EyeBreakReminder.Settings";RegisterClassExW(&cls);cls.style=0;
   cls.lpfnWndProc=DefWindowProcW;cls.lpszClassName=TRAY_MENU_CLASS;RegisterClassExW(&cls);
   trayMenuOwner=CreateWindowExW(WS_EX_TOOLWINDOW,TRAY_MENU_CLASS,L"",WS_POPUP,0,0,0,0,nullptr,nullptr,instance,nullptr);if(!trayMenuOwner)throw std::runtime_error("Tray menu window unavailable");
-  main=CreateWindowExW(WS_EX_APPWINDOW|WS_EX_CONTROLPARENT,CLASS,L"Eye Break Reminder",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,820,720,nullptr,nullptr,instance,nullptr);if(!main)throw std::runtime_error("Window unavailable");audio=std::make_unique<Audio>(main);load();dpi=GetDpiForWindow(main);
+  main=CreateWindowExW(WS_EX_APPWINDOW|WS_EX_CONTROLPARENT,CLASS,L"Eye Break Reminder",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,820,720,nullptr,nullptr,instance,nullptr);if(!main)throw std::runtime_error("Window unavailable");audio=std::make_unique<Audio>(main);audio->changed=[this]{postPreviewRefresh();};load();dpi=GetDpiForWindow(main);
   auto list=monitors();Monitor selected=preferred(settings,main);for(auto&m:list)if(settings.x>=m.work.left&&settings.x<m.work.right&&settings.y>=m.work.top&&settings.y<m.work.bottom)selected=m;RECT work=selected.work;
   int width=std::min(px(settings.width),int(work.right-work.left)),height=std::min(px(settings.height),int(work.bottom-work.top));int x=settings.x==-32000?work.left+(work.right-work.left-width)/2:std::clamp(settings.x,int(work.left),int(work.right-width));int y=settings.y==-32000?work.top+(work.bottom-work.top-height)/2:std::clamp(settings.y,int(work.top),int(work.bottom-height));SetWindowPos(main,nullptr,x,y,width,height,SWP_NOZORDER);
   createControls();applyTheme();addTray();WTSRegisterSessionNotification(main,NOTIFY_FOR_THIS_SESSION);
@@ -445,8 +581,10 @@ public:
    if(message.message==WM_KEYDOWN&&message.wParam==VK_RETURN){HWND focus=GetFocus();wchar_t clsName[32]{};GetClassNameW(focus,clsName,32);if(wcscmp(clsName,L"Button")==0){SendMessageW(focus,BM_CLICK,0,0);continue;}}
    if(message.message==WM_KEYDOWN&&message.wParam==VK_ESCAPE&&breakWindow){engine->finish(false);continue;}
    HWND dialog=breakWindow&&IsChild(breakWindow,GetFocus())?breakWindow:main;if(!IsDialogMessageW(dialog,&message)){TranslateMessage(&message);DispatchMessageW(&message);}HWND focus=GetFocus();if(focus!=lastFocus){lastFocus=focus;ensureFocused(focus);ensureBreakVisible(focus);}}
-  audio.reset();if(backgroundBrush)DeleteObject(backgroundBrush);if(surfaceBrush)DeleteObject(surfaceBrush);if(normalFont)DeleteObject(normalFont);
+  audio->changed=nullptr;audio.reset();if(backgroundBrush)DeleteObject(backgroundBrush);if(surfaceBrush)DeleteObject(surfaceBrush);if(normalFont)DeleteObject(normalFont);
   if(headingFont)DeleteObject(headingFont);
+  if(tabFont)DeleteObject(tabFont);
+  if(smallFont)DeleteObject(smallFont);
   if(titleFont)DeleteObject(titleFont);
   if(countFont)DeleteObject(countFont);
   CloseHandle(stopEvent);CloseHandle(dueEvent);DeleteCriticalSection(&deadlineLock);return 0;

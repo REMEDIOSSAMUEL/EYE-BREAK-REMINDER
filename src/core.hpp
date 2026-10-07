@@ -138,6 +138,102 @@ inline Stats statistics(const std::vector<Record>&records,int today,int monday,c
     int count=s.todayCompleted+s.todaySkipped;s.completion=count?100.0*s.todayCompleted/count:0;
     int cursor=completedDays.count(today)?today:today-1;while(completedDays.count(cursor--))++s.streak;return s;
 }
+// Pure layout arithmetic shared by the Windows UI and the tests. All inputs are device pixels except where noted "logical".
+namespace geometry {
+// Logical (96 DPI) length to device pixels at the given DPI.
+inline int scaled(double logical,int dpi){return int(std::lround(logical*dpi/96.0));}
+// The Settings shell: ONE rectangle, centred in the window, at most 640 logical px wide with a 24 logical px outer margin. The tab
+// bar, the section row, the page heading, the scroll viewport (including its scroll bar) and the History list all use exactly this
+// rectangle, so they share one left edge and one right edge.
+struct Column {int x=0,width=0;};
+inline Column contentColumn(int clientWidth,int dpi){
+    int available=std::max(scaled(320,dpi),clientWidth-2*scaled(24,dpi));
+    Column c;c.width=std::max(scaled(200,dpi),std::min(available,scaled(640,dpi)));c.x=(clientWidth-c.width)/2;return c;
+}
+// Segmented navigation: equal widths when every caption fits on one row, otherwise widths follow the captions and the
+// segments wrap onto further rows. Rows with several segments are stretched to exactly fill the width; a row holding a single
+// segment keeps the cell width of the row above so it reads as part of the grid rather than a full-width bar.
+struct Segment {int index=0,row=0,x=0,width=0;};
+inline std::vector<Segment> segmentRows(const std::vector<int>&natural,int x0,int width,int gap,int minimum,bool allowWrap=true){
+    std::vector<Segment> out;int n=int(natural.size());if(n==0)return out;
+    int widest=*std::max_element(natural.begin(),natural.end()),usable=width-(n-1)*gap;
+    if(usable/n>=widest){
+        for(int i=0;i<n;++i){int left=x0+usable*i/n+i*gap,right=i==n-1?x0+width:x0+usable*(i+1)/n+i*gap;out.push_back({i,0,left,std::max(minimum,right-left)});}
+        return out;
+    }
+    if(!allowWrap){ // one row whose widths follow the captions in proportion; used by the primary tab bar
+        long long sum=0;for(int v:natural)sum+=v;int x=x0;
+        for(int i=0;i<n;++i){int w=i==n-1?x0+width-x:std::max(minimum,int((long long)natural[i]*usable/std::max<long long>(1,sum)));if(i==n-1)w=std::max(minimum,w);out.push_back({i,0,x,w});x+=w+gap;}
+        return out;
+    }
+    std::vector<std::vector<int>> rows(1);int rowWidth=0;
+    for(int i=0;i<n;++i){int need=natural[i]+(rows.back().empty()?0:gap);if(!rows.back().empty()&&rowWidth+need>width){rows.emplace_back();rowWidth=0;need=natural[i];}rows.back().push_back(i);rowWidth+=need;}
+    int previousCell=width;
+    for(int r=0;r<int(rows.size());++r){auto&row=rows[r];int count=int(row.size()),used=0;for(int i:row)used+=natural[i];int extra=std::max(0,width-used-(count-1)*gap),x=x0;
+        if(count==1&&r>0){int i=row[0];int w=std::min(width,std::max(natural[i],previousCell));out.push_back({i,r,x0,std::max(minimum,w)});continue;}
+        for(int k=0;k<count;++k){int i=row[k];int w=natural[i]+extra/count;if(k==count-1)w=x0+width-x;if(k==0)previousCell=std::max(minimum,w);out.push_back({i,r,x,std::max(minimum,w)});x+=w+gap;}}
+    return out;
+}
+// Settings form placement. Items are laid out in content coordinates (x is measured from the pane edge, `inset` is the left
+// margin). Headings, hints and check boxes span the content width. A caption and the field after it sit side by side when
+// the column is wide enough for every caption, otherwise the caption stacks above its field. A slider may be followed by a
+// value label on the same row; buttons flow left to right and wrap when they no longer fit.
+enum class FormKind {Plain,Heading,Caption,Hint,Check,Field,Slider,Value,Button};
+struct FormItem {FormKind kind=FormKind::Plain;int textWidth=0;std::function<int(int)> textHeight;bool sameRow=false,indent=false,spin=false;};
+struct FormBox {int x=0,y=0,w=0,h=0,spinWidth=0;};
+struct Form {std::vector<FormBox> boxes;int height=0;bool sideBySide=false;};
+// Captions sit beside their fields only when the column is wide enough and every caption fits the label column.
+inline bool sideBySide(int contentWidth,int widestCaption,int labelWidth,int minimumContentWidth){return contentWidth>=minimumContentWidth&&widestCaption<=labelWidth;}
+inline Form layoutForm(const std::vector<FormItem>&items,int contentW,int inset,int dpi,double textScale){
+    auto px=[&](double v){return scaled(v,dpi);};
+    Form out;out.boxes.assign(items.size(),FormBox{});
+    const int fieldH=px(std::max(32.0,21.0*textScale)),labelW=px(210),colGap=px(16),valueW=px(52);
+    int widest=0;for(auto&item:items)if(item.kind==FormKind::Caption)widest=std::max(widest,item.textWidth);
+    out.sideBySide=sideBySide(contentW,widest,labelW,px(500));
+    auto heightAt=[&](const FormItem&item,int width){return item.textHeight?item.textHeight(std::max(1,width)):px(20);};
+    auto box=[&](std::size_t n,int x,int y,int w,int h){out.boxes[n]=FormBox{x,y,w,h,0};};
+    auto gapFor=[&](FormKind before,FormKind next)->int{
+        if(next==FormKind::Heading){return px(26);}
+        if(before==FormKind::Heading){return px(10);}
+        if(next==FormKind::Hint){return px(4);}
+        if(before==FormKind::Hint){return px(12);}
+        if(before==FormKind::Check&&next==FormKind::Check){return px(2);}
+        if(next==FormKind::Button){return px(18);}
+        return px(14);
+    };
+    int y=px(4);FormKind previous=FormKind::Plain;bool first=true;
+    for(std::size_t i=0;i<items.size();++i){
+        const FormItem&c=items[i];if(c.sameRow)continue;
+        if(!first)y+=gapFor(previous,c.kind);
+        first=false;FormKind placed=c.kind;
+        switch(c.kind){
+            case FormKind::Heading:{int h=heightAt(c,contentW)+px(4);box(i,inset,y,contentW,h);y+=h;break;}
+            case FormKind::Check:{int h=std::max(px(std::max(30.0,20.0*textScale)),heightAt(c,contentW-px(34))+px(10));box(i,inset,y,contentW,h);y+=h;break;}
+            case FormKind::Caption:{
+                const FormItem*field=i+1<items.size()?&items[i+1]:nullptr;
+                if(!field){int h=heightAt(c,contentW)+px(2);box(i,inset,y,contentW,h);y+=h;break;}
+                // Fields run to the column edge so every right edge lines up with the divider and the section row.
+                int spin=field->spin?px(24):0;
+                int controlW=field->spin?px(132):(out.sideBySide?contentW-labelW-colGap:contentW);int fx=inset,fy=y;
+                if(out.sideBySide){box(i,inset,y,labelW,fieldH);fx=inset+labelW+colGap;y+=fieldH;}
+                else{int captionH=heightAt(c,contentW)+px(2);box(i,inset,y,contentW,captionH);y+=captionH+px(6);fy=y;y+=fieldH;}
+                if(field->kind==FormKind::Slider){
+                    bool hasValue=i+2<items.size()&&items[i+2].sameRow;int sliderW=controlW-(hasValue?valueW+px(8):0);
+                    box(i+1,fx,fy,sliderW,fieldH);if(hasValue){box(i+2,fx+sliderW+px(8),fy,valueW,fieldH);++i;}
+                }else{box(i+1,fx,fy,controlW-spin,fieldH);out.boxes[i+1].spinWidth=spin;}
+                ++i;placed=FormKind::Field;break;}
+            case FormKind::Button:{
+                int x=inset,h=fieldH;auto natural=[&](const FormItem&b){return std::min(contentW,std::max(px(112),b.textWidth+px(40)));};
+                int bw=natural(c);box(i,x,y,bw,h);x+=bw;
+                while(i+1<items.size()&&items[i+1].sameRow){++i;int w2=natural(items[i]);if(x+px(10)+w2>inset+contentW){y+=h+px(8);x=inset;}else{x+=px(10);}box(i,x,y,w2,h);x+=w2;}
+                y+=h;break;}
+            default:{int indent=c.indent?px(32):0;int h=heightAt(c,contentW-indent)+px(2);box(i,inset+indent,y,contentW-indent,h);y+=h;break;}
+        }
+        previous=placed;
+    }
+    out.height=y;return out;
+}
+}
 // Scroll position with a wheel accumulator and a short ease-out animation. Units are the caller's (pixels or list rows).
 // Input moves the target immediately and is never queued: the position closes on the target and stops when it arrives.
 class ScrollModel {

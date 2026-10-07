@@ -7,8 +7,8 @@
 104 RCDATA "assets/Clear.wav"
 105 RCDATA "assets/Soft.wav"
 1 VERSIONINFO
-FILEVERSION 1,0,5,0
-PRODUCTVERSION 1,0,5,0
+FILEVERSION 1,0,6,0
+PRODUCTVERSION 1,0,6,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0
 FILEOS VOS_NT_WINDOWS32
@@ -20,11 +20,11 @@ BEGIN
   BLOCK "040904b0"
   BEGIN
    VALUE "FileDescription", "Eye Break Reminder\0"
-   VALUE "FileVersion", "1.0.5.0\0"
+   VALUE "FileVersion", "1.0.6.0\0"
    VALUE "InternalName", "EyeBreakReminder\0"
    VALUE "OriginalFilename", "EyeBreakReminder.exe\0"
    VALUE "ProductName", "Eye Break Reminder\0"
-   VALUE "ProductVersion", "1.0.5\0"
+   VALUE "ProductVersion", "1.0.6\0"
   END
  END
  BLOCK "VarFileInfo"

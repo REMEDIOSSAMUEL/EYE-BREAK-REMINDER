@@ -1,4 +1,4 @@
-# Eye Break Reminder 1.0.5 — Windows 11 x64
+# Eye Break Reminder 1.0.6 — Windows 11 x64
 
 A native Windows desktop eye-break utility, compiled from Linux with C++17 and MinGW-w64. It uses Win32 system controls, Windows common dialogs, native title bars, native tray integration, and a custom timer dial. It has no browser, console, .NET dependency or external assets at runtime.
 
@@ -48,7 +48,7 @@ See [CHANGELOG.md](CHANGELOG.md) for releases and [CONTRIBUTING.md](CONTRIBUTING
 
 ## Build on Windows (MSYS2)
 
-The 1.0.5 release was built on Windows 11 with MSYS2 instead of Linux. The `mingw64` (msvcrt) toolchain is required: `ucrt64` links `api-ms-win-crt-*` DLLs and fails the import check in `scripts/verify.py`. Install `mingw-w64-x86_64-gcc`, `mingw-w64-x86_64-binutils`, `make` and, for the installer, `mingw-w64-i686-nsis`, whose x86 stubs give the 32-bit bootstrap (the `ucrt64` NSIS package has only amd64 stubs). Compared with the Linux commands below:
+The 1.0.6 release was built on Windows 11 with MSYS2 instead of Linux. The `mingw64` (msvcrt) toolchain is required: `ucrt64` links `api-ms-win-crt-*` DLLs and fails the import check in `scripts/verify.py`. Install `mingw-w64-x86_64-gcc`, `mingw-w64-x86_64-binutils`, `make` and, for the installer, `mingw-w64-i686-nsis`, whose x86 stubs give the 32-bit bootstrap (the `ucrt64` NSIS package has only amd64 stubs). Compared with the Linux commands below:
 
 - pass `WINDRES=windres PYTHON=python` and `CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00'` (MSYS2 headers default to an older Windows target and omit `GetDpiForWindow`);
 - make `x86_64-w64-mingw32-strip` resolvable (the Makefile hardcodes that name; a copy of `strip.exe` under that name on `PATH` works);
@@ -75,7 +75,7 @@ For a legitimate signing certificate, sign the app before installer packaging, t
 
 ## Verification boundary
 
-The executable and installer are compiled with MinGW-w64 and NSIS, with actual core test execution and binary/resource checks. Release 1.0.5 was also launched on a real Windows 11 x64 machine and exercised with scripted input and audio-session measurements (see `docs/VERIFICATION.md`). **The installer has not been run, and the interactive UI checklist in `docs/WINDOWS-TESTING.md` has not been completed by a person.** Successful compilation does not establish runtime correctness. See `docs/VERIFICATION.md` and `docs/WINDOWS-TESTING.md` for the actual evidence and open checks.
+The executable and installer are compiled with MinGW-w64 and NSIS, with actual core test execution and binary/resource checks. Releases 1.0.4 and 1.0.5 were launched on a real Windows 11 x64 machine and exercised with scripted input and audio-session measurements; release 1.0.6 was launched there and its live-resize repainting was measured with scripted window sizing and screen capture (see `docs/VERIFICATION.md`). **The installer has not been run, and the interactive UI checklist in `docs/WINDOWS-TESTING.md` has not been completed by a person.** Successful compilation does not establish runtime correctness. See `docs/VERIFICATION.md` and `docs/WINDOWS-TESTING.md` for the actual evidence and open checks.
 
 ## Publishing releases
 
