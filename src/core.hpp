@@ -315,6 +315,21 @@ inline Stats statistics(const std::vector<Record>&records,int today,int monday,c
 namespace geometry {
 // Logical (96 DPI) length to device pixels at the given DPI.
 inline int scaled(double logical,int dpi){return int(std::lround(logical*dpi/96.0));}
+inline constexpr double timerProgressStartDegrees=-90.0; // GDI+ uses a downward y-axis, so -90 degrees is 12 o'clock.
+// Clockwise sweep for a clamped Timer ring. Kept pure so the 0/25/50/75/100% geometry can be checked without GDI+.
+inline double timerProgressSweep(double progress){return 360.0*std::clamp(progress,0.0,1.0);}
+inline constexpr int timerHeaderTitleWidth=120,timerHeaderStatusGap=4,timerHeaderTopInset=1,timerHeaderRowGap=4;
+inline int timerHeaderHeight(int dpi,double textScale){return scaled(std::max(38.0,20.0*textScale),dpi);}
+inline int timerHeaderCaptionOffset(int dpi,double textScale){return scaled(timerHeaderTopInset,dpi)+timerHeaderHeight(dpi,textScale)+scaled(timerHeaderRowGap,dpi);}
+inline int timerRingTopOffset(int dpi){return scaled(88,dpi)+scaled(8,dpi);}
+// Maximum width of a rectangular label that stays inside a stroked circular ring. `top` is relative to the ring ellipse.
+inline int circleLabelWidth(int diameter,int strokeWidth,int top,int height){
+    if(diameter<=0||strokeWidth<0||height<=0)return 0;
+    const double radius=std::max(0.0,diameter/2.0-strokeWidth/2.0-1.0),center=diameter/2.0;
+    const double farthest=std::max(std::abs(double(top)-center),std::abs(double(top+height)-center));
+    if(farthest>=radius)return 0;
+    return std::max(0,int(std::floor(2.0*std::sqrt(radius*radius-farthest*farthest)))-1);
+}
 // The Settings shell: ONE rectangle, centred in the window, at most 640 logical px wide with a 24 logical px outer margin. The tab
 // bar, the section row, the page heading, the scroll viewport (including its scroll bar) and the History list all use exactly this
 // rectangle, so they share one left edge and one right edge.

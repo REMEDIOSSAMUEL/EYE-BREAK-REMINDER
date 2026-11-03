@@ -120,6 +120,25 @@ void geometryTests(){
   combination();expect(saturated,"a wide window reaches the 640 logical px maximum");
   combination();{auto narrow=geometry::contentColumn(halfUp(520,dpi),dpi);expect(narrow.width>=halfUp(460,dpi),"the minimum window still gets a usable shell width");}}
 
+ // ---- Timer ring -----------------------------------------------------------------------------------------------------------
+  block("Timer ring sweep, countdown bounds and caption clearance");
+ {const double remaining[]={1200,900,600,300,0};const double expected[]={0,0.25,0.5,0.75,1};
+  for(int i=0;i<5;++i){Snapshot snapshot{Phase::Work,false,remaining[i],1200,1,false};combination();expect(std::fabs(snapshot.progress()-expected[i])<1e-9,"engine snapshot progress matches 0/25/50/75/100 percent remaining-time samples");}}
+ {const double progress[]={0,0.25,0.5,0.75,1,-0.25,1.25};const double expected[]={0,90,180,270,360,0,360};
+  for(int i=0;i<7;++i){combination();expect(std::fabs(geometry::timerProgressSweep(progress[i])-expected[i])<1e-9,"the ring sweep starts at 12 o'clock and covers 0/25/50/75/100 percent, clamped");}
+  combination();expect(geometry::timerProgressStartDegrees==-90.0,"clockwise progress begins at 12 o'clock");}
+ for(int dpi:kDpis)for(double textScale:kTextScales)for(int logical:{160,185,272}){
+  int diameter=geometry::scaled(logical,dpi),inset=geometry::scaled(4,dpi),stroke=geometry::scaled(4,dpi),ringDiameter=diameter-2*inset;
+   int countTop=diameter/3-inset,countHeight=diameter/3;
+  auto fits=[&](int width,int top,int height){double radius=ringDiameter/2.0-stroke/2.0-1.0,center=ringDiameter/2.0;
+   double farY=std::max(std::abs(double(top)-center),std::abs(double(top+height)-center));return width>0&&std::hypot(width/2.0+0.5,farY)<=radius+1e-9;};
+   int countWidth=geometry::circleLabelWidth(ringDiameter,stroke,countTop,countHeight);
+  combination();expect(fits(countWidth,countTop,countHeight),"countdown STATIC bounds stay inside the ring at supported DPIs and sizes");
+    int headingHeight=geometry::timerHeaderHeight(dpi,textScale),captionOffset=geometry::timerHeaderCaptionOffset(dpi,textScale),ringTop=geometry::timerRingTopOffset(dpi);
+    combination();expect(captionOffset+headingHeight<=ringTop,"full-width caption STATIC fits above the ring at supported DPIs and text scales");
+    int titleWidth=geometry::scaled(geometry::timerHeaderTitleWidth,dpi),statusLeft=titleWidth+geometry::scaled(geometry::timerHeaderStatusGap,dpi),minimumContentWidth=geometry::scaled(460,dpi);
+    combination();expect(statusLeft>titleWidth&&statusLeft<minimumContentWidth,"Timer title and state occupy separate horizontal space at minimum content width");}
+
  // ---- section navigation (segment rows) -----------------------------------------------------------------------------------
  block("section navigation (geometry::segmentRows)");
  {const int gap=6,minimum=40;unsigned seed=12345;int widestRows=0;bool sawEqual=false,sawWrapped=false;

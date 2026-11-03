@@ -6,7 +6,7 @@ namespace {
 constexpr wchar_t CLASS[]=L"EyeBreakReminder.Native";
 constexpr wchar_t BREAK_CLASS[]=L"EyeBreakReminder.Break";
 constexpr wchar_t TRAY_MENU_CLASS[]=L"EyeBreakReminder.TrayMenu";
-constexpr UINT TRAY_MESSAGE=WM_APP+1, ENGINE_MESSAGE=WM_APP+2, PREVIEW_REFRESH=WM_APP+5;
+constexpr UINT TRAY_MESSAGE=WM_APP+1, ENGINE_MESSAGE=WM_APP+2, PREVIEW_REFRESH=WM_APP+5, RESIZE_REFRESH=WM_APP+6;
 constexpr int NAV_TIMER=10,NAV_HISTORY=11,NAV_SETTINGS=12,PAUSE=20,RESET=21,TAKE_BREAK=22,COMPLETE=23,SKIP=24,SNOOZE1=25,SNOOZE3=26,SNOOZE5=27;
 constexpr int COUNTDOWN=40,TIMER_STATE=41,COUNT_CAPTION=42,BREAK_TITLE=43,BREAK_INSTRUCTION=44,BREAK_GUIDANCE=45,HISTORY_TOGGLE=30,CLEAR_HISTORY=31,ALARM_TOGGLE=32,WORK=100,BREAK_SECONDS=101,SOUND=102,VOLUME=103,MODE=104,MONITOR=105,THEME=106,REPEAT=107,NOTIFY=108,SNOOZE=109,AUTO_START=110,STARTUP=111,TRAY=112,RESTORE=113,PAUSE_LOCK=114,SELECT_MONITOR=115,PREVIEW=116,STOP_AUDIO=117,RESET_SETTINGS=118,VOLUME_VALUE=119;
 constexpr int SCHEDULE_TOGGLE=120,PRESET_WEEKDAYS=121,PRESET_EVERYDAY=122,SCHEDULE_STATUS=123;
@@ -21,6 +21,8 @@ using Kind=geometry::FormKind;
 // `group` is the weekday a schedule row control belongs to (-1 otherwise); `keep` wraps an inline label with the field after it.
 struct Control {HWND handle{};int id=0;int page=0;Kind kind=Kind::Plain;HWND buddySpin{};int x=0,y=0,w=0,h=0,spinWidth=0,rowHeight=0,section=0,group=-1;bool sameRow=false,indent=false,keep=false;};
 struct Placement {HWND handle{};int x=0,y=0,w=0,h=0;};
+struct TimerGeometry {int left=0,top=0,diameter=0,ringX=0,ringY=0,ringDiameter=0;};
+struct TimerPresentation {std::wstring countdown,caption,status;double progress=0;};
 struct Colors {COLORREF background=RGB(247,248,250),surface=RGB(255,255,255),hover=RGB(239,243,249),foreground=RGB(24,30,42),secondary=RGB(93,103,119),line=RGB(215,222,232),accent=RGB(37,99,235);bool dark=false,contrast=false;};
 class Application {
 public:
@@ -28,9 +30,9 @@ public:
  Settings settings;std::unique_ptr<Engine> engine;std::unique_ptr<Audio> audio;std::vector<Record> history;
  std::vector<Control> controls;std::array<HWND,3> nav{};std::array<HWND,SECTION_COUNT> sectionNav{};int settingsSection=0,buildSection=0;HWND historyList{},settingsPane{};std::vector<Monitor> displays;
  Colors colors;std::wstring directory;UINT dpi=96;double textScale=1;bool hidden=false,locked=false,sleeping=false,quitting=false,quietBreak=false,loading=false,trayAdded=false,dirtySettings=false,saveWarned=false;
- int page=0,settingsHeight=0,breakHeight=0,settingsApplied=INT_MIN,breakApplied=INT_MIN,historyApplied=0;std::uint64_t notifiedCycle=0,alarmedCycle=0;NOTIFYICONDATAW trayData{};
+ int page=0,settingsHeight=0,breakHeight=0,settingsApplied=INT_MIN,breakApplied=INT_MIN,historyApplied=0;TimerPresentation timerPresentation;UINT renderTimerInterval=0;std::uint64_t notifiedCycle=0,alarmedCycle=0;NOTIFYICONDATAW trayData{};
  ScrollModel settingsScroller,breakScroller,historyScroller{0.05};std::vector<Placement> breakItems;bool scrollTimer=false,previewRefreshPosted=false;double scrollClock=0;
- HANDLE dueEvent{},stopEvent{};HANDLE worker{};UINT activateMessage=RegisterWindowMessageW(L"EyeBreakReminder.Activate.Native.1");UINT quitMessage=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");UINT explorerMessage=RegisterWindowMessageW(L"TaskbarCreated");
+ HANDLE dueEvent{},stopEvent{};HANDLE worker{};volatile LONG interactiveResize=0,resizeRefreshPosted=0,resizeVisualInterval=250;UINT activateMessage=RegisterWindowMessageW(L"EyeBreakReminder.Activate.Native.1");UINT quitMessage=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");UINT explorerMessage=RegisterWindowMessageW(L"TaskbarCreated");
  double deadline=0;CRITICAL_SECTION deadlineLock{};RECT normalBounds{};bool haveNormalBounds=false,breakSnooze=false;
  // Dynamic Annotation gives schedule fields full accessible names ("Monday, period 1, start time") beyond their short visible labels.
  IAccPropServices* accessibility{};std::vector<HWND> annotated;
@@ -125,6 +127,21 @@ public:
  int pillHeight()const{return px(std::max(28.0,21.0*textScale));}
  int fieldHeight()const{return px(std::max(32.0,21.0*textScale));}
  int navBottom()const{return px(16)+tabHeight();}
+ TimerGeometry timerGeometry(int width,int buttonTop)const{
+  int timerTop=navBottom()+px(22),statusBottom=timerTop+px(88);
+  int diameter=std::min({px(272),width-px(100),std::max(px(160),buttonTop-statusBottom-px(18))});
+  int left=(width-diameter)/2,top=statusBottom+px(8);
+  return {left,top,diameter,left+px(4),top+px(4),diameter-px(8)};
+ }
+ int timerLabelWidth(const TimerGeometry&ring,int top,int height)const{return geometry::circleLabelWidth(ring.ringDiameter,px(4),top-ring.ringY,height);}
+ void drawTimerRing(Gdiplus::Graphics&graphics,const TimerGeometry&ring,double progress)const{
+  auto rgba=[](COLORREF color){return Gdiplus::Color(255,GetRValue(color),GetGValue(color),GetBValue(color));};
+  Gdiplus::Pen track(rgba(colors.line),float(px(4))),accent(rgba(colors.accent),float(px(4)));
+  graphics.DrawEllipse(&track,ring.ringX,ring.ringY,ring.ringDiameter,ring.ringDiameter);
+  progress=std::clamp(progress,0.0,1.0);
+  if(progress>=1.0)graphics.DrawEllipse(&accent,ring.ringX,ring.ringY,ring.ringDiameter,ring.ringDiameter);
+  else if(progress>0.0)graphics.DrawArc(&accent,ring.ringX,ring.ringY,ring.ringDiameter,ring.ringDiameter,float(geometry::timerProgressStartDegrees),float(geometry::timerProgressSweep(progress)));
+ }
  // One content column (the Settings shell) shared by the tab bar, the section row, the page heading, the scroll viewport and the
  // History list. The settings scroll bar lives inside this column, at its right edge.
  using Column=geometry::Column;
@@ -301,7 +318,7 @@ public:
  void createControls(){
   dpi=GetDpiForWindow(main);createFonts();
   for(int i=0;i<3;++i){nav[i]=CreateWindowExW(0,L"BUTTON",i==0?L"&Timer":i==1?L"&History":L"&Settings",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(NAV_TIMER+i)),instance,nullptr);SendMessageW(nav[i],WM_SETFONT,reinterpret_cast<WPARAM>(tabFont),TRUE);}
-  control(L"STATIC",L"Running",SS_CENTER|SS_CENTERIMAGE|SS_ENDELLIPSIS,TIMER_STATE,0);control(L"STATIC",L"Next eye break",SS_CENTER|SS_CENTERIMAGE,COUNT_CAPTION,0);control(L"STATIC",L"20:00",SS_CENTER|SS_CENTERIMAGE,COUNTDOWN,0);
+  control(L"STATIC",L"Running",SS_CENTER|SS_CENTERIMAGE|SS_ENDELLIPSIS,TIMER_STATE,0);control(L"STATIC",L"Next eye break",SS_CENTER|SS_CENTERIMAGE|SS_ENDELLIPSIS,COUNT_CAPTION,0);control(L"STATIC",L"20:00",SS_CENTER|SS_CENTERIMAGE|SS_ENDELLIPSIS,COUNTDOWN,0);
   control(L"BUTTON",L"Take a break now",BS_DEFPUSHBUTTON,TAKE_BREAK,0);control(L"BUTTON",L"Pause",BS_PUSHBUTTON,PAUSE,0);control(L"BUTTON",L"Reset",BS_PUSHBUTTON,RESET,0);
   historyList=CreateWindowExW(WS_EX_CLIENTEDGE,WC_LISTVIEWW,L"Eye break history",WS_CHILD|WS_TABSTOP|LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS,0,0,1,1,main,reinterpret_cast<HMENU>(200),instance,nullptr);ListView_SetExtendedListViewStyle(historyList,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
   for(int i=0;i<3;++i){LVCOLUMNW col{};col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_SUBITEM;col.pszText=const_cast<LPWSTR>(i==0?L"Date":i==1?L"Break":L"Seconds");col.cx=px(i==0?240:140);col.iSubItem=i;ListView_InsertColumn(historyList,i,&col);}
@@ -318,6 +335,7 @@ public:
  }
  void switchPage(int next){page=next;settleScroll();for(auto h:sectionNav)ShowWindow(h,page==2?SW_SHOW:SW_HIDE);for(int i=0;i<3;++i){SendMessageW(nav[i],BM_SETCHECK,i==page?BST_CHECKED:BST_UNCHECKED,0);InvalidateRect(nav[i],nullptr,TRUE);}
   for(auto&c:controls)if(c.page!=2)ShowWindow(c.handle,c.page==page?SW_SHOW:SW_HIDE);
+  if(page==0)updateAccessibleTimer();
   ShowWindow(settingsPane,page==2?SW_SHOW:SW_HIDE);ShowWindow(historyList,page==1?SW_SHOW:SW_HIDE);if(page==1)updateHistory();layout();updateRenderTimer();InvalidateRect(main,nullptr,TRUE);}
  void layout(){
   if(!main||!settingsPane)return;
@@ -328,12 +346,13 @@ public:
    for(auto&segment:geometry::segmentRows(natural,col.x,col.width,0,px(60),false))move(nav[segment.index],segment.x,tabTop,segment.width,tabHeightNow);}
   int top=navBottom()+px(28);
   if(page==0){int y=std::max(top+px(285),h-px(150)-2*bh-gap);int buttonWidth=std::min(w-2*pad,px(280*std::sqrt(textScale)));move(find(TAKE_BREAK),(w-buttonWidth)/2,y,buttonWidth,bh);int secondWidth=(buttonWidth-gap)/2;move(find(PAUSE),(w-buttonWidth)/2,y+bh+gap,secondWidth,bh);move(find(RESET),(w-buttonWidth)/2+secondWidth+gap,y+bh+gap,secondWidth,bh);
-   int timerTop=navBottom()+px(22),stateBottom=timerTop+px(88);
-   int diameter=std::min({px(272),w-px(100),std::max(px(160),y-stateBottom-px(18))});int left=(w-diameter)/2,ty=stateBottom+px(8);
-   move(find(TIMER_STATE),pad,timerTop+px(50),w-2*pad,px(38));
-   move(find(COUNTDOWN),left,ty+diameter/3,diameter,diameter/3);
-   move(find(COUNT_CAPTION),left,ty+diameter*2/3,diameter,px(40));
-   int size=std::min(px(56*std::sqrt(textScale)),diameter/4);if(size!=countSize){HFONT previous=countFont;countSize=size;countFont=CreateFontW(-size,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable");SendMessageW(find(COUNTDOWN),WM_SETFONT,reinterpret_cast<WPARAM>(countFont),TRUE);if(previous)DeleteObject(previous);}
+    int timerTop=navBottom()+px(22);TimerGeometry ring=timerGeometry(w,y);
+    int headingHeight=geometry::timerHeaderHeight(int(dpi),textScale),headingTop=timerTop+px(geometry::timerHeaderTopInset),titleWidth=px(geometry::timerHeaderTitleWidth),statusGap=px(geometry::timerHeaderStatusGap);
+    move(find(TIMER_STATE),col.x+titleWidth+statusGap,headingTop,std::max(1,col.width-titleWidth-statusGap),headingHeight);
+    move(find(COUNT_CAPTION),col.x,timerTop+geometry::timerHeaderCaptionOffset(int(dpi),textScale),col.width,headingHeight);
+    int countTop=ring.top+ring.diameter/3,countHeight=ring.diameter/3,countWidth=timerLabelWidth(ring,countTop,ring.diameter/3);
+    move(find(COUNTDOWN),ring.left+(ring.diameter-countWidth)/2,countTop,countWidth,countHeight);
+   int size=std::min(px(56*std::sqrt(textScale)),ring.diameter/4);if(size!=countSize){HFONT previous=countFont;countSize=size;countFont=CreateFontW(-size,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable");SendMessageW(find(COUNTDOWN),WM_SETFONT,reinterpret_cast<WPARAM>(countFont),TRUE);if(previous)DeleteObject(previous);}
   }
   if(page==1){int listTop=top+px(135)*int(std::ceil(textScale));int listHeight=std::max(px(80),h-listTop-pad-bh-gap);move(historyList,col.x,listTop,col.width,listHeight);move(find(HISTORY_TOGGLE),col.x,listTop+listHeight+gap,std::max(px(240),col.width-px(150)),bh);move(find(CLEAR_HISTORY),col.x+col.width-px(140),listTop+listHeight+gap,px(140),bh);}
   int pillTop=navBottom()+px(22),pillHeightNow=pillHeight(),pillGap=px(4);
@@ -460,17 +479,13 @@ public:
  }
  void text(HDC dc,const std::wstring&str,RECT area,HFONT font,COLORREF color,UINT flags=DT_LEFT|DT_WORDBREAK){SelectObject(dc,font);SetTextColor(dc,color);SetBkMode(dc,TRANSPARENT);DrawTextW(dc,str.c_str(),int(str.size()),&area,flags);}
  void paint(HWND hwnd,bool isBreak){
-  PAINTSTRUCT ps{};HDC target=BeginPaint(hwnd,&ps);RECT r{};GetClientRect(hwnd,&r);HDC dc=CreateCompatibleDC(target);HBITMAP bitmap=CreateCompatibleBitmap(target,std::max(1L,r.right),std::max(1L,r.bottom));auto previous=SelectObject(dc,bitmap);FillRect(dc,&r,backgroundBrush);auto snap=engine->snapshot();
+  PAINTSTRUCT ps{};HDC target=BeginPaint(hwnd,&ps);RECT r{};GetClientRect(hwnd,&r);HDC dc=CreateCompatibleDC(target);HBITMAP bitmap=CreateCompatibleBitmap(target,std::max(1L,r.right),std::max(1L,r.bottom));auto previous=SelectObject(dc,bitmap);FillRect(dc,&r,backgroundBrush);
   if(!isBreak){Column col=column(r.right);int rule=std::max(1,px(1));RECT line{col.x,navBottom()-rule,col.x+col.width,navBottom()};HBRUSH lineBrush=CreateSolidBrush(colors.line);FillRect(dc,&line,lineBrush);DeleteObject(lineBrush);}
   if(isBreak){ // Native STATIC controls render all break content.
   }else if(page==0){
-   int top=navBottom()+px(22);Column col=column(r.right);RECT title{col.x,top,col.x+col.width,top+px(44)};text(dc,L"Timer",title,titleFont,colors.foreground);
-   std::wstring state=stateText(snap);RECT status{px(28),top+px(50),r.right-px(28),top+px(88)};text(dc,state,status,normalFont,colors.secondary,DT_CENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
-   RECT button{};GetWindowRect(find(TAKE_BREAK),&button);MapWindowPoints(nullptr,main,reinterpret_cast<POINT*>(&button),2);int diameter=std::min({px(272),int(r.right)-px(100),std::max(px(160),int(button.top-status.bottom)-px(18))});int left=(r.right-diameter)/2,ty=status.bottom+px(8);
-   Gdiplus::Graphics graphics(dc);graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);Gdiplus::Pen track(Gdiplus::Color(255,GetRValue(colors.line),GetGValue(colors.line),GetBValue(colors.line)),float(px(4)));Gdiplus::Pen accent(Gdiplus::Color(255,GetRValue(colors.accent),GetGValue(colors.accent),GetBValue(colors.accent)),float(px(4)));
-   graphics.DrawEllipse(&track,left+px(4),ty+px(4),diameter-px(8),diameter-px(8));if(snap.progress()>0)graphics.DrawArc(&accent,left+px(4),ty+px(4),diameter-px(8),diameter-px(8),-90.f,float(360*snap.progress()));
-   HFONT large=CreateFontW(-std::min(px(56),diameter/4),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable");RECT time{left,ty+diameter/3,left+diameter,ty+diameter*2/3};text(dc,timeText(snap.remaining),time,large,colors.foreground,DT_CENTER|DT_SINGLELINE|DT_VCENTER);DeleteObject(large);
-   RECT caption{left,ty+diameter*2/3,left+diameter,ty+diameter*2/3+px(40)};text(dc,captionText(snap),caption,normalFont,colors.secondary,DT_CENTER|DT_SINGLELINE);
+    int top=navBottom()+px(22);Column col=column(r.right);RECT title{col.x,top+px(geometry::timerHeaderTopInset),col.x+px(geometry::timerHeaderTitleWidth),top+px(geometry::timerHeaderTopInset)+geometry::timerHeaderHeight(int(dpi),textScale)};text(dc,L"Timer",title,headingFont,colors.foreground,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+   RECT button{};GetWindowRect(find(TAKE_BREAK),&button);MapWindowPoints(nullptr,main,reinterpret_cast<POINT*>(&button),2);TimerGeometry ring=timerGeometry(int(r.right),button.top);
+    Gdiplus::Graphics graphics(dc);graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);drawTimerRing(graphics,ring,timerPresentation.progress);
    RECT reset{};GetWindowRect(find(RESET),&reset);MapWindowPoints(nullptr,main,reinterpret_cast<POINT*>(&reset),2);RECT rule{px(28),reset.bottom+px(18),r.right-px(28),r.bottom-px(10)};
    std::wstring explanation=L"20 min · Work      20 ft · Look away      20 sec · Rest\nEvery 20 minutes, look around 20 feet / 6 metres away for at least 20 seconds.";
    if(settings.workMinutes!=20||settings.breakSeconds!=20)explanation+=L"\nYour schedule: "+std::to_wstring(settings.workMinutes)+L" min work, "+std::to_wstring(settings.breakSeconds)+L" sec rest.";
@@ -500,7 +515,17 @@ public:
   return engine->scheduled()?L"Running — within scheduled hours":L"Running";
  }
  static const wchar_t* captionText(const Snapshot&s){return s.phase==Phase::Break?L"Eye break":s.held?L"On hold":L"Next eye break";}
- void updateAccessibleTimer(){auto snap=engine->snapshot();auto set=[&](int id,const std::wstring&value){HWND h=find(id);if(!h)return;wchar_t old[160]{};GetWindowTextW(h,old,160);if(value!=old)SetWindowTextW(h,value.c_str());};set(COUNTDOWN,timeText(snap.remaining));set(COUNT_CAPTION,captionText(snap));set(TIMER_STATE,stateText(snap));}
+  bool updateAccessibleTimer(){auto snap=engine->snapshot();TimerPresentation next{timeText(snap.remaining),captionText(snap),stateText(snap),snap.progress()};
+   bool changed=next.countdown!=timerPresentation.countdown||next.caption!=timerPresentation.caption||next.status!=timerPresentation.status||next.progress!=timerPresentation.progress;timerPresentation=std::move(next);
+   auto set=[&](int id,const std::wstring&value){HWND h=find(id);if(!h)return;wchar_t old[160]{};GetWindowTextW(h,old,160);if(value!=old){SetWindowTextW(h,value.c_str());InvalidateRect(h,nullptr,FALSE);}};
+   set(COUNTDOWN,timerPresentation.countdown);set(COUNT_CAPTION,timerPresentation.caption);set(TIMER_STATE,timerPresentation.status);return changed;}
+  void refreshTimerDisplay(bool tickEngine=true){
+   if(!engine||quitting)return;
+   if(tickEngine)engine->tick();
+   bool changed=updateAccessibleTimer();
+   if(changed&&!hidden&&page==0)InvalidateRect(main,nullptr,FALSE);
+   if(breakWindow){HWND count=GetDlgItem(breakWindow,COUNTDOWN);if(count){wchar_t previous[32]{};GetWindowTextW(count,previous,32);if(timerPresentation.countdown!=previous){SetWindowTextW(count,timerPresentation.countdown.c_str());InvalidateRect(breakWindow,nullptr,FALSE);}}}
+  }
  void updateScheduleStatus(){HWND h=find(SCHEDULE_STATUS);if(!h)return;auto text=scheduleStatus();if(text==windowText(h))return;SetWindowTextW(h,text.c_str());if(page==2&&settingsSection==SCHEDULE_SECTION)layoutSettings();}
  // Wall-clock or time-zone change (announced by Windows, or found by the once-a-minute check): re-evaluate the schedule.
  void timeChanged(){if(!engine||quitting)return;engine->tick();schedule();updateAccessibleTimer();updateScheduleStatus();updateTray();if(!hidden&&page==0)InvalidateRect(main,nullptr,FALSE);}
@@ -599,10 +624,18 @@ public:
   settingsChanged();saveSettings();
  }
  void captureBounds(){if(!main||IsIconic(main)||IsZoomed(main)||hidden)return;RECT r{};GetWindowRect(main,&r);settings.x=r.left;settings.y=r.top;settings.width=int((r.right-r.left)*96/dpi);settings.height=int((r.bottom-r.top)*96/dpi);settings.validate();normalBounds=r;haveNormalBounds=true;}
- void showMain(bool focusBreak=true){hidden=false;ShowWindow(main,IsIconic(main)?SW_RESTORE:SW_SHOW);SetForegroundWindow(main);updateRenderTimer();if(focusBreak&&engine->snapshot().phase==Phase::Break){if(!breakWindow)showBreak();else SetForegroundWindow(breakWindow);}}
+ void showMain(bool focusBreak=true){hidden=false;ShowWindow(main,IsIconic(main)?SW_RESTORE:SW_SHOW);updateAccessibleTimer();InvalidateRect(main,nullptr,FALSE);SetForegroundWindow(main);updateRenderTimer();if(focusBreak&&engine->snapshot().phase==Phase::Break){if(!breakWindow)showBreak();else SetForegroundWindow(breakWindow);}}
  void hideMain(){if(!trayAdded){error(L"The tray icon isn't available. The window will stay open so you can control the timer.");ShowWindow(main,SW_RESTORE);return;}captureBounds();hidden=true;ShowWindow(main,SW_HIDE);saveSettings();saveTimer();updateRenderTimer();}
  void closeMain(){if(!settings.tray){exit();return;}if(!settings.trayExplained){settings.trayExplained=true;saveSettings();inform(main,L"The timer keeps running in the system tray",L"Closing keeps your reminders active. To quit, right-click the tray icon and choose Exit. You can change this in Settings.");}hideMain();}
- void updateRenderTimer(){if(!main)return;KillTimer(main,RENDER);if(engine){auto s=engine->snapshot();if(s.paused||(s.held&&s.phase!=Phase::Break))return;}if((!hidden&&!IsIconic(main)&&page==0)||breakWindow){BOOL animations=TRUE;SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animations,0);SetTimer(main,RENDER,animations?250:1000,nullptr);}}
+  void updateRenderTimer(){
+   if(!main)return;
+   UINT interval=0;
+   if(engine){auto s=engine->snapshot();if(!s.paused&&!(s.held&&s.phase!=Phase::Break)&&((!hidden&&!IsIconic(main)&&page==0)||breakWindow)){BOOL animations=TRUE;SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animations,0);interval=animations?250:1000;}}
+   InterlockedExchange(&resizeVisualInterval,LONG(interval));
+   if(interval==renderTimerInterval)return;
+   if(renderTimerInterval){KillTimer(main,RENDER);renderTimerInterval=0;}
+   if(interval&&SetTimer(main,RENDER,interval,nullptr))renderTimerInterval=interval;
+  }
  // The worker wakes for whichever comes first: the countdown reaching zero or the next operating-schedule boundary. Boundaries are
  // wall-clock instants, so with the schedule on the deadline is also re-derived at least once a minute; a clock or time-zone change
  // that Windows does not announce cannot leave a hidden window in the wrong state for long. The engine checks the schedule before
@@ -613,7 +646,12 @@ public:
   if(!away&&engine->scheduled()){double boundary=now+60;if(std::int64_t change=engine->scheduleBoundary())boundary=std::min(boundary,now+std::max(0.0,double(change)-preciseUtc())+0.02);next=next>0?std::min(next,boundary):boundary;}
   EnterCriticalSection(&deadlineLock);deadline=next;LeaveCriticalSection(&deadlineLock);SetEvent(dueEvent);
  }
- static DWORD WINAPI work(LPVOID context){auto self=static_cast<Application*>(context);HANDLE events[]={self->stopEvent,self->dueEvent};for(;;){EnterCriticalSection(&self->deadlineLock);double when=self->deadline;LeaveCriticalSection(&self->deadlineLock);DWORD timeout=when<=0?INFINITE:DWORD(std::clamp(std::ceil((when-monotonic())*1000),1.0,double(MAXDWORD-1)));DWORD result=WaitForMultipleObjects(2,events,FALSE,timeout);if(result==WAIT_OBJECT_0||result==WAIT_FAILED)return 0;if(result==WAIT_TIMEOUT){EnterCriticalSection(&self->deadlineLock);if(self->deadline==when)self->deadline=0;LeaveCriticalSection(&self->deadlineLock);PostMessageW(self->main,ENGINE_MESSAGE,0,0);}}}
+  static DWORD WINAPI work(LPVOID context){auto self=static_cast<Application*>(context);HANDLE events[]={self->stopEvent,self->dueEvent};double nextVisual=0;for(;;){EnterCriticalSection(&self->deadlineLock);double when=self->deadline;LeaveCriticalSection(&self->deadlineLock);
+   LONG interval=InterlockedCompareExchange(&self->resizeVisualInterval,0,0);bool resizing=InterlockedCompareExchange(&self->interactiveResize,0,0)!=0&&interval>0;double now=monotonic();if(resizing){if(nextVisual<=0)nextVisual=now+interval/1000.0;}else nextVisual=0;
+   double wakeAt=when;if(resizing&&(wakeAt<=0||nextVisual<wakeAt))wakeAt=nextVisual;DWORD timeout=wakeAt<=0?INFINITE:DWORD(std::clamp(std::ceil((wakeAt-now)*1000),1.0,double(MAXDWORD-1)));
+   DWORD result=WaitForMultipleObjects(2,events,FALSE,timeout);if(result==WAIT_OBJECT_0||result==WAIT_FAILED)return 0;if(result==WAIT_TIMEOUT){double after=monotonic();bool due=false;
+    if(when>0&&after>=when){EnterCriticalSection(&self->deadlineLock);if(self->deadline==when){self->deadline=0;due=true;}LeaveCriticalSection(&self->deadlineLock);}if(due)PostMessageW(self->main,ENGINE_MESSAGE,0,0);
+    LONG currentInterval=InterlockedCompareExchange(&self->resizeVisualInterval,0,0);if(InterlockedCompareExchange(&self->interactiveResize,0,0)!=0&&currentInterval>0&&nextVisual>0&&after>=nextVisual){nextVisual=after+currentInterval/1000.0;if(InterlockedCompareExchange(&self->resizeRefreshPosted,1,0)==0&&!PostMessageW(self->main,RESIZE_REFRESH,0,0))InterlockedExchange(&self->resizeRefreshPosted,0);}}}}
  void changed(){auto snap=engine->snapshot();updateAccessibleTimer();
   if(snap.phase!=Phase::Break)dismissBreak();
   // Operating hours closed during a break the user started: it may finish, but no alarm, notification or snooze outside hours.
@@ -669,7 +707,8 @@ public:
  LRESULT color(HDC dc,HWND child=nullptr,bool input=false){
   // A disabled edit (the hours of an unselected day) asks for static colours; it keeps its field surface with secondary text.
   bool dimmed=false;if(child&&!input&&!IsWindowEnabled(child)){wchar_t cls[16]{};GetClassNameW(child,cls,16);dimmed=input=_wcsicmp(cls,L"Edit")==0;}
-  SetBkColor(dc,input?colors.surface:colors.background);COLORREF ink=dimmed&&!colors.contrast?colors.secondary:colors.foreground;if(child&&!colors.contrast&&!dimmed){if(reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0))==headingFont)ink=colors.accent;else if(GetWindowLongPtrW(child,GWLP_USERDATA)==1)ink=colors.secondary;}SetTextColor(dc,ink);return reinterpret_cast<LRESULT>(input?surfaceBrush:backgroundBrush);}
+   SetBkColor(dc,input?colors.surface:colors.background);SetBkMode(dc,OPAQUE);
+   COLORREF ink=dimmed&&!colors.contrast?colors.secondary:colors.foreground;if(child&&!colors.contrast&&!dimmed){if(reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0))==headingFont)ink=colors.accent;else if(GetDlgCtrlID(child)==COUNT_CAPTION||GetWindowLongPtrW(child,GWLP_USERDATA)==1)ink=colors.secondary;}SetTextColor(dc,ink);return reinterpret_cast<LRESULT>(input?surfaceBrush:backgroundBrush);}
  static LRESULT CALLBACK paneProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;case WM_HSCROLL:if(reinterpret_cast<HWND>(l)==a.find(VOLUME)){a.settings.volume=int(SendMessageW(a.find(VOLUME),TBM_GETPOS,0,0));a.updateVolumeLabel();a.settingsChanged();if(LOWORD(w)==TB_ENDTRACK)a.saveSettings();}return 0;case WM_VSCROLL:if(a.barScroll(a.settingsScroller,hwnd,LOWORD(w),a.px(40)))a.settingsMoved();return 0;case WM_MOUSEWHEEL:a.wheelSettings(GET_WHEEL_DELTA_WPARAM(w));return 0;case WM_ERASEBKGND:{RECT r{};GetClientRect(hwnd,&r);FillRect(reinterpret_cast<HDC>(w),&r,a.backgroundBrush);return 1;}case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);}return DefWindowProcW(hwnd,msg,w,l);}
  static LRESULT CALLBACK breakProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_PAINT:a.paint(hwnd,true);return 0;case WM_ERASEBKGND:return 1;case WM_SIZE:a.layoutBreak();return 0;case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;
   case WM_VSCROLL:if(a.barScroll(a.breakScroller,hwnd,LOWORD(w),MulDiv(40,int(GetDpiForWindow(hwnd)),96)))a.breakMoved();return 0;
@@ -678,18 +717,21 @@ public:
  static LRESULT CALLBACK mainProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;
   if(msg==a.activateMessage){a.showMain();return 0;}if(msg==a.quitMessage){a.exit();return 0;}if(msg==a.explorerMessage){a.addTray();a.updateTray();return 0;}
   switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_PAINT:if(a.engine)a.paint(hwnd,false);else {PAINTSTRUCT p{};BeginPaint(hwnd,&p);EndPaint(hwnd,&p);}return 0;case WM_ERASEBKGND:return 1;
-   case WM_SIZE:if(a.engine){if(w==SIZE_MINIMIZED){if(a.settings.tray)PostMessageW(hwnd,WM_APP+4,0,0);a.updateRenderTimer();}else {a.layout();a.updateRenderTimer();}}return 0;
+    case WM_SIZE:if(a.engine){if(w==SIZE_MINIMIZED){if(a.settings.tray)PostMessageW(hwnd,WM_APP+4,0,0);a.updateRenderTimer();}else {a.layout();a.updateRenderTimer();}}return 0;
+    case WM_SIZING:if(!a.hidden&&a.renderTimerInterval>0&&(a.page==0||a.breakWindow)&&InterlockedExchange(&a.interactiveResize,1)==0)SetEvent(a.dueEvent);break;
+    case WM_EXITSIZEMOVE:if(InterlockedExchange(&a.interactiveResize,0)!=0){SetEvent(a.dueEvent);a.refreshTimerDisplay();}a.updateRenderTimer();return 0;
    case WM_GETMINMAXINFO:{auto size=reinterpret_cast<MINMAXINFO*>(l);size->ptMinTrackSize={a.px(520),a.px(480)};return 0;}
    case WM_DPICHANGED:{a.settingsScroller.rescale(double(HIWORD(w))/a.dpi);a.dpi=HIWORD(w);auto r=reinterpret_cast<RECT*>(l);SetWindowPos(hwnd,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);a.createFonts();a.layout();return 0;}
    case WM_SETTINGCHANGE:case WM_THEMECHANGED:if(a.engine){a.createFonts();a.applyTheme();a.layout();a.layoutBreak();a.updateRenderTimer();if(msg==WM_SETTINGCHANGE)a.timeChanged();}return 0;
    case WM_TIMECHANGE:_tzset();a.timeChanged();return 0;
    case WM_DISPLAYCHANGE:if(a.page==2)a.buildSettings();return 0;
    case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;
-   case WM_TIMER:if(w==RENDER){a.engine->tick();a.updateAccessibleTimer();if(!a.hidden&&a.page==0)InvalidateRect(hwnd,nullptr,FALSE);if(a.breakWindow){auto time=timeText(a.engine->snapshot().remaining);wchar_t previous[32]{};GetWindowTextW(GetDlgItem(a.breakWindow,COUNTDOWN),previous,32);if(time!=previous)SetWindowTextW(GetDlgItem(a.breakWindow,COUNTDOWN),time.c_str());InvalidateRect(a.breakWindow,nullptr,FALSE);}}else if(w==CHECKPOINT){a.saveTimer();if(a.dirtySettings)a.saveSettings();}else if(w==SCROLL)a.stepScroll();return 0;
+    case WM_TIMER:if(w==RENDER)a.refreshTimerDisplay();else if(w==CHECKPOINT){a.saveTimer();if(a.dirtySettings)a.saveSettings();}else if(w==SCROLL)a.stepScroll();return 0;
    case ENGINE_MESSAGE:if(!a.quitting){a.engine->tick();a.schedule();if(a.engine->scheduled()){a.updateAccessibleTimer();a.updateScheduleStatus();if(!a.hidden&&a.page==0)InvalidateRect(hwnd,nullptr,FALSE);}}return 0;
    case WM_APP+3:a.error(L"Eye Break Reminder couldn't load some saved data. Defaults or a fresh timer have been restored.");return 0;
    case WM_APP+4:a.hideMain();return 0;
-   case PREVIEW_REFRESH:a.previewRefreshPosted=false;a.refreshPreview();return 0;
+    case PREVIEW_REFRESH:a.previewRefreshPosted=false;a.refreshPreview();return 0;
+    case RESIZE_REFRESH:InterlockedExchange(&a.resizeRefreshPosted,0);if(!a.quitting&&InterlockedCompareExchange(&a.interactiveResize,0,0)!=0)a.refreshTimerDisplay(false);return 0;
    case TRAY_MESSAGE:{UINT event=LOWORD(l);if(event==WM_LBUTTONUP||event==NIN_SELECT||event==NIN_KEYSELECT||event==NIN_BALLOONUSERCLICK)a.showMain();else if(event==WM_CONTEXTMENU||event==WM_RBUTTONUP)a.trayMenu({GET_X_LPARAM(w),GET_Y_LPARAM(w)});return 0;}
    case MM_WOM_DONE:if(a.audio&&a.audio->done(w,l)&&!a.audio->preview&&a.settings.repeat&&a.settings.alarm&&a.engine->snapshot().phase==Phase::Break&&!a.engine->snapshot().held&&!a.locked&&!a.sleeping)a.audio->play(a.settings);return 0;
    case WM_POWERBROADCAST:if(w==PBT_APMSUSPEND){a.sleeping=true;a.suspend(false);}else if(w==PBT_APMRESUMEAUTOMATIC||w==PBT_APMRESUMESUSPEND){a.sleeping=false;a.wake();}return TRUE;

@@ -18,9 +18,12 @@ Changed
 - Settings sections are now Intervals, Schedule, Alarm, Reminders, General and About.
 - "Reset all settings" also restores the default (disabled) schedule.
 - The Timer status line ends with an ellipsis instead of being clipped when it is too long for the window.
+- The Timer progress ring now shows its full circular track and clockwise progress over 360 degrees. It starts at 12 o'clock, advances clockwise around the circumference and draws 100% as a closed ellipse.
 
 Fixed
 
+- Timer countdown, caption and state controls no longer depend on a null brush and transparent-text background to blend over the progress ring. They remain accessible native `STATIC` controls and receive active Light, Dark or High Contrast background and text colors. The countdown stays within the ring track; the caption uses a full-width row above the ring so it remains readable at enlarged text sizes. The parent draws the ring once from the same cached timer presentation used for the controls' text.
+- The Timer display no longer restarts its 250 ms render timer on every `WM_SIZE`. During interactive resizing, the existing deadline worker coalesces visual refresh requests at the configured render cadence; the UI thread reads the engine snapshot and paints it, while countdown deadlines and QueryPerformanceCounter timing are unchanged.
 - The Source ZIP no longer includes the compiled test program when it is built on Windows (`tests/core-tests.exe`; the packaging script only excluded the Linux name). Other build outputs, local tool folders and signing-key files listed in `.gitignore` are excluded as well, and `scripts/verify.py` now fails if the Source ZIP contains such files or lacks any source, test, script, installer, asset or documentation file. The installer and portable ZIP are unchanged.
 - Time fields in Settings no longer go blank when the page scrolls. After scrolling Settings → Schedule with the mouse wheel, the scroll bar or keyboard focus, the From and to boxes kept their values but showed empty boxes until they were focused. The fields' frame painting also covered the text area, and scrolling repaints only the frame of each moved field. The frame is now painted around the text area. The same frame code is used by the Intervals number fields; in 1.0.6 those never scroll, so the problem did not show there.
 
