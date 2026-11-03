@@ -22,6 +22,7 @@ Changed
 Fixed
 
 - The Source ZIP no longer includes the compiled test program when it is built on Windows (`tests/core-tests.exe`; the packaging script only excluded the Linux name). Other build outputs, local tool folders and signing-key files listed in `.gitignore` are excluded as well, and `scripts/verify.py` now fails if the Source ZIP contains such files or lacks any source, test, script, installer, asset or documentation file. The installer and portable ZIP are unchanged.
+- Time fields in Settings no longer go blank when the page scrolls. After scrolling Settings → Schedule with the mouse wheel, the scroll bar or keyboard focus, the From and to boxes kept their values but showed empty boxes until they were focused. The fields' frame painting also covered the text area, and scrolling repaints only the frame of each moved field. The frame is now painted around the text area. The same frame code is used by the Intervals number fields; in 1.0.6 those never scroll, so the problem did not show there.
 
 Also
 

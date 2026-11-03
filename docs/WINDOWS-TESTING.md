@@ -1,6 +1,25 @@
-# Windows 11 x64 acceptance checks — not yet executed
+# Windows 11 x64 acceptance checks — results and remaining checks
 
-Record OS build, display scaling, SDK/tool versions and actual results. Do not mark items passed from source inspection.
+Record OS build, display scaling, SDK/tool versions and actual results where available. Do not mark items passed from source inspection alone.
+
+## Owner-confirmed manual results (2026-11-03)
+
+The owner confirmed these real Windows visual checks passed in the corrected application:
+
+- A — Dark mode: PASS
+- B — Light mode: PASS
+- C — Countdown stability: PASS
+- D — Live resizing: PASS
+- E — Pause and Resume: PASS
+- F — Break countdown: PASS
+- G — Scheduled On hold: PASS
+- H — Caption and layout: PASS
+- Operating Schedule Group 1.1 Existing behaviour: PASS
+- Operating Schedule Group 1.2 Schedule editing and scrolling: PASS
+- Operating Schedule Group 1.3 Light/Dark and scrolling: PASS
+- Operating Schedule Group 1.4 Keyboard accessibility: PASS
+
+The earlier white rectangles, rendering jitter and countdown freezing during live resizing were not reproduced. Operating Schedule Groups 2 onward remain open; the checks below are not marked complete by this acceptance unless explicitly listed above.
 
 - Cross-compile x64, execute C++ core tests, package; check EXE GUI subsystem, metadata, icon, and runtime folder.
 - Install as a standard user; verify Start Menu, optional desktop shortcut, Installed Apps, upgrade preservation and uninstall/startup cleanup.
@@ -18,7 +37,7 @@ Record OS build, display scaling, SDK/tool versions and actual results. Do not m
 - Offline operation from installer and portable folder with no globally installed third-party runtimes.
 - Unsigned and legitimate signed release paths, executable/installer/uninstaller verification, archive contents, SHA-256 checksums.
 
-A Linux MinGW-w64 cross-compiler was used successfully; no genuine Windows 11 runtime was available. All UI, lifecycle, installer and audio/notification acceptance checks remain open until executed.
+At the time this baseline was written, a Linux MinGW-w64 cross-compiler had been used and no genuine Windows 11 runtime was available; the UI, lifecycle, installer and audio/notification checks were still open. See the owner-confirmed results above for checks completed subsequently; the remaining checks are listed below.
 
 ## Settings-page regression (1.0.1)
 

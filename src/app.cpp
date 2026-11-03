@@ -189,7 +189,11 @@ public:
    case WM_NCCALCSIZE:if(w){auto*params=reinterpret_cast<NCCALCSIZE_PARAMS*>(l);RECT&r=params->rgrc[0];int border=std::max(1,a.px(1));
      HDC dc=GetDC(h);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));TEXTMETRICW tm{};GetTextMetricsW(dc,&tm);SelectObject(dc,previous);ReleaseDC(h,dc);
      int vertical=std::max(border,int((r.bottom-r.top-tm.tmHeight)/2));r.left+=border;r.right-=border;r.top+=vertical;r.bottom-=vertical;return 0;}break;
-   case WM_NCPAINT:{HDC dc=GetWindowDC(h);RECT window{};GetWindowRect(h,&window);OffsetRect(&window,-window.left,-window.top);int border=std::max(1,a.px(1));bool focused=GetFocus()==h;
+   case WM_NCPAINT:{HDC dc=GetWindowDC(h);RECT window{};GetWindowRect(h,&window);int border=std::max(1,a.px(1));bool focused=GetFocus()==h;
+     // A window DC also covers the client area. Scrolling moves fields with copied bits and repaints only their frame, so
+     // painting over the client here erased the text with nothing to redraw it; the frame is painted around the client.
+     RECT client{};GetClientRect(h,&client);MapWindowPoints(h,nullptr,reinterpret_cast<POINT*>(&client),2);OffsetRect(&client,-window.left,-window.top);
+     OffsetRect(&window,-window.left,-window.top);ExcludeClipRect(dc,client.left,client.top,client.right,client.bottom);
      FillRect(dc,&window,a.surfaceBrush);HPEN pen=CreatePen(PS_SOLID,border,focused?a.colors.accent:a.colors.line);auto oldPen=SelectObject(dc,pen);auto oldBrush=SelectObject(dc,GetStockObject(NULL_BRUSH));
      Rectangle(dc,window.left,window.top,window.right,window.bottom);SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(pen);ReleaseDC(h,dc);return 0;}
    case WM_SETFOCUS:case WM_KILLFOCUS:{LRESULT result=DefSubclassProc(h,msg,w,l);RedrawWindow(h,nullptr,nullptr,RDW_FRAME|RDW_INVALIDATE);return result;}
