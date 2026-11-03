@@ -12,6 +12,7 @@
 #include <commctrl.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <oleacc.h>
 #include <dwmapi.h>
 #include <wtsapi32.h>
 #include <uxtheme.h>
@@ -28,6 +29,17 @@ inline std::wstring executable(){std::wstring path(32768,L' ');DWORD n=GetModule
 inline std::wstring dataDirectory(){PWSTR raw=nullptr;if(FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,0,nullptr,&raw)))throw std::runtime_error("Local data folder unavailable");std::wstring dir=raw;CoTaskMemFree(raw);dir+=L"\\EyeBreakReminder";std::filesystem::create_directories(dir);return dir;}
 inline std::int64_t utc(){return std::int64_t(std::time(nullptr));}
 inline double monotonic(){LARGE_INTEGER t,f;QueryPerformanceCounter(&t);QueryPerformanceFrequency(&f);return double(t.QuadPart)/double(f.QuadPart);}
+// Wall time with sub-second precision, used only to place operating-schedule deadlines on their exact second.
+inline double preciseUtc(){FILETIME f{};GetSystemTimePreciseAsFileTime(&f);ULARGE_INTEGER u{};u.LowPart=f.dwLowDateTime;u.HighPart=f.dwHighDateTime;return double(u.QuadPart)/1e7-11644473600.0;}
+// The Windows local calendar for one instant, read from the current time zone (including its daylight-saving rules for that
+// year) on every call, so a time-zone change applies at once. Falls back to the C runtime if the zone cannot be read.
+inline LocalTime localTime(std::int64_t stamp){
+ stamp=std::max<std::int64_t>(0,stamp);ULARGE_INTEGER ticks{};ticks.QuadPart=std::uint64_t(stamp+11644473600LL)*10000000ULL;FILETIME file{ticks.LowPart,ticks.HighPart};
+ SYSTEMTIME universal{},local{};DYNAMIC_TIME_ZONE_INFORMATION zone{};
+ if(FileTimeToSystemTime(&file,&universal)&&GetDynamicTimeZoneInformation(&zone)!=TIME_ZONE_ID_INVALID&&SystemTimeToTzSpecificLocalTimeEx(&zone,&universal,&local))
+  return{daysFromCivil(local.wYear,local.wMonth,local.wDay),local.wHour*60+local.wMinute,local.wSecond};
+ std::time_t t=std::time_t(stamp);std::tm tm{};localtime_s(&tm,&t);return{daysFromCivil(tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday),tm.tm_hour*60+tm.tm_min,tm.tm_sec};
+}
 inline bool read(const std::wstring&path,std::string&out,DWORD limit=2*1024*1024){
  HANDLE f=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);if(f==INVALID_HANDLE_VALUE)return false;
  LARGE_INTEGER n{};bool ok=GetFileSizeEx(f,&n)&&n.QuadPart>=0&&n.QuadPart<=limit;DWORD got=0;

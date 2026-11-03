@@ -9,23 +9,31 @@ constexpr wchar_t TRAY_MENU_CLASS[]=L"EyeBreakReminder.TrayMenu";
 constexpr UINT TRAY_MESSAGE=WM_APP+1, ENGINE_MESSAGE=WM_APP+2, PREVIEW_REFRESH=WM_APP+5;
 constexpr int NAV_TIMER=10,NAV_HISTORY=11,NAV_SETTINGS=12,PAUSE=20,RESET=21,TAKE_BREAK=22,COMPLETE=23,SKIP=24,SNOOZE1=25,SNOOZE3=26,SNOOZE5=27;
 constexpr int COUNTDOWN=40,TIMER_STATE=41,COUNT_CAPTION=42,BREAK_TITLE=43,BREAK_INSTRUCTION=44,BREAK_GUIDANCE=45,HISTORY_TOGGLE=30,CLEAR_HISTORY=31,ALARM_TOGGLE=32,WORK=100,BREAK_SECONDS=101,SOUND=102,VOLUME=103,MODE=104,MONITOR=105,THEME=106,REPEAT=107,NOTIFY=108,SNOOZE=109,AUTO_START=110,STARTUP=111,TRAY=112,RESTORE=113,PAUSE_LOCK=114,SELECT_MONITOR=115,PREVIEW=116,STOP_AUDIO=117,RESET_SETTINGS=118,VOLUME_VALUE=119;
+constexpr int SCHEDULE_TOGGLE=120,PRESET_WEEKDAYS=121,PRESET_EVERYDAY=122,SCHEDULE_STATUS=123;
+// Weekly hours: one check box per day (DAY_BASE + day). Period controls are PERIOD_BASE + day*10 + period*3 + {0 start, 1 end,
+// 2 Remove}; PERIOD_BASE + day*10 + 9 is the day's Add period button.
+constexpr int DAY_BASE=280,PERIOD_BASE=300,PERIOD_END=PERIOD_BASE+70;
 constexpr UINT_PTR RENDER=1,CHECKPOINT=2,SCROLL=3;
-constexpr int SECTION_BASE=130,SECTION_COUNT=5;
+constexpr int SECTION_BASE=130,SECTION_COUNT=6,SCHEDULE_SECTION=1;
+constexpr const wchar_t* DAY_NAMES[7]={L"Monday",L"Tuesday",L"Wednesday",L"Thursday",L"Friday",L"Saturday",L"Sunday"};
 // Settings controls are typed so one layout engine can place them on a shared grid.
 using Kind=geometry::FormKind;
-struct Control {HWND handle{};int id=0;int page=0;Kind kind=Kind::Plain;HWND buddySpin{};int x=0,y=0,w=0,h=0,spinWidth=0,rowHeight=0,section=0;bool sameRow=false,indent=false;};
+// `group` is the weekday a schedule row control belongs to (-1 otherwise); `keep` wraps an inline label with the field after it.
+struct Control {HWND handle{};int id=0;int page=0;Kind kind=Kind::Plain;HWND buddySpin{};int x=0,y=0,w=0,h=0,spinWidth=0,rowHeight=0,section=0,group=-1;bool sameRow=false,indent=false,keep=false;};
 struct Placement {HWND handle{};int x=0,y=0,w=0,h=0;};
 struct Colors {COLORREF background=RGB(247,248,250),surface=RGB(255,255,255),hover=RGB(239,243,249),foreground=RGB(24,30,42),secondary=RGB(93,103,119),line=RGB(215,222,232),accent=RGB(37,99,235);bool dark=false,contrast=false;};
 class Application {
 public:
  HINSTANCE instance{};HWND main{},breakWindow{},trayMenuOwner{};HICON icon{};HFONT normalFont{},headingFont{},tabFont{},smallFont{},titleFont{},countFont{},breakFont{},breakTitleFont{},breakCountFont{};int countSize=0;HBRUSH backgroundBrush{},surfaceBrush{};
  Settings settings;std::unique_ptr<Engine> engine;std::unique_ptr<Audio> audio;std::vector<Record> history;
- std::vector<Control> controls;std::array<HWND,3> nav{};std::array<HWND,5> sectionNav{};int settingsSection=0,buildSection=0;HWND historyList{},settingsPane{};std::vector<Monitor> displays;
+ std::vector<Control> controls;std::array<HWND,3> nav{};std::array<HWND,SECTION_COUNT> sectionNav{};int settingsSection=0,buildSection=0;HWND historyList{},settingsPane{};std::vector<Monitor> displays;
  Colors colors;std::wstring directory;UINT dpi=96;double textScale=1;bool hidden=false,locked=false,sleeping=false,quitting=false,quietBreak=false,loading=false,trayAdded=false,dirtySettings=false,saveWarned=false;
  int page=0,settingsHeight=0,breakHeight=0,settingsApplied=INT_MIN,breakApplied=INT_MIN,historyApplied=0;std::uint64_t notifiedCycle=0,alarmedCycle=0;NOTIFYICONDATAW trayData{};
  ScrollModel settingsScroller,breakScroller,historyScroller{0.05};std::vector<Placement> breakItems;bool scrollTimer=false,previewRefreshPosted=false;double scrollClock=0;
  HANDLE dueEvent{},stopEvent{};HANDLE worker{};UINT activateMessage=RegisterWindowMessageW(L"EyeBreakReminder.Activate.Native.1");UINT quitMessage=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");UINT explorerMessage=RegisterWindowMessageW(L"TaskbarCreated");
- double deadline=0;CRITICAL_SECTION deadlineLock{};RECT normalBounds{};bool haveNormalBounds=false;
+ double deadline=0;CRITICAL_SECTION deadlineLock{};RECT normalBounds{};bool haveNormalBounds=false,breakSnooze=false;
+ // Dynamic Annotation gives schedule fields full accessible names ("Monday, period 1, start time") beyond their short visible labels.
+ IAccPropServices* accessibility{};std::vector<HWND> annotated;
  static Application* app;
  int px(double value)const{return geometry::scaled(value,int(dpi));}
  int fontHeight(int points)const{return -int(std::round(points*dpi/72.0*textScale));}
@@ -68,7 +76,7 @@ public:
  void load(){
   directory=dataDirectory();std::string text;bool damaged=false;
   auto path=directory+L"\\settings.ini";if(exists(path)&&(!read(path,text,65536)||!decodeSettings(text,settings))){quarantine(path);settings={};damaged=true;}settings.validate();settings.startup=startupEnabled();
-  engine=std::make_unique<Engine>(settings,monotonic,utc);Saved saved;path=directory+L"\\timer.dat";
+  engine=std::make_unique<Engine>(settings,monotonic,utc,localTime);Saved saved;path=directory+L"\\timer.dat";
   if(settings.restore&&exists(path)){if(!read(path,text,1024)||!decodeTimer(text,saved)||!engine->restore(saved)){quarantine(path);damaged=true;}}
   path=directory+L"\\history.dat";if(exists(path)&&(!read(path,text)||!decodeHistory(text,history,utc()))){quarantine(path);history.clear();damaged=true;}
   if(damaged)PostMessageW(main,WM_APP+3,0,0);
@@ -198,7 +206,7 @@ public:
   SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);Control c;c.handle=h;c.id=id;c.page=onPage;c.kind=kind;c.section=buildSection;controls.push_back(c);themeControl(h);return h;
  }
  HWND label(const wchar_t*text,Kind kind=Kind::Plain,bool indent=false){
-  DWORD style=(kind==Kind::Value?SS_RIGHT:SS_LEFT)|SS_NOPREFIX|(kind==Kind::Caption||kind==Kind::Value?SS_CENTERIMAGE:0); // the value readout is right-aligned so it ends on the column edge
+  DWORD style=(kind==Kind::Value?SS_RIGHT:SS_LEFT)|SS_NOPREFIX|(kind==Kind::Caption||kind==Kind::Value||kind==Kind::Inline?SS_CENTERIMAGE:0); // the value readout is right-aligned so it ends on the column edge
   HWND h=control(L"STATIC",text,style,-1,2,kind,settingsPane);controls.back().indent=indent;if(kind==Kind::Hint)SetWindowLongPtrW(h,GWLP_USERDATA,1);
   SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(kind==Kind::Heading?headingFont:normalFont),TRUE);return h;
  }
@@ -210,6 +218,31 @@ public:
  }
  void number(const wchar_t*labelText,int id,int value,int low,int high){label(labelText,Kind::Caption);HWND h=control(L"EDIT",std::to_wstring(value).c_str(),ES_NUMBER|ES_AUTOHSCROLL,id,2,Kind::Field,settingsPane);SendMessageW(h,EM_SETLIMITTEXT,3,0);SendMessageW(h,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELPARAM(px(10),px(10)));
   HWND spin=CreateWindowExW(0,UPDOWN_CLASSW,L"",WS_CHILD|WS_VISIBLE|UDS_ALIGNRIGHT|UDS_SETBUDDYINT|UDS_ARROWKEYS,0,0,0,0,settingsPane,nullptr,instance,nullptr);if(!spin)throw std::runtime_error("Could not create number control");controls.back().buddySpin=spin;themeControl(spin);SendMessageW(spin,UDM_SETBUDDY,reinterpret_cast<WPARAM>(h),0);SendMessageW(spin,UDM_SETRANGE32,low,high);SendMessageW(spin,UDM_SETPOS32,0,value);}
+ void accessibleName(HWND h,const std::wstring&name){
+  if(!accessibility&&FAILED(CoCreateInstance(CLSID_AccPropServices,nullptr,CLSCTX_INPROC_SERVER,IID_IAccPropServices,reinterpret_cast<void**>(&accessibility))))accessibility=nullptr;
+  if(accessibility&&SUCCEEDED(accessibility->SetHwndPropStr(h,DWORD(OBJID_CLIENT),DWORD(CHILDID_SELF),PROPID_ACC_NAME,name.c_str())))annotated.push_back(h);
+ }
+ void clearAccessibleNames(){if(accessibility)for(HWND h:annotated){MSAAPROPID name=PROPID_ACC_NAME;accessibility->ClearHwndProps(h,DWORD(OBJID_CLIENT),DWORD(CHILDID_SELF),&name,1);}annotated.clear();}
+ // Inline row parts for the weekly hours. A row starts with an indented label; the label is kept on the same line as its field.
+ void rowLabel(const wchar_t*text,int day,bool first){label(text,Kind::Inline);auto&c=controls.back();c.sameRow=!first;c.indent=first;c.keep=true;c.group=day;}
+ void timeField(int id,int minutes,int day,const std::wstring&name){
+  HWND h=control(L"EDIT",wide(formatClock(minutes)).c_str(),ES_CENTER|ES_AUTOHSCROLL,id,2,Kind::Inline,settingsPane);auto&c=controls.back();c.sameRow=true;c.group=day;
+  SendMessageW(h,EM_SETLIMITTEXT,5,0);SendMessageW(h,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELPARAM(px(6),px(6)));accessibleName(h,name+L", 24-hour");
+ }
+ void rowButton(const wchar_t*text,int id,int day,const std::wstring&name){HWND h=control(L"BUTTON",text,BS_PUSHBUTTON,id,2,Kind::Inline,settingsPane);auto&c=controls.back();c.sameRow=true;c.group=day;accessibleName(h,name);}
+ // One day of the weekly hours: its check box, then one row per period ("From [start] to [end] [Remove]") with Add on the last row.
+ void scheduleDay(int d){
+  const auto&s=settings.schedule;checkbox(DAY_NAMES[d],DAY_BASE+d,2,s.days[d],settingsPane);
+  for(int i=0;i<s.counts[d];++i){
+   const Period&p=s.periods[d][i];int base=PERIOD_BASE+d*10+i*3;std::wstring which=std::wstring(DAY_NAMES[d])+L", period "+std::to_wstring(i+1);
+   rowLabel(L"From",d,true);timeField(base,p.start,d,which+L", start time");rowLabel(L"to",d,false);timeField(base+1,p.end,d,which+L", end time");
+   if(s.counts[d]>1)rowButton(L"Remove",base+2,d,L"Remove "+which);
+   if(i==s.counts[d]-1&&s.counts[d]<Schedule::maxPeriods)rowButton(L"Add period",PERIOD_BASE+d*10+9,d,std::wstring(L"Add a period to ")+DAY_NAMES[d]);
+  }
+  enableDay(d);
+ }
+ // An unselected day keeps its hours but greys them out; its labels use the secondary text colour.
+ void enableDay(int d){bool on=settings.schedule.days[d];for(auto&c:controls)if(c.group==d){if(c.kind==Kind::Inline&&c.id<0)SetWindowLongPtrW(c.handle,GWLP_USERDATA,on?0:1);else EnableWindow(c.handle,on?TRUE:FALSE);InvalidateRect(c.handle,nullptr,TRUE);}}
  HWND find(int id){for(auto&c:controls)if(c.id==id)return c.handle;return nullptr;}
  void updateVolumeLabel(){HWND v=find(VOLUME_VALUE);if(v)SetWindowTextW(v,(std::to_wstring(settings.volume)+L"%").c_str());}
  // Stop is only useful while something is playing. The audio object only posts a request (never touches the UI itself), so
@@ -225,27 +258,36 @@ public:
 // GCC 15 reports a false "free-nonheap-object" for the temporary string vectors passed to combo() below.
 #pragma GCC diagnostic ignored "-Wfree-nonheap-object"
  void buildSettings(){
-  loading=true;buildSection=0;for(auto it=controls.begin();it!=controls.end();){if(it->page==2){DestroyWindow(it->handle);it=controls.erase(it);}else ++it;}
+  loading=true;buildSection=0;clearAccessibleNames();for(auto it=controls.begin();it!=controls.end();){if(it->page==2){DestroyWindow(it->handle);it=controls.erase(it);}else ++it;}
   // Buddy spin controls are recreated with their edits.
   EnumChildWindows(settingsPane,[](HWND child,LPARAM)->BOOL{wchar_t name[64]{};GetClassNameW(child,name,64);if(wcscmp(name,UPDOWN_CLASSW)==0)DestroyWindow(child);return TRUE;},0);
   label(L"Work and break intervals",Kind::Heading);number(L"Work interval (minutes)",WORK,settings.workMinutes,1,180);number(L"Break duration (seconds)",BREAK_SECONDS,settings.breakSeconds,5,300);
   hint(L"Changes apply to the next cycle. Reset starts a fresh work interval.");
-  buildSection=1;label(L"Alarm",Kind::Heading);checkbox(L"Alarm enabled",ALARM_TOGGLE,2,settings.alarm,settingsPane);
+  buildSection=SCHEDULE_SECTION;label(L"Operating schedule",Kind::Heading);checkbox(L"Enable operating schedule",SCHEDULE_TOGGLE,2,settings.schedule.enabled,settingsPane);
+  hint(L"Automatic eye-break reminders only run during the selected days and hours. Outside them the countdown waits; Pause, Reset and Take a break now still work.");
+  label(L"Quick setup",Kind::Heading);control(L"BUTTON",L"Weekdays 09:00–17:00",BS_PUSHBUTTON,PRESET_WEEKDAYS,2,Kind::Button,settingsPane);control(L"BUTTON",L"Every day 09:00–17:00",BS_PUSHBUTTON,PRESET_EVERYDAY,2,Kind::Button,settingsPane);controls.back().sameRow=true;
+  hint(L"For a custom schedule, choose the days and hours below.");
+  label(L"Weekly hours",Kind::Heading);
+  hint(L"24-hour local time, up to three periods a day. A period that ends earlier than it starts continues past midnight, even into a day that is off. Use 00:00 to 24:00 for a whole day. Overlapping or touching periods count as one.");
+  for(int d=0;d<7;++d)scheduleDay(d);
+  label(L"Status",Kind::Heading);label(scheduleStatus().c_str());controls.back().id=SCHEDULE_STATUS;
+  hint(L"Eye Break Reminder must be running, in a window or in the tray, for the schedule to apply. It does not start the app; use Start with Windows for that.");
+  buildSection=2;label(L"Alarm",Kind::Heading);checkbox(L"Alarm enabled",ALARM_TOGGLE,2,settings.alarm,settingsPane);
   combo(L"Alarm sound",SOUND,{L"Gentle",L"Bell",L"Chime",L"Clear",L"Soft"},settings.sound);
   label(L"Alarm volume",Kind::Caption);HWND volume=control(TRACKBAR_CLASSW,L"",TBS_NOTICKS|TBS_BOTH,VOLUME,2,Kind::Slider,settingsPane);SendMessageW(volume,TBM_SETRANGE,TRUE,MAKELONG(0,100));SendMessageW(volume,TBM_SETPOS,TRUE,settings.volume);SetWindowTextW(volume,L"Alarm volume, percent");
   label((std::to_wstring(settings.volume)+L"%").c_str(),Kind::Value);controls.back().id=VOLUME_VALUE;controls.back().sameRow=true;
   checkbox(L"Repeat until the break ends or is acknowledged",REPEAT,2,settings.repeat,settingsPane);
   control(L"BUTTON",L"Preview alarm",BS_PUSHBUTTON,PREVIEW,2,Kind::Button,settingsPane);control(L"BUTTON",L"Stop preview",BS_PUSHBUTTON,STOP_AUDIO,2,Kind::Button,settingsPane);controls.back().sameRow=true;
-  buildSection=2;label(L"Break reminders",Kind::Heading);checkbox(L"Windows notifications",NOTIFY,2,settings.notifications,settingsPane);checkbox(L"Allow snooze (1, 3 or 5 minutes)",SNOOZE,2,settings.snooze,settingsPane);
+  buildSection=3;label(L"Break reminders",Kind::Heading);checkbox(L"Windows notifications",NOTIFY,2,settings.notifications,settingsPane);checkbox(L"Allow snooze (1, 3 or 5 minutes)",SNOOZE,2,settings.snooze,settingsPane);
   label(L"Break window",Kind::Heading);
   combo(L"Break presentation",MODE,{L"Normal window",L"Compact reminder",L"Fullscreen reminder (opt in)"},settings.mode);combo(L"Preferred monitor",MONITOR,{L"Active display",L"Primary display",L"Selected display"},settings.monitor);
   displays=monitors();std::vector<std::wstring> names;int chosen=0;for(std::size_t i=0;i<displays.size();++i){names.push_back(L"Display "+std::to_wstring(i+1)+(displays[i].primary?L" (primary)":L""));if(utf8(displays[i].device)==settings.selectedMonitor)chosen=int(i);}combo(L"Selected display",SELECT_MONITOR,names,chosen);
-  buildSection=3;label(L"Appearance",Kind::Heading);combo(L"Theme",THEME,{L"Use system setting",L"Light",L"Dark"},settings.theme);
+  buildSection=4;label(L"Appearance",Kind::Heading);combo(L"Theme",THEME,{L"Use system setting",L"Light",L"Dark"},settings.theme);
   label(L"Behaviour",Kind::Heading);checkbox(L"Start timer automatically on launch",AUTO_START,2,settings.autoStart,settingsPane);checkbox(L"Start with Windows",STARTUP,2,settings.startup,settingsPane);
   hint(L"Open Eye Break Reminder automatically when you sign in.",true);checkbox(L"Minimize to system tray",TRAY,2,settings.tray,settingsPane);hint(L"Closing keeps reminders active. Choose Exit in the tray menu to quit.",true);
   checkbox(L"Resume countdown when reopening the app",RESTORE,2,settings.restore,settingsPane);hint(L"Reinstalling after uninstall starts a fresh work interval. Preferences and history are kept.",true);checkbox(L"Pause while workstation is locked",PAUSE_LOCK,2,settings.pauseLocked,settingsPane);
   hint(L"Sleep counts as elapsed work time. Wake shows at most one reminder. Paused timers stay paused.",true);
-  buildSection=4;label(L"About",Kind::Heading);label(L"Eye Break Reminder");hint(L"Version 1.0.6 · x64 · Windows 11");
+  buildSection=5;label(L"About",Kind::Heading);label(L"Eye Break Reminder");hint(L"Version 1.0.6 · x64 · Windows 11");
   hint(L"All data stays on this device. No internet, telemetry, account, camera or microphone.");
   label(L"Accessibility",Kind::Heading);hint(L"Uses Windows text scaling, high contrast and keyboard focus.");
   hint(L"Ctrl+R: Reset · Ctrl+Shift+B: Take break · Ctrl+comma: Settings");
@@ -255,12 +297,12 @@ public:
  void createControls(){
   dpi=GetDpiForWindow(main);createFonts();
   for(int i=0;i<3;++i){nav[i]=CreateWindowExW(0,L"BUTTON",i==0?L"&Timer":i==1?L"&History":L"&Settings",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(NAV_TIMER+i)),instance,nullptr);SendMessageW(nav[i],WM_SETFONT,reinterpret_cast<WPARAM>(tabFont),TRUE);}
-  control(L"STATIC",L"Running",SS_CENTER|SS_CENTERIMAGE,TIMER_STATE,0);control(L"STATIC",L"Next eye break",SS_CENTER|SS_CENTERIMAGE,COUNT_CAPTION,0);control(L"STATIC",L"20:00",SS_CENTER|SS_CENTERIMAGE,COUNTDOWN,0);
+  control(L"STATIC",L"Running",SS_CENTER|SS_CENTERIMAGE|SS_ENDELLIPSIS,TIMER_STATE,0);control(L"STATIC",L"Next eye break",SS_CENTER|SS_CENTERIMAGE,COUNT_CAPTION,0);control(L"STATIC",L"20:00",SS_CENTER|SS_CENTERIMAGE,COUNTDOWN,0);
   control(L"BUTTON",L"Take a break now",BS_DEFPUSHBUTTON,TAKE_BREAK,0);control(L"BUTTON",L"Pause",BS_PUSHBUTTON,PAUSE,0);control(L"BUTTON",L"Reset",BS_PUSHBUTTON,RESET,0);
   historyList=CreateWindowExW(WS_EX_CLIENTEDGE,WC_LISTVIEWW,L"Eye break history",WS_CHILD|WS_TABSTOP|LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS,0,0,1,1,main,reinterpret_cast<HMENU>(200),instance,nullptr);ListView_SetExtendedListViewStyle(historyList,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
   for(int i=0;i<3;++i){LVCOLUMNW col{};col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_SUBITEM;col.pszText=const_cast<LPWSTR>(i==0?L"Date":i==1?L"Break":L"Seconds");col.cx=px(i==0?240:140);col.iSubItem=i;ListView_InsertColumn(historyList,i,&col);}
   checkbox(L"Save history on this device",HISTORY_TOGGLE,1,settings.history,main);control(L"BUTTON",L"Clear history",BS_PUSHBUTTON,CLEAR_HISTORY,1);
-  {const wchar_t*names[SECTION_COUNT]={L"Intervals",L"Alarm",L"Reminders",L"General",L"About"};
+  {const wchar_t*names[SECTION_COUNT]={L"Intervals",L"Schedule",L"Alarm",L"Reminders",L"General",L"About"};
    for(int i=0;i<SECTION_COUNT;++i){sectionNav[i]=CreateWindowExW(0,L"BUTTON",names[i],WS_CHILD|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(SECTION_BASE+i)),instance,nullptr);SendMessageW(sectionNav[i],WM_SETFONT,reinterpret_cast<WPARAM>(smallFont),TRUE);}}
   settingsPane=CreateWindowExW(WS_EX_CONTROLPARENT,L"EyeBreakReminder.Settings",L"Settings",WS_CHILD|WS_VSCROLL|WS_CLIPCHILDREN|WS_GROUP,0,0,1,1,main,nullptr,instance,nullptr);buildSettings();selectSection(0);switchPage(0);
  }
@@ -310,7 +352,10 @@ public:
   for(auto&c:controls)if(c.page==2){bool inSection=c.section==settingsSection;ShowWindow(c.handle,inSection?SW_SHOW:SW_HIDE);if(c.buddySpin)ShowWindow(c.buddySpin,inSection?SW_SHOW:SW_HIDE);if(inSection)items.push_back(&c);}
   std::vector<geometry::FormItem> form;
   for(auto*item:items){geometry::FormItem f;f.kind=item->kind;std::wstring text=windowText(item->handle);f.textWidth=measureWidth(item->handle,text);
-   f.textHeight=[this,handle=item->handle,text](int width){return measureHeight(handle,text,width);};f.sameRow=item->sameRow;f.indent=item->indent;f.spin=item->buddySpin!=nullptr;form.push_back(std::move(f));}
+   f.textHeight=[this,handle=item->handle,text](int width){return measureHeight(handle,text,width);};f.sameRow=item->sameRow;f.indent=item->indent;f.spin=item->buddySpin!=nullptr;f.keep=item->keep;
+   // Inline rows: time fields fit "00:00" plus their margins and frame, buttons fit their caption, labels their text.
+   if(f.kind==Kind::Inline){wchar_t cls[16]{};GetClassNameW(item->handle,cls,16);if(_wcsicmp(cls,L"Edit")==0)f.width=measureWidth(item->handle,L"00:00")+px(30);else if(_wcsicmp(cls,L"Button")==0)f.width=std::max(px(76),f.textWidth+px(32));else f.width=f.textWidth+px(2);}
+   form.push_back(std::move(f));}
   // Pass 1 lays the form out across the whole shell. Only if it is taller than the viewport does a scroll bar appear (inside the
   // shell, at its right edge) and the form is laid out again in the narrower client area. A taller form can never need less, so
   // there is no flip-flop.
@@ -416,12 +461,12 @@ public:
   if(isBreak){ // Native STATIC controls render all break content.
   }else if(page==0){
    int top=navBottom()+px(22);Column col=column(r.right);RECT title{col.x,top,col.x+col.width,top+px(44)};text(dc,L"Timer",title,titleFont,colors.foreground);
-   std::wstring state=snap.paused?L"Paused":snap.phase==Phase::Break?L"Rest your eyes":snap.phase==Phase::Snooze?L"Snoozed — next reminder below":L"Running";RECT status{px(28),top+px(50),r.right-px(28),top+px(88)};text(dc,state,status,normalFont,colors.secondary,DT_CENTER|DT_SINGLELINE);
+   std::wstring state=stateText(snap);RECT status{px(28),top+px(50),r.right-px(28),top+px(88)};text(dc,state,status,normalFont,colors.secondary,DT_CENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
    RECT button{};GetWindowRect(find(TAKE_BREAK),&button);MapWindowPoints(nullptr,main,reinterpret_cast<POINT*>(&button),2);int diameter=std::min({px(272),int(r.right)-px(100),std::max(px(160),int(button.top-status.bottom)-px(18))});int left=(r.right-diameter)/2,ty=status.bottom+px(8);
    Gdiplus::Graphics graphics(dc);graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);Gdiplus::Pen track(Gdiplus::Color(255,GetRValue(colors.line),GetGValue(colors.line),GetBValue(colors.line)),float(px(4)));Gdiplus::Pen accent(Gdiplus::Color(255,GetRValue(colors.accent),GetGValue(colors.accent),GetBValue(colors.accent)),float(px(4)));
    graphics.DrawEllipse(&track,left+px(4),ty+px(4),diameter-px(8),diameter-px(8));if(snap.progress()>0)graphics.DrawArc(&accent,left+px(4),ty+px(4),diameter-px(8),diameter-px(8),-90.f,float(360*snap.progress()));
    HFONT large=CreateFontW(-std::min(px(56),diameter/4),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable");RECT time{left,ty+diameter/3,left+diameter,ty+diameter*2/3};text(dc,timeText(snap.remaining),time,large,colors.foreground,DT_CENTER|DT_SINGLELINE|DT_VCENTER);DeleteObject(large);
-   RECT caption{left,ty+diameter*2/3,left+diameter,ty+diameter*2/3+px(40)};text(dc,snap.phase==Phase::Break?L"Eye break":L"Next eye break",caption,normalFont,colors.secondary,DT_CENTER|DT_SINGLELINE);
+   RECT caption{left,ty+diameter*2/3,left+diameter,ty+diameter*2/3+px(40)};text(dc,captionText(snap),caption,normalFont,colors.secondary,DT_CENTER|DT_SINGLELINE);
    RECT reset{};GetWindowRect(find(RESET),&reset);MapWindowPoints(nullptr,main,reinterpret_cast<POINT*>(&reset),2);RECT rule{px(28),reset.bottom+px(18),r.right-px(28),r.bottom-px(10)};
    std::wstring explanation=L"20 min · Work      20 ft · Look away      20 sec · Rest\nEvery 20 minutes, look around 20 feet / 6 metres away for at least 20 seconds.";
    if(settings.workMinutes!=20||settings.breakSeconds!=20)explanation+=L"\nYour schedule: "+std::to_wstring(settings.workMinutes)+L" min work, "+std::to_wstring(settings.breakSeconds)+L" sec rest.";
@@ -433,10 +478,31 @@ public:
   }
   BitBlt(target,0,0,r.right,r.bottom,dc,0,0,SRCCOPY);SelectObject(dc,previous);DeleteObject(bitmap);DeleteDC(dc);EndPaint(hwnd,&ps);
  }
- void updateAccessibleTimer(){auto snap=engine->snapshot();auto set=[&](int id,const std::wstring&value){HWND h=find(id);if(!h)return;wchar_t old[160]{};GetWindowTextW(h,old,160);if(value!=old)SetWindowTextW(h,value.c_str());};set(COUNTDOWN,timeText(snap.remaining));set(COUNT_CAPTION,snap.phase==Phase::Break?L"Eye break":L"Next eye break");set(TIMER_STATE,snap.paused?L"Paused":snap.phase==Phase::Break?L"Rest your eyes":snap.phase==Phase::Snooze?L"Snoozed — next reminder below":L"Running");}
+ // "today at 17:00", "tomorrow at 09:00" or "Monday at 09:00", in the Windows local calendar.
+ std::wstring scheduleTime(std::int64_t stamp){auto at=localTime(stamp),today=localTime(utc());std::wstring day=at.day==today.day?L"today":at.day==today.day+1?L"tomorrow":DAY_NAMES[at.weekday()];return day+L" at "+wide(formatClock(at.minute));}
+ std::wstring scheduleStatus(){
+  if(!settings.schedule.enabled)return L"The operating schedule is off. Reminders run whenever the timer is running.";
+  if(!settings.schedule.anyDay())return L"No days are selected, so no automatic reminders will occur.";
+  std::int64_t change=engine->scheduleBoundary();
+  if(engine->scheduleOpen())return change?L"Active now. Operating hours end "+scheduleTime(change)+L".":std::wstring(L"Active now, around the clock.");
+  return change?L"Outside operating hours. Next operating period: "+scheduleTime(change)+L".":std::wstring(L"Outside operating hours.");
+ }
+ // Manual pause and scheduled inactivity are reported separately; a held countdown is never shown as running.
+ std::wstring stateText(const Snapshot&s){
+  if(s.paused)return s.held?L"Paused — outside scheduled hours":L"Paused";
+  if(s.phase==Phase::Break)return L"Rest your eyes";
+  if(s.held){std::int64_t next=engine->scheduleBoundary();return next?L"Outside scheduled hours — next period "+scheduleTime(next):std::wstring(L"Outside scheduled hours");}
+  if(s.phase==Phase::Snooze)return L"Snoozed — next reminder below";
+  return engine->scheduled()?L"Running — within scheduled hours":L"Running";
+ }
+ static const wchar_t* captionText(const Snapshot&s){return s.phase==Phase::Break?L"Eye break":s.held?L"On hold":L"Next eye break";}
+ void updateAccessibleTimer(){auto snap=engine->snapshot();auto set=[&](int id,const std::wstring&value){HWND h=find(id);if(!h)return;wchar_t old[160]{};GetWindowTextW(h,old,160);if(value!=old)SetWindowTextW(h,value.c_str());};set(COUNTDOWN,timeText(snap.remaining));set(COUNT_CAPTION,captionText(snap));set(TIMER_STATE,stateText(snap));}
+ void updateScheduleStatus(){HWND h=find(SCHEDULE_STATUS);if(!h)return;auto text=scheduleStatus();if(text==windowText(h))return;SetWindowTextW(h,text.c_str());if(page==2&&settingsSection==SCHEDULE_SECTION)layoutSettings();}
+ // Wall-clock or time-zone change (announced by Windows, or found by the once-a-minute check): re-evaluate the schedule.
+ void timeChanged(){if(!engine||quitting)return;engine->tick();schedule();updateAccessibleTimer();updateScheduleStatus();updateTray();if(!hidden&&page==0)InvalidateRect(main,nullptr,FALSE);}
  void updateHistory(){if(!historyList)return;ListView_DeleteAllItems(historyList);historyScroller.jump(0);historyApplied=0;int row=0;for(auto it=history.rbegin();it!=history.rend()&&row<100;++it,++row){auto date=formatDate(it->at);LVITEMW item{};item.mask=LVIF_TEXT;item.iItem=row;item.pszText=date.data();ListView_InsertItem(historyList,&item);ListView_SetItemText(historyList,row,1,const_cast<LPWSTR>(it->completed?L"Completed":L"Skipped"));auto seconds=std::to_wstring(int(std::round(it->seconds)));ListView_SetItemText(historyList,row,2,seconds.data());}InvalidateRect(main,nullptr,TRUE);}
  void addTray(){trayData={};trayData.cbSize=sizeof(trayData);trayData.hWnd=main;trayData.uID=1;trayData.uFlags=NIF_ICON|NIF_MESSAGE|NIF_TIP|NIF_SHOWTIP;trayData.uCallbackMessage=TRAY_MESSAGE;trayData.hIcon=icon;wcscpy_s(trayData.szTip,L"Eye Break Reminder");trayAdded=Shell_NotifyIconW(NIM_ADD,&trayData)!=0;if(trayAdded){trayData.uVersion=NOTIFYICON_VERSION_4;Shell_NotifyIconW(NIM_SETVERSION,&trayData);}}
- void updateTray(){auto s=engine->snapshot();auto status=s.paused?L"Paused":s.phase==Phase::Break?L"Rest your eyes":s.phase==Phase::Snooze?L"Snoozed":L"Running";auto tip=L"Eye Break Reminder — "+std::wstring(status);wcsncpy_s(trayData.szTip,tip.c_str(),_TRUNCATE);trayData.uFlags=NIF_TIP|NIF_SHOWTIP;if(trayAdded)Shell_NotifyIconW(NIM_MODIFY,&trayData);}
+ void updateTray(){auto s=engine->snapshot();auto status=s.paused?(s.held?L"Paused, outside scheduled hours":L"Paused"):s.phase==Phase::Break?L"Rest your eyes":s.held?L"Outside scheduled hours":s.phase==Phase::Snooze?L"Snoozed":L"Running";auto tip=L"Eye Break Reminder — "+std::wstring(status);wcsncpy_s(trayData.szTip,tip.c_str(),_TRUNCATE);trayData.uFlags=NIF_TIP|NIF_SHOWTIP;if(trayAdded)Shell_NotifyIconW(NIM_MODIFY,&trayData);}
  void clearNotification(){if(!trayAdded)return;trayData.uFlags=NIF_INFO;trayData.szInfo[0]=0;Shell_NotifyIconW(NIM_MODIFY,&trayData);}
  void notify(std::uint64_t cycle){if(!settings.notifications||!trayAdded||notifiedCycle==cycle)return;notifiedCycle=cycle;trayData.uFlags=NIF_INFO|NIF_REALTIME;wcscpy_s(trayData.szInfoTitle,L"Time to rest your eyes");auto message=L"Look 20 feet / 6 metres away for "+std::to_wstring(settings.breakSeconds)+L" seconds. Click to open the reminder.";wcsncpy_s(trayData.szInfo,message.c_str(),_TRUNCATE);trayData.dwInfoFlags=NIIF_INFO|NIIF_NOSOUND|NIIF_RESPECT_QUIET_TIME;Shell_NotifyIconW(NIM_MODIFY,&trayData);}
  void trayMenu(POINT anchor){
@@ -463,7 +529,48 @@ public:
   switch(chosen){case 1:showMain();break;case 2:togglePause();break;case 3:engine->takeBreak();break;case 4:settings.alarm=!settings.alarm;if(!settings.alarm)audio->stop();settingsChanged();if(page==2)buildSettings();break;case 5:switchPage(2);buildSettings();showMain(false);SetFocus(nav[2]);break;case 6:exit();break;}
  }
  void togglePause(){if(engine->snapshot().paused)engine->resume();else {engine->pause();audio->stop();}}
- void settingsChanged(){settings.validate();engine->configure(settings);dirtySettings=true;applyTheme();updateTray();InvalidateRect(main,nullptr,TRUE);}
+ void settingsChanged(){settings.validate();engine->configure(settings);dirtySettings=true;applyTheme();updateTray();updateScheduleStatus();InvalidateRect(main,nullptr,TRUE);}
+ // Rebuilds the Settings controls after periods are added, removed or replaced, then focuses `focusId`.
+ void rebuildSettings(int focusId){
+  SendMessageW(settingsPane,WM_SETREDRAW,FALSE,0);buildSettings();SendMessageW(settingsPane,WM_SETREDRAW,TRUE,0);
+  RedrawWindow(settingsPane,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_FRAME);if(HWND h=find(focusId))SetFocus(h);
+ }
+ // A typed time is stored only when it forms a valid period; otherwise the field shows the stored value again and explains why.
+ void commitTime(int day,int period,bool end){
+  HWND h=find(PERIOD_BASE+day*10+period*3+(end?1:0));if(!h||period>=settings.schedule.counts[day])return;
+  Period&p=settings.schedule.periods[day][period];Period next=p;int typed=0;
+  bool readable=parseClock(utf8(windowText(h)),end,typed),valid=readable&&makePeriod(end?p.start:typed,end?typed:p.end,next);
+  if(valid&&!(next==p)){p=next;settingsChanged();saveSettings();}
+  SetWindowTextW(h,wide(formatClock(end?p.end:p.start)).c_str());
+  if(!valid){EDITBALLOONTIP tip{sizeof(tip),L"Time not changed",readable?L"Start and end can't be the same. For a whole day, use 00:00 to 24:00.":end?L"Enter a 24-hour time such as 17:30. Use 24:00 for midnight at the end of the day.":L"Enter a 24-hour time such as 09:00 or 13:30.",TTI_WARNING};Edit_ShowBalloonTip(h,&tip);}
+ }
+ void addPeriod(int day){
+  auto&s=settings.schedule;if(s.counts[day]>=Schedule::maxPeriods)return;
+  // The new period starts an hour after the previous one ends and lasts up to four hours; it can be edited at once.
+  const Period&last=s.periods[day][s.counts[day]-1];int start=(last.end+60)%1440;s.periods[day][s.counts[day]++]=Period{start,std::min(start+240,1440)};
+  settingsChanged();saveSettings();rebuildSettings(PERIOD_BASE+day*10+(s.counts[day]-1)*3);
+ }
+ void removePeriod(int day,int period){
+  auto&s=settings.schedule;if(s.counts[day]<=1||period>=s.counts[day])return;
+  std::copy(s.periods[day].begin()+period+1,s.periods[day].begin()+s.counts[day],s.periods[day].begin()+period);s.periods[day][--s.counts[day]]=Period{};
+  settingsChanged();saveSettings();rebuildSettings(PERIOD_BASE+day*10+std::min(period,s.counts[day]-1)*3);
+ }
+ void applyPreset(bool everyDay){
+  Schedule preset=Schedule::preset(everyDay);
+  if(!settings.schedule.sameHours(preset)&&!confirm(main,L"Replace the weekly hours?",everyDay?L"Every day will run from 09:00 to 17:00. Your current days and periods are replaced.":L"Monday to Friday will run from 09:00 to 17:00, and Saturday and Sunday are turned off. Your current days and periods are replaced."))return;
+  preset.enabled=settings.schedule.enabled;settings.schedule=preset;settingsChanged();saveSettings();rebuildSettings(everyDay?PRESET_EVERYDAY:PRESET_WEEKDAYS);
+ }
+ bool scheduleCommand(int id,int code){
+  if(id>=DAY_BASE&&id<DAY_BASE+7){if(code==BN_CLICKED){settings.schedule.days[id-DAY_BASE]=checked(id);enableDay(id-DAY_BASE);settingsChanged();saveSettings();}return true;}
+  if(id<PERIOD_BASE||id>=PERIOD_END)return false;
+  int day=(id-PERIOD_BASE)/10,slot=(id-PERIOD_BASE)%10;
+  if(slot==9){if(code==BN_CLICKED)addPeriod(day);return true;}
+  if(slot>=9)return true;
+  int period=slot/3,part=slot%3;
+  if(part==2&&code==BN_CLICKED)removePeriod(day,period);
+  else if(part<2&&code==EN_KILLFOCUS)commitTime(day,period,part==1);
+  return true;
+ }
  int selected(int id){return int(SendMessageW(find(id),CB_GETCURSEL,0,0));}
  bool checked(int id){return SendMessageW(find(id),BM_GETCHECK,0,0)==BST_CHECKED;}
  int integer(int id,int previous){wchar_t text[32]{};GetWindowTextW(find(id),text,32);if(!*text)return previous;wchar_t*end=nullptr;long value=wcstol(text,&end,10);return *end?previous:int(std::clamp(value,0L,10000L));}
@@ -472,11 +579,14 @@ public:
   if(code==EN_SETFOCUS||code==CBN_SETFOCUS||code==BN_SETFOCUS)ensureFocused(find(id));
   if(id>=NAV_TIMER&&id<=NAV_SETTINGS&&code==BN_CLICKED){switchPage(id-NAV_TIMER);return;}
   if(id>=SECTION_BASE&&id<SECTION_BASE+SECTION_COUNT&&code==BN_CLICKED){selectSection(id-SECTION_BASE);return;}
-  if(code==BN_CLICKED){switch(id){case PAUSE:togglePause();return;case RESET:engine->reset();return;case TAKE_BREAK:engine->takeBreak();return;case COMPLETE:engine->finish(true);return;case SKIP:engine->finish(false);return;case SNOOZE1:engine->snooze(1);return;case SNOOZE3:engine->snooze(3);return;case SNOOZE5:engine->snooze(5);return;
+  if(scheduleCommand(id,code))return;
+  if(code==BN_CLICKED){switch(id){
+   case PRESET_WEEKDAYS:applyPreset(false);return;case PRESET_EVERYDAY:applyPreset(true);return;
+   case SCHEDULE_TOGGLE:settings.schedule.enabled=checked(id);break;case PAUSE:togglePause();return;case RESET:engine->reset();return;case TAKE_BREAK:engine->takeBreak();return;case COMPLETE:engine->finish(true);return;case SKIP:engine->finish(false);return;case SNOOZE1:engine->snooze(1);return;case SNOOZE3:engine->snooze(3);return;case SNOOZE5:engine->snooze(5);return;
    case CLEAR_HISTORY:if(confirm(main,L"Clear all history?",L"This removes every eye break recorded on this device.")){history.clear();saveHistory();updateHistory();}return;
    case PREVIEW:if(!audio->play(settings,true))error(L"The alarm couldn't play. Check your Windows audio output.");return;
    case STOP_AUDIO:audio->stop();return;
-   case RESET_SETTINGS:if(confirm(main,L"Reset all settings?",L"Restores defaults and disables Start with Windows. Your history is preserved.")){if(!setStartup(false)){error(L"Startup registration couldn't be removed.");return;}settings={};settingsChanged();engine->reset();saveSettings();buildSettings();}return;
+   case RESET_SETTINGS:if(confirm(main,L"Reset all settings?",L"Restores defaults, turns the operating schedule off and disables Start with Windows. Your history is preserved.")){if(!setStartup(false)){error(L"Startup registration couldn't be removed.");return;}settings={};settingsChanged();engine->reset();saveSettings();buildSettings();}return;
    case HISTORY_TOGGLE:settings.history=checked(id);break;case ALARM_TOGGLE:settings.alarm=checked(id);if(!settings.alarm)audio->stop();break;case REPEAT:settings.repeat=checked(id);break;case NOTIFY:settings.notifications=checked(id);if(!settings.notifications)clearNotification();break;case SNOOZE:settings.snooze=checked(id);break;case AUTO_START:settings.autoStart=checked(id);break;case TRAY:settings.tray=checked(id);break;case RESTORE:settings.restore=checked(id);break;case PAUSE_LOCK:settings.pauseLocked=checked(id);break;
    case STARTUP:{bool requested=checked(id);if(!setStartup(requested)){SendMessageW(find(id),BM_SETCHECK,settings.startup?BST_CHECKED:BST_UNCHECKED,0);error(L"Startup couldn't be changed. Your organisation may manage startup apps.");return;}settings.startup=requested;break;}default:return;}}
   else if(code==CBN_SELCHANGE){switch(id){case SOUND:settings.sound=selected(id);break;case MODE:settings.mode=selected(id);break;case MONITOR:settings.monitor=selected(id);break;case THEME:settings.theme=selected(id);break;case SELECT_MONITOR:{int index=selected(id);if(index>=0&&index<int(displays.size()))settings.selectedMonitor=utf8(displays[index].device);break;}default:return;}}
@@ -488,11 +598,25 @@ public:
  void showMain(bool focusBreak=true){hidden=false;ShowWindow(main,IsIconic(main)?SW_RESTORE:SW_SHOW);SetForegroundWindow(main);updateRenderTimer();if(focusBreak&&engine->snapshot().phase==Phase::Break){if(!breakWindow)showBreak();else SetForegroundWindow(breakWindow);}}
  void hideMain(){if(!trayAdded){error(L"The tray icon isn't available. The window will stay open so you can control the timer.");ShowWindow(main,SW_RESTORE);return;}captureBounds();hidden=true;ShowWindow(main,SW_HIDE);saveSettings();saveTimer();updateRenderTimer();}
  void closeMain(){if(!settings.tray){exit();return;}if(!settings.trayExplained){settings.trayExplained=true;saveSettings();inform(main,L"The timer keeps running in the system tray",L"Closing keeps your reminders active. To quit, right-click the tray icon and choose Exit. You can change this in Settings.");}hideMain();}
- void updateRenderTimer(){if(!main)return;KillTimer(main,RENDER);if(engine&&engine->snapshot().paused)return;if((!hidden&&!IsIconic(main)&&page==0)||breakWindow){BOOL animations=TRUE;SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animations,0);SetTimer(main,RENDER,animations?250:1000,nullptr);}}
- void schedule(){auto s=engine->snapshot();EnterCriticalSection(&deadlineLock);deadline=s.paused||engine->isSuspended()?0:monotonic()+s.remaining;LeaveCriticalSection(&deadlineLock);SetEvent(dueEvent);}
+ void updateRenderTimer(){if(!main)return;KillTimer(main,RENDER);if(engine){auto s=engine->snapshot();if(s.paused||(s.held&&s.phase!=Phase::Break))return;}if((!hidden&&!IsIconic(main)&&page==0)||breakWindow){BOOL animations=TRUE;SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION,0,&animations,0);SetTimer(main,RENDER,animations?250:1000,nullptr);}}
+ // The worker wakes for whichever comes first: the countdown reaching zero or the next operating-schedule boundary. Boundaries are
+ // wall-clock instants, so with the schedule on the deadline is also re-derived at least once a minute; a clock or time-zone change
+ // that Windows does not announce cannot leave a hidden window in the wrong state for long. The engine checks the schedule before
+ // a due countdown can start a break.
+ void schedule(){
+  auto s=engine->snapshot();double now=monotonic(),next=0;bool away=engine->isSuspended();
+  if(!away&&!s.paused&&!(s.held&&s.phase!=Phase::Break))next=now+s.remaining;
+  if(!away&&engine->scheduled()){double boundary=now+60;if(std::int64_t change=engine->scheduleBoundary())boundary=std::min(boundary,now+std::max(0.0,double(change)-preciseUtc())+0.02);next=next>0?std::min(next,boundary):boundary;}
+  EnterCriticalSection(&deadlineLock);deadline=next;LeaveCriticalSection(&deadlineLock);SetEvent(dueEvent);
+ }
  static DWORD WINAPI work(LPVOID context){auto self=static_cast<Application*>(context);HANDLE events[]={self->stopEvent,self->dueEvent};for(;;){EnterCriticalSection(&self->deadlineLock);double when=self->deadline;LeaveCriticalSection(&self->deadlineLock);DWORD timeout=when<=0?INFINITE:DWORD(std::clamp(std::ceil((when-monotonic())*1000),1.0,double(MAXDWORD-1)));DWORD result=WaitForMultipleObjects(2,events,FALSE,timeout);if(result==WAIT_OBJECT_0||result==WAIT_FAILED)return 0;if(result==WAIT_TIMEOUT){EnterCriticalSection(&self->deadlineLock);if(self->deadline==when)self->deadline=0;LeaveCriticalSection(&self->deadlineLock);PostMessageW(self->main,ENGINE_MESSAGE,0,0);}}}
- void changed(){updateAccessibleTimer();if(engine->snapshot().phase!=Phase::Break)dismissBreak();SetWindowTextW(find(PAUSE),engine->snapshot().paused?L"Resume":L"Pause");schedule();saveTimer();updateTray();updateRenderTimer();InvalidateRect(main,nullptr,TRUE);if(breakWindow){SetWindowTextW(GetDlgItem(breakWindow,BREAK_GUIDANCE),engine->snapshot().paused?L"Break paused. Resume from the main window.":L"Keep looking into the distance.");InvalidateRect(breakWindow,nullptr,TRUE);}}
- void breakDue(std::uint64_t cycle,bool alarm){if(locked||sleeping||engine->isSuspended())return;if(alarm&&!audio->play(settings))error(L"The alarm couldn't play. Check your Windows audio output.");if(hidden||IsIconic(main))notify(cycle);showBreak();}
+ void changed(){auto snap=engine->snapshot();updateAccessibleTimer();
+  if(snap.phase!=Phase::Break)dismissBreak();
+  // Operating hours closed during a break the user started: it may finish, but no alarm, notification or snooze outside hours.
+  else if(snap.held){if(audio->playing&&!audio->preview)audio->stop();clearNotification();if(breakWindow)for(int id:{SNOOZE1,SNOOZE3,SNOOZE5})if(HWND b=GetDlgItem(breakWindow,id))EnableWindow(b,FALSE);}
+  updateScheduleStatus();SetWindowTextW(find(PAUSE),engine->snapshot().paused?L"Resume":L"Pause");schedule();saveTimer();updateTray();updateRenderTimer();InvalidateRect(main,nullptr,TRUE);if(breakWindow){SetWindowTextW(GetDlgItem(breakWindow,BREAK_GUIDANCE),engine->snapshot().paused?L"Break paused. Resume from the main window.":L"Keep looking into the distance.");InvalidateRect(breakWindow,nullptr,TRUE);}}
+ // Outside operating hours the only break is one the user asked for: the engine sends it without the alarm and it is not notified.
+ void breakDue(std::uint64_t cycle,bool alarm){if(locked||sleeping||engine->isSuspended())return;if(alarm&&!audio->play(settings))error(L"The alarm couldn't play. Check your Windows audio output.");if((hidden||IsIconic(main))&&!engine->snapshot().held)notify(cycle);showBreak();}
  // The completion alarm reuses the selected sound, volume and mute setting. It is asynchronous (waveOut) and keyed to the
  // finished break, so repeated timer messages, repaints, window restores and recovery cannot play it twice.
  void breakCompleted(std::uint64_t cycle,bool alarm){if(!alarm||locked||sleeping||engine->isSuspended()||alarmedCycle==cycle)return;alarmedCycle=cycle;if(!audio->play(settings))error(L"The alarm couldn't play. Check your Windows audio output.");}
@@ -511,7 +635,9 @@ public:
   if(settings.mode==2){work=monitor.bounds;w=work.right-work.left;h=work.bottom-work.top;}else {w=std::min(w,int(work.right-work.left));h=std::min(h,int(work.bottom-work.top));}
   SetWindowPos(breakWindow,nullptr,work.left+(work.right-work.left-w)/2,work.top+(work.bottom-work.top-h)/2,w,h,SWP_NOZORDER);
   SendMessageW(breakWindow,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(icon));SendMessageW(breakWindow,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(icon));
-  auto button=[&](const wchar_t* name,int id){HWND child=CreateWindowExW(0,L"BUTTON",name,WS_CHILD|WS_VISIBLE|WS_TABSTOP|(id==COMPLETE?BS_DEFPUSHBUTTON:BS_PUSHBUTTON)|BS_MULTILINE,0,0,0,0,breakWindow,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(breakFont),TRUE);return child;};button(L"I'm back",COMPLETE);button(L"Skip",SKIP);if(settings.snooze){button(L"Snooze 1 min",SNOOZE1);button(L"3 min",SNOOZE3);button(L"5 min",SNOOZE5);}
+  // Snoozing schedules an automatic reminder, so a break outside operating hours offers no snooze.
+  breakSnooze=settings.snooze&&!engine->snapshot().held;
+  auto button=[&](const wchar_t* name,int id){HWND child=CreateWindowExW(0,L"BUTTON",name,WS_CHILD|WS_VISIBLE|WS_TABSTOP|(id==COMPLETE?BS_DEFPUSHBUTTON:BS_PUSHBUTTON)|BS_MULTILINE,0,0,0,0,breakWindow,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(breakFont),TRUE);return child;};button(L"I'm back",COMPLETE);button(L"Skip",SKIP);if(breakSnooze){button(L"Snooze 1 min",SNOOZE1);button(L"3 min",SNOOZE3);button(L"5 min",SNOOZE5);}
   auto caption=[&](const wchar_t*name,int id,HFONT font){HWND child=CreateWindowExW(0,L"STATIC",name,WS_CHILD|WS_VISIBLE|SS_CENTER|(id==COUNTDOWN?SS_CENTERIMAGE:0),0,0,1,1,breakWindow,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);};
   caption(L"Rest your eyes",BREAK_TITLE,breakTitleFont);caption(L"Look at something at least 20 feet / 6 metres away.",BREAK_INSTRUCTION,breakFont);caption(timeText(engine->snapshot().remaining).c_str(),COUNTDOWN,breakCountFont);caption(L"Keep looking into the distance.",BREAK_GUIDANCE,breakFont);
   layoutBreak();applyTheme();ShowWindow(breakWindow,SW_SHOW);SetForegroundWindow(breakWindow);FLASHWINFO flash{sizeof(flash),breakWindow,FLASHW_TRAY,3,0};FlashWindowEx(&flash);SetFocus(GetDlgItem(breakWindow,COMPLETE));updateRenderTimer();
@@ -523,8 +649,8 @@ public:
   breakItems.clear();
   auto place=[&](int id,int height){breakItems.push_back({GetDlgItem(breakWindow,id),x,y,width,height});y+=height+gap;};
   place(BREAK_TITLE,bpx(42*textScale));place(BREAK_INSTRUCTION,bpx(48*textScale));place(COUNTDOWN,bpx(96*std::sqrt(textScale)));place(BREAK_GUIDANCE,bpx(48*textScale));place(COMPLETE,bh);
-  int skipWidth=settings.snooze?width/4:width;breakItems.push_back({GetDlgItem(breakWindow,SKIP),x,y,skipWidth-4,bh});
-  if(settings.snooze){int widths[3]={width/3,width/5,width-width/4-width/3-width/5};int left=x+width/4;int ids[3]={SNOOZE1,SNOOZE3,SNOOZE5};for(int i=0;i<3;++i){breakItems.push_back({GetDlgItem(breakWindow,ids[i]),left,y,widths[i]-4,bh});left+=widths[i];}}
+  int skipWidth=breakSnooze?width/4:width;breakItems.push_back({GetDlgItem(breakWindow,SKIP),x,y,skipWidth-4,bh});
+  if(breakSnooze){int widths[3]={width/3,width/5,width-width/4-width/3-width/5};int left=x+width/4;int ids[3]={SNOOZE1,SNOOZE3,SNOOZE5};for(int i=0;i<3;++i){breakItems.push_back({GetDlgItem(breakWindow,ids[i]),left,y,widths[i]-4,bh});left+=widths[i];}}
   breakHeight=y+bh+pad;breakScroller.setRange(std::max(0,breakHeight-int(r.bottom)));positionBreak(true);InvalidateRect(breakWindow,nullptr,TRUE);
  }
  void positionBreak(bool force=false){
@@ -536,7 +662,10 @@ public:
  void suspend(bool isLock){engine->suspend(isLock);dismissBreak();schedule();saveTimer();}
  void wake(){if(locked||sleeping)return;engine->wake();schedule();if(engine->snapshot().phase==Phase::Break)showBreak();}
  void exit(){if(quitting)return;quitting=true;saveSettings();saveTimer();dismissBreak();DestroyWindow(main);}
- LRESULT color(HDC dc,HWND child=nullptr,bool input=false){SetBkColor(dc,input?colors.surface:colors.background);COLORREF ink=colors.foreground;if(child&&!colors.contrast){if(reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0))==headingFont)ink=colors.accent;else if(GetWindowLongPtrW(child,GWLP_USERDATA)==1)ink=colors.secondary;}SetTextColor(dc,ink);return reinterpret_cast<LRESULT>(input?surfaceBrush:backgroundBrush);}
+ LRESULT color(HDC dc,HWND child=nullptr,bool input=false){
+  // A disabled edit (the hours of an unselected day) asks for static colours; it keeps its field surface with secondary text.
+  bool dimmed=false;if(child&&!input&&!IsWindowEnabled(child)){wchar_t cls[16]{};GetClassNameW(child,cls,16);dimmed=input=_wcsicmp(cls,L"Edit")==0;}
+  SetBkColor(dc,input?colors.surface:colors.background);COLORREF ink=dimmed&&!colors.contrast?colors.secondary:colors.foreground;if(child&&!colors.contrast&&!dimmed){if(reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0))==headingFont)ink=colors.accent;else if(GetWindowLongPtrW(child,GWLP_USERDATA)==1)ink=colors.secondary;}SetTextColor(dc,ink);return reinterpret_cast<LRESULT>(input?surfaceBrush:backgroundBrush);}
  static LRESULT CALLBACK paneProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;case WM_HSCROLL:if(reinterpret_cast<HWND>(l)==a.find(VOLUME)){a.settings.volume=int(SendMessageW(a.find(VOLUME),TBM_GETPOS,0,0));a.updateVolumeLabel();a.settingsChanged();if(LOWORD(w)==TB_ENDTRACK)a.saveSettings();}return 0;case WM_VSCROLL:if(a.barScroll(a.settingsScroller,hwnd,LOWORD(w),a.px(40)))a.settingsMoved();return 0;case WM_MOUSEWHEEL:a.wheelSettings(GET_WHEEL_DELTA_WPARAM(w));return 0;case WM_ERASEBKGND:{RECT r{};GetClientRect(hwnd,&r);FillRect(reinterpret_cast<HDC>(w),&r,a.backgroundBrush);return 1;}case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);}return DefWindowProcW(hwnd,msg,w,l);}
  static LRESULT CALLBACK breakProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_PAINT:a.paint(hwnd,true);return 0;case WM_ERASEBKGND:return 1;case WM_SIZE:a.layoutBreak();return 0;case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;
   case WM_VSCROLL:if(a.barScroll(a.breakScroller,hwnd,LOWORD(w),MulDiv(40,int(GetDpiForWindow(hwnd)),96)))a.breakMoved();return 0;
@@ -548,16 +677,17 @@ public:
    case WM_SIZE:if(a.engine){if(w==SIZE_MINIMIZED){if(a.settings.tray)PostMessageW(hwnd,WM_APP+4,0,0);a.updateRenderTimer();}else {a.layout();a.updateRenderTimer();}}return 0;
    case WM_GETMINMAXINFO:{auto size=reinterpret_cast<MINMAXINFO*>(l);size->ptMinTrackSize={a.px(520),a.px(480)};return 0;}
    case WM_DPICHANGED:{a.settingsScroller.rescale(double(HIWORD(w))/a.dpi);a.dpi=HIWORD(w);auto r=reinterpret_cast<RECT*>(l);SetWindowPos(hwnd,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);a.createFonts();a.layout();return 0;}
-   case WM_SETTINGCHANGE:case WM_THEMECHANGED:if(a.engine){a.createFonts();a.applyTheme();a.layout();a.layoutBreak();a.updateRenderTimer();}return 0;
+   case WM_SETTINGCHANGE:case WM_THEMECHANGED:if(a.engine){a.createFonts();a.applyTheme();a.layout();a.layoutBreak();a.updateRenderTimer();if(msg==WM_SETTINGCHANGE)a.timeChanged();}return 0;
+   case WM_TIMECHANGE:_tzset();a.timeChanged();return 0;
    case WM_DISPLAYCHANGE:if(a.page==2)a.buildSettings();return 0;
    case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;
    case WM_TIMER:if(w==RENDER){a.engine->tick();a.updateAccessibleTimer();if(!a.hidden&&a.page==0)InvalidateRect(hwnd,nullptr,FALSE);if(a.breakWindow){auto time=timeText(a.engine->snapshot().remaining);wchar_t previous[32]{};GetWindowTextW(GetDlgItem(a.breakWindow,COUNTDOWN),previous,32);if(time!=previous)SetWindowTextW(GetDlgItem(a.breakWindow,COUNTDOWN),time.c_str());InvalidateRect(a.breakWindow,nullptr,FALSE);}}else if(w==CHECKPOINT){a.saveTimer();if(a.dirtySettings)a.saveSettings();}else if(w==SCROLL)a.stepScroll();return 0;
-   case ENGINE_MESSAGE:if(!a.quitting){a.engine->tick();a.schedule();}return 0;
+   case ENGINE_MESSAGE:if(!a.quitting){a.engine->tick();a.schedule();if(a.engine->scheduled()){a.updateAccessibleTimer();a.updateScheduleStatus();if(!a.hidden&&a.page==0)InvalidateRect(hwnd,nullptr,FALSE);}}return 0;
    case WM_APP+3:a.error(L"Eye Break Reminder couldn't load some saved data. Defaults or a fresh timer have been restored.");return 0;
    case WM_APP+4:a.hideMain();return 0;
    case PREVIEW_REFRESH:a.previewRefreshPosted=false;a.refreshPreview();return 0;
    case TRAY_MESSAGE:{UINT event=LOWORD(l);if(event==WM_LBUTTONUP||event==NIN_SELECT||event==NIN_KEYSELECT||event==NIN_BALLOONUSERCLICK)a.showMain();else if(event==WM_CONTEXTMENU||event==WM_RBUTTONUP)a.trayMenu({GET_X_LPARAM(w),GET_Y_LPARAM(w)});return 0;}
-   case MM_WOM_DONE:if(a.audio&&a.audio->done(w,l)&&!a.audio->preview&&a.settings.repeat&&a.settings.alarm&&a.engine->snapshot().phase==Phase::Break&&!a.locked&&!a.sleeping)a.audio->play(a.settings);return 0;
+   case MM_WOM_DONE:if(a.audio&&a.audio->done(w,l)&&!a.audio->preview&&a.settings.repeat&&a.settings.alarm&&a.engine->snapshot().phase==Phase::Break&&!a.engine->snapshot().held&&!a.locked&&!a.sleeping)a.audio->play(a.settings);return 0;
    case WM_POWERBROADCAST:if(w==PBT_APMSUSPEND){a.sleeping=true;a.suspend(false);}else if(w==PBT_APMRESUMEAUTOMATIC||w==PBT_APMRESUMESUSPEND){a.sleeping=false;a.wake();}return TRUE;
    case WM_WTSSESSION_CHANGE:if(w==WTS_SESSION_LOCK){a.locked=true;a.suspend(true);}else if(w==WTS_SESSION_UNLOCK){a.locked=false;a.wake();}return 0;
    case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);
@@ -578,10 +708,12 @@ public:
   engine->changed=[this]{changed();};engine->due=[this](auto cycle,bool alarm){breakDue(cycle,alarm);};engine->breakCompleted=[this](auto cycle,bool alarm){breakCompleted(cycle,alarm);};engine->ended=[this](Record record){if(settings.history){history.push_back(record);if(history.size()>10000)history.erase(history.begin());saveHistory();updateHistory();}};
   worker=CreateThread(nullptr,0,Application::work,this,0,nullptr);if(!worker)throw std::runtime_error("Timer worker unavailable");changed();SetTimer(main,CHECKPOINT,30000,nullptr);ShowWindow(main,show);UpdateWindow(main);updateRenderTimer();SetFocus(nav[0]);
   HWND lastFocus=nullptr;MSG message{};while(GetMessageW(&message,nullptr,0,0)>0){if(message.message==WM_MOUSEWHEEL&&handleWheel(message))continue;if(message.message==WM_KEYDOWN&&GetKeyState(VK_CONTROL)<0){if(message.wParam=='R'){engine->reset();continue;}if(message.wParam=='B'&&GetKeyState(VK_SHIFT)<0){engine->takeBreak();continue;}if(message.wParam==VK_OEM_COMMA){showMain();switchPage(2);continue;}}
-   if(message.message==WM_KEYDOWN&&message.wParam==VK_RETURN){HWND focus=GetFocus();wchar_t clsName[32]{};GetClassNameW(focus,clsName,32);if(wcscmp(clsName,L"Button")==0){SendMessageW(focus,BM_CLICK,0,0);continue;}}
+   if(message.message==WM_KEYDOWN&&message.wParam==VK_RETURN){HWND focus=GetFocus();wchar_t clsName[32]{};GetClassNameW(focus,clsName,32);if(wcscmp(clsName,L"Button")==0){SendMessageW(focus,BM_CLICK,0,0);continue;}
+    // Enter in a schedule time field stores (or rejects) the typed time without leaving the field.
+    int focusId=GetDlgCtrlID(focus);if(_wcsicmp(clsName,L"Edit")==0&&focusId>=PERIOD_BASE&&focusId<PERIOD_END){command(focusId,EN_KILLFOCUS);SendMessageW(focus,EM_SETSEL,0,-1);continue;}}
    if(message.message==WM_KEYDOWN&&message.wParam==VK_ESCAPE&&breakWindow){engine->finish(false);continue;}
    HWND dialog=breakWindow&&IsChild(breakWindow,GetFocus())?breakWindow:main;if(!IsDialogMessageW(dialog,&message)){TranslateMessage(&message);DispatchMessageW(&message);}HWND focus=GetFocus();if(focus!=lastFocus){lastFocus=focus;ensureFocused(focus);ensureBreakVisible(focus);}}
-  audio->changed=nullptr;audio.reset();if(backgroundBrush)DeleteObject(backgroundBrush);if(surfaceBrush)DeleteObject(surfaceBrush);if(normalFont)DeleteObject(normalFont);
+  audio->changed=nullptr;audio.reset();clearAccessibleNames();if(accessibility){accessibility->Release();accessibility=nullptr;}if(backgroundBrush)DeleteObject(backgroundBrush);if(surfaceBrush)DeleteObject(surfaceBrush);if(normalFont)DeleteObject(normalFont);
   if(headingFont)DeleteObject(headingFont);
   if(tabFont)DeleteObject(tabFont);
   if(smallFont)DeleteObject(smallFont);

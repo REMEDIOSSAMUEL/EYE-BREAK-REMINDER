@@ -115,6 +115,14 @@ for name in ['EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip']:
    else:
     require('EyeBreakReminder/src/app.cpp' in names and 'EyeBreakReminder/tests/core_tests.cpp' in names,'Complete source/tests in archive')
     require(not any('/release/' in p or p.endswith('/core-tests') for p in names),'Source archive excludes build outputs')
+    # No compiled test binary (Linux or Windows name), other binaries, archives, temporary files, signing secrets or tool folders.
+    banned=('.exe','.dll','.o','.obj','.pdb','.zip','.tmp','.pyc','.pfx','.pem','.p12','.key')
+    require(not any(p.lower().endswith(banned) or any(part in {'build','dist','__pycache__'} or part.startswith('.') for part in p.split('/')[1:-1]) for p in names),'Source archive has no binaries, build outputs, secrets or tool folders')
+    # Everything needed to build, test and package is present: sources, test sources, scripts, installer, assets, documentation.
+    shipped={str(f.relative_to(ROOT)).replace('\\','/') for d in ['src','scripts','installer','assets','docs'] for f in (ROOT/d).rglob('*') if f.is_file() and not f.name.lower().endswith(banned) and '__pycache__' not in f.parts}
+    shipped|={'tests/core_tests.cpp','Makefile','VERSION','README.md','CHANGELOG.md','CONTRIBUTING.md','.editorconfig','.gitattributes','.gitignore'}
+    missing=sorted(p for p in shipped if 'EyeBreakReminder/'+p not in names)
+    require(not missing,'Source archive is missing '+', '.join(missing))
 hashes=ROOT/'release/EyeBreakReminder-SHA256.txt'
 if hashes.exists():
  for line in hashes.read_text().splitlines():
