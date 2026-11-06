@@ -1,0 +1,228 @@
+name: Installer acceptance (disposable Windows runner)
+
+on:
+  push:
+    branches:
+      - test/v110-release-acceptance
+    paths:
+      - .github/workflows/installer-acceptance.yml
+      - ci/installer-acceptance/**
+      - CHANGELOG.md
+      - Makefile
+      - README.md
+      - VERSION
+      - docs/PRIVACY.md
+      - docs/VERIFICATION.md
+      - docs/WINDOWS-TESTING.md
+      - installer/setup.nsi
+      - scripts/set-version.py
+      - src/app.cpp
+      - src/app.manifest
+      - src/core.hpp
+      - src/resources.rc
+      - src/windows_services.hpp
+      - tests/core_tests.cpp
+permissions:
+  contents: read
+
+jobs:
+  installer-acceptance:
+    if: github.ref == 'refs/heads/test/v110-release-acceptance' && github.event_name == 'push'
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - name: Create test-only evidence directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP 'EyeBreakInstallerAcceptance') | Out-Null
+
+      - name: Configure MSYS2 line endings
+        shell: pwsh
+        run: git config --global core.autocrlf input
+
+      - name: Check out the intended feature source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up MSYS2 build tools
+        id: msys2
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884
+        with:
+          release: false
+          update: true
+          cache: false
+          msystem: MINGW64
+          path-type: minimal
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-python
+
+      - name: Download and verify official NSIS 3.13 compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'nsis-3.13.zip'
+          $nsisRoot = Join-Path $env:RUNNER_TEMP 'nsis-3.13'
+          if (Test-Path -LiteralPath $nsisRoot) { throw "NSIS extraction path already exists: $nsisRoot" }
+          $url = 'https://sourceforge.net/projects/nsis/files/NSIS%203/3.13/nsis-3.13.zip/download?use_mirror=netix'
+          $expectedHash = 'BA63DFFC4410EE89193E1CB5A41989991BD77C61068DA17E3156D136B7B0B3D8'
+          $curl = (Get-Command curl.exe -ErrorAction Stop).Source
+          & $curl --location --fail --silent --show-error --max-time 120 --output $zip $url
+          if ($LASTEXITCODE -ne 0) { throw "Official NSIS download failed with curl exit code $LASTEXITCODE" }
+          $actualHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToUpperInvariant()
+          if ($actualHash -ne $expectedHash) { throw "NSIS archive hash mismatch: $actualHash" }
+          Expand-Archive -LiteralPath $zip -DestinationPath $nsisRoot
+          $nsisDirectory = Join-Path $nsisRoot 'nsis-3.13'
+          $makensisExe = Join-Path $nsisDirectory 'makensis.exe'
+          $unicodeStub = Join-Path $nsisDirectory 'Stubs\lzma_solid-x86-unicode'
+          if (-not (Test-Path -LiteralPath $makensisExe -PathType Leaf)) { throw "Official NSIS 3.13 compiler missing: $makensisExe" }
+          if (-not (Test-Path -LiteralPath $unicodeStub -PathType Leaf)) { throw "Required solid LZMA x86 Unicode stub missing: $unicodeStub" }
+          $compilerOutput = @(& $makensisExe -VERSION 2>&1)
+          $compilerVersion = ($compilerOutput -join ' ').Trim()
+          if ($LASTEXITCODE -ne 0 -or $compilerVersion -notmatch '3\.13') { throw "Expected official NSIS compiler version 3.13; got $compilerVersion" }
+          $evidence = Join-Path $env:RUNNER_TEMP 'EyeBreakInstallerAcceptance'
+          $record = [ordered]@{ source=$url; version='3.13'; archiveSha256=$actualHash; compilerPath='nsis-3.13/makensis.exe'; compilerSha256=(Get-FileHash -LiteralPath $makensisExe -Algorithm SHA256).Hash.ToUpperInvariant(); selectedInstallerStub='Stubs/lzma_solid-x86-unicode'; installerStubSha256=(Get-FileHash -LiteralPath $unicodeStub -Algorithm SHA256).Hash.ToUpperInvariant(); compilerVersion=$compilerVersion }
+          [IO.File]::WriteAllText((Join-Path $evidence 'nsis-toolchain.json'),(ConvertTo-Json $record -Depth 4),[Text.UTF8Encoding]::new($false))
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"ACCEPTANCE_NSIS_DIR=$nsisDirectory`n",[Text.UTF8Encoding]::new($false))
+
+      - name: Verify branch and build the test-only v1.1.0 candidate
+        shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expectedBase = '0214be24bc6218c7eac0e5a2c7daf3c3e9d205e0'
+          if ($env:GITHUB_REF_NAME -ne 'test/v110-release-acceptance') {
+            throw "Refusing installer execution from unexpected branch: $env:GITHUB_REF_NAME"
+          }
+          $head = (git rev-parse HEAD).Trim()
+          $parent = (git rev-parse 'HEAD^').Trim()
+          & git merge-base --is-ancestor $expectedBase $head
+          if ($LASTEXITCODE -ne 0) {
+            throw "Expected source commit $expectedBase to be an ancestor of acceptance HEAD $head"
+          }
+          if ($head -ne $env:GITHUB_SHA) {
+            throw "Checked out HEAD $head does not match event SHA $env:GITHUB_SHA"
+          }
+          $allowed = @(
+            '.github/workflows/installer-acceptance.yml',
+            'ci/installer-acceptance/Run-InstallerAcceptance.ps1',
+            'ci/installer-acceptance/fixture.cpp',
+            'installer/setup.nsi',
+            'src/app.cpp',
+            'src/core.hpp',
+            'src/windows_services.hpp',
+            'src/app.manifest',
+            'src/resources.rc',
+            'tests/core_tests.cpp',
+            'scripts/set-version.py',
+            'Makefile',
+            'VERSION',
+            'README.md',
+            'CHANGELOG.md',
+            'docs/PRIVACY.md',
+            'docs/VERIFICATION.md',
+            'docs/WINDOWS-TESTING.md'
+          )
+          $required = @(
+            '.github/workflows/installer-acceptance.yml',
+            'ci/installer-acceptance/Run-InstallerAcceptance.ps1',
+            'ci/installer-acceptance/fixture.cpp'
+          )
+          $changes = @(git diff --name-status "$expectedBase...HEAD")
+          $changed = @(); $unexpected = @()
+          foreach ($line in $changes) {
+            $parts = $line -split "`t", 2
+            if ($parts.Count -ne 2 -or $parts[0] -notin @('A','M') -or $parts[1] -notin $allowed) {
+              $unexpected += $line
+            } else { $changed += $parts[1] }
+          }
+          $missing = @($required | Where-Object { $_ -notin $changed })
+          if ($unexpected.Count -ne 0 -or $missing.Count -ne 0) {
+            throw "Acceptance branch has unexpected changes ($($unexpected -join ', ')) or missing harness files ($($missing -join ', ')). Changed: $($changed -join ', ')"
+          }
+          $sourceVersion = (Get-Content VERSION -Raw).Trim()
+          if ($sourceVersion -notin @('1.0.6','1.1.0')) {
+            throw "Source checkout version must be 1.0.6 or 1.1.0; found $sourceVersion"
+          }
+          $reviewedInputs = @{
+            'ci/installer-acceptance/Run-InstallerAcceptance.ps1' = '5AE9510C023C83396544421DAC88DCADBE481986CE393A0EAA6BBE59A651CB67'
+            'ci/installer-acceptance/fixture.cpp' = 'F9F42B6CFC5A6A6858329E6AAB2FF5F752C5CC4B4523FF6CD039040BF9A9B45E'
+            'scripts/set-version.py' = 'B8045C05A91296BAA288BA506C820F894B75F2A12EA7559E58AAC256713CD2E0'
+            'Makefile' = '44426AFF2E7682AD7CDBB7199916CB73B82B5B26A728CC368A947F08EA1D13A5'
+          }
+          $reviewedInputs['installer/setup.nsi'] = if ($sourceVersion -eq '1.0.6') {
+            'AB51731AF74454AC8E7102AC8ABE331EB3B6A265ED139E640BF88A613850A620'
+          } else {
+            '4B10E29E6A6F2CD42112B944FB82914948B96D5148A3BC5C4D33AC77A949054A'
+          }
+          foreach ($path in $reviewedInputs.Keys) {
+            $text = [IO.File]::ReadAllText($path).Replace("`r`n", "`n")
+            $bytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { $actualHash = [Convert]::ToHexString($sha.ComputeHash($bytes)) } finally { $sha.Dispose() }
+            if ($actualHash -ne $reviewedInputs[$path]) {
+              throw "Reviewed input hash mismatch for ${path}: $actualHash"
+            }
+          }
+          $logDir = Join-Path $env:RUNNER_TEMP 'EyeBreakInstallerAcceptance'
+          $bash = Join-Path $env:MSYS2_LOCATION 'usr\bin\bash.exe'
+          if (-not (Test-Path -LiteralPath $bash)) { throw "MSYS2 bash not found: $bash" }
+          $nsis = Join-Path $env:ACCEPTANCE_NSIS_DIR 'makensis.exe'
+          if (-not (Test-Path -LiteralPath $nsis -PathType Leaf)) { throw "Official NSIS compiler not found: $nsis" }
+          $env:MAKENSIS_WINDOWS_PATH = $nsis
+          $env:ACCEPTANCE_LOG_DIR = $logDir
+          & $bash -lc 'set -euo pipefail; cd "$(cygpath -u "$GITHUB_WORKSPACE")"; log="$(cygpath -u "$ACCEPTANCE_LOG_DIR")/build.log"; export MAKENSIS="$(cygpath -u "$MAKENSIS_WINDOWS_PATH")"; export WINDRES=windres; shim_dir="$(cygpath -u "$RUNNER_TEMP")/eye-break-tool-shims"; mkdir -p "$shim_dir"; printf "%s\n" "#!/usr/bin/env bash" "exec strip \"\$@\"" > "$shim_dir/x86_64-w64-mingw32-strip"; chmod +x "$shim_dir/x86_64-w64-mingw32-strip"; export PATH="$shim_dir:$PATH"; target_flags="-std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -municode -mwindows -static -static-libgcc -static-libstdc++ -DUNICODE -D_UNICODE -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00"; test -x "$MAKENSIS"; command -v "$WINDRES"; strip_path="$(command -v strip)"; case "$strip_path" in /mingw64/bin/strip*) ;; *) printf "Unexpected MINGW64 strip: %s\n" "$strip_path" >&2; exit 1;; esac; command -v x86_64-w64-mingw32-strip; { printf "MSYSTEM=%s\nImageOS=%s\nImageVersion=%s\nMAKENSIS=%s\nWINDRES=%s\nSTRIP_SHIM=%s\nTARGET_WINDOWS_FLAGS=%s\n" "$MSYSTEM" "$ImageOS" "$ImageVersion" "$MAKENSIS" "$WINDRES" "$shim_dir/x86_64-w64-mingw32-strip" "$target_flags"; sha256sum "$shim_dir/x86_64-w64-mingw32-strip"; x86_64-w64-mingw32-g++ --version; python3 --version; make --version; "$MAKENSIS" -VERSION; } | tee "$log"; python3 scripts/set-version.py 1.1.0 2>&1 | tee -a "$log"; make -B release/EyeBreakReminder.exe "FLAGS=$target_flags" 2>&1 | tee -a "$log";  g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -static-libgcc -static-libstdc++ ci/installer-acceptance/fixture.cpp -o tests/installer-acceptance-fixture.exe 2>&1 | tee -a "$log"'
+          if ($LASTEXITCODE -ne 0) { throw "Candidate build or packaging failed with exit code $LASTEXITCODE" }
+          $candidateExe = Join-Path $env:GITHUB_WORKSPACE 'release\EyeBreakReminder.exe'
+          if (-not (Test-Path -LiteralPath $candidateExe -PathType Leaf)) { throw "Built candidate executable missing: $candidateExe" }
+          if ((Get-Item -LiteralPath $candidateExe).Length -le 0) { throw 'Built candidate executable is empty' }
+          $appVersion = (Get-Item -LiteralPath $candidateExe).VersionInfo.ProductVersion
+          if ($appVersion -ne '1.1.0') { throw "Candidate executable metadata is $appVersion, expected 1.1.0" }
+          $nsisStdout = Join-Path $logDir 'nsis-build.stdout.log'
+          $nsisStderr = Join-Path $logDir 'nsis-build.stderr.log'
+          $nsisProcess = Start-Process -FilePath $nsis -ArgumentList @('-NOCD','installer/setup.nsi') -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -PassThru -Wait -RedirectStandardOutput $nsisStdout -RedirectStandardError $nsisStderr
+          $nsisExitCode = $nsisProcess.ExitCode
+          Get-Content -LiteralPath $nsisStdout -ErrorAction SilentlyContinue
+          Get-Content -LiteralPath $nsisStderr -ErrorAction SilentlyContinue
+          if ($nsisExitCode -ne 0) { throw "NSIS candidate installer build failed with exit code $nsisExitCode" }
+          $candidateSetup = Join-Path $env:GITHUB_WORKSPACE 'release\EyeBreakReminder-Setup-x64.exe'
+          if (-not (Test-Path -LiteralPath $candidateSetup -PathType Leaf)) { throw "NSIS returned success but candidate installer is missing: $candidateSetup" }
+          if ((Get-Item -LiteralPath $candidateSetup).Length -le 0) { throw 'Built candidate installer is empty' }
+          $setupVersion = (Get-Item -LiteralPath $candidateSetup).VersionInfo.ProductVersion
+          if ($setupVersion -ne '1.1.0') { throw "Candidate installer metadata is $setupVersion, expected 1.1.0" }
+          $buildEvidence = [ordered]@{ sourceCommit=$head; appVersion=$appVersion; appSha256=(Get-FileHash -LiteralPath $candidateExe -Algorithm SHA256).Hash; installerVersion=$setupVersion; installerSha256=(Get-FileHash -LiteralPath $candidateSetup -Algorithm SHA256).Hash }
+          [IO.File]::WriteAllText((Join-Path $logDir 'candidate-build.json'),(ConvertTo-Json $buildEvidence -Depth 4),[Text.UTF8Encoding]::new($false))
+
+      - name: Download and verify official v1.0.6 setup
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'ci/installer-acceptance/Run-InstallerAcceptance.ps1'
+          $text = [IO.File]::ReadAllText($path).Replace("`r`n", "`n")
+          $bytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
+          $sha = [Security.Cryptography.SHA256]::Create()
+          try { $actualHash = [Convert]::ToHexString($sha.ComputeHash($bytes)) } finally { $sha.Dispose() }
+          $expectedHash = '5AE9510C023C83396544421DAC88DCADBE481986CE393A0EAA6BBE59A651CB67'
+          if ($actualHash -ne $expectedHash) { throw "Refusing to expose the read-only GitHub token to an altered acceptance harness: $actualHash" }
+          & .\ci\installer-acceptance\Run-InstallerAcceptance.ps1 -DownloadOfficialOnly
+          if ($LASTEXITCODE -ne 0) { throw "Official v1.0.6 artifact verification failed with exit code $LASTEXITCODE" }
+
+      - name: Execute genuine install, upgrade, and uninstall acceptance
+        shell: pwsh
+        run: .\ci\installer-acceptance\Run-InstallerAcceptance.ps1
+
+      - name: Upload test-generated logs and results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: installer-acceptance-${{ github.run_id }}
+          path: ${{ runner.temp }}\EyeBreakInstallerAcceptance\
+          if-no-files-found: warn
+          retention-days: 7
