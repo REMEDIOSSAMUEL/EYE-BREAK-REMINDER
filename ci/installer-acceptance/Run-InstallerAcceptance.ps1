@@ -319,6 +319,40 @@ using System.Security.Principal;
 public static class EbrAcceptanceWindowProbe {
  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string className,string windowName);
 [DllImport("user32.dll", EntryPoint="GetClassNameW", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)] public static extern int GetClassName(IntPtr hwnd,System.Text.StringBuilder className,int maxCount);
+[DllImport("user32.dll", EntryPoint="GetParent", ExactSpelling=true)]
+public static extern IntPtr GetParent(IntPtr hwnd);
+
+[UnmanagedFunctionPointer(CallingConvention.Winapi)]
+private delegate bool ChildWindowVisitor(IntPtr hwnd,IntPtr data);
+
+[DllImport("user32.dll", EntryPoint="EnumChildWindows", ExactSpelling=true)]
+private static extern bool EnumerateChildren(
+    IntPtr parent,ChildWindowVisitor callback,IntPtr data);
+
+public static IntPtr FindSettingsPaneByEnumeration(IntPtr parent,uint expectedPid) {
+    IntPtr match=IntPtr.Zero;
+
+    ChildWindowVisitor callback=(child,data)=>{
+        if(GetParent(child)!=parent)return true;
+
+        uint pid=0;
+        if(GetWindowThreadProcessId(child,out pid)==0 || pid!=expectedPid)
+            return true;
+
+        var cls=new System.Text.StringBuilder(256);
+        if(GetClassName(child,cls,cls.Capacity)>0 &&
+           string.Equals(cls.ToString(),"EyeBreakReminder.Settings",
+                         StringComparison.Ordinal)){
+            match=child;
+            return false;
+        }
+        return true;
+    };
+
+    EnumerateChildren(parent,callback,IntPtr.Zero);
+    GC.KeepAlive(callback);
+    return match;
+}
  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent,IntPtr after,string className,string windowName);
  [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr parent,int id);
  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd,System.Text.StringBuilder text,int count);
@@ -446,6 +480,51 @@ function UiSettingsPane([IntPtr]$Main){
     }
   }
 
+  # The v1.0.6 settings pane has a null child-window ID.
+  # ID zero is only a candidate; verify class, parent and PID.
+  if($pane -eq [IntPtr]::Zero){
+    $candidate=[EbrAcceptanceWindowProbe]::GetDlgItem($Main,0)
+
+    if($candidate -ne [IntPtr]::Zero){
+      $candidateClass=[Text.StringBuilder]::new(256)
+      [void][EbrAcceptanceWindowProbe]::GetClassName(
+        $candidate,$candidateClass,$candidateClass.Capacity
+      )
+
+      [uint32]$candidatePid=0
+      [void][EbrAcceptanceWindowProbe]::GetWindowThreadProcessId(
+        $candidate,[ref]$candidatePid
+      )
+
+      $candidateParent=[EbrAcceptanceWindowProbe]::GetParent($candidate)
+
+      Write-Host (
+        'SETTINGS_ID_ZERO: ' +
+        (ConvertTo-Json -InputObject ([ordered]@{
+          handle=('0x{0:X}' -f $candidate.ToInt64())
+          class=$candidateClass.ToString()
+          pid=$candidatePid
+          directParent=($candidateParent -eq $Main)
+        }) -Compress)
+      )
+
+      if(
+        $candidateClass.ToString() -ceq 'EyeBreakReminder.Settings' -and
+        $candidatePid -eq $mainPid -and
+        $candidateParent -eq $Main
+      ){
+        $pane=$candidate
+        $method='validated child ID zero'
+      }
+    }
+  }
+
+  if($pane -eq [IntPtr]::Zero){
+    $method='native EnumChildWindows'
+    $pane=[EbrAcceptanceWindowProbe]::FindSettingsPaneByEnumeration(
+      $Main,$mainPid
+    )
+  }
   # Validate the handle even if the original lookup succeeded.
   if($pane -ne [IntPtr]::Zero){
     [uint32]$panePid=0
