@@ -605,7 +605,15 @@ function AcceptanceMain{
   $candidateHash=CandidateIdentity;Fixture @('schedule-core')
 
   Begin-Scenario 'fresh_v106_install';Install 'official v1.0.6 setup /S' $setupPath
-  $v106=CheckInstall '1.0.6' 'fresh v1.0.6' $expectedOfficialAppSha256;$script:artifacts.officialV106.installedAppSha256=$v106.sha256
+  $v106=CheckInstall '1.0.6' 'fresh v1.0.6' $expectedOfficialAppSha256
+  if($null -eq $v106 -or [string]::IsNullOrWhiteSpace([string]$v106.sha256)){
+    throw 'Official v1.0.6 installed executable hash was not returned.'
+  }
+  if($script:artifacts.officialV106 -isnot [pscustomobject]){
+    throw 'Official v1.0.6 artifact manifest is not a PSCustomObject.'
+  }
+  Add-Member -InputObject $script:artifacts.officialV106 -MemberType NoteProperty -Name installedAppSha256 -Value $v106.sha256 -ErrorAction Stop
+  Assert -Name 'official v1.0.6 installed hash recorded' -Passed ($script:artifacts.officialV106.installedAppSha256 -ceq $v106.sha256) -Observed $script:artifacts.officialV106.installedAppSha256 -Expected $v106.sha256
   Assert -Name 'fresh setup did not create app data before app launch' -Passed (-not(Test-Path -LiteralPath $appDataPath)) -Observed (Test-Path -LiteralPath $appDataPath) -Expected $false
   End-Scenario 'fresh_v106_install'
 
