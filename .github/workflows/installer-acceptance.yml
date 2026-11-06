@@ -155,9 +155,9 @@ jobs:
             'Makefile' = '44426AFF2E7682AD7CDBB7199916CB73B82B5B26A728CC368A947F08EA1D13A5'
           }
           $reviewedInputs['installer/setup.nsi'] = if ($sourceVersion -eq '1.0.6') {
-            'C1CB10CF5814F1AD138DEAFBF580777D524A1A6D83D17EB2719E19CC59673C99'
+            'AB51731AF74454AC8E7102AC8ABE331EB3B6A265ED139E640BF88A613850A620'
           } else {
-            '4CDFFD2F25F985C214B0C9146712CDAC742DBFFA65BCA5689680C82FB1216FD0'
+            '4B10E29E6A6F2CD42112B944FB82914948B96D5148A3BC5C4D33AC77A949054A'
           }
           foreach ($path in $reviewedInputs.Keys) {
             $text = [IO.File]::ReadAllText($path).Replace("`r`n", "`n")
