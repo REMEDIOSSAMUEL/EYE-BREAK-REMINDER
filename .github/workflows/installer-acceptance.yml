@@ -218,6 +218,99 @@ jobs:
         shell: pwsh
         run: .\ci\installer-acceptance\Run-InstallerAcceptance.ps1
 
+      - name: Verify exact accepted binaries before retention
+        if: success()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUNNER_TEMP 'EyeBreakInstallerAcceptance'
+          $buildPath = Join-Path $evidence 'candidate-build.json'
+          $resultsPath = Join-Path $evidence 'results.json'
+          if (-not (Test-Path -LiteralPath $buildPath -PathType Leaf)) { throw 'Build evidence missing' }
+          if (-not (Test-Path -LiteralPath $resultsPath -PathType Leaf)) { throw 'Acceptance results missing' }
+          $build = Get-Content -LiteralPath $buildPath -Raw | ConvertFrom-Json
+          $results = Get-Content -LiteralPath $resultsPath -Raw | ConvertFrom-Json
+          $sourceCommit = 'fc9db9e992601cd2ba18346a74012b27ccdeb360'
+          if ($env:GITHUB_REF_NAME -ne 'test/v110-release-acceptance') { throw 'Wrong acceptance branch' }
+          if ($build.sourceCommit -ne $env:GITHUB_SHA) { throw 'Build source identity mismatch' }
+          if ($results.artifacts.candidate.candidateCommit -ne $env:GITHUB_SHA) { throw 'Acceptance source identity mismatch' }
+          if ($results.artifacts.candidate.sourceBaseCommit -ne $sourceCommit) { throw 'Production source mismatch' }
+          if ($build.appVersion -ne '1.1.0' -or $build.installerVersion -ne '1.1.0') { throw 'Unexpected build version' }
+          $requiredScenarios = @(
+            'environment',
+            'official_v106_artifact',
+            'fresh_v106_install',
+            'v106_app_and_user_data',
+            'v106_to_v110_upgrade',
+            'operating_schedule_runtime',
+            'v110_uninstall',
+            'fresh_v110_install',
+            'fresh_v110_uninstall',
+            'cleanup'
+          )
+          $scenarioNames = @($results.scenarios.PSObject.Properties | ForEach-Object Name)
+          if ($scenarioNames.Count -ne $requiredScenarios.Count) { throw 'Unexpected scenario count' }
+          foreach ($scenario in $requiredScenarios) {
+            if ($scenario -notin $scenarioNames -or $results.scenarios.$scenario -ne 'PASS') {
+              throw "Acceptance scenario is not PASS: $scenario"
+            }
+          }
+          $items = @(
+            [pscustomobject]@{
+              File = 'EyeBreakReminder.exe'
+              BuildHash = $build.appSha256
+              AcceptedHash = $results.artifacts.candidate.applicationSha256
+            },
+            [pscustomobject]@{
+              File = 'EyeBreakReminder-Setup-x64.exe'
+              BuildHash = $build.installerSha256
+              AcceptedHash = $results.artifacts.candidate.setupSha256
+            }
+          )
+          foreach ($item in $items) {
+            $file = Join-Path $env:GITHUB_WORKSPACE "release\$($item.File)"
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              throw "Accepted binary missing: $($item.File)"
+            }
+            $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+            if (
+              $item.BuildHash -notmatch '^[A-Fa-f0-9]{64}$' -or
+              $item.AcceptedHash -notmatch '^[A-Fa-f0-9]{64}$' -or
+              $actual -ne $item.BuildHash -or
+              $actual -ne $item.AcceptedHash
+            ) {
+              throw "Built, tested and retained binary hashes disagree: $($item.File)"
+            }
+            $version = (Get-Item -LiteralPath $file).VersionInfo
+            if ($version.FileVersion -ne '1.1.0.0' -or $version.ProductVersion -ne '1.1.0') {
+              throw "Unexpected binary version: $($item.File)"
+            }
+            Write-Host "ACCEPTED BINARY VERIFIED: $($item.File) SHA256=$actual"
+          }
+          $manifest = [ordered]@{
+            runId = $env:GITHUB_RUN_ID
+            acceptanceCommit = $env:GITHUB_SHA
+            productionSourceCommit = $sourceCommit
+            version = '1.1.0'
+            scenariosPassed = $requiredScenarios.Count
+            installerSha256 = $build.installerSha256
+            applicationSha256 = $build.appSha256
+          }
+          $manifestPath = Join-Path $env:GITHUB_WORKSPACE 'release\accepted-binary-provenance.json'
+          [IO.File]::WriteAllText($manifestPath, (ConvertTo-Json $manifest -Depth 4), [Text.UTF8Encoding]::new($false))
+
+      - name: Upload exact accepted v1.1.0 binaries
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: v110-accepted-binaries-${{ github.run_id }}
+          path: |
+            release/EyeBreakReminder.exe
+            release/EyeBreakReminder-Setup-x64.exe
+            release/accepted-binary-provenance.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload test-generated logs and results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
