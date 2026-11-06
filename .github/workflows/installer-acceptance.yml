@@ -94,7 +94,7 @@ jobs:
           MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $expectedBase = '0214be24bc6218c7eac0e5a2c7daf3c3e9d205e0'
+          $expectedBase = 'fc9db9e992601cd2ba18346a74012b27ccdeb360'
           if ($env:GITHUB_REF_NAME -ne 'test/v110-release-acceptance') {
             throw "Refusing installer execution from unexpected branch: $env:GITHUB_REF_NAME"
           }
@@ -145,11 +145,11 @@ jobs:
             throw "Acceptance branch has unexpected changes ($($unexpected -join ', ')) or missing harness files ($($missing -join ', ')). Changed: $($changed -join ', ')"
           }
           $sourceVersion = (Get-Content VERSION -Raw).Trim()
-          if ($sourceVersion -notin @('1.0.6','1.1.0')) {
-            throw "Source checkout version must be 1.0.6 or 1.1.0; found $sourceVersion"
+          if ($sourceVersion -ne '1.1.0') {
+            throw "Final acceptance source must be 1.1.0; found $sourceVersion"
           }
           $reviewedInputs = @{
-            'ci/installer-acceptance/Run-InstallerAcceptance.ps1' = '5AE9510C023C83396544421DAC88DCADBE481986CE393A0EAA6BBE59A651CB67'
+            'ci/installer-acceptance/Run-InstallerAcceptance.ps1' = '7B219681247335397E07EBCBE771F86C9AC2A3A7B12B766BA0C5D8440A3FE083'
             'ci/installer-acceptance/fixture.cpp' = 'F9F42B6CFC5A6A6858329E6AAB2FF5F752C5CC4B4523FF6CD039040BF9A9B45E'
             'scripts/set-version.py' = 'B8045C05A91296BAA288BA506C820F894B75F2A12EA7559E58AAC256713CD2E0'
             'Makefile' = '44426AFF2E7682AD7CDBB7199916CB73B82B5B26A728CC368A947F08EA1D13A5'
@@ -175,7 +175,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $nsis -PathType Leaf)) { throw "Official NSIS compiler not found: $nsis" }
           $env:MAKENSIS_WINDOWS_PATH = $nsis
           $env:ACCEPTANCE_LOG_DIR = $logDir
-          & $bash -lc 'set -euo pipefail; cd "$(cygpath -u "$GITHUB_WORKSPACE")"; log="$(cygpath -u "$ACCEPTANCE_LOG_DIR")/build.log"; export MAKENSIS="$(cygpath -u "$MAKENSIS_WINDOWS_PATH")"; export WINDRES=windres; shim_dir="$(cygpath -u "$RUNNER_TEMP")/eye-break-tool-shims"; mkdir -p "$shim_dir"; printf "%s\n" "#!/usr/bin/env bash" "exec strip \"\$@\"" > "$shim_dir/x86_64-w64-mingw32-strip"; chmod +x "$shim_dir/x86_64-w64-mingw32-strip"; export PATH="$shim_dir:$PATH"; target_flags="-std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -municode -mwindows -static -static-libgcc -static-libstdc++ -DUNICODE -D_UNICODE -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00"; test -x "$MAKENSIS"; command -v "$WINDRES"; strip_path="$(command -v strip)"; case "$strip_path" in /mingw64/bin/strip*) ;; *) printf "Unexpected MINGW64 strip: %s\n" "$strip_path" >&2; exit 1;; esac; command -v x86_64-w64-mingw32-strip; { printf "MSYSTEM=%s\nImageOS=%s\nImageVersion=%s\nMAKENSIS=%s\nWINDRES=%s\nSTRIP_SHIM=%s\nTARGET_WINDOWS_FLAGS=%s\n" "$MSYSTEM" "$ImageOS" "$ImageVersion" "$MAKENSIS" "$WINDRES" "$shim_dir/x86_64-w64-mingw32-strip" "$target_flags"; sha256sum "$shim_dir/x86_64-w64-mingw32-strip"; x86_64-w64-mingw32-g++ --version; python3 --version; make --version; "$MAKENSIS" -VERSION; } | tee "$log"; python3 scripts/set-version.py 1.1.0 2>&1 | tee -a "$log"; make -B release/EyeBreakReminder.exe "FLAGS=$target_flags" 2>&1 | tee -a "$log";  g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -static-libgcc -static-libstdc++ ci/installer-acceptance/fixture.cpp -o tests/installer-acceptance-fixture.exe 2>&1 | tee -a "$log"'
+          & $bash -lc 'set -euo pipefail; cd "$(cygpath -u "$GITHUB_WORKSPACE")"; log="$(cygpath -u "$ACCEPTANCE_LOG_DIR")/build.log"; export MAKENSIS="$(cygpath -u "$MAKENSIS_WINDOWS_PATH")"; export WINDRES=windres; shim_dir="$(cygpath -u "$RUNNER_TEMP")/eye-break-tool-shims"; mkdir -p "$shim_dir"; printf "%s\n" "#!/usr/bin/env bash" "exec strip \"\$@\"" > "$shim_dir/x86_64-w64-mingw32-strip"; chmod +x "$shim_dir/x86_64-w64-mingw32-strip"; export PATH="$shim_dir:$PATH"; target_flags="-std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -municode -mwindows -static -static-libgcc -static-libstdc++ -DUNICODE -D_UNICODE -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00"; test -x "$MAKENSIS"; command -v "$WINDRES"; strip_path="$(command -v strip)"; case "$strip_path" in /mingw64/bin/strip*) ;; *) printf "Unexpected MINGW64 strip: %s\n" "$strip_path" >&2; exit 1;; esac; command -v x86_64-w64-mingw32-strip; { printf "MSYSTEM=%s\nImageOS=%s\nImageVersion=%s\nMAKENSIS=%s\nWINDRES=%s\nSTRIP_SHIM=%s\nTARGET_WINDOWS_FLAGS=%s\n" "$MSYSTEM" "$ImageOS" "$ImageVersion" "$MAKENSIS" "$WINDRES" "$shim_dir/x86_64-w64-mingw32-strip" "$target_flags"; sha256sum "$shim_dir/x86_64-w64-mingw32-strip"; x86_64-w64-mingw32-g++ --version; python3 --version; make --version; "$MAKENSIS" -VERSION; } | tee "$log"; test "$(cat VERSION)" = "1.1.0"; printf "Using committed v1.1.0 version metadata\n" | tee -a "$log"; make -B release/EyeBreakReminder.exe "FLAGS=$target_flags" 2>&1 | tee -a "$log";  g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -static-libgcc -static-libstdc++ ci/installer-acceptance/fixture.cpp -o tests/installer-acceptance-fixture.exe 2>&1 | tee -a "$log"'
           if ($LASTEXITCODE -ne 0) { throw "Candidate build or packaging failed with exit code $LASTEXITCODE" }
           $candidateExe = Join-Path $env:GITHUB_WORKSPACE 'release\EyeBreakReminder.exe'
           if (-not (Test-Path -LiteralPath $candidateExe -PathType Leaf)) { throw "Built candidate executable missing: $candidateExe" }
@@ -209,7 +209,7 @@ jobs:
           $bytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
           $sha = [Security.Cryptography.SHA256]::Create()
           try { $actualHash = [Convert]::ToHexString($sha.ComputeHash($bytes)) } finally { $sha.Dispose() }
-          $expectedHash = '5AE9510C023C83396544421DAC88DCADBE481986CE393A0EAA6BBE59A651CB67'
+          $expectedHash = '7B219681247335397E07EBCBE771F86C9AC2A3A7B12B766BA0C5D8440A3FE083'
           if ($actualHash -ne $expectedHash) { throw "Refusing to expose the read-only GitHub token to an altered acceptance harness: $actualHash" }
           & .\ci\installer-acceptance\Run-InstallerAcceptance.ps1 -DownloadOfficialOnly
           if ($LASTEXITCODE -ne 0) { throw "Official v1.0.6 artifact verification failed with exit code $LASTEXITCODE" }
