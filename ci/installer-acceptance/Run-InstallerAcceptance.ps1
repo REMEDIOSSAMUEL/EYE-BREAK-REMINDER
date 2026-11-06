@@ -478,6 +478,75 @@ function AppSmoke([string]$Version,[string]$Stage){
     if($proc.HasExited){break};Start-Sleep -Milliseconds 250
   }while([DateTime]::UtcNow-lt$until)
   $proc.Refresh();$alive=-not$proc.HasExited;$path=$processImage
+  if($hwnd -eq [IntPtr]::Zero){
+    $windowDiagnostics=[ordered]@{
+      stage=$Stage
+      processId=$id
+      processSession=$processSession
+      runnerSession=$script:environment.sessionId
+      userInteractive=[Environment]::UserInteractive
+      sessionName=$env:SESSIONNAME
+      processMainWindowHandle=$null
+      processMainWindowTitle=$null
+      windows=[ordered]@{}
+    }
+
+    try{
+      $proc.Refresh()
+      $windowDiagnostics.processMainWindowHandle=('0x{0:X}' -f $proc.MainWindowHandle.ToInt64())
+      $windowDiagnostics.processMainWindowTitle=$proc.MainWindowTitle
+    }catch{
+      $windowDiagnostics.processProbeError=$_.Exception.Message
+    }
+
+    $windowSpecs=@(
+      @{name='main';class='EyeBreakReminder.Native';title=$null}
+      @{name='tray';class='EyeBreakReminder.TrayMenu';title=$null}
+      @{name='startupDialog';class='#32770';title='Eye Break Reminder'}
+      @{name='titleOnly';class=$null;title='Eye Break Reminder'}
+    )
+
+    foreach($spec in $windowSpecs){
+      $foundWindow=[EbrAcceptanceWindowProbe]::FindWindow(
+        $spec.class,
+        $spec.title
+      )
+
+      $owner=[uint32]0
+      $caption=''
+      $visible=$false
+
+      if($foundWindow -ne [IntPtr]::Zero){
+        [void][EbrAcceptanceWindowProbe]::GetWindowThreadProcessId(
+          $foundWindow,
+          [ref]$owner
+        )
+
+        $buffer=[Text.StringBuilder]::new(512)
+        [void][EbrAcceptanceWindowProbe]::GetWindowText(
+          $foundWindow,
+          $buffer,
+          $buffer.Capacity
+        )
+
+        $caption=$buffer.ToString()
+        $visible=[EbrAcceptanceWindowProbe]::IsWindowVisible($foundWindow)
+      }
+
+      $windowDiagnostics.windows[$spec.name]=[ordered]@{
+        handle=('0x{0:X}' -f $foundWindow.ToInt64())
+        ownerPid=$owner
+        belongsToApp=([int]$owner -eq $id)
+        visible=$visible
+        title=$caption
+      }
+    }
+
+    Write-Host (
+      'WINDOW_DIAGNOSTIC: ' +
+      (ConvertTo-Json -InputObject $windowDiagnostics -Depth 7 -Compress)
+    )
+  }
   Assert -Name "$Stage process is running from installed path" -Passed ($alive-and(SamePath ([string]$path) $installedExe)) -Observed ([ordered]@{pid=$id;session=$proc.SessionId;path=$path;alive=$alive}) -Expected ([ordered]@{alive=$true;path=$installedExe})
   Assert -Name "$Stage creates native main window for its process" -Passed ($hwnd-ne[IntPtr]::Zero-and[int]$windowPid-eq$id) -Observed ([ordered]@{hwnd=('0x{0:X}'-f$hwnd.ToInt64());pid=$windowPid}) -Expected ([ordered]@{class='EyeBreakReminder.Native';pid=$id})
   $visible=$false;$title=''
