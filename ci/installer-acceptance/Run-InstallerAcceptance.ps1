@@ -1121,7 +1121,64 @@ function AcceptanceMain{
 
   Begin-Scenario 'fresh_v110_uninstall'
   TestForeignStartupValue
-  [void](RunBounded 'fresh v1.1.0 real uninstaller /S' $uninstallerExe @('/S',"_?=$installPath") 120);NoEyeBreak 'fresh uninstall'
+  # NSIS _?= disables its own temporary-copy step. Execute our verified
+  # runner-owned copy so the installed Uninstall.exe can be deleted.
+  if($env:GITHUB_ACTIONS -ne 'true'){
+    throw 'Uninstaller acceptance must run only in GitHub Actions'
+  }
+  if([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)){
+    throw 'GitHub runner temporary directory is missing'
+  }
+
+  $runnerTemp=FullPath $env:RUNNER_TEMP
+  Assert -Name 'uninstaller staging root exists' `
+    -Passed (Test-Path -LiteralPath $runnerTemp -PathType Container) `
+    -Observed $runnerTemp -Expected 'existing runner temporary directory'
+
+  $uninstallStage=Join-Path $runnerTemp (
+    'EyeBreakAcceptanceUninstall-' + [guid]::NewGuid().ToString('N')
+  )
+  $uninstallStage=FullPath $uninstallStage
+
+  Assert -Name 'uninstaller staging directory is inside runner temp' `
+    -Passed (IsDescendantPath $uninstallStage $runnerTemp) `
+    -Observed $uninstallStage -Expected $runnerTemp
+
+  if(Test-Path -LiteralPath $uninstallStage){
+    throw 'Uninstaller staging directory already exists'
+  }
+
+  $originalUninstallerHash=Hash $uninstallerExe
+
+  try{
+    [void](New-Item -ItemType Directory -Path $uninstallStage -ErrorAction Stop)
+    CheckNoReparse $uninstallStage 'uninstaller temporary staging' -Contents
+
+    $copiedUninstaller=Join-Path $uninstallStage 'Uninstall.exe'
+
+    Copy-Item -LiteralPath $uninstallerExe `
+      -Destination $copiedUninstaller -ErrorAction Stop
+
+    $copiedHash=Hash $copiedUninstaller
+
+    Assert -Name 'temporary uninstaller is byte-identical to installed uninstaller' `
+      -Passed ($copiedHash -eq $originalUninstallerHash) `
+      -Observed $copiedHash -Expected $originalUninstallerHash
+
+    [void](RunBounded `
+      'fresh v1.1.0 real uninstaller /S (verified temporary copy)' `
+      $copiedUninstaller @('/S',"_?=$installPath") 120)
+  }
+  finally{
+    if(Test-Path -LiteralPath $uninstallStage){
+      if(-not(IsDescendantPath $uninstallStage $runnerTemp)){
+        throw 'Refusing cleanup outside GitHub runner temporary directory'
+      }
+      Remove-Item -LiteralPath $uninstallStage -Recurse -Force -ErrorAction Stop
+    }
+  }
+
+  NoEyeBreak 'fresh uninstall'
   CheckUninstalled 'fresh uninstall'
   ClearForeignStartupValue
   foreach($name in @('settings.ini','history.dat','acceptance-unrelated-sentinel.txt')){
