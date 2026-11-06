@@ -1,4 +1,5 @@
 Unicode true
+Target x86-unicode
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "x64.nsh"

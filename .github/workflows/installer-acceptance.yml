@@ -58,7 +58,34 @@ jobs:
             make
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-python
-            mingw-w64-i686-nsis
+
+      - name: Download and verify official NSIS 3.13 compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'nsis-3.13.zip'
+          $nsisRoot = Join-Path $env:RUNNER_TEMP 'nsis-3.13'
+          if (Test-Path -LiteralPath $nsisRoot) { throw "NSIS extraction path already exists: $nsisRoot" }
+          $url = 'https://sourceforge.net/projects/nsis/files/NSIS%203/3.13/nsis-3.13.zip/download?use_mirror=netix'
+          $expectedHash = 'BA63DFFC4410EE89193E1CB5A41989991BD77C61068DA17E3156D136B7B0B3D8'
+          $curl = (Get-Command curl.exe -ErrorAction Stop).Source
+          & $curl --location --fail --silent --show-error --max-time 120 --output $zip $url
+          if ($LASTEXITCODE -ne 0) { throw "Official NSIS download failed with curl exit code $LASTEXITCODE" }
+          $actualHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToUpperInvariant()
+          if ($actualHash -ne $expectedHash) { throw "NSIS archive hash mismatch: $actualHash" }
+          Expand-Archive -LiteralPath $zip -DestinationPath $nsisRoot
+          $nsisDirectory = Join-Path $nsisRoot 'nsis-3.13'
+          $makensisExe = Join-Path $nsisDirectory 'makensis.exe'
+          $unicodeStub = Join-Path $nsisDirectory 'Stubs\lzma_solid-x86-unicode'
+          if (-not (Test-Path -LiteralPath $makensisExe -PathType Leaf)) { throw "Official NSIS 3.13 compiler missing: $makensisExe" }
+          if (-not (Test-Path -LiteralPath $unicodeStub -PathType Leaf)) { throw "Required solid LZMA x86 Unicode stub missing: $unicodeStub" }
+          $compilerOutput = @(& $makensisExe -VERSION 2>&1)
+          $compilerVersion = ($compilerOutput -join ' ').Trim()
+          if ($LASTEXITCODE -ne 0 -or $compilerVersion -notmatch '3\.13') { throw "Expected official NSIS compiler version 3.13; got $compilerVersion" }
+          $evidence = Join-Path $env:RUNNER_TEMP 'EyeBreakInstallerAcceptance'
+          $record = [ordered]@{ source=$url; version='3.13'; archiveSha256=$actualHash; compilerPath='nsis-3.13/makensis.exe'; compilerSha256=(Get-FileHash -LiteralPath $makensisExe -Algorithm SHA256).Hash.ToUpperInvariant(); selectedInstallerStub='Stubs/lzma_solid-x86-unicode'; installerStubSha256=(Get-FileHash -LiteralPath $unicodeStub -Algorithm SHA256).Hash.ToUpperInvariant(); compilerVersion=$compilerVersion }
+          [IO.File]::WriteAllText((Join-Path $evidence 'nsis-toolchain.json'),(ConvertTo-Json $record -Depth 4),[Text.UTF8Encoding]::new($false))
+          [IO.File]::AppendAllText($env:GITHUB_ENV,"ACCEPTANCE_NSIS_DIR=$nsisDirectory`n",[Text.UTF8Encoding]::new($false))
 
       - name: Verify branch and build the test-only v1.1.0 candidate
         shell: pwsh
@@ -127,9 +154,9 @@ jobs:
             'Makefile' = '44426AFF2E7682AD7CDBB7199916CB73B82B5B26A728CC368A947F08EA1D13A5'
           }
           $reviewedInputs['installer/setup.nsi'] = if ($sourceVersion -eq '1.0.6') {
-            '2719B9D144EDE58BCFFB6282DC47A89F8CC9740F34370849F5632F7CAA11D889'
+            'C1CB10CF5814F1AD138DEAFBF580777D524A1A6D83D17EB2719E19CC59673C99'
           } else {
-            'CF01573D29D9578224DCEDF2674C9A3BB5B95066687075B2598A1B170905F521'
+            '4CDFFD2F25F985C214B0C9146712CDAC742DBFFA65BCA5689680C82FB1216FD0'
           }
           foreach ($path in $reviewedInputs.Keys) {
             $text = [IO.File]::ReadAllText($path).Replace("`r`n", "`n")
@@ -143,8 +170,11 @@ jobs:
           $logDir = Join-Path $env:RUNNER_TEMP 'EyeBreakInstallerAcceptance'
           $bash = Join-Path $env:MSYS2_LOCATION 'usr\bin\bash.exe'
           if (-not (Test-Path -LiteralPath $bash)) { throw "MSYS2 bash not found: $bash" }
+          $nsis = Join-Path $env:ACCEPTANCE_NSIS_DIR 'makensis.exe'
+          if (-not (Test-Path -LiteralPath $nsis -PathType Leaf)) { throw "Official NSIS compiler not found: $nsis" }
+          $env:MAKENSIS_WINDOWS_PATH = $nsis
           $env:ACCEPTANCE_LOG_DIR = $logDir
-          & $bash -lc 'set -euo pipefail; log="$(cygpath -u "$ACCEPTANCE_LOG_DIR")/build.log"; export MAKENSIS=/mingw32/bin/makensis.exe; test -x "$MAKENSIS"; { printf "MSYSTEM=%s\nImageOS=%s\nImageVersion=%s\nMAKENSIS=%s\n" "$MSYSTEM" "$ImageOS" "$ImageVersion" "$MAKENSIS"; x86_64-w64-mingw32-g++ --version; python3 --version; make --version; "$MAKENSIS" -VERSION; } | tee "$log"; python3 scripts/set-version.py 1.1.0 2>&1 | tee -a "$log"; make -B release/EyeBreakReminder.exe 2>&1 | tee -a "$log"; make release/EyeBreakReminder-Setup-x64.exe 2>&1 | tee -a "$log"; g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -static-libgcc -static-libstdc++ ci/installer-acceptance/fixture.cpp -o tests/installer-acceptance-fixture.exe 2>&1 | tee -a "$log"'
+          & $bash -lc 'set -euo pipefail; log="$(cygpath -u "$ACCEPTANCE_LOG_DIR")/build.log"; export MAKENSIS="$(cygpath -u "$MAKENSIS_WINDOWS_PATH")"; test -x "$MAKENSIS"; { printf "MSYSTEM=%s\nImageOS=%s\nImageVersion=%s\nMAKENSIS=%s\n" "$MSYSTEM" "$ImageOS" "$ImageVersion" "$MAKENSIS"; x86_64-w64-mingw32-g++ --version; python3 --version; make --version; "$MAKENSIS" -VERSION; } | tee "$log"; python3 scripts/set-version.py 1.1.0 2>&1 | tee -a "$log"; make -B release/EyeBreakReminder.exe 2>&1 | tee -a "$log"; make release/EyeBreakReminder-Setup-x64.exe 2>&1 | tee -a "$log"; g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -static-libgcc -static-libstdc++ ci/installer-acceptance/fixture.cpp -o tests/installer-acceptance-fixture.exe 2>&1 | tee -a "$log"'
           if ($LASTEXITCODE -ne 0) { throw "Candidate build or packaging failed with exit code $LASTEXITCODE" }
 
       - name: Download and verify official v1.0.6 setup
