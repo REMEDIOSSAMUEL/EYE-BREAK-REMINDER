@@ -57,6 +57,7 @@ jobs:
           install: >-
             make
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
             mingw-w64-x86_64-python
 
       - name: Download and verify official NSIS 3.13 compiler
