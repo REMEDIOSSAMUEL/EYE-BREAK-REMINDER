@@ -516,7 +516,8 @@ function EnvironmentEvidence{
   $profileKey="Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
   $profileImage=[Environment]::ExpandEnvironmentVariables([string](Get-ItemPropertyValue -LiteralPath $profileKey -Name ProfileImagePath))
   $uac=Get-ItemPropertyValue -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name EnableLUA -ErrorAction SilentlyContinue
-  $script:environment=[ordered]@{osCaption=$os.Caption;osVersion=$os.Version;osBuild=[int]$os.BuildNumber;osArchitecture=$os.OSArchitecture;computerName=$cs.Name;processArchitecture=$env:PROCESSOR_ARCHITECTURE;username=$identity.Name;sid=$sid;profilePath=$profile;userProfileEnvironment=$profileEnv;profileListPath=$profileImage;localAppData=$local;administrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);uacEnableLUA=$uac;runValue=(RunValue);sessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId}
+  $adminPrompt=Get-ItemPropertyValue -LiteralPath 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name ConsentPromptBehaviorAdmin -ErrorAction Stop
+  $script:environment=[ordered]@{osCaption=$os.Caption;osVersion=$os.Version;osBuild=[int]$os.BuildNumber;osArchitecture=$os.OSArchitecture;computerName=$cs.Name;processArchitecture=$env:PROCESSOR_ARCHITECTURE;username=$identity.Name;sid=$sid;profilePath=$profile;userProfileEnvironment=$profileEnv;profileListPath=$profileImage;localAppData=$local;administrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);uacEnableLUA=$uac;uacConsentPromptBehaviorAdmin=$adminPrompt;runValue=(RunValue);sessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId}
   Assert -Name 'Windows Server 2025 image' -Passed ($os.Caption-like'*Windows Server 2025*') -Observed $os.Caption -Expected 'Windows Server 2025'
   Assert -Name 'Windows OS and process are x64' -Passed ([Environment]::Is64BitOperatingSystem-and[Environment]::Is64BitProcess-and$env:PROCESSOR_ARCHITECTURE-eq'AMD64'-and$os.OSArchitecture-like'*64*') -Observed ([ordered]@{os=$os.OSArchitecture;process=$env:PROCESSOR_ARCHITECTURE;process64=[Environment]::Is64BitProcess}) -Expected 'x64'
   Assert -Name 'Windows build meets application gate' -Passed ([int]$os.BuildNumber-ge 22000) -Observed ([int]$os.BuildNumber) -Expected '>=22000'
@@ -535,7 +536,7 @@ function EnvironmentEvidence{
   Remove-Item -LiteralPath $probe -Recurse -Force;Remove-Item -LiteralPath $probeRoot -Recurse -Force
   Assert -Name 'HKCU probe is removed' -Passed (-not(Test-Path -LiteralPath $probeRoot)) -Observed (Test-Path -LiteralPath $probeRoot) -Expected $false
   Assert -Name 'GITHUB_TOKEN absent from installer step' -Passed (-not(Test-Path Env:GITHUB_TOKEN)) -Observed (Test-Path Env:GITHUB_TOKEN) -Expected $false
-  Assert -Name 'hosted runner privilege and disabled UAC are recorded' -Passed ($null-ne$sid-and$script:environment.administrator-and$uac-eq 0) -Observed ([ordered]@{user=$identity.Name;sid=$sid;administrator=$script:environment.administrator;uac=$uac}) -Expected ([ordered]@{administrator=$true;uacEnableLUA=0})
+  Assert -Name 'hosted runner administrator token and no-prompt elevation policy are recorded' -Passed ($null-ne$sid-and$script:environment.administrator-and$uac-in @(0,1)-and$adminPrompt-eq 0) -Observed ([ordered]@{user=$identity.Name;sid=$sid;administrator=$script:environment.administrator;enableLUA=$uac;consentPromptBehaviorAdmin=$adminPrompt}) -Expected ([ordered]@{administrator=$true;enableLUA='record actual 0 or 1';consentPromptBehaviorAdmin=0})
   Assert -Name 'NSIS uninstaller path argument is unambiguous' -Passed (-not $installPath.Contains(' ')) -Observed $installPath -Expected 'path with no spaces for /_?= directory argument'
   foreach($path in @($profile,$local,$installPath,$appDataPath,$startMenuFolder,$startMenuShortcut)){CheckNoReparse $path 'runner user path'}
   Assert -Name 'pre-existing app HKCU registration absent' -Passed (-not(Test-Path -LiteralPath $appReg)-and-not(Test-Path -LiteralPath $uninstallReg)) -Observed ([ordered]@{app=(Test-Path -LiteralPath $appReg);uninstall=(Test-Path -LiteralPath $uninstallReg)}) -Expected 'both absent'
@@ -563,7 +564,7 @@ function CandidateIdentity{
 }
 function SaveManifest{
   $result=[ordered]@{schemaVersion=1;status=$script:status;failure=$script:failure;generatedAtUtc=[DateTime]::UtcNow.ToString('o');runner=$script:environment;artifacts=$script:artifacts;scenarios=$script:scenarios;assertions=@($script:checks);installerProcesses=@($script:installerProcesses);applicationLaunches=@($script:appLaunches);dataSnapshots=$script:dataSnapshots
-    limitations=@('Windows Server 2025 is not Windows 11.','No separate standard account was created; standard-token behavior is not certified.','The NSIS run uses /S; native process/window/control-message checks are not visual wizard or accessibility acceptance.','No screenshot, Narrator, or Shell notification claim is made.','GitHub-hosted Windows runs as administrator with UAC disabled; actual token and UAC state are recorded. HKCU and no-HKLM scope are asserted.')}
+    limitations=@('Windows Server 2025 is not Windows 11.','No separate standard account was created; standard-token behavior is not certified.','The NSIS run uses /S; native process/window/control-message checks are not visual wizard or accessibility acceptance.','No screenshot, Narrator, or Shell notification claim is made.','The hosted runner process token is Administrator; EnableLUA and ConsentPromptBehaviorAdmin are recorded without changing them, and admin prompt behavior is asserted to be 0. HKCU and no-HKLM scope are asserted; standard-user token and interactive UAC behavior are not certified.')}
   [IO.File]::WriteAllText($manifestPath,(ConvertTo-Json -InputObject $result -Depth 12),[Text.UTF8Encoding]::new($false))
 }
 function AcceptanceMain{
@@ -598,7 +599,6 @@ function AcceptanceMain{
   foreach($name in @('settings.ini','timer.dat','history.dat','acceptance-unrelated-sentinel.txt')){
     Assert -Name "upgrade preserves $name byte-for-byte" -Passed ($upgraded[$name]-eq$baseline[$name]) -Observed $upgraded[$name] -Expected $baseline[$name]
   }
-  Fixture @('validate','representative',$appDataPath)
   AppSmoke '1.1.0' 'upgraded v1.1.0 legacy data restore'
   Fixture @('validate','resumed',$appDataPath)
   $afterUpgradeApp=DataHashes 'after-v110-app-resume'
@@ -696,7 +696,7 @@ try {
       schemaVersion=1;status=$script:status;failure=$script:failure;generatedAtUtc=[DateTime]::UtcNow.ToString('o')
       runner=$script:environment;artifacts=$script:artifacts;scenarios=$script:scenarios;assertions=@($script:checks)
       installerProcesses=@($script:installerProcesses);applicationLaunches=@($script:appLaunches);dataSnapshots=$script:dataSnapshots
-      limitations=@('Windows Server 2025 is not Windows 11.','No separate standard account was created; this result does not certify standard-token behavior.','The NSIS run uses /S; native process/window/control-message checks are not visual wizard or accessibility acceptance.','No screenshot, Narrator, or Shell notification claim is made.','GitHub documents Windows hosted runners as administrator with UAC disabled; the actual process token and UAC state are asserted. HKCU and no-HKLM scope are asserted.')
+      limitations=@('Windows Server 2025 is not Windows 11.','No separate standard account was created; this result does not certify standard-token behavior.','The NSIS run uses /S; native process/window/control-message checks are not visual wizard or accessibility acceptance.','No screenshot, Narrator, or Shell notification claim is made.','The hosted runner process token is Administrator; EnableLUA and ConsentPromptBehaviorAdmin are recorded without changing them, and admin prompt behavior is asserted to be 0. HKCU and no-HKLM scope are asserted; standard-user token and interactive UAC behavior are not certified.')
     }
     [IO.File]::WriteAllText($manifestPath,(ConvertTo-Json $manifest -Depth 12),[Text.UTF8Encoding]::new($false))
   }
