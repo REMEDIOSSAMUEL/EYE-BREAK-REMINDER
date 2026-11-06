@@ -60,9 +60,9 @@ Live-resize repainting was measured on Windows 11 build 26300 with scripted wind
 
 Not tested for 1.0.6: the installer (it was built and its file metadata checked, never run), the alarm and Preview/Stop runtime checks on the final executable (the core tests cover the completion logic, and the 1.0.4 alarm measurements above were taken on an earlier build), resizing with a real mouse drag, multiple monitors, enlarged Windows text and 125%/175% scaling on this build, high-contrast themes (the tab bar, section buttons, slider and focus rings use custom drawing), screen readers, and an unscripted pass of `docs/WINDOWS-TESTING.md`. The Timer progress ring still has small gaps where its two text labels mask it; that is unchanged. The build is unsigned.
 
-## Operating schedule (unreleased, after 1.0.6)
+## Operating schedule (v1.1.0 release candidate)
 
-Not a release: the version is still 1.0.6 and no installer with this change has been published.
+The release candidate now has version metadata 1.1.0. No installer containing this change has been published.
 
 Build: MSYS2 `mingw64` GCC 15.2 (msvcrt, `-Werror`) on Windows 11 build 26300, with the overrides documented in README.md. **6490 core assertions** passed (`make test`, `make all`). The earlier blocks are unchanged (timer engine and persistence 58, break-completion alarm 19, scrolling 17, layout geometry 5713); the 683 new assertions are:
 
@@ -200,3 +200,28 @@ These are real-application visual observations, not conclusions from source insp
 Owner-confirmed Operating Schedule Group 1 results: 1.1 Existing behaviour — PASS; 1.2 Schedule editing and scrolling — PASS; 1.3 Light/Dark and scrolling — PASS; 1.4 Keyboard accessibility — PASS. Operating Schedule Groups 2 onward remain uncompleted and open in [WINDOWS-TESTING.md](WINDOWS-TESTING.md).
 
 **Final automated verification rerun (2026-11-03):** `make test` passed 6,638 core assertions. `make all` passed; because the ignored executable was newer than the source, `make -B all` was also run to force a full resource and Windows x64 GUI rebuild from the current source. It passed with `-Wall -Wextra -Wpedantic -Werror` and no compiler warnings. The MSYS2 `mingw64` toolchain lacked the Makefile's cross-prefixed strip command, so a temporary alias outside the repository was used; no build configuration or tracked tool was changed. `make package` passed all 83 binary/package assertions. Verification accepted the Windows GUI subsystem, x64 machine, the 13-DLL allowlist including `msvcrt.dll`, five embedded sounds, nine icon sizes, and clean Source and Portable ZIP contents. The native NSIS build was generated from a temporary backslash-converted copy of the installer script, as documented in README.md; its only warning was 9100 for the project's absent `LegalCopyright` metadata. Windows runtime remains untested by automation. No application was launched and no live application data was accessed.
+
+## v1.1.0 installer acceptance (2026-11-06)
+
+A disposable GitHub-hosted Windows Server 2025 x64 runner successfully executed the installer acceptance workflow for test-only v1.1.0 candidate commit `71842fd36d4a0db435bb85055712771e142f5f7f`.
+
+Evidence: https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/42227030125
+
+The passing run covered:
+
+- The pinned official v1.0.6 installer, its metadata, file hashes and installation layout.
+- v1.0.6 application launch, representative persisted settings, history and timer restoration.
+- Silent upgrade from v1.0.6 to test-only v1.1.0, including installed version, registration, shortcuts and executable identity.
+- Byte-for-byte preservation of settings.ini, timer.dat, history.dat and unrelated user data during upgrade.
+- Native Windows UI controls, existing settings and history, operating-schedule defaults, and the closed-schedule countdown held outside operating hours.
+- Uninstallation following upgrade, including removal of application files, shortcuts, registration and owned startup entries.
+- Preservation of settings, history and unrelated user data during uninstall, with removal of timer.dat.
+- Fresh v1.1.0 installation, persistence and uninstallation, including protection of an unrelated startup registration.
+
+All acceptance scenarios passed.
+
+These are automated checks on Windows Server 2025, not an unscripted Windows 11 acceptance session. They do not establish complete coverage of real sleep and lock transitions, audible alarm behaviour, screen-reader interaction, high-contrast rendering or multi-monitor configurations.
+
+The accepted CI workflow built a test-only v1.1.0 candidate from source that still declared VERSION 1.0.6. The separately prepared, versioned production release artifacts must be rebuilt and verified before publication. They must not be represented as byte-identical to the earlier CI candidate.
+
+The historical limitations recorded above remain applicable except where explicitly superseded by these installer acceptance results. The build is unsigned.

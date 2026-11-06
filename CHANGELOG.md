@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 (release candidate prepared 2026-11-06; not published)
 
-Not yet a release: the version number is still 1.0.6 and no installer has been published for these changes.
+This is an unpublished release candidate. The product version is now 1.1.0, but no v1.1.0 release or installer has been published.
 
 Added
 

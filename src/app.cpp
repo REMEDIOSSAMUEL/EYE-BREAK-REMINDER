@@ -308,7 +308,7 @@ public:
   hint(L"Open Eye Break Reminder automatically when you sign in.",true);checkbox(L"Minimize to system tray",TRAY,2,settings.tray,settingsPane);hint(L"Closing keeps reminders active. Choose Exit in the tray menu to quit.",true);
   checkbox(L"Resume countdown when reopening the app",RESTORE,2,settings.restore,settingsPane);hint(L"Reinstalling after uninstall starts a fresh work interval. Preferences and history are kept.",true);checkbox(L"Pause while workstation is locked",PAUSE_LOCK,2,settings.pauseLocked,settingsPane);
   hint(L"Sleep counts as elapsed work time. Wake shows at most one reminder. Paused timers stay paused.",true);
-  buildSection=5;label(L"About",Kind::Heading);label(L"Eye Break Reminder");hint(L"Version 1.0.6 · x64 · Windows 11");
+  buildSection=5;label(L"About",Kind::Heading);label(L"Eye Break Reminder");hint(L"Version 1.1.0 · x64 · Windows 11");
   hint(L"All data stays on this device. No internet, telemetry, account, camera or microphone.");
   label(L"Accessibility",Kind::Heading);hint(L"Uses Windows text scaling, high contrast and keyboard focus.");
   hint(L"Ctrl+R: Reset · Ctrl+Shift+B: Take break · Ctrl+comma: Settings");

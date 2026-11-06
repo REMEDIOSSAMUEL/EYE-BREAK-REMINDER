@@ -1,4 +1,4 @@
-# Eye Break Reminder 1.0.6 — Windows 11 x64
+# Eye Break Reminder 1.1.0 — Windows 11 x64
 
 A native Windows desktop eye-break utility, compiled from Linux with C++17 and MinGW-w64. It uses Win32 system controls, Windows common dialogs, native title bars, native tray integration, and a custom timer dial. It has no browser, console, .NET dependency or external assets at runtime.
 
@@ -26,7 +26,7 @@ Light, dark and system themes set app surfaces and the native title bar. Buttons
 
 ## Operating schedule
 
-*Unreleased: added to the source after 1.0.6 and not part of the published 1.0.6 downloads (see CHANGELOG.md).*
+*New in the unpublished v1.1.0 release candidate. The published v1.0.6 downloads do not contain this feature.*
 
 The operating schedule limits automatic eye-break reminders to the days and hours you choose, for example Monday to Friday 09:00–17:00, Saturday 10:00–14:00 and Sunday off. It is **off by default**, including after upgrading, and while it is off the app behaves exactly as before.
 
@@ -75,7 +75,7 @@ The 1.0.6 release was built on Windows 11 with MSYS2 instead of Linux. The `ming
 - pass `WINDRES=windres PYTHON=python` and `CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00'` (MSYS2 headers default to an older Windows target and omit `GetDpiForWindow`);
 - make `x86_64-w64-mingw32-strip` resolvable (the Makefile hardcodes that name; a copy of `strip.exe` under that name on `PATH` works);
 - pass `TMP=C:/msys64/tmp TEMP=C:/msys64/tmp` to `make`, because MSYS `sh` drops them and native GCC then cannot create temporary files;
-- native `makensis` needs backslashes in the `File` and `OutFile` paths of `installer/setup.nsi`; build the installer from a backslash-converted copy, run from the repository root with `-NOCD`, then run `make package`;
+- use the MINGW32 NSIS compiler with `-NOCD installer/setup.nsi` from the repository root; the updated script uses anchored Windows paths and explicitly selects the x86-unicode bootstrap, so no temporary converted installer script is needed; then run `make package`;
 - run Python with `PYTHONUTF8=1` for `scripts/set-version.py`.
 
 ## Build from Linux
@@ -97,7 +97,7 @@ For a legitimate signing certificate, sign the app before installer packaging, t
 
 ## Verification boundary
 
-The executable and installer are compiled with MinGW-w64 and NSIS, with actual core test execution and binary/resource checks. Releases 1.0.4 and 1.0.5 were launched on a real Windows 11 x64 machine and exercised with scripted input and audio-session measurements; release 1.0.6 was launched there and its live-resize repainting was measured with scripted window sizing and screen capture (see `docs/VERIFICATION.md`). The unreleased operating schedule was exercised on Windows 11 with scripted input, UI Automation and screenshots; sleep, lock, clock and time-zone changes are covered by core tests only. **The installer has not been run, and the interactive UI checklist in `docs/WINDOWS-TESTING.md` has not been completed by a person.** Successful compilation does not establish runtime correctness. See `docs/VERIFICATION.md` and `docs/WINDOWS-TESTING.md` for the actual evidence and open checks.
+The executable and installer are compiled with MinGW-w64 and NSIS, with actual core test execution and binary/resource checks. Releases 1.0.4 and 1.0.5 were launched on a real Windows 11 x64 machine and exercised with scripted input and audio-session measurements; release 1.0.6 was launched there and its live-resize repainting was measured with scripted window sizing and screen capture (see `docs/VERIFICATION.md`). The v1.1.0 operating schedule was exercised on Windows 11 with scripted input, UI Automation and screenshots; sleep, lock, clock and time-zone changes are covered by core tests only. **A test-only v1.1.0 candidate passed automated installation, upgrade and uninstall checks on a disposable Windows Server 2025 x64 runner. The final versioned production package has not yet undergone that acceptance workflow, and the interactive UI checklist in `docs/WINDOWS-TESTING.md` has not been completed by a person.** Successful compilation does not establish runtime correctness. See `docs/VERIFICATION.md` and `docs/WINDOWS-TESTING.md` for the actual evidence and open checks.
 
 ## Publishing releases
 

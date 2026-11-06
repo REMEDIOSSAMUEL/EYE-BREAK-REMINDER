@@ -1,10 +1,12 @@
 Unicode true
+Target x86-unicode
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "x64.nsh"
 !include "WinVer.nsh"
+!define EB_PROJECT_ROOT "${__FILEDIR__}\.."
 Name "Eye Break Reminder"
-OutFile "release/EyeBreakReminder-Setup-x64.exe"
+OutFile "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Setup-x64.exe"
 InstallDir "$LOCALAPPDATA\Programs\EyeBreakReminder"
 InstallDirRegKey HKCU "Software\EyeBreakReminder" "InstallDir"
 RequestExecutionLevel user
@@ -12,13 +14,13 @@ ManifestSupportedOS Win10
 ManifestDPIAwareness PerMonitorV2
 SetCompressor /SOLID lzma
 BrandingText "Eye Break Reminder"
-VIProductVersion "1.0.6.0"
+VIProductVersion "1.1.0.0"
 VIAddVersionKey /LANG=1033 "ProductName" "Eye Break Reminder"
 VIAddVersionKey /LANG=1033 "FileDescription" "Eye Break Reminder Setup"
-VIAddVersionKey /LANG=1033 "FileVersion" "1.0.6.0"
-VIAddVersionKey /LANG=1033 "ProductVersion" "1.0.6"
-!define MUI_ICON "assets/App.ico"
-!define MUI_UNICON "assets/App.ico"
+VIAddVersionKey /LANG=1033 "FileVersion" "1.1.0.0"
+VIAddVersionKey /LANG=1033 "ProductVersion" "1.1.0"
+!define MUI_ICON "${EB_PROJECT_ROOT}\assets\App.ico"
+!define MUI_UNICON "${EB_PROJECT_ROOT}\assets\App.ico"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\EyeBreakReminder.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Open Eye Break Reminder"
@@ -73,16 +75,16 @@ Section "Eye Break Reminder (required)" MainSection
     Delete "$LOCALAPPDATA\EyeBreakReminder\timer.dat"
   keep_timer:
   SetOutPath "$INSTDIR"
-  File "release/EyeBreakReminder.exe"
-  File "README.md"
-  File "docs/PRIVACY.md"
-  File "docs/VERIFICATION.md"
+  File "${EB_PROJECT_ROOT}\release\EyeBreakReminder.exe"
+  File "${EB_PROJECT_ROOT}\README.md"
+  File "${EB_PROJECT_ROOT}\docs\PRIVACY.md"
+  File "${EB_PROJECT_ROOT}\docs\VERIFICATION.md"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateDirectory "$SMPROGRAMS\Eye Break Reminder"
   CreateShortcut "$SMPROGRAMS\Eye Break Reminder\Eye Break Reminder.lnk" "$INSTDIR\EyeBreakReminder.exe" "" "$INSTDIR\EyeBreakReminder.exe" 0
   WriteRegStr HKCU "Software\EyeBreakReminder" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayName" "Eye Break Reminder"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayVersion" "1.0.6"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayVersion" "1.1.0"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayIcon" "$INSTDIR\EyeBreakReminder.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "InstallLocation" "$INSTDIR"
