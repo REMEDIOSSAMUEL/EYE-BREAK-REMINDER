@@ -237,9 +237,29 @@ function CheckFileSet([string]$Stage){
 }
 function CheckNoDuplicate([string]$Stage){
   $root=Join-Path $localAppData 'Programs'
-  $actual=if(Test-Path -LiteralPath $root){@(Get-ChildItem -LiteralPath $root -Force -Directory|Where-Object{$_.Name-like'*EyeBreak*'-or$_.Name-like'*Eye Break*'}|ForEach-Object{FullPath $_.FullName})}else{@()}
-  $expected=if(Test-Path -LiteralPath $installPath -PathType Container){@((FullPath $installPath))}else{@()}
-  Assert -Name "$Stage no duplicate per-user install" -Passed ([string]::Join('|',$actual)-ieq[string]::Join('|',$expected)) -Observed $actual -Expected $expected
+
+  [string[]]$actual=@()
+  if(Test-Path -LiteralPath $root -PathType Container){
+    $actual=@(
+      Get-ChildItem -LiteralPath $root -Force -Directory |
+        Where-Object { $_.Name -like '*EyeBreak*' -or $_.Name -like '*Eye Break*' } |
+        ForEach-Object { FullPath $_.FullName } |
+        Sort-Object
+    )
+  }
+
+  [string[]]$expected=@()
+  if(Test-Path -LiteralPath $installPath -PathType Container){
+    $expected=@((FullPath $installPath))
+  }
+
+  $valid=($actual.Count -eq $expected.Count)
+
+  if($valid -and $expected.Count -eq 1){
+    $valid=(SamePath $actual[0] $expected[0])
+  }
+
+  Assert -Name "$Stage no duplicate per-user install" -Passed $valid -Observed $actual -Expected $expected
 }
 function CheckInstallRegistration([string]$Version,[string]$Stage){
   $dir=RegValue $appReg 'InstallDir';$name=RegValue $uninstallReg 'DisplayName';$dv=RegValue $uninstallReg 'DisplayVersion'
