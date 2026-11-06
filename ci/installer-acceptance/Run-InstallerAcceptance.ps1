@@ -394,7 +394,89 @@ function UiClick([IntPtr]$Parent,[int]$Id,[string]$Name){
   $control=UiChild $Parent $Id $Name;[void](UiMessage $control 0x00F5)
 }
 function UiSettingsPane([IntPtr]$Main){
-  [EbrAcceptanceWindowProbe]::FindWindowEx($Main,[IntPtr]::Zero,'EyeBreakReminder.Settings',$null)
+  [uint32]$mainPid=0
+  [void][EbrAcceptanceWindowProbe]::GetWindowThreadProcessId(
+    $Main,[ref]$mainPid
+  )
+
+  $pane=[EbrAcceptanceWindowProbe]::FindWindowEx(
+    $Main,[IntPtr]::Zero,'EyeBreakReminder.Settings',$null
+  )
+
+  $method='class lookup'
+  $observed=[Collections.Generic.List[object]]::new()
+
+  if($pane -eq [IntPtr]::Zero){
+    $method='direct child enumeration'
+    $after=[IntPtr]::Zero
+
+    for($i=0;$i -lt 512;$i++){
+      $child=[EbrAcceptanceWindowProbe]::FindWindowEx(
+        $Main,$after,$null,$null
+      )
+
+      if($child -eq [IntPtr]::Zero){break}
+      $after=$child
+
+      $classBuffer=[Text.StringBuilder]::new(256)
+      [void][EbrAcceptanceWindowProbe]::GetClassName(
+        $child,$classBuffer,$classBuffer.Capacity
+      )
+
+      [uint32]$childPid=0
+      [void][EbrAcceptanceWindowProbe]::GetWindowThreadProcessId(
+        $child,[ref]$childPid
+      )
+
+      if($observed.Count -lt 30){
+        $observed.Add([ordered]@{
+          handle=('0x{0:X}' -f $child.ToInt64())
+          class=$classBuffer.ToString()
+          pid=$childPid
+        })
+      }
+
+      if(
+        $classBuffer.ToString() -ceq 'EyeBreakReminder.Settings' -and
+        $childPid -eq $mainPid
+      ){
+        $pane=$child
+        break
+      }
+    }
+  }
+
+  # Validate the handle even if the original lookup succeeded.
+  if($pane -ne [IntPtr]::Zero){
+    [uint32]$panePid=0
+    $paneClass=[Text.StringBuilder]::new(256)
+
+    [void][EbrAcceptanceWindowProbe]::GetWindowThreadProcessId(
+      $pane,[ref]$panePid
+    )
+    [void][EbrAcceptanceWindowProbe]::GetClassName(
+      $pane,$paneClass,$paneClass.Capacity
+    )
+
+    if(
+      $panePid -ne $mainPid -or
+      $paneClass.ToString() -cne 'EyeBreakReminder.Settings'
+    ){
+      $pane=[IntPtr]::Zero
+    }
+  }
+
+  Write-Host (
+    'SETTINGS_PANE_PROBE: ' +
+    (ConvertTo-Json -InputObject ([ordered]@{
+      method=$method
+      mainPid=$mainPid
+      handle=('0x{0:X}' -f $pane.ToInt64())
+      observedChildren=$observed.ToArray()
+    }) -Depth 5 -Compress)
+  )
+
+  $pane
 }
 function UiExpectedDefaults([IntPtr]$Main,[bool]$Fresh,[bool]$HasSchedule){
   UiClick $Main 12 'Settings tab';$settings=UiSettingsPane $Main
