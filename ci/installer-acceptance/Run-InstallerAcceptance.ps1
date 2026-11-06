@@ -291,6 +291,21 @@ function CheckInstallRegistration([string]$Version,[string]$Stage){
   NoHklm $Stage;NoMachineAppDirectories $Stage;CheckNoDuplicate $Stage
 }
 function CheckUninstalled([string]$Stage){
+  if(Test-Path -LiteralPath $installPath){
+    $remaining=@()
+    if(Test-Path -LiteralPath $installPath -PathType Container){
+      $remaining=@(
+        Get-ChildItem -LiteralPath $installPath -Force |
+        ForEach-Object { $_.Name }
+      )
+    }else{
+      $remaining=@('[installation path exists but is not a directory]')
+    }
+    Write-Host (
+      'UNINSTALL_REMAINING: ' +
+      (ConvertTo-Json -InputObject $remaining -Compress)
+    )
+  }
   Assert -Name "$Stage files removed" -Passed (-not(Test-Path -LiteralPath $installPath)) -Observed (Test-Path -LiteralPath $installPath) -Expected $false
   foreach($pair in @(@($startMenuShortcut,'user Start Menu shortcut'),@($startMenuFolder,'user Start Menu folder'),@($desktopShortcut,'user Desktop'),@($commonMenuShortcut,'common Start Menu'),@($commonDesktopShortcut,'common Desktop'))){
     Assert -Name "$Stage $($pair[1]) absent" -Passed (-not(Test-Path -LiteralPath $pair[0])) -Observed (Test-Path -LiteralPath $pair[0]) -Expected $false
@@ -1011,7 +1026,64 @@ function AcceptanceMain{
   End-Scenario 'operating_schedule_runtime'
 
   Begin-Scenario 'v110_uninstall';TestOwnedStartupValue;$beforeUninstall=DataHashes 'before-v110-uninstall'
-  [void](RunBounded 'v1.1.0 real uninstaller /S' $uninstallerExe @('/S',"_?=$installPath") 120);NoEyeBreak 'v1.1.0 uninstall'
+  # NSIS _?= disables its own temporary-copy step. Execute our verified
+  # runner-owned copy so the installed Uninstall.exe can be deleted.
+  if($env:GITHUB_ACTIONS -ne 'true'){
+    throw 'Uninstaller acceptance must run only in GitHub Actions'
+  }
+  if([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)){
+    throw 'GitHub runner temporary directory is missing'
+  }
+
+  $runnerTemp=FullPath $env:RUNNER_TEMP
+  Assert -Name 'uninstaller staging root exists' `
+    -Passed (Test-Path -LiteralPath $runnerTemp -PathType Container) `
+    -Observed $runnerTemp -Expected 'existing runner temporary directory'
+
+  $uninstallStage=Join-Path $runnerTemp (
+    'EyeBreakAcceptanceUninstall-' + [guid]::NewGuid().ToString('N')
+  )
+  $uninstallStage=FullPath $uninstallStage
+
+  Assert -Name 'uninstaller staging directory is inside runner temp' `
+    -Passed (IsDescendantPath $uninstallStage $runnerTemp) `
+    -Observed $uninstallStage -Expected $runnerTemp
+
+  if(Test-Path -LiteralPath $uninstallStage){
+    throw 'Uninstaller staging directory already exists'
+  }
+
+  $originalUninstallerHash=Hash $uninstallerExe
+
+  try{
+    [void](New-Item -ItemType Directory -Path $uninstallStage -ErrorAction Stop)
+    CheckNoReparse $uninstallStage 'uninstaller temporary staging' -Contents
+
+    $copiedUninstaller=Join-Path $uninstallStage 'Uninstall.exe'
+
+    Copy-Item -LiteralPath $uninstallerExe `
+      -Destination $copiedUninstaller -ErrorAction Stop
+
+    $copiedHash=Hash $copiedUninstaller
+
+    Assert -Name 'temporary uninstaller is byte-identical to installed uninstaller' `
+      -Passed ($copiedHash -eq $originalUninstallerHash) `
+      -Observed $copiedHash -Expected $originalUninstallerHash
+
+    [void](RunBounded `
+      'v1.1.0 real uninstaller /S (verified temporary copy)' `
+      $copiedUninstaller @('/S',"_?=$installPath") 120)
+  }
+  finally{
+    if(Test-Path -LiteralPath $uninstallStage){
+      if(-not(IsDescendantPath $uninstallStage $runnerTemp)){
+        throw 'Refusing cleanup outside GitHub runner temporary directory'
+      }
+      Remove-Item -LiteralPath $uninstallStage -Recurse -Force -ErrorAction Stop
+    }
+  }
+
+  NoEyeBreak 'v1.1.0 uninstall'
   CheckUninstalled 'upgrade uninstall'
   foreach($name in @('settings.ini','history.dat','acceptance-unrelated-sentinel.txt')){
     $p=Join-Path $appDataPath $name;$actual=if(Test-Path -LiteralPath $p -PathType Leaf){Hash $p}else{$null}
