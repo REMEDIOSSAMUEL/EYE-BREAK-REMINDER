@@ -231,7 +231,14 @@ function InstalledFiles{
 function CheckFileSet([string]$Stage){
   CheckNoReparse $installPath "$Stage install" -Contents
   $expected=@('EyeBreakReminder.exe','PRIVACY.md','README.md','Uninstall.exe','VERIFICATION.md')|Sort-Object
-  $actual=@(InstalledFiles);$dirs=if(Test-Path -LiteralPath $installPath){@(Get-ChildItem -LiteralPath $installPath -Force -Directory -Recurse|ForEach-Object Name)}else{@()}
+  $actual=@(InstalledFiles)
+  [string[]]$dirs=@()
+  if(Test-Path -LiteralPath $installPath -PathType Container){
+    $dirs=@(
+      Get-ChildItem -LiteralPath $installPath -Force -Directory -Recurse |
+        ForEach-Object Name
+    )
+  }
   $ok=([string]::Join('|',$actual)-ceq[string]::Join('|',$expected))-and$dirs.Count-eq 0
   Assert -Name "$Stage exact installed files/layout" -Passed $ok -Observed ([ordered]@{files=$actual;directories=$dirs}) -Expected $expected
 }
