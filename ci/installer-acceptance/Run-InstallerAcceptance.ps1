@@ -329,6 +329,19 @@ private delegate bool ChildWindowVisitor(IntPtr hwnd,IntPtr data);
 private static extern bool EnumerateChildren(
     IntPtr parent,ChildWindowVisitor callback,IntPtr data);
 
+[DllImport("user32.dll", EntryPoint="GetDlgCtrlID", ExactSpelling=true)]
+public static extern int GetDlgCtrlID(IntPtr hwnd);
+
+public static IntPtr[] DirectChildWindows(IntPtr parent) {
+    var children=new System.Collections.Generic.List<IntPtr>();
+    ChildWindowVisitor callback=(child,data)=>{
+        if(GetParent(child)==parent) children.Add(child);
+        return true;
+    };
+    EnumerateChildren(parent,callback,IntPtr.Zero);
+    GC.KeepAlive(callback);
+    return children.ToArray();
+}
 public static IntPtr FindSettingsPaneByEnumeration(IntPtr parent,uint expectedPid) {
     IntPtr match=IntPtr.Zero;
 
@@ -557,6 +570,76 @@ function UiSettingsPane([IntPtr]$Main){
 
   $pane
 }
+function UiExpectStaticLabel([IntPtr]$Parent,[string]$Name,[string]$Expected){
+  [uint32]$parentPid=0
+  [void][EbrAcceptanceWindowProbe]::GetWindowThreadProcessId(
+    $Parent,[ref]$parentPid
+  )
+
+  $matches=[Collections.Generic.List[IntPtr]]::new()
+  $samples=[Collections.Generic.List[object]]::new()
+  $candidateCount=0
+
+  foreach($child in [EbrAcceptanceWindowProbe]::DirectChildWindows($Parent)){
+    if([EbrAcceptanceWindowProbe]::GetParent($child) -ne $Parent){continue}
+
+    [uint32]$childPid=0
+    [void][EbrAcceptanceWindowProbe]::GetWindowThreadProcessId(
+      $child,[ref]$childPid
+    )
+    if($childPid -ne $parentPid -or $parentPid -eq 0){continue}
+
+    $className=[Text.StringBuilder]::new(256)
+    [void][EbrAcceptanceWindowProbe]::GetClassName(
+      $child,$className,$className.Capacity
+    )
+    if($className.ToString() -ine 'Static'){continue}
+
+    $nativeId=[EbrAcceptanceWindowProbe]::GetDlgCtrlID($child)
+    if($nativeId -ne -1){continue}
+
+    if(-not [EbrAcceptanceWindowProbe]::IsWindowVisible($child)){continue}
+
+    $candidateCount++
+    $buffer=[Text.StringBuilder]::new(2048)
+    $result=[IntPtr]::Zero
+    $sent=[EbrAcceptanceWindowProbe]::SendMessageTimeoutText(
+      $child,0x000D,[IntPtr]$buffer.Capacity,$buffer,
+      2,3000,[ref]$result
+    )
+
+    if($sent -eq [IntPtr]::Zero){
+      throw "Unable to read $Name STATIC label candidate"
+    }
+
+    $actual=$buffer.ToString()
+    if($samples.Count -lt 20){
+      $samples.Add([ordered]@{
+        handle=('0x{0:X}' -f $child.ToInt64())
+        text=$actual
+      })
+    }
+
+    if($actual -ceq $Expected){
+      $matches.Add($child)
+    }
+  }
+
+  Assert -Name "$Name visible native label and exact text" `
+    -Passed ($matches.Count -eq 1) `
+    -Observed ([ordered]@{
+      matchingLabels=$matches.Count
+      visibleStaticCandidates=$candidateCount
+      examined=$samples.ToArray()
+    }) `
+    -Expected ([ordered]@{
+      class='Static'
+      nativeId=-1
+      parent='settings pane'
+      text=$Expected
+      matchingLabels=1
+    })
+}
 function UiExpectedDefaults([IntPtr]$Main,[bool]$Fresh,[bool]$HasSchedule){
   UiClick $Main 12 'Settings tab';$settings=UiSettingsPane $Main
   Assert -Name 'settings pane window exists' -Passed ($settings-ne[IntPtr]::Zero) -Observed ('0x{0:X}'-f$settings.ToInt64()) -Expected 'nonzero HWND'
@@ -587,7 +670,7 @@ function UiExpectedDefaults([IntPtr]$Main,[bool]$Fresh,[bool]$HasSchedule){
   if($HasSchedule){
     UiClick $Main 131 'Operating Schedule section';$settings=UiSettingsPane $Main
     UiExpectCheck $settings 120 'operating schedule enabled' $false
-    UiExpectText $settings 123 'operating schedule status' 'The operating schedule is off. Reminders run whenever the timer is running.'
+    UiExpectStaticLabel $settings 'operating schedule status' 'The operating schedule is off. Reminders run whenever the timer is running.'
     for($day=0;$day-lt 7;$day++){
       UiExpectCheck $settings (280+$day) "default schedule day $day" ($day-lt 5)
       UiExpectText $settings (300+$day*10) "default schedule day $day start" '09:00'
@@ -603,7 +686,7 @@ function UiExpectedClosedSchedule([IntPtr]$Main){
   UiClick $Main 12 'Settings tab';$settings=UiSettingsPane $Main
   UiClick $Main 131 'Operating Schedule section';$settings=UiSettingsPane $Main
   UiExpectCheck $settings 120 'closed schedule enabled' $true
-  UiExpectText $settings 123 'closed schedule status' 'No days are selected, so no automatic reminders will occur.'
+  UiExpectStaticLabel $settings 'closed schedule status' 'No days are selected, so no automatic reminders will occur.'
   for($day=0;$day-lt 7;$day++){
     UiExpectCheck $settings (280+$day) "closed schedule day $day" $false
     UiExpectText $settings (300+$day*10) "closed schedule day $day start" '09:00'
