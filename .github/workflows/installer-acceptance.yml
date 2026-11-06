@@ -149,7 +149,7 @@ jobs:
             throw "Source checkout version must be 1.0.6 or 1.1.0; found $sourceVersion"
           }
           $reviewedInputs = @{
-            'ci/installer-acceptance/Run-InstallerAcceptance.ps1' = '8EA6F4D9968F5DF31B21B120463428BB96DBC022ADB6884B5A89B21D88FBC8AD'
+            'ci/installer-acceptance/Run-InstallerAcceptance.ps1' = '9B0C870D3081791205D8DDCD40CF7DE964B38C5D7C8876C348337060560CEB11'
             'ci/installer-acceptance/fixture.cpp' = 'F9F42B6CFC5A6A6858329E6AAB2FF5F752C5CC4B4523FF6CD039040BF9A9B45E'
             'scripts/set-version.py' = 'B8045C05A91296BAA288BA506C820F894B75F2A12EA7559E58AAC256713CD2E0'
             'Makefile' = '44426AFF2E7682AD7CDBB7199916CB73B82B5B26A728CC368A947F08EA1D13A5'
@@ -209,7 +209,7 @@ jobs:
           $bytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
           $sha = [Security.Cryptography.SHA256]::Create()
           try { $actualHash = [Convert]::ToHexString($sha.ComputeHash($bytes)) } finally { $sha.Dispose() }
-          $expectedHash = '8EA6F4D9968F5DF31B21B120463428BB96DBC022ADB6884B5A89B21D88FBC8AD'
+          $expectedHash = '9B0C870D3081791205D8DDCD40CF7DE964B38C5D7C8876C348337060560CEB11'
           if ($actualHash -ne $expectedHash) { throw "Refusing to expose the read-only GitHub token to an altered acceptance harness: $actualHash" }
           & .\ci\installer-acceptance\Run-InstallerAcceptance.ps1 -DownloadOfficialOnly
           if ($LASTEXITCODE -ne 0) { throw "Official v1.0.6 artifact verification failed with exit code $LASTEXITCODE" }

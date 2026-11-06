@@ -318,6 +318,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 public static class EbrAcceptanceWindowProbe {
  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string className,string windowName);
+[DllImport("user32.dll", EntryPoint="GetClassNameW", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)] public static extern int GetClassName(IntPtr hwnd,System.Text.StringBuilder className,int maxCount);
  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent,IntPtr after,string className,string windowName);
  [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr parent,int id);
  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd,System.Text.StringBuilder text,int count);
@@ -477,6 +478,55 @@ function AppSmoke([string]$Version,[string]$Stage){
     if($candidate-ne[IntPtr]::Zero){[void][EbrAcceptanceWindowProbe]::GetWindowThreadProcessId($candidate,[ref]$windowPid);if([int]$windowPid-eq$id){$hwnd=$candidate;break}}
     if($proc.HasExited){break};Start-Sleep -Milliseconds 250
   }while([DateTime]::UtcNow-lt$until)
+  if($hwnd -eq [IntPtr]::Zero){
+    $proc.Refresh()
+    $candidate=$proc.MainWindowHandle
+
+    if($candidate -ne [IntPtr]::Zero){
+      [uint32]$candidatePid=0
+      [void][EbrAcceptanceWindowProbe]::GetWindowThreadProcessId(
+        $candidate,[ref]$candidatePid
+      )
+
+      $classBuffer=[Text.StringBuilder]::new(256)
+      $classLength=[EbrAcceptanceWindowProbe]::GetClassName(
+        $candidate,$classBuffer,$classBuffer.Capacity
+      )
+
+      $titleBuffer=[Text.StringBuilder]::new(512)
+      [void][EbrAcceptanceWindowProbe]::GetWindowText(
+        $candidate,$titleBuffer,$titleBuffer.Capacity
+      )
+
+      $candidateVisible=[EbrAcceptanceWindowProbe]::IsWindowVisible($candidate)
+
+      $accepted=(
+        $classLength -gt 0 -and
+        $classBuffer.ToString() -ceq 'EyeBreakReminder.Native' -and
+        [int]$candidatePid -eq $id
+      )
+
+      $candidateEvidence=[ordered]@{
+        handle=('0x{0:X}' -f $candidate.ToInt64())
+        pid=$candidatePid
+        expectedPid=$id
+        class=$classBuffer.ToString()
+        title=$titleBuffer.ToString()
+        visible=$candidateVisible
+        accepted=$accepted
+      }
+
+      Write-Host (
+        'WINDOW_CANDIDATE: ' +
+        (ConvertTo-Json -InputObject $candidateEvidence -Compress)
+      )
+
+      if($accepted){
+        $hwnd=$candidate
+        $windowPid=$candidatePid
+      }
+    }
+  }
   $proc.Refresh();$alive=-not$proc.HasExited;$path=$processImage
   if($hwnd -eq [IntPtr]::Zero){
     $windowDiagnostics=[ordered]@{
