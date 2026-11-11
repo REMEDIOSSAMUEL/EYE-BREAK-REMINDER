@@ -1129,7 +1129,9 @@ function Test-ShellTrayAndNaturalNotification {
     Pass 'Close-to-tray explanation is displayed in a visible native dialog' ([pscustomobject]@{Class=$explanation.Class;Title=$explanation.Title;ProcessId=$explanation.ProcessId;MessageTextExposed=$explanation.MessageTextExposed;Texts=$explanation.Texts})
     Capture-ActiveWindow $explanation.Handle 'tray-close-to-tray-explanation.png' | Out-Null
     if($explanation.MessageTextExposed){Pass 'Close-to-tray explanation text is available through native dialog controls' $explanation.Texts}else{Not-Tested 'Close-to-tray explanation text through native controls' 'The TaskDialog was visible and captured, but Windows did not expose its instruction text through GetWindowText.'}
-    Click-Control $explanation.Handle 1 'Acknowledge close-to-tray explanation'
+    $okButtons=@(foreach($child in [EBR_PRE_NATIVE]::Children($explanation.Handle)){if([EBR_PRE_NATIVE]::ClassName($child) -eq 'Button' -and [EBR_PRE_NATIVE]::IsWindowVisible($child) -and [EBR_PRE_NATIVE]::IsWindowEnabled($child) -and [EBR_PRE_NATIVE]::Text($child) -match '^\s*&?OK\s*$'){[pscustomobject]@{Handle=$child;Text=[EBR_PRE_NATIVE]::Text($child);Id=[EBR_PRE_NATIVE]::GetDlgCtrlID($child)}}})
+    Require ($okButtons.Count -eq 1) 'Close-to-tray TaskDialog exposes one enabled OK button' $okButtons
+    [void][EBR_PRE_NATIVE]::SendMessageW($okButtons[0].Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
     Pass 'One-time close-to-tray explanation was acknowledged through its native OK button'
   }
   $closeWait=[Diagnostics.Stopwatch]::StartNew()
