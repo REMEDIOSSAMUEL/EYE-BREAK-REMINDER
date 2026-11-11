@@ -16,7 +16,7 @@ $appProcess=$null
 function Add-Result([string]$Name,[string]$Status,$Details=$null){$events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')})}
 function Check([bool]$Condition,[string]$Name,$Details=$null){if($Condition){Add-Result $Name 'PASS' $Details}else{Add-Result $Name 'FAIL' $Details}}
 function Invoke-StandardProcess([string]$FilePath,[string[]]$Arguments,[int]$TimeoutSeconds=120){
-  $process=Start-Process -FilePath $FilePath -ArgumentList $Arguments -Credential $credential -LoadUserProfile -PassThru
+  $process=Start-Process -FilePath $FilePath -ArgumentList $Arguments -Credential $credential -LoadUserProfile -UseNewEnvironment -PassThru
   if(-not $process.WaitForExit($TimeoutSeconds*1000)){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue;throw "Standard-user process timed out: $FilePath"}
   $process.Refresh()
   return [pscustomobject]@{Pid=$process.Id;ExitCode=$process.ExitCode}
@@ -84,7 +84,7 @@ try{
   }finally{$userHive.Dispose()}
 
   $consentBefore=@(Get-Process -Name consent -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
-  $appProcess=Start-Process -FilePath $appExe -Credential $credential -LoadUserProfile -PassThru
+  $appProcess=Start-Process -FilePath $appExe -Credential $credential -LoadUserProfile -UseNewEnvironment -PassThru
   Start-Sleep -Seconds 5
   $appProcess.Refresh()
   $runningPath=''
