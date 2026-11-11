@@ -501,6 +501,11 @@ function Get-ProcessTreeSnapshot([int]$RootPid,[string]$ExecutablePath) {
     [pscustomobject]@{ProcessId=[int]$_.ProcessId;ParentProcessId=[int]$_.ParentProcessId;SessionId=[int]$_.SessionId;Name=$_.Name;ExecutablePath=$_.ExecutablePath;CommandLine=$_.CommandLine;CreationDate=$_.CreationDate}
   })
 }
+function Get-AvailableProcessExitCode($Process) {
+  if($null -eq $Process -or -not $Process.HasExited){return $null}
+  try{$value=$Process.ExitCode;if($null -ne $value){return [int]$value}}catch{}
+  return $null
+}
 function Get-DesktopWindowSnapshot([int[]]$RelevantProcessIds=@()) {
   @([EBR_PRE_NATIVE]::TopWindows() | ForEach-Object {
     $h=$_;$pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($h,[ref]$pidValue)
@@ -636,9 +641,8 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
       [void]$process.WaitForExit(30000)
       if($isUninstaller){
         if(-not $launchProcess.HasExited){[void]$launchProcess.WaitForExit(30000)}
-        $uiExitCode=$null;$parentExitCode=$null
-        if($process.HasExited){try{$uiExitCode=[int]$process.ExitCode}catch{}}
-        if($launchProcess.HasExited){try{$parentExitCode=[int]$launchProcess.ExitCode}catch{}}
+        $uiExitCode=Get-AvailableProcessExitCode $process
+        $parentExitCode=Get-AvailableProcessExitCode $launchProcess
         $processTreeAfter=[System.Collections.Generic.List[object]]::new();$completionSamples=[System.Collections.Generic.List[object]]::new();$completionWatch=[Diagnostics.Stopwatch]::StartNew();$afterState=Get-UninstallStateSnapshot
         while($completionWatch.Elapsed.TotalSeconds -lt 20){
           $processTreeAfter=Get-ProcessTreeSnapshot $launchProcess.Id $Path
