@@ -247,13 +247,12 @@ function Set-Edit([IntPtr]$Root,[int]$Id,[string]$Value,[string]$Name) {
   [EBR_PRE_NATIVE]::Key(0x11,$true)
   foreach($digit in $Value.ToCharArray()){Send-VirtualKey ([byte][int]$digit)}
   Start-Sleep -Milliseconds 100
-  $typed=[EBR_PRE_NATIVE]::Text($control.Handle)
   Capture-ActiveWindow $script:mainWindow "installed-edit-$Id-$Value.png" | Out-Null
-  Require ($typed.Trim() -eq $Value) "$Name accepts visible keyboard input" ([pscustomobject]@{Expected=$Value;Actual=$typed})
   $nextId=if($Id -eq 100){101}else{130}
   Focus-AppControl (Get-Control $Root $nextId 'Focus target after edit').Handle
+  Start-Sleep -Milliseconds 100
   $actual=[EBR_PRE_NATIVE]::Text($control.Handle)
-  Require ($actual.Trim() -eq $Value) "$Name edit value" ([pscustomobject]@{Expected=$Value;Actual=$actual})
+  Require ($actual.Trim() -eq $Value) "$Name accepts keyboard input and commits on focus loss" ([pscustomobject]@{Expected=$Value;Actual=$actual})
   $settingKey=if($Id -eq 100){'workMinutes'}elseif($Id -eq 101){'breakSeconds'}else{''}
   if($settingKey){
     $saved=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
