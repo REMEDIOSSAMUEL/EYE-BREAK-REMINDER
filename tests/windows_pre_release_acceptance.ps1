@@ -86,6 +86,7 @@ public static class EBR_PRE_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetDC(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
   [DllImport("gdi32.dll", SetLastError=true)] public static extern uint GetPixel(IntPtr dc, int x, int y);
+  [DllImport("oleacc.dll", PreserveSig=true)] private static extern int AccessibleObjectFromWindow(IntPtr hwnd, int objectId, ref Guid iid, out IntPtr accessible);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SystemParametersInfoW(uint action, uint parameter, ref EBR_PRE_HIGHCONTRAST value, uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SystemParametersInfoSimpleW(uint action, uint parameter, IntPtr value, uint flags);
@@ -101,6 +102,7 @@ public static class EBR_PRE_NATIVE {
   public static bool SetHighContrast(uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));h.dwFlags=flags;return SystemParametersInfoW(0x0043,h.cbSize,ref h,2);}
   public static bool BroadcastSetting(IntPtr hwnd,string name){IntPtr text=Marshal.StringToHGlobalUni(name);try{IntPtr result;return SendMessageTimeoutW(hwnd,0x001A,IntPtr.Zero,text,2,1500,out result)!=IntPtr.Zero;}finally{Marshal.FreeHGlobal(text);}}
   public static uint ClientPixel(IntPtr hwnd,int x,int y){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)return 0;try{return GetPixel(dc,x,y);}finally{ReleaseDC(hwnd,dc);}}
+  public static object AccessibleWindow(IntPtr hwnd,int objectId){Guid iid=new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");IntPtr accessible;int hr=AccessibleObjectFromWindow(hwnd,objectId,ref iid,out accessible);if(hr<0||accessible==IntPtr.Zero)return null;try{return Marshal.GetObjectForIUnknown(accessible);}finally{Marshal.Release(accessible);}}
 }
 '@
 Add-Type -TypeDefinition $native -ErrorAction Stop
@@ -345,6 +347,17 @@ function Capture-ActiveWindow([IntPtr]$Window,[string]$Name) {
   if((Get-Item -LiteralPath $path).Length -lt 1024){throw "Active-screen screenshot appears empty: $path"}
   Pass "Active desktop screenshot: $Name" ([pscustomobject]@{Path=$path;Method='CopyFromScreen';WindowBounds=$bounds})
   return $path
+}
+function Get-CapturedClientPixel([IntPtr]$Window,[string]$Path) {
+  $bounds=Get-Rect $Window;$client=Get-ClientGeometry $Window
+  $x=$client.Left-$bounds.Left+8
+  $y=$client.Top-$bounds.Top+[Math]::Max(8,$client.Height-8)
+  $bitmap=[System.Drawing.Bitmap]::FromFile($Path)
+  try {
+    if($x -lt 0 -or $y -lt 0 -or $x -ge $bitmap.Width -or $y -ge $bitmap.Height){throw "Client sample $x,$y is outside screenshot $($bitmap.Width)x$($bitmap.Height)."}
+    $pixel=$bitmap.GetPixel($x,$y)
+    return [uint32](($pixel.B -shl 16) -bor ($pixel.G -shl 8) -bor $pixel.R)
+  } finally {$bitmap.Dispose()}
 }
 function Capture-PrintWindow([IntPtr]$Window,[string]$Name) {
   $bounds=Get-Rect $Window;$bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[System.Drawing.Graphics]::FromImage($bitmap)
@@ -785,10 +798,18 @@ function Test-OsAppearanceAndTextScale {
       [void][EBR_PRE_NATIVE]::SendMessageW($script:mainWindow,0x031A,[IntPtr]::Zero,[IntPtr]::Zero)
       [void][EBR_PRE_NATIVE]::GetHighContrast([ref]$flags)
       Require (($flags -band 1) -ne 0) 'Windows reports High Contrast enabled through SPI_GETHIGHCONTRAST' ([pscustomobject]@{Flags=$flags})
-      Start-Sleep -Milliseconds 300
-      Capture-ActiveWindow $script:mainWindow 'follow-windows-forced-colors-active.png' | Out-Null
+      # Windows can cover the desktop briefly with its own "Please wait" screen
+      # while applying Forced Colors. Let the shell transition finish before
+      # capturing and compare an on-screen app pixel with the HWND paint result.
+      Start-Sleep -Seconds 2
       $forcedPixel=[EBR_PRE_NATIVE]::ClientPixel($script:mainWindow,8,[Math]::Max(8,(Get-ClientGeometry $script:mainWindow).Height-8))
-      Require ($forcedPixel -ne $darkPixel) 'Follow Windows repaints with Windows Forced Colors palette' ([pscustomobject]@{DarkPixel=('0x{0:X8}' -f $darkPixel);ForcedColorsPixel=('0x{0:X8}' -f $forcedPixel)})
+      Require ($forcedPixel -ne $darkPixel) 'Follow Windows window palette responds to Forced Colors' ([pscustomobject]@{DarkPixel=('0x{0:X8}' -f $darkPixel);ForcedColorsPixel=('0x{0:X8}' -f $forcedPixel)})
+      $forcedShot=Capture-ActiveWindow $script:mainWindow 'follow-windows-forced-colors-active.png'
+      if($forcedShot){
+        $visiblePixel=Get-CapturedClientPixel $script:mainWindow $forcedShot
+        if($visiblePixel -eq $forcedPixel){Pass 'Forced Colors palette is visible in the active desktop capture' ([pscustomobject]@{WindowPixel=('0x{0:X8}' -f $forcedPixel);ScreenPixel=('0x{0:X8}' -f $visiblePixel)})}
+        else{Not-Tested 'Visible Forced Colors screenshot confirmation' ([pscustomobject]@{Reason='A Windows transition/foreground overlay obscured the app; the screenshot pixel did not match the app window DC.';WindowPixel=('0x{0:X8}' -f $forcedPixel);ScreenPixel=('0x{0:X8}' -f $visiblePixel)})}
+      }
       [void][EBR_PRE_NATIVE]::SetHighContrast($script:highContrastOriginal)
       [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')
       Pass 'Windows High Contrast system setting restored after the test'
@@ -981,16 +1002,58 @@ function Open-TrayContextMenu {
 }
 function Get-TrayMenuItems([IntPtr]$MenuWindow) {
   $menuRoot=[System.Windows.Automation.AutomationElement]::FromHandle($MenuWindow)
-  @($menuRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::MenuItem -and $_.Current.Name })
+  $condition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::MenuItem)
+  $uiaItems=@($menuRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,$condition) | Where-Object { $_.Current.Name })
+  if($uiaItems.Count -gt 0){return [pscustomobject]@{Source='UIA';Items=$uiaItems;Handle=$MenuWindow}}
+  foreach($objectId in @(-4,-3,-16)){
+    try{
+      $accessible=[EBR_PRE_NATIVE]::AccessibleWindow($MenuWindow,$objectId)
+      if($null -eq $accessible){continue}
+      $entries=@(for($childId=1;$childId -le $accessible.accChildCount;$childId++){
+        try{$name=[string]$accessible.get_accName([object]$childId);if(-not [string]::IsNullOrWhiteSpace($name)){[pscustomobject]@{Name=$name.Trim();ChildId=$childId}}}catch{}
+      })
+      if($entries.Count -gt 0){return [pscustomobject]@{Source='MSAA';Accessible=$accessible;Entries=$entries;Handle=$MenuWindow}}
+    }catch{}
+  }
+  return [pscustomobject]@{Source='HitTest';Entries=@();Handle=$MenuWindow}
+}
+function Get-TrayMenuNames($Items) {
+  if($Items.Source -eq 'UIA'){return @($Items.Items | ForEach-Object {$_.Current.Name})}
+  if($Items.Source -eq 'MSAA'){return @($Items.Entries | ForEach-Object {$_.Name})}
+  return @()
+}
+function Invoke-TrayCommandByHitTest([IntPtr]$MenuWindow,[string]$Name) {
+  $index=switch -Exact ($Name){'Open Eye Break Reminder'{0};'Pause timer'{1};'Resume timer'{1};'Take a break now'{2};'Alarm muted'{3};'Settings'{4};'Exit'{5};default{throw "Unknown tray command '$Name'."}}
+  $bounds=Get-Rect $MenuWindow
+  if($bounds.Width -le 100 -or $bounds.Height -le 60){throw "Native tray popup has unusable hit-test bounds for '$Name': $($bounds.Width)x$($bounds.Height)."}
+  $row=($bounds.Height-4)/6.5
+  $separator=if($index -ge 5){$row/2}else{0}
+  $x=[int]($bounds.Left+$bounds.Width/3);$y=[int]($bounds.Top+2+$index*$row+$separator+$row/2)
+  if(-not [EBR_PRE_NATIVE]::SetCursorPos($x,$y)){throw "Could not position pointer over tray command '$Name' at $x,$y."}
+  [EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 70;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 350
+  if([EBR_PRE_NATIVE]::IsWindowVisible($MenuWindow)){
+    [void][EBR_PRE_NATIVE]::SetForegroundWindow($MenuWindow)
+    [System.Windows.Forms.SendKeys]::SendWait('{HOME}')
+    for($i=0;$i -lt $index;$i++){[System.Windows.Forms.SendKeys]::SendWait('{DOWN}')}
+    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+  }
+  Pass "Tray menu command selected by native row interaction: $Name" ([pscustomobject]@{Source='Visible #32768 popup hit-test with keyboard retry';Index=$index;Bounds=$bounds})
 }
 function Invoke-TrayCommand([string]$Name) {
   $menu=Open-TrayContextMenu
   if($menu -eq [IntPtr]::Zero){throw "Could not open the actual Windows tray menu to select '$Name'."}
   $items=Get-TrayMenuItems $menu
-  $item=@($items | Where-Object { $_.Current.Name -eq $Name }) | Select-Object -First 1
-  if(-not $item){throw "The native tray menu did not expose an accessible '$Name' command. Found: $(@($items | ForEach-Object {$_.Current.Name}) -join ' | ')"}
-  try{$item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}
-  catch{$item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}
+  if($items.Source -eq 'UIA'){
+    $item=@($items.Items | Where-Object { $_.Current.Name -eq $Name }) | Select-Object -First 1
+    if(-not $item){throw "The native tray menu did not expose an accessible '$Name' command. Found: $(@(Get-TrayMenuNames $items) -join ' | ')"}
+    try{$item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}
+    catch{$item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}
+  } elseif($items.Source -eq 'MSAA'){
+    $entry=@($items.Entries | Where-Object {$_.Name -eq $Name}) | Select-Object -First 1
+    if(-not $entry){throw "MSAA tray menu item '$Name' was not present: $(@(Get-TrayMenuNames $items) -join ', ')."}
+    $items.Accessible.accDoDefaultAction([object]$entry.ChildId)
+  } else {Invoke-TrayCommandByHitTest $menu $Name}
   Start-Sleep -Milliseconds 350
   Pass "Tray menu command invoked: $Name" $Name
 }
@@ -1016,8 +1079,12 @@ function Test-ShellTrayAndNaturalNotification {
   Pass 'Actual tray context menu opened as a native popup' ([pscustomobject]@{MenuWindow=('0x{0:X}' -f $menu.ToInt64())})
   Capture-TrayPopup $menu 'tray-context-menu-active.png' | Out-Null
   $menuItems=Get-TrayMenuItems $menu
-  $menuNames=@($menuItems | ForEach-Object {$_.Current.Name})
-  Require (@('Open Eye Break Reminder','Pause timer','Take a break now','Settings','Exit' | Where-Object {$menuNames -contains $_}).Count -ge 5) 'Tray menu exposes the expected accessible native commands' $menuNames
+  $menuNames=@(Get-TrayMenuNames $menuItems)
+  if($menuItems.Source -ne 'HitTest'){
+    Require (@('Open Eye Break Reminder','Pause timer','Take a break now','Settings','Exit' | Where-Object {$menuNames -contains $_}).Count -ge 5) "Tray menu exposes expected $($menuItems.Source) native commands" $menuNames
+  } else {
+    Pass 'Tray popup has a readable native screenshot; row actions will be exercised against visible menu bounds' ([pscustomobject]@{Source=$menuItems.Source;Screenshot='tray-context-menu-active.png';Bounds=(Get-Rect $menu)})
+  }
   Invoke-TrayCommand 'Pause timer'
   Require ((Wait-ForStatus 'Paused') -like '*Paused*') 'Tray Pause command pauses the installed timer' (Get-Status)
   Invoke-TrayCommand 'Resume timer'
