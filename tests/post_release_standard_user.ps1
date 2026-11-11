@@ -86,20 +86,27 @@ try{
   $appKeyPath="$sid\Software\EyeBreakReminder"
   $uninstallKeyPath="$sid\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder"
   $hiveMountedByHarness=Mount-StandardUserHive
-  $userHive=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users,[Microsoft.Win32.RegistryView]::Default)
-  try{
-    $appKey=$userHive.OpenSubKey($appKeyPath)
-    $uninstallKey=$userHive.OpenSubKey($uninstallKeyPath)
-    $displayVersion=if($uninstallKey){[string]$uninstallKey.GetValue('DisplayVersion')}else{''}
-    $registeredLocation=if($uninstallKey){[string]$uninstallKey.GetValue('InstallLocation')}else{''}
-    Check ((Test-Path -LiteralPath $appExe) -and (Test-Path -LiteralPath $uninstaller)) 'Standard-user install writes the executable and uninstaller to the profile installation path' ([pscustomobject]@{Executable=(Test-Path -LiteralPath $appExe);Uninstaller=(Test-Path -LiteralPath $uninstaller);InstallDir=$installDir})
-    if(Test-Path -LiteralPath $appExe){
-      $version=(Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
-      Check ($version -match '^1\.2\.0') 'Standard-user installed executable reports v1.2.0' $version
-    }
-    Check ($appKey -and $uninstallKey -and $displayVersion -eq '1.2.0' -and [IO.Path]::GetFullPath($registeredLocation) -ieq [IO.Path]::GetFullPath($installDir)) 'Standard-user HKCU registration identifies the correct installed application' ([pscustomobject]@{AppKeyPresent=[bool]$appKey;UninstallKeyPresent=[bool]$uninstallKey;DisplayVersion=$displayVersion;InstallLocation=$registeredLocation;HiveMountedByHarness=$hiveMountedByHarness})
-    if($appKey){$appKey.Dispose()};if($uninstallKey){$uninstallKey.Dispose()}
-  }finally{$userHive.Dispose();Dismount-StandardUserHive $hiveMountedByHarness;$hiveMountedByHarness=$false}
+  $registrySnapshots=[System.Collections.Generic.List[object]]::new()
+  foreach($view in @([Microsoft.Win32.RegistryView]::Registry64,[Microsoft.Win32.RegistryView]::Registry32)){
+    $viewHive=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users,$view)
+    try{
+      $appKey=$viewHive.OpenSubKey($appKeyPath)
+      $uninstallKey=$viewHive.OpenSubKey($uninstallKeyPath)
+      $viewDisplayVersion=if($uninstallKey){[string]$uninstallKey.GetValue('DisplayVersion')}else{''}
+      $viewLocation=if($uninstallKey){[string]$uninstallKey.GetValue('InstallLocation')}else{''}
+      $registrySnapshots.Add([pscustomobject]@{View=$view.ToString();AppKeyPresent=[bool]$appKey;UninstallKeyPresent=[bool]$uninstallKey;AppValueNames=if($appKey){@($appKey.GetValueNames())}else{@()};UninstallValueNames=if($uninstallKey){@($uninstallKey.GetValueNames())}else{@()};DisplayVersion=$viewDisplayVersion;InstallLocation=$viewLocation})
+      if($appKey){$appKey.Dispose()};if($uninstallKey){$uninstallKey.Dispose()}
+    }finally{$viewHive.Dispose()}
+  }
+  $registry64=$registrySnapshots | Where-Object View -eq 'Registry64' | Select-Object -First 1
+  $registry32=$registrySnapshots | Where-Object View -eq 'Registry32' | Select-Object -First 1
+  Check ((Test-Path -LiteralPath $appExe) -and (Test-Path -LiteralPath $uninstaller)) 'Standard-user install writes the executable and uninstaller to the profile installation path' ([pscustomobject]@{Executable=(Test-Path -LiteralPath $appExe);Uninstaller=(Test-Path -LiteralPath $uninstaller);InstallDir=$installDir})
+  if(Test-Path -LiteralPath $appExe){
+    $version=(Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
+    Check ($version -match '^1\.2\.0') 'Standard-user installed executable reports v1.2.0' $version
+  }
+  Check ($registry64.AppKeyPresent -and $registry64.UninstallKeyPresent -and $registry64.DisplayVersion -eq '1.2.0' -and [IO.Path]::GetFullPath($registry64.InstallLocation) -ieq [IO.Path]::GetFullPath($installDir)) 'Standard-user HKCU registration identifies the correct installed application' ([pscustomobject]@{ExpectedView='Registry64';Registry64=$registry64;Registry32=$registry32;HiveMountedByHarness=$hiveMountedByHarness})
+  Dismount-StandardUserHive $hiveMountedByHarness;$hiveMountedByHarness=$false
 
   $consentBefore=@(Get-Process -Name consent -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
   $appProcess=Start-Process -FilePath $appExe -Credential $credential -LoadUserProfile -UseNewEnvironment -PassThru
@@ -130,8 +137,13 @@ try{
     Check $uninstallTreeComplete 'Standard-user silent uninstall waits for the NSIS child process and completes file cleanup' ([pscustomobject]@{ParentPid=$uninstall.Pid;ParentExitCode=$uninstall.ExitCode;NsisChildObserved=$nsisChildObserved;RemainingProcesses=@($nsisChildren | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath);RemainingFiles=$remainingFiles})
     Check (-not (Test-Path -LiteralPath $installDir)) 'Standard-user silent uninstall removes its per-user installation directory' $installDir
     $hiveMountedByHarness=Mount-StandardUserHive
-    $userHive=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users,[Microsoft.Win32.RegistryView]::Default)
-    try{$remaining=$userHive.OpenSubKey($uninstallKeyPath);Check ($null -eq $remaining) 'Standard-user silent uninstall removes its per-user registration' ([pscustomobject]@{RegistrationRemains=($null -ne $remaining);HiveMountedByHarness=$hiveMountedByHarness});if($remaining){$remaining.Dispose()}}finally{$userHive.Dispose();Dismount-StandardUserHive $hiveMountedByHarness;$hiveMountedByHarness=$false}
+    $remainingRegistryViews=[System.Collections.Generic.List[object]]::new()
+    foreach($view in @([Microsoft.Win32.RegistryView]::Registry64,[Microsoft.Win32.RegistryView]::Registry32)){
+      $viewHive=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users,$view)
+      try{$remaining=$viewHive.OpenSubKey($uninstallKeyPath);if($remaining){$remainingRegistryViews.Add($view.ToString());$remaining.Dispose()}}finally{$viewHive.Dispose()}
+    }
+    Check ($remainingRegistryViews.Count -eq 0) 'Standard-user silent uninstall removes its per-user registration in both registry views' ([pscustomobject]@{RemainingViews=$remainingRegistryViews.ToArray();HiveMountedByHarness=$hiveMountedByHarness})
+    Dismount-StandardUserHive $hiveMountedByHarness;$hiveMountedByHarness=$false
   }
 }catch{
   if($_.Exception -isnot [System.OperationCanceledException]){Add-Result 'Standard-user installer lifecycle' 'FAIL' $_.Exception.Message}
