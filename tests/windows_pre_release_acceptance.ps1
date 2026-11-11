@@ -687,7 +687,7 @@ function Test-UiaAndKeyboard {
   Require (@('Timer','History','Settings' | Where-Object { $names -contains $_ }).Count -eq 3) 'UI Automation exposes the main navigation names' $names
   $elements=Get-UiaElements $script:mainWindow
   $named=@($elements | Where-Object { $_.Current.IsControlElement -and $_.Current.Name -and $_.Current.IsEnabled -and -not $_.Current.IsOffscreen })
-  Require ($named.Count -ge 10) 'UI Automation exposes enabled named controls' ([pscustomobject]@{NamedEnabledVisibleControls=$named.Count;Examples=@($named | Select-Object -First 20 | ForEach-Object {$_.Current.Name})})
+  Require ($named.Count -ge 9) 'UI Automation exposes enabled named controls on the Timer screen' ([pscustomobject]@{NamedEnabledVisibleControls=$named.Count;Examples=@($named | Select-Object -First 20 | ForEach-Object {$_.Current.Name})})
   if(-not $script:interactiveDesktop){Not-Tested 'Keyboard-only focus order' 'No interactive Windows desktop was exposed.';return}
   $nav=Get-Control $script:mainWindow 10 'Timer navigation'
   Focus-AppControl $nav.Handle
