@@ -319,11 +319,18 @@ function Find-WizardButton([IntPtr]$Window,[string]$Pattern) {
   }
   return $null
 }
-function Invoke-WizardButton($Button) {
-  if($Button.Element){$Button.Element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();return}
-  $result=[IntPtr]::Zero
-  $sent=[EBR_PRE_NATIVE]::SendMessageTimeoutW($Button.Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero,2,3000,[ref]$result)
-  if($sent -eq [IntPtr]::Zero){throw "Could not invoke visible installer button '$($Button.Name)' through Win32."}
+function Invoke-WizardButton([IntPtr]$Window,$Button) {
+  $rect=New-Object EBR_PRE_RECT
+  if(-not [EBR_PRE_NATIVE]::GetWindowRect($Button.Handle,[ref]$rect)){throw "Could not measure installer button '$($Button.Name)' before clicking it."}
+  $x=[int](($rect.Left+$rect.Right)/2);$y=[int](($rect.Top+$rect.Bottom)/2)
+  [void][EBR_PRE_NATIVE]::SetForegroundWindow($Window)
+  Start-Sleep -Milliseconds 100
+  if([EBR_PRE_NATIVE]::GetForegroundWindow() -ne $Window){throw "Could not activate the installer window before clicking '$($Button.Name)' at $x,$y."}
+  if(-not [EBR_PRE_NATIVE]::SetCursorPos($x,$y)){throw "Could not position the cursor over installer button '$($Button.Name)' at $x,$y."}
+  [EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 60
+  [EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+  Pass 'Installer wizard button clicked through the interactive Windows desktop' ([pscustomobject]@{Name=$Button.Name;LocatedBy=$Button.Source;Bounds=[pscustomobject]@{Left=$rect.Left;Top=$rect.Top;Right=$rect.Right;Bottom=$rect.Bottom};Window=('0x{0:X}' -f $Window.ToInt64())})
 }
 function Invoke-Wizard([string]$Path,[string]$Kind) {
   if(-not $script:interactiveDesktop){Not-Tested "$Kind visible wizard" 'The runner has no interactive Explorer desktop.';return $false}
@@ -335,10 +342,11 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
   }
   Require ($window -ne [IntPtr]::Zero) "$Kind wizard shows a visible native window" $process.Id
   $buttonsSeen=[System.Collections.Generic.List[string]]::new()
-  $watch=[Diagnostics.Stopwatch]::StartNew();$stage=0
+  $watch=[Diagnostics.Stopwatch]::StartNew();$stage=0;$lastCapturedStage=-1
   while($watch.Elapsed.TotalMinutes -lt 3){
     if($process.HasExited){break}
     [void][EBR_PRE_NATIVE]::SetForegroundWindow($window)
+    if($stage -gt 0 -and $stage -le 6 -and $stage -ne $lastCapturedStage){Capture-ActiveWindow $window ("{0}-wizard-stage-{1}.png" -f $Kind,$stage) | Out-Null;$lastCapturedStage=$stage}
     $finish=Find-WizardButton $window '^(Finish|Close)$'
     if($finish){
       $checkboxes=@([System.Windows.Automation.AutomationElement]::FromHandle($window).FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and $_.Current.Name -match 'Open Eye Break Reminder' })
@@ -350,7 +358,7 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
         Require ($remainingChecked.Count -eq 0) "$Kind finish-page run checkbox is cleared before test cleanup" $remainingChecked.Count
       } else {Not-Tested "$Kind finish-page run checkbox state" 'The visible NSIS finish page exposed no matching Run checkbox.'}
       Capture-ActiveWindow $window ("{0}-wizard-finish.png" -f $Kind) | Out-Null
-      Invoke-WizardButton $finish
+      Invoke-WizardButton $window $finish
       [void]$process.WaitForExit(30000)
       Require ($process.HasExited) "$Kind wizard finishes and exits" ([pscustomobject]@{ExitCode=$process.ExitCode})
       Require ($process.ExitCode -eq 0) "$Kind wizard exits with code 0" ([pscustomobject]@{ExitCode=$process.ExitCode})
@@ -360,17 +368,17 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
     $next=Find-WizardButton $window '^(Next|Next >|&Next >)$'
     if($stage -eq 0){
       Capture-ActiveWindow $window ("{0}-wizard-first-page.png" -f $Kind) | Out-Null
-      $nativeButtons=@([EBR_PRE_NATIVE]::Children($window) | Where-Object {[EBR_PRE_NATIVE]::ClassName($_) -eq 'Button'} | ForEach-Object {[pscustomobject]@{Name=[EBR_PRE_NATIVE]::Text($_);Visible=[EBR_PRE_NATIVE]::IsWindowVisible($_);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($_);Hwnd=('0x{0:X}' -f $_.ToInt64())}})
+      $nativeButtons=@([EBR_PRE_NATIVE]::Children($window) | Where-Object {[EBR_PRE_NATIVE]::ClassName($_) -eq 'Button'} | ForEach-Object {[pscustomobject]@{Name=[EBR_PRE_NATIVE]::Text($_);Visible=[EBR_PRE_NATIVE]::IsWindowVisible($_);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($_);ControlId=[EBR_PRE_NATIVE]::GetDlgCtrlID($_);Hwnd=('0x{0:X}' -f $_.ToInt64())}})
       Require ($next -ne $null -or $install -ne $null) "$Kind wizard exposes a usable navigation button" ([pscustomobject]@{WindowTitle=[EBR_PRE_NATIVE]::Text($window);NativeButtons=$nativeButtons})
     }
     if($install){
-      $name=$install.Name
+      $name="$($install.Name) [$($install.Source)]"
       if(-not $buttonsSeen.Contains($name)){$buttonsSeen.Add($name)}
-      Invoke-WizardButton $install;$stage++
+      Invoke-WizardButton $window $install;$stage++
     } elseif($next){
-      $name=$next.Name
+      $name="$($next.Name) [$($next.Source)]"
       if(-not $buttonsSeen.Contains($name)){$buttonsSeen.Add($name)}
-      Invoke-WizardButton $next;$stage++
+      Invoke-WizardButton $window $next;$stage++
     }
     Start-Sleep -Milliseconds 200
     foreach($h in [EBR_PRE_NATIVE]::TopWindowsForProcess($process.Id)){if([EBR_PRE_NATIVE]::IsWindowVisible($h)){$window=$h;break}}
