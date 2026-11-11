@@ -42,13 +42,14 @@ Counts below treat each matrix row as one test group. Assertion totals from the 
 | NOT TESTED | Real OS appearance switching and Forced Colors | The app's Follow Windows repaint response to a synthetic `WM_THEMECHANGED` message was checked. Windows dark/light settings were not changed, and Windows High Contrast/Forced Colors was not toggled. |
 | NOT TESTED | Additional DPI and Windows text scales | Only 150% DPI and 100% text scale were available to this run. Other real DPI/text-scale configurations were not exercised. |
 | NOT TESTED | Full keyboard-only navigation and screen-reader speech | A high-contrast keyboard focus indicator was captured, and navigation names were exposed through UI Automation. The desktop could not acquire focus for a full synthetic Tab sequence; Narrator or other screen-reader speech was not tested. |
+| NOT TESTED | Active-desktop repaint of inactive navigation while the break reminder is foreground | Two inactive-main-window `PrintWindow` captures omitted one primary-navigation caption, and the missing caption varied. Process-bound HWND/UI Automation checks showed all three navigation controls visible and enabled before, during, and after a break. With no interactive shell desktop, the capture discrepancy could not be distinguished from an active-screen repaint defect. |
 | NOT TESTED | Real system-tray menu, single-instance behavior, hide/reopen, and tray exit | The automation desktop had no interactive `Shell_TrayWnd`; `Shell_NotifyIconGetRect` returned `E_FAIL` during an initial probe. The corrected probe recorded the shell integration as not testable. No tray menu workflow is claimed. |
 | NOT TESTED | Windows Shell toast surface | The in-app break reminder window was visibly exercised and captured. No Windows toast was observed or claimed. |
 | NOT TESTED | Physical speaker output | Audio hardware was not tested. The GUI suite disabled the alarm to keep automated runs quiet; no hardware playback claim is made. |
 | NOT TESTED | Real lock/unlock and sleep/resume | Only existing deterministic core/synthetic lifecycle tests ran. The host was not locked, put to sleep, signed out, or restarted. |
 | NOT TESTED | Display changes and multi-monitor placement | No display configuration was changed and no physical multi-monitor test was run. |
 
-**Final matrix totals:** PASS 11, FAIL 0, NOT TESTED 11. The 6,680 core, 128 GUI, and package-verifier assertion totals below are separate from these group counts. Initial tray-probe/harness diagnostics are described in the limitations section and are not counted as product assertion failures.
+**Final matrix totals:** PASS 11, FAIL 0, NOT TESTED 12. The 6,680 core, 128 GUI, and package-verifier assertion totals below are separate from these group counts. Initial tray-probe/harness diagnostics are described in the limitations section and are not counted as product assertion failures.
 
 ## Live update request
 
@@ -58,7 +59,9 @@ The isolated GUI suite made a real request from the application and completed it
 
 The GUI test directly launched the isolated native application, navigated its real top-level window via process-bound Win32 handles, used UI Automation, started/skipped/snoozed breaks, captured the reminder HWND, and inspected navigation controls across a break. This is a real GUI operation, but it is not proof of tray operation or a Windows toast.
 
-An initial tray probe returned `E_FAIL` when the automation session had no interactive `Shell_TrayWnd`. A subsequent corrected isolated probe recorded the shell tray as **NOT TESTED** and exited the test app cleanly. During development of that diagnostic helper, one attempt stopped because the helper lacked an `IsWindowEnabled` declaration; the helper was corrected and rerun. Neither diagnostic failure exercised or changed the product. No successful tray icon, menu, duplicate-launch, toast, physical sound, lock, sleep, resume, or multi-monitor operation is claimed.
+An initial tray probe returned `E_FAIL` when the automation session had no interactive `Shell_TrayWnd`. A subsequent corrected isolated probe recorded the shell tray as **NOT TESTED** and exited the test app cleanly. During development of that diagnostic helper, one attempt stopped because the helper lacked an `IsWindowEnabled` declaration; the helper was corrected and rerun. Neither diagnostic failure exercised or changed the product. No audio test sink was present in the repository's test infrastructure. No successful tray icon, menu, duplicate-launch, toast, physical sound, lock, sleep, resume, or multi-monitor operation is claimed.
+
+Screenshots reviewed include `timer-dark-work.png`, `timer-dark-break.png`, `timer-light-break.png`, `timer-high-contrast-dark-break.png`, `settings-high-contrast-visible-focus.png`, `history-dark.png`, `reminder-dark.png`, and `about-update-checker.png`. Acceptance results are in `build/gui-test/evidence/gui-acceptance-results.json`; the isolated tray/UIA probe record is `build/gui-test/evidence/final-tray-integration.json`. These are local ignored test outputs and are not release artifacts.
 
 ## Regression and artifact results
 
@@ -90,4 +93,4 @@ The packaged executable and installer metadata are `1.2.0` (`1.2.0.0` in PE vers
 
 ## Release-readiness conclusion
 
-The automated core, GUI, update-fixture, and package checks pass, but this is **not a complete real-Windows pre-release validation**: the installer and upgrade workflow, live GitHub response, interactive shell, Windows theme/Forced Colors changes, audio, lock/sleep, and multi-monitor behavior remain untested. v1.2.0 is built for review, but the available evidence does not justify claiming that all requested release validation passed. No v1.2.0 release has been published.
+The automated core, GUI, update-fixture, and package checks pass, but this is **not a complete real-Windows pre-release validation**: the installer and upgrade workflow, live GitHub response, interactive shell, Windows theme/Forced Colors changes, active-desktop repaint caveat during a break, audio, lock/sleep, and multi-monitor behavior remain untested. v1.2.0 is built for review, but the available evidence does not justify claiming that all requested release validation passed. No v1.2.0 release has been published.
