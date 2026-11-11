@@ -20,7 +20,7 @@ jobs:
           persist-credentials: false
 
       - name: Install the native Windows build toolchain
-        uses: msys2/setup-msys2@767c5b499449c4509d404e38812c2b6ce04d6620 # v2.32.0
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
         with:
           msystem: MINGW64
           update: true
@@ -33,6 +33,7 @@ jobs:
             mingw-w64-i686-nsis
 
       - name: Build production and GUI-test executables and all release packages
+        id: build
         shell: msys2 {0}
         run: |
           mkdir -p "$RUNNER_TEMP/eye-break-reminder-tmp"
@@ -78,6 +79,7 @@ jobs:
           }
 
       - name: Detect whether this runner exposes an interactive Windows desktop
+        id: runner_probe
         if: always()
         shell: pwsh
         run: |
@@ -89,7 +91,7 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Run the existing native Win32 GUI acceptance suite
-        if: always() && env.GUI_DESKTOP_AVAILABLE == 'true'
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -98,7 +100,7 @@ jobs:
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Record the existing GUI suite as unavailable on a headless runner
-        if: always() && env.GUI_DESKTOP_AVAILABLE != 'true'
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE != 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -117,8 +119,28 @@ jobs:
           $record | ConvertTo-Json -Depth 6 | Set-Content 'build/gui-test/evidence/gui-acceptance-results.json' -Encoding UTF8
           Write-Output $record.Events[0].Details
 
+      - name: Record GUI suite as unavailable when the runner probe fails
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome != 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'build/gui-test/evidence' | Out-Null
+          $record = [pscustomobject]@{
+            Version = '1.2.0'
+            Assertions = 0
+            Events = @([pscustomobject]@{
+              Name = 'Existing native Win32 GUI acceptance suite'
+              Status = 'NOT TESTED'
+              Details = 'The Windows desktop capability probe failed; GUI availability is unknown.'
+              Utc = [DateTime]::UtcNow.ToString('o')
+            })
+            EvidenceDirectory = (Join-Path (Get-Location) 'build/gui-test/evidence')
+          }
+          $record | ConvertTo-Json -Depth 6 | Set-Content 'build/gui-test/evidence/gui-acceptance-results.json' -Encoding UTF8
+          Write-Output $record.Events[0].Details
+
       - name: Run installed-app, update, appearance, and lifecycle acceptance
-        if: always()
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
