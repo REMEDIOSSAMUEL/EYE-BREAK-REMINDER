@@ -47,7 +47,7 @@ jobs:
           fi
           make -B package gui-test \
             CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
-            WINDRES=x86_64-w64-mingw32-windres \
+            WINDRES=windres \
             MAKENSIS=/mingw64/bin/makensis.exe \
             PYTHON=python
 
