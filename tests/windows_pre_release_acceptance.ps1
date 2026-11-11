@@ -265,11 +265,13 @@ function Set-Edit([IntPtr]$Root,[int]$Id,[string]$Value,[string]$Name) {
   Require ($focused -eq $nextControl.Handle) "$Name Tab navigation moves to the next setting control" ([pscustomobject]@{ExpectedHandle=('0x{0:X}' -f $nextControl.Handle.ToInt64());ActualHandle=('0x{0:X}' -f $focused.ToInt64())})
   Start-Sleep -Milliseconds 100
   $actual=[EBR_PRE_NATIVE]::Text($control.Handle)
-  Require ($actual.Trim() -eq $Value) "$Name accepts keyboard input and commits on focus loss" ([pscustomobject]@{Expected=$Value;Actual=$actual})
+  Capture-ActiveWindow $script:mainWindow "installed-edit-$Id-$Value-after-tab.png" | Out-Null
   $settingKey=if($Id -eq 100){'workMinutes'}elseif($Id -eq 101){'breakSeconds'}else{''}
   if($settingKey){
     $saved=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
-    Require ($saved.ContainsKey($settingKey) -and [string]$saved[$settingKey] -eq $Value) "$Name is applied and persisted" ([pscustomobject]@{Key=$settingKey;Expected=$Value;Actual=$saved[$settingKey]})
+    Require ($saved.ContainsKey($settingKey) -and [string]$saved[$settingKey] -eq $Value) "$Name accepts keyboard input and persists after Tab" ([pscustomobject]@{Key=$settingKey;Expected=$Value;Saved=$saved[$settingKey];EditWindowText=$actual})
+  } else {
+    Require ($actual.Trim() -eq $Value) "$Name edit value after keyboard focus change" ([pscustomobject]@{Expected=$Value;Actual=$actual})
   }
 }
 function Read-SettingsMap([string]$Path) {
@@ -390,7 +392,7 @@ function Stop-InstalledApp {
     if(-not $process.WaitForExit(10000)){
       # Only terminate the PID started by this isolated runner script.
       $actual='';try{$actual=[IO.Path]::GetFullPath((Get-Process -Id $script:appPid -ErrorAction Stop).Path)}catch{}
-      if($actual -ieq $appExe){Stop-Process -Id $script:appPid -Force -ErrorAction SilentlyContinue;Pass 'Test app cleanup used its owned process ID' $script:appPid}
+      if($actual -ieq $appExe){Stop-Process -Id $script:appPid -Force -ErrorAction SilentlyContinue;if(-not $process.WaitForExit(5000)){throw 'The owned test application process did not exit after forced cleanup.'};Pass 'Test app cleanup used its owned process ID' $script:appPid}
     }
   }
   $script:appPid=0;$script:mainWindow=[IntPtr]::Zero
@@ -836,6 +838,7 @@ function Test-FreshInstallApp {
     Require ((Get-Combo $script:mainWindow 106 'Theme') -eq 1) 'Installed app restores the selected theme after restart'
     Switch-Settings 0
     Require ([EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 100 'Restored work interval').Handle) -eq '1') 'Installed app restores the work interval after restart'
+    Require ([EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 101 'Restored break duration').Handle) -eq '30') 'Installed app restores the break duration after restart'
     $listId=200
     Switch-Settings 0
     Switch-Timer
