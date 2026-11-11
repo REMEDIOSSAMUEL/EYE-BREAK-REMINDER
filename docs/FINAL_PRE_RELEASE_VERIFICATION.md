@@ -7,6 +7,8 @@
 **Feature branch:** `feature/v1.2.0-theme-accessibility-break-mode`
 
 **Application and packaging source commit exercised:** `84d906917bd3790c4d280d10354d865fb06fa12a`. This adds only the Source ZIP self-reference exclusion and its verifier assertion on top of feature commit `622a9f1f72c8f420d4f274cdaaf9693c52fa1c68`. This report is committed afterward and excluded from the Source ZIP; it does not change executable inputs.
+
+**Final clean artifact rebuild:** ran from branch commit `9544aca2f40b48f54501d11efe48da098303dcc8` (the report commit before its final checksum update). The report is not embedded in the executable, installer, portable archive, or source archive, so this checksum update does not change package inputs. The final verifier is rerun after the report commit.
 **Release publication:** Not performed. No release was created and `main` was not changed.
 
 ## Scope and environment
@@ -63,6 +65,8 @@ An initial tray probe returned `E_FAIL` when the automation session had no inter
 Source/packaging commit: `84d906917bd3790c4d280d10354d865fb06fa12a`
 
 Feature implementation commit: `622a9f1f72c8f420d4f274cdaaf9693c52fa1c68`
+
+Final clean build checkout: `9544aca2f40b48f54501d11efe48da098303dcc8` (before the report's final checksum update)
 Build toolchain: MSYS2 MINGW64 GCC 15.2.0 (MSVCRT), C++17 with `-Wall -Wextra -Wpedantic -Werror`, `WINVER=0x0A00`, `_WIN32_WINNT=0x0A00`; MINGW32 NSIS 3.11 (32-bit bootstrap); Python packaging and verification scripts.
 
 | Suite / package | Result |
@@ -76,11 +80,11 @@ The application and NSIS installer are **unsigned**. No signing certificate was 
 
 | Artifact | Final size | SHA-256 |
 |---|---:|---|
-| `release/EyeBreakReminder.exe` | 2,604,032 bytes | `5bc04bb369b81faad93687395e599a73386718e7dbeda95bb859304a7f0df7bd` |
-| `release/EyeBreakReminder-Setup-x64.exe` | 1,391,275 bytes | `6b20f9db56b6afa34529d2e24db24e7b36d9feccffe658337163d3983d81d186` |
-| `release/EyeBreakReminder-Portable-x64.zip` | 1,447,954 bytes | `10bc380eea3c5e07b536d48fd2df5aeac23754ace90a649d69e12af83d86028a` |
+| `release/EyeBreakReminder.exe` | 2,604,032 bytes | `c8b0393632d7cd37483e58ed9371a98113da4e20259318310936c255b33310b1` |
+| `release/EyeBreakReminder-Setup-x64.exe` | 1,404,782 bytes | `87c06b6df8c40131bb1c0eea7abd6ae0c6a43e25badfe2380a00e9c564fc743e` |
+| `release/EyeBreakReminder-Portable-x64.zip` | 1,447,954 bytes | `775bf67e7346de2f04f539a28d2613485090ba132d04ea9fad111e530c21e0fe` |
 | `release/EyeBreakReminder-Source.zip` | 968,767 bytes | `976cce913b725af305054c383e3efbe25200e31eb5f026e69522104266bd64d5` |
-| `release/EyeBreakReminder-SHA256.txt` | 382 bytes | `50230b2f98c1e9e5cd595506bb3708f5ad45df5b5caef6e649cfcc0136efd5c3` |
+| `release/EyeBreakReminder-SHA256.txt` | 382 bytes | `f3d1f965d14905d364cda206ca01f24ce9c000e3363557911994cda277cbf430` |
 
 The packaged executable and installer metadata are `1.2.0` (`1.2.0.0` in PE version resources). The x64 Windows GUI identity, embedded manifest/icons/sounds, built-in Windows DLL dependency allowlist, portable executable byte identity, source archive contents, ZIP CRCs, source-report exclusion, and all four artifact hashes passed. The source archive excludes release outputs; the portable archive contains the exact verified v1.2.0 executable. NSIS built the installer after that executable from `installer/setup.nsi`, which names `release/EyeBreakReminder.exe`. No v1.1.0 binary is included. NSIS emitted warning 9100 because the project has no supplied `LegalCopyright` identity; none was invented. The app and installer remain unsigned.
 
