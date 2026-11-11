@@ -39,6 +39,7 @@ $script:liveLatestError = ''
 $script:osOriginal = @{}
 $script:highContrastOriginal = $null
 $script:transcriptStarted = $false
+$script:uninstallerDiagnostics = [System.Collections.Generic.List[object]]::new()
 $fatal = $false
 
 $native = @'
@@ -488,22 +489,123 @@ function Get-ProcessFamilyIds([int]$RootPid) {
   }
   return @($ids)
 }
+function Get-ProcessTreeSnapshot([int]$RootPid,[string]$ExecutablePath) {
+  $all=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+  $ids=[System.Collections.Generic.HashSet[int]]::new()
+  foreach($id in (Get-ProcessFamilyIds $RootPid)){[void]$ids.Add([int]$id)}
+  $expectedPath=[IO.Path]::GetFullPath($ExecutablePath)
+  foreach($entry in $all){
+    if($entry.ExecutablePath){try{if([IO.Path]::GetFullPath([string]$entry.ExecutablePath) -ieq $expectedPath){[void]$ids.Add([int]$entry.ProcessId)}}catch{}}
+  }
+  @($all | Where-Object {$ids.Contains([int]$_.ProcessId)} | ForEach-Object {
+    [pscustomobject]@{ProcessId=[int]$_.ProcessId;ParentProcessId=[int]$_.ParentProcessId;SessionId=[int]$_.SessionId;Name=$_.Name;ExecutablePath=$_.ExecutablePath;CommandLine=$_.CommandLine;CreationDate=$_.CreationDate}
+  })
+}
+function Get-DesktopWindowSnapshot([int[]]$RelevantProcessIds=@()) {
+  @([EBR_PRE_NATIVE]::TopWindows() | ForEach-Object {
+    $h=$_;$pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($h,[ref]$pidValue)
+    $visible=[EBR_PRE_NATIVE]::IsWindowVisible($h)
+    if($visible -or $RelevantProcessIds -contains [int]$pidValue){
+      $rect=New-Object EBR_PRE_RECT;$bounds=$null
+      if([EBR_PRE_NATIVE]::GetWindowRect($h,[ref]$rect)){$bounds=[pscustomobject]@{Left=$rect.Left;Top=$rect.Top;Right=$rect.Right;Bottom=$rect.Bottom}}
+      $proc=$null;try{$proc=Get-Process -Id ([int]$pidValue) -ErrorAction Stop}catch{}
+      [pscustomobject]@{Handle=$h.ToInt64();ProcessId=[int]$pidValue;ProcessName=$(if($proc){$proc.ProcessName}else{$null});Class=[EBR_PRE_NATIVE]::ClassName($h);Title=[EBR_PRE_NATIVE]::Text($h);Visible=$visible;Bounds=$bounds}
+    }
+  })
+}
+function Get-UninstallStateSnapshot {
+  $uninstallString=$null
+  try{$uninstallString=(Get-ItemProperty -LiteralPath $uninstallKey -Name UninstallString -ErrorAction Stop).UninstallString}catch{}
+  $startup=@()
+  if(Test-Path -LiteralPath $runKey){$startup=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties | Where-Object {$_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder'} | ForEach-Object {[pscustomobject]@{Name=$_.Name;Value=[string]$_.Value}})}
+  [pscustomobject]@{ExecutableExists=(Test-Path -LiteralPath $appExe);UninstallerExists=(Test-Path -LiteralPath (Join-Path $installDir 'Uninstall.exe'));InstallDirectoryExists=(Test-Path -LiteralPath $installDir);StartMenuShortcutExists=(Test-Path -LiteralPath $startMenuLink);DesktopShortcutExists=(Test-Path -LiteralPath $desktopLink);UninstallKeyExists=(Test-Path -LiteralPath $uninstallKey);UninstallString=$uninstallString;InstallKeyExists=(Test-Path -LiteralPath $appKey);StartupEntries=$startup}
+}
+function Capture-DesktopScreenshot([string]$Name) {
+  if(-not $script:interactiveDesktop){return $null}
+  $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
+  if($bounds.Width -lt 100 -or $bounds.Height -lt 80){return $null}
+  $path=Join-Path $EvidenceDirectory $Name
+  $bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+  try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$bitmap.Save($path,[System.Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()}
+  if((Get-Item -LiteralPath $path).Length -lt 1024){throw "Desktop screenshot appears empty: $path"}
+  return $path
+}
+function Get-UninstallerEventLogEvidence([DateTime]$StartTime,[DateTime]$EndTime) {
+  $entries=[System.Collections.Generic.List[object]]::new()
+  foreach($logName in @('Application','System','Security')){
+    try{
+      $events=@(Get-WinEvent -FilterHashtable @{LogName=$logName;StartTime=$StartTime;EndTime=$EndTime} -MaxEvents 200 -ErrorAction Stop | Where-Object {$_.ProviderName -match 'Application Error|Windows Error Reporting|SideBySide|User32|User Profile|Kernel-Power|Security-Auditing|UAC' -or $_.Message -match 'EyeBreakReminder|Uninstall\.exe|consent\.exe|NSIS'} | Select-Object -First 40)
+      foreach($event in $events){$entries.Add([pscustomobject]@{LogName=$logName;Utc=$event.TimeCreated.ToUniversalTime().ToString('o');Id=$event.Id;Provider=$event.ProviderName;Level=$event.LevelDisplayName;Message=$event.Message})}
+    }catch{$entries.Add([pscustomobject]@{LogName=$logName;ReadError=$_.Exception.Message})}
+  }
+  return $entries.ToArray()
+}
+function Save-UninstallerDiagnostic($Diagnostic) {
+  $script:uninstallerDiagnostics.Add($Diagnostic)
+  ConvertTo-Json -InputObject ($script:uninstallerDiagnostics.ToArray()) -Depth 12 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'uninstaller-diagnostics.json') -Encoding UTF8
+}
 function Invoke-Wizard([string]$Path,[string]$Kind) {
   if(-not $script:interactiveDesktop){Not-Tested "$Kind visible wizard" 'The runner has no interactive Explorer desktop.';return $false}
+  $isUninstaller=$Kind -match '(?i)uninstall'
+  $launchTime=[DateTime]::Now
   $process=Start-Process -FilePath $Path -WorkingDirectory (Split-Path -Parent $Path) -PassThru
+  $launchProcess=$process
   $started=[Diagnostics.Stopwatch]::StartNew();$window=[IntPtr]::Zero
   $familyIds=@($process.Id);$familyRefresh=[Diagnostics.Stopwatch]::StartNew()
-  while($started.Elapsed.TotalSeconds -lt 20 -and $window -eq [IntPtr]::Zero){
-    if($familyRefresh.ElapsedMilliseconds -ge 400){$familyIds=Get-ProcessFamilyIds $process.Id;$familyRefresh.Restart()}
-    foreach($familyPid in $familyIds){foreach($h in [EBR_PRE_NATIVE]::TopWindowsForProcess($familyPid)){if([EBR_PRE_NATIVE]::IsWindowVisible($h)){$window=$h;break}};if($window -ne [IntPtr]::Zero){break}}
-    if($window -eq [IntPtr]::Zero){$process.Refresh();if($process.HasExited -and $familyIds.Count -le 1){break}}
-    Start-Sleep -Milliseconds 100
+  $limitSeconds=if($isUninstaller){30}else{20}
+  $windowSnapshots=[System.Collections.Generic.List[object]]::new();$desktopScreenshots=[System.Collections.Generic.List[string]]::new()
+  $lastSampleSecond=-1;$lastRefreshSecond=-1
+  $beforeState=if($isUninstaller){Get-UninstallStateSnapshot}else{$null}
+  $initialProcesses=@();$initialWindows=@()
+  if($isUninstaller){$initialProcesses=Get-ProcessTreeSnapshot $launchProcess.Id $Path;$initialIds=@($initialProcesses | ForEach-Object {$_.ProcessId});if($initialIds -notcontains $launchProcess.Id){$initialIds=@($launchProcess.Id)+$initialIds};$initialWindows=Get-DesktopWindowSnapshot $initialIds}
+  if($isUninstaller){try{$shot=Capture-DesktopScreenshot ("{0}-desktop-before.png" -f $Kind);if($shot){$desktopScreenshots.Add($shot)}}catch{$desktopScreenshots.Add("capture error: $($_.Exception.Message)")}}
+  while($started.Elapsed.TotalSeconds -lt $limitSeconds -and $window -eq [IntPtr]::Zero){
+    $second=[int][Math]::Floor($started.Elapsed.TotalSeconds)
+    if($isUninstaller -and ($familyRefresh.ElapsedMilliseconds -ge 400 -or $second -ne $lastRefreshSecond)){
+      $processSnapshot=Get-ProcessTreeSnapshot $process.Id $Path
+      $familyIds=@($processSnapshot | ForEach-Object {$_.ProcessId})
+      if($familyIds -notcontains $process.Id){$familyIds=@($process.Id)+$familyIds}
+      $allWindows=Get-DesktopWindowSnapshot $familyIds
+      $visibleRelevant=@($allWindows | Where-Object {$_.Visible -and $familyIds -contains $_.ProcessId}) | Select-Object -First 1
+      if(-not $visibleRelevant){$visibleRelevant=@($allWindows | Where-Object {$_.Visible -and $_.Title -match '(?i)Eye Break Reminder|Uninstall|User Account Control'}) | Select-Object -First 1}
+      if($visibleRelevant){$window=[IntPtr]([long]$visibleRelevant.Handle)}
+      if($second -ne $lastSampleSecond){
+        $windowSnapshots.Add([pscustomobject]@{ElapsedSeconds=$second;Processes=$processSnapshot;Windows=$allWindows;InstalledState=(Get-UninstallStateSnapshot)})
+        $lastSampleSecond=$second
+      }
+      if($second -in @(1,5,15,29)){
+        try{$shot=Capture-DesktopScreenshot ("{0}-desktop-t{1:D2}.png" -f $Kind,$second);if($shot){$desktopScreenshots.Add($shot)}}catch{$desktopScreenshots.Add("t=$second capture error: $($_.Exception.Message)")}
+      }
+      $lastRefreshSecond=$second;$familyRefresh.Restart()
+    } elseif(-not $isUninstaller) {
+      if($familyRefresh.ElapsedMilliseconds -ge 400){$familyIds=Get-ProcessFamilyIds $process.Id;$familyRefresh.Restart()}
+      foreach($familyPid in $familyIds){foreach($h in [EBR_PRE_NATIVE]::TopWindowsForProcess($familyPid)){if([EBR_PRE_NATIVE]::IsWindowVisible($h)){$window=$h;break}};if($window -ne [IntPtr]::Zero){break}}
+      if($window -eq [IntPtr]::Zero){$process.Refresh();if($process.HasExited -and $familyIds.Count -le 1){break}}
+    }
+    if($window -eq [IntPtr]::Zero){Start-Sleep -Milliseconds 100}
   }
   if($window -eq [IntPtr]::Zero){
     $process.Refresh()
-    if($Kind -match '(?i)uninstall' -and $process.HasExited -and $process.ExitCode -eq 0){
-      Not-Tested "$Kind interactive wizard appearance" 'The owned uninstaller process exited successfully without exposing a visible wizard; subsequent checks verify actual file and registration removal.'
-      Pass "$Kind uninstaller process exits successfully without a visible wizard" ([pscustomobject]@{Pid=$process.Id;ExitCode=$process.ExitCode;ProcessFamily=$familyIds})
+    if($isUninstaller){
+      $endTime=[DateTime]::Now;$finalProcesses=Get-ProcessTreeSnapshot $process.Id $Path;$finalIds=@($finalProcesses | ForEach-Object {$_.ProcessId});if($finalIds -notcontains $process.Id){$finalIds=@($process.Id)+$finalIds}
+      $finalWindows=Get-DesktopWindowSnapshot $finalIds;$afterState=Get-UninstallStateSnapshot
+      $eventEvidence=Get-UninstallerEventLogEvidence $launchTime $endTime
+      $consentProcesses=@()
+      try{$consentProcesses=@(Get-CimInstance Win32_Process -Filter "Name='consent.exe'" -ErrorAction Stop | Select-Object ProcessId,ParentProcessId,SessionId,Name,ExecutablePath,CommandLine)}catch{}
+      try{$shot=Capture-DesktopScreenshot ("{0}-desktop-final.png" -f $Kind);if($shot){$desktopScreenshots.Add($shot)}}catch{$desktopScreenshots.Add("final capture error: $($_.Exception.Message)")}
+      $diagnostic=[pscustomobject]@{Kind=$Kind;Path=$Path;Arguments='';Started=$launchTime.ToString('o');Ended=$endTime.ToString('o');DurationSeconds=[Math]::Round($started.Elapsed.TotalSeconds,2);ParentPid=$launchProcess.Id;ParentExited=$launchProcess.HasExited;ParentExitCode=$(if($launchProcess.HasExited){$launchProcess.ExitCode}else{$null});Before=$beforeState;After=$afterState;InitialProcesses=$initialProcesses;InitialWindows=$initialWindows;Processes=$finalProcesses;ConsentProcesses=$consentProcesses;WindowSamples=$windowSnapshots.ToArray();FinalWindows=$finalWindows;DesktopScreenshots=$desktopScreenshots.ToArray();EventLogs=$eventEvidence}
+      Save-UninstallerDiagnostic $diagnostic
+      $consentObserved=$consentProcesses.Count -gt 0 -or @($finalWindows | Where-Object {$_.Title -match '(?i)User Account Control'}).Count -gt 0
+      if($consentObserved){Not-Tested "$Kind interactive uninstall UI" 'A UAC consent process/window was observed; the isolated test did not accept or automate a security prompt.'}
+      else{Add-Event "$Kind interactive uninstall displays a usable wizard or completes removal" 'FAIL' $diagnostic}
+      if($launchProcess.HasExited){Pass "$Kind uninstaller parent process exit captured" ([pscustomobject]@{Pid=$launchProcess.Id;ExitCode=$launchProcess.ExitCode;ProcessTree=$finalProcesses})}
+      if(-not $launchProcess.HasExited){
+        $terminated=[System.Collections.Generic.List[int]]::new()
+        $processIdsToStop=@($finalProcesses | ForEach-Object {$_.ProcessId});if($processIdsToStop -notcontains $launchProcess.Id){$processIdsToStop=@($launchProcess.Id)+$processIdsToStop}
+        foreach($processId in $processIdsToStop){try{Stop-Process -Id $processId -Force -ErrorAction Stop;$terminated.Add([int]$processId)}catch{}}
+        $script:uninstallerDiagnostics[$script:uninstallerDiagnostics.Count-1] | Add-Member -NotePropertyName CleanupTerminatedProcessIds -NotePropertyValue $terminated.ToArray() -Force
+        ConvertTo-Json -InputObject ($script:uninstallerDiagnostics.ToArray()) -Depth 12 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'uninstaller-diagnostics.json') -Encoding UTF8
+      }
       return $false
     }
     $visibleWindows=@(foreach($h in [EBR_PRE_NATIVE]::TopWindows()){
@@ -534,6 +636,23 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
       [void]$process.WaitForExit(30000)
       Require ($process.HasExited) "$Kind wizard finishes and exits" ([pscustomobject]@{ExitCode=$process.ExitCode})
       Require ($process.ExitCode -eq 0) "$Kind wizard exits with code 0" ([pscustomobject]@{ExitCode=$process.ExitCode})
+      if($isUninstaller){
+        if(-not $launchProcess.HasExited){[void]$launchProcess.WaitForExit(30000)}
+        Require ($launchProcess.HasExited) "$Kind launch parent process exits after the wizard completes" ([pscustomobject]@{Pid=$launchProcess.Id;HasExited=$launchProcess.HasExited})
+        Require ($launchProcess.ExitCode -eq 0) "$Kind launch parent process exits with code 0" ([pscustomobject]@{Pid=$launchProcess.Id;ExitCode=$launchProcess.ExitCode})
+        $processTreeAfter=[System.Collections.Generic.List[object]]::new();$completionSamples=[System.Collections.Generic.List[object]]::new();$completionWatch=[Diagnostics.Stopwatch]::StartNew();$afterState=Get-UninstallStateSnapshot
+        while($completionWatch.Elapsed.TotalSeconds -lt 20){
+          $processTreeAfter=Get-ProcessTreeSnapshot $launchProcess.Id $Path
+          $completionSamples.Add([pscustomobject]@{ElapsedSeconds=[Math]::Round($completionWatch.Elapsed.TotalSeconds,1);Processes=$processTreeAfter;State=(Get-UninstallStateSnapshot)})
+          $state=Get-UninstallStateSnapshot
+          if(-not $state.InstallDirectoryExists -and -not $state.UninstallKeyExists -and $processTreeAfter.Count -eq 0){$afterState=$state;break}
+          Start-Sleep -Milliseconds 250
+        }
+        $endTime=[DateTime]::Now;$afterState=Get-UninstallStateSnapshot;$finalIds=@($processTreeAfter | ForEach-Object {$_.ProcessId});if($finalIds -notcontains $launchProcess.Id){$finalIds=@($launchProcess.Id)+$finalIds};$finalWindows=Get-DesktopWindowSnapshot $finalIds;$eventEvidence=Get-UninstallerEventLogEvidence $launchTime $endTime
+        try{$shot=Capture-DesktopScreenshot ("{0}-desktop-after-wizard.png" -f $Kind);if($shot){$desktopScreenshots.Add($shot)}}catch{$desktopScreenshots.Add("after-wizard capture error: $($_.Exception.Message)")}
+        $diagnostic=[pscustomobject]@{Kind=$Kind;Path=$Path;Arguments='';Started=$launchTime.ToString('o');Ended=$endTime.ToString('o');DurationSeconds=[Math]::Round(($endTime-$launchTime).TotalSeconds,2);ParentPid=$launchProcess.Id;ParentExited=$launchProcess.HasExited;ParentExitCode=$(if($launchProcess.HasExited){$launchProcess.ExitCode}else{$null});WizardVisible=$true;WizardButtons=$buttonsSeen.ToArray();Before=$beforeState;After=$afterState;InitialProcesses=$initialProcesses;InitialWindows=$initialWindows;CompletionSamples=$completionSamples.ToArray();Processes=$processTreeAfter;FinalWindows=$finalWindows;DesktopScreenshots=$desktopScreenshots.ToArray();EventLogs=$eventEvidence}
+        Save-UninstallerDiagnostic $diagnostic
+      }
       return $true
     }
     $install=Find-WizardButton $window '^&?(Install|Uninstall|Remove)$'
@@ -1253,9 +1372,18 @@ function Test-UpgradeFromV11([string]$OldInstaller) {
     Capture-ActiveWindow $script:mainWindow 'upgrade-v11-history-statistics-active.png' | Out-Null
     Stop-InstalledApp
   }
-  Invoke-Uninstall 'v1.2.0 post-upgrade' $script:interactiveDesktop
+  Invoke-Uninstall 'v1.2.0 post-upgrade' $false
   $settingsStill=Test-Path -LiteralPath $settingsPath;$historyStill=Test-Path -LiteralPath $historyPath
   Require ($settingsStill -and $historyStill) 'Final uninstall preserves the runner-created settings and history for cleanup verification' ([pscustomobject]@{SettingsPreserved=$settingsStill;HistoryPreserved=$historyStill})
+}
+
+function Test-V11InteractiveUninstaller([string]$OldInstaller) {
+  if(-not $OldInstaller -or -not $script:interactiveDesktop){Not-Tested 'Official v1.1.0 no-argument interactive uninstall comparison' 'A digest-verified v1.1.0 installer and interactive desktop are both required.';return}
+  Invoke-Install $OldInstaller 'official v1.1.0 uninstall comparison' $false
+  Assert-InstallationMetadata '1.1.0'
+  Invoke-Uninstall 'official v1.1.0 no-argument uninstall comparison' $true
+  $settingsStill=Test-Path -LiteralPath (Join-Path $dataDir 'settings.ini');$historyStill=Test-Path -LiteralPath (Join-Path $dataDir 'history.dat')
+  Require ($settingsStill -and $historyStill) 'v1.1.0 uninstall comparison preserves settings and history' ([pscustomobject]@{SettingsPreserved=$settingsStill;HistoryPreserved=$historyStill})
 }
 
 try {
@@ -1314,6 +1442,7 @@ try {
   }
 
   Test-UpgradeFromV11 $oldInstaller
+  Test-V11InteractiveUninstaller $oldInstaller
   if(-not $script:interactiveDesktop){
     Not-Tested 'Real Windows theme switching and Forced Colors' 'Runner desktop capability probe reported no Explorer shell/taskbar.'
     Not-Tested 'Tray menu actions and actual Shell notification surface' 'Runner desktop capability probe reported no Explorer shell/taskbar.'
@@ -1373,8 +1502,10 @@ try {
     Fail=$script:failCount
     NotTested=$script:notTestedCount
     Events=$script:events.ToArray()
+    UninstallerDiagnostics=$script:uninstallerDiagnostics.ToArray()
   }
   $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'windows-pre-release-results.json') -Encoding UTF8
+  if($script:uninstallerDiagnostics.Count -gt 0){$script:uninstallerDiagnostics.ToArray() | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'uninstaller-diagnostics.json') -Encoding UTF8}
   $summaryLine="Windows pre-release acceptance: PASS=$($script:passCount) FAIL=$($script:failCount) NOT TESTED=$($script:notTestedCount)"
   Write-Output $summaryLine
   try { $summaryLine | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 } catch {}
