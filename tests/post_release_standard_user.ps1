@@ -31,7 +31,7 @@ try{
   try{
     $passwordText='Aa1!'+[guid]::NewGuid().ToString('N')+'xZ9#'
     $password=ConvertTo-SecureString -String $passwordText -AsPlainText -Force
-    $user=New-LocalUser -Name $userName -Password $password -AccountNeverExpires -PasswordNeverExpires -UserMayNotChangePassword -Description 'Disposable Eye Break Reminder v1.2.0 acceptance account'
+    $user=New-LocalUser -Name $userName -Password $password -AccountNeverExpires -PasswordNeverExpires -UserMayNotChangePassword -Description 'Disposable EBR test account'
     $created=$true
     $sid=$user.SID.Value
     $usersGroup=Get-LocalGroup -SID 'S-1-5-32-545'
