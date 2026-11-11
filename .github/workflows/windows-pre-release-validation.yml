@@ -31,23 +31,10 @@ jobs:
             mingw-w64-x86_64-make
             mingw-w64-x86_64-python
 
-      - name: Install pinned official NSIS 3.11 x86 installer builder
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $download = Join-Path $env:RUNNER_TEMP 'nsis-3.11-setup.exe'
-          $target = Join-Path $env:RUNNER_TEMP 'nsis-3.11'
-          Invoke-WebRequest -Uri 'https://sourceforge.net/projects/nsis/files/NSIS%203/3.11/nsis-3.11-setup.exe/download' -OutFile $download
-          $actual = (Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash.ToUpperInvariant()
-          $expected = '38D49F8FE09B1C332B01D0940E57B7258F4447733643273A01C59959AD9D3B0A'
-          if ($actual -ne $expected) { throw "NSIS 3.11 download SHA-256 mismatch: $actual" }
-          $install = Start-Process -FilePath $download -ArgumentList @('/S', "/D=$target") -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "NSIS 3.11 installer returned $($install.ExitCode)" }
-          $makensis = Join-Path $target 'makensis.exe'
-          if (-not (Test-Path -LiteralPath $makensis -PathType Leaf)) { throw "NSIS compiler missing after installation: $makensis" }
-          $version = (& $makensis /VERSION | Out-String).Trim()
-          if ($version -notmatch '^v?3\.11(\.|$)') { throw "Expected NSIS 3.11, got '$version'" }
-          "Pinned NSIS compiler: $version ($makensis)"
+      - name: Set up upstream NSIS 3.11 x86 installer builder
+        uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1
+        with:
+          version: '3.11'
 
       - name: Build production and GUI-test executables and all release packages
         id: build
@@ -62,7 +49,10 @@ jobs:
             strip_tool="$(command -v strip)"
             cp "$strip_tool" /mingw64/bin/x86_64-w64-mingw32-strip.exe
           fi
-          makensis_path="$(cygpath -u "$RUNNER_TEMP/nsis-3.11/makensis.exe")"
+          nsis_root="$(cygpath -u "$NSISDIR")"
+          makensis_path="$nsis_root/makensis.exe"
+          test -x "$makensis_path"
+          "$makensis_path" -VERSION
           make -B package gui-test \
             CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
             WINDRES=windres \
