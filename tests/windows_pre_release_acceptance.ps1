@@ -70,7 +70,7 @@ public static class EBR_PRE_NATIVE {
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern int GetClassNameW(IntPtr hwnd, StringBuilder name, int maxCount);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr FindWindowW(string className, string windowName);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetParent(IntPtr hwnd);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool SetWindowTextW(IntPtr hwnd, string text);
+  public static bool SetRemoteControlText(IntPtr hwnd,string value) { IntPtr text=Marshal.StringToHGlobalUni(value);try{return SendMessageW(hwnd,0x000C,IntPtr.Zero,text)!=IntPtr.Zero;}finally{Marshal.FreeHGlobal(text);} }
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
@@ -220,11 +220,26 @@ function Set-Edit([IntPtr]$Root,[int]$Id,[string]$Value,[string]$Name) {
   $control=Get-Control $Root $Id $Name
   if($control.Class -ne 'Edit' -or -not $control.Enabled){throw "$Name is not an enabled Edit control."}
   Focus-AppControl $control.Handle
-  [void][EBR_PRE_NATIVE]::SetWindowTextW($control.Handle,$Value)
+  if(-not [EBR_PRE_NATIVE]::SetRemoteControlText($control.Handle,$Value)){throw "WM_SETTEXT failed for $Name."}
   $nextId=if($Id -eq 100){101}else{130}
   Focus-AppControl (Get-Control $Root $nextId 'Focus target after edit').Handle
   $actual=[EBR_PRE_NATIVE]::Text($control.Handle)
   Require ($actual.Trim() -eq $Value) "$Name edit value" ([pscustomobject]@{Expected=$Value;Actual=$actual})
+  $settingKey=if($Id -eq 100){'workMinutes'}elseif($Id -eq 101){'breakSeconds'}else{''}
+  if($settingKey){
+    $saved=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
+    Require ($saved.ContainsKey($settingKey) -and [string]$saved[$settingKey] -eq $Value) "$Name is applied and persisted" ([pscustomobject]@{Key=$settingKey;Expected=$Value;Actual=$saved[$settingKey]})
+  }
+}
+function Read-SettingsMap([string]$Path) {
+  if(-not (Test-Path -LiteralPath $Path -PathType Leaf)){throw "Settings file is missing: $Path"}
+  $contents=Get-Content -LiteralPath $Path -Raw
+  $values=@{}
+  foreach($line in ($contents -split '\r?\n')){
+    $equals=$line.IndexOf('=')
+    if($equals -gt 0){$values[$line.Substring(0,$equals)]=$line.Substring($equals+1)}
+  }
+  return ,$values
 }
 function Get-AppMainWindow([int]$ProcessId,[int]$TimeoutSeconds=20) {
   $watch=[Diagnostics.Stopwatch]::StartNew()
@@ -770,8 +785,9 @@ function Test-FreshInstallApp {
   Switch-Settings 4
   Switch-Timer
   $settingsPath=Join-Path $dataDir 'settings.ini'
-  $settings=Get-Content -LiteralPath $settingsPath -Raw
-  Require ($settings -match '(?m)^theme=1$' -and $settings -match '(?m)^workMinutes=1$' -and $settings -match '(?m)^breakSeconds=30$') 'Installed app persists theme and configured schedule values' ([pscustomobject]@{Settings=$settingsPath})
+  $settings=Read-SettingsMap $settingsPath
+  $persistedValues=[pscustomobject]@{Theme=$settings['theme'];WorkMinutes=$settings['workMinutes'];BreakSeconds=$settings['breakSeconds']}
+  Require ($settings['theme'] -eq '1' -and $settings['workMinutes'] -eq '1' -and $settings['breakSeconds'] -eq '30') 'Installed app persists theme and configured schedule values' ([pscustomobject]@{Path=$settingsPath;Observed=$persistedValues})
   $hashBefore=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
   $restore=Start-InstalledApp
   if($restore){
@@ -923,15 +939,15 @@ function Test-UpgradeFromV11([string]$OldInstaller) {
   Click-Control $breakWindow 23 'Complete v1.1 migration history break'
   Stop-InstalledApp
   $settingsPath=Join-Path $dataDir 'settings.ini';$historyPath=Join-Path $dataDir 'history.dat'
-  $v11Settings=Get-Content -LiteralPath $settingsPath -Raw
+  $v11Settings=Read-SettingsMap $settingsPath
   $v11History=@(Get-Content -LiteralPath $historyPath | Where-Object {$_.Trim()})
-  Require ($v11Settings -match '(?m)^workMinutes=7$' -and $v11Settings -match '(?m)^breakSeconds=45$' -and $v11Settings -match '(?m)^startup=1$') 'v1.1 representative settings persisted before upgrade' ([pscustomobject]@{SettingsPath=$settingsPath})
+  Require ($v11Settings['workMinutes'] -eq '7' -and $v11Settings['breakSeconds'] -eq '45' -and $v11Settings['startup'] -eq '1') 'v1.1 representative settings persisted before upgrade' ([pscustomobject]@{Path=$settingsPath;Observed=[pscustomobject]@{WorkMinutes=$v11Settings['workMinutes'];BreakSeconds=$v11Settings['breakSeconds'];Startup=$v11Settings['startup']}})
   Require ($v11History.Count -ge 1) 'v1.1 generated a history/statistics record before upgrade' $v11History.Count
   $beforeHistory=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
   Invoke-Install $InstallerPath 'v1.2.0 in-place upgrade from v1.1.0' $false
   Assert-InstallationMetadata '1.2.0'
-  $afterSettings=Get-Content -LiteralPath $settingsPath -Raw
-  Require ($afterSettings -match '(?m)^workMinutes=7$' -and $afterSettings -match '(?m)^breakSeconds=45$' -and $afterSettings -match '(?m)^startup=1$') 'v1.2.0 preserves v1.1.0 settings and startup preference during upgrade' ([pscustomobject]@{SettingsPath=$settingsPath})
+  $afterSettings=Read-SettingsMap $settingsPath
+  Require ($afterSettings['workMinutes'] -eq '7' -and $afterSettings['breakSeconds'] -eq '45' -and $afterSettings['startup'] -eq '1') 'v1.2.0 preserves v1.1.0 settings and startup preference during upgrade' ([pscustomobject]@{Path=$settingsPath;Observed=[pscustomobject]@{WorkMinutes=$afterSettings['workMinutes'];BreakSeconds=$afterSettings['breakSeconds'];Startup=$afterSettings['startup']}})
   $afterHistory=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
   Require ($afterHistory -eq $beforeHistory) 'v1.2.0 preserves v1.1.0 history bytes during in-place upgrade' ([pscustomobject]@{Before=$beforeHistory;After=$afterHistory;Rows=$v11History.Count})
   $runValues=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder' })
