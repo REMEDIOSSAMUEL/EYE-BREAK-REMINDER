@@ -7,7 +7,7 @@ $expectedInstaller='121eaa8d14b8e3d342252edfc91bc25d6e8334b829c2824b7f90813062de
 $events=[System.Collections.Generic.List[object]]::new()
 $created=$false
 $installStarted=$false
-$userName='EbrPostV120_'+[guid]::NewGuid().ToString('N').Substring(0,10)
+$userName='Ebr12_'+[guid]::NewGuid().ToString('N').Substring(0,10)
 $user=$null
 $credential=$null
 $profilePath=$null
@@ -44,7 +44,8 @@ try{
     $credential=[PSCredential]::new("$env:COMPUTERNAME\$userName",$password)
     Add-Result 'Disposable standard account created without recording its credential' 'PASS' ([pscustomobject]@{AccountType='Standard';SID=$sid})
   }catch{
-    Add-Result 'Standard-user account capability' 'NOT TESTED' ([pscustomobject]@{Reason=$_.Exception.Message;UserManagementAvailable=(Get-Command New-LocalUser -ErrorAction SilentlyContinue -ne $null)})
+    $newLocalUserAvailable=[bool](Get-Command New-LocalUser -ErrorAction SilentlyContinue)
+    Add-Result 'Standard-user account capability' 'NOT TESTED' ([pscustomobject]@{Reason=$_.Exception.Message;UserManagementAvailable=$newLocalUserAvailable})
     throw [System.OperationCanceledException]::new('Standard-user account creation is not available on this hosted runner.')
   }finally{
     Remove-Variable passwordText,password -ErrorAction SilentlyContinue

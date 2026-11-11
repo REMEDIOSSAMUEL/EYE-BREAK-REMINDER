@@ -655,7 +655,8 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
         foreach($runCheck in $nativeRunChecks){if([EBR_PRE_NATIVE]::SendMessageW($runCheck,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32() -eq 1){[void][EBR_PRE_NATIVE]::SendMessageW($runCheck,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)}}
         $remainingChecked=@($nativeRunChecks | Where-Object {[EBR_PRE_NATIVE]::SendMessageW($_,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32() -eq 1})
         Require ($remainingChecked.Count -eq 0) "$Kind finish-page run checkbox is cleared before test cleanup" $remainingChecked.Count
-      } else {Not-Tested "$Kind finish-page run checkbox state" 'The visible NSIS finish page exposed no matching Run checkbox.'}
+      } elseif($isUninstaller){Pass "$Kind uninstaller finish page correctly omits an app Run checkbox" ([pscustomobject]@{UIAutomationRunCheckboxes=$checkboxes.Count;NativeRunCheckboxes=$nativeRunChecks.Count;Behavior='An uninstaller finish page closes the uninstall wizard and does not offer to launch the app.'})}
+      else {Not-Tested "$Kind installer finish-page Run checkbox state" 'The visible NSIS installer finish page exposed no matching Run checkbox.'}
       Capture-ActiveWindow $window ("{0}-wizard-finish.png" -f $Kind) | Out-Null
       Invoke-WizardButton $window $finish
       [void]$process.WaitForExit(30000)
