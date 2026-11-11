@@ -2,6 +2,30 @@
 
 Record OS build, display scaling, SDK/tool versions and actual results where available. Do not mark items passed from source inspection alone.
 
+## v1.2.0 isolated GUI acceptance
+
+Build `make gui-test` and launch `build/gui-test/EyeBreakReminder.exe` through Windows GUI automation. This binary uses a 10x monotonic clock and stores settings/history under `build/gui-test/test-data`; it does not read or write `%LOCALAPPDATA%\EyeBreakReminder`. Use the app's native UI and capture screenshots of Timer, History, Settings → General and Settings → About. Do not change system-wide display, text-size, Forced Colors or reduced-motion settings just for this run.
+
+For deterministic update-check UI responses, place `test-update-response.txt` beside the test executable. Its optional header uses `status=200`, `failure=none|offline|timeout|tls|other`, `error=12029` and `delay_ms=2500` lines, followed by a blank line and the JSON response. Example:
+
+```text
+status=200
+failure=none
+delay_ms=0
+
+{"tag_name":"v1.2.0","html_url":"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.2.0","draft":false,"prerelease":false}
+```
+
+Change the response tag/URL together to cover same, newer and older versions; set `prerelease=true` for prerelease rejection. Use `status=429`, `status=404`, `failure=offline`, `failure=timeout`, `failure=tls`, malformed JSON and `delay_ms=5000` for failure, rate-limit, invalid-response, busy-button, UI-responsiveness and timer-continuity cases. Remove the fixture to test the public GitHub API. This injection exists only in the test build.
+
+- Select each theme, check Timer, History, Settings and the break window, then close/relaunch and confirm the selection persists. Verify keyboard focus and contrast in both high-contrast palettes. Test Follow Windows using the system theme already active.
+- With 1 minute work and 300 seconds break, press Reset and capture the normal work status. At 10x the work countdown reaches a break in about 6 seconds and a 300-second break lasts about 30 seconds; Pause and Snooze remain available for short interactive checks.
+- While in a break, switch between themes and verify the progress indicator, status, primary action and reminder window use that theme's break accent. Confirm the next work phase returns to blue. Disable the optional break accent and repeat in a normal theme; high contrast must continue to distinguish phases.
+- Compare the Timer status rectangle with the circle center at the default and minimum window sizes. Check different DPIs/text scales using the geometry assertions and repeat on Windows scaling levels where available. Verify the obsolete middle sentence is absent, the 20-20-20 line remains, and the schedule values update after changing intervals.
+- In About, run every deterministic update fixture. The window must remain responsive during the delay, the button must disable while checking, latest/current/update/error states must match, and the accelerated timer must keep counting. Finally remove the fixture and verify the real API path.
+
+Record each GUI result and screenshot below; source inspection and pure geometry/network tests are not a substitute for a Windows UI observation.
+
 ## Owner-confirmed manual results (2026-11-03)
 
 The owner confirmed these real Windows visual checks passed in the corrected application:
@@ -117,3 +141,11 @@ The owner has confirmed the eight visual results listed above in the real Window
 - Repeat at the minimum and a larger window size, on available 100/125/150/175/200% DPI settings, and with Windows text scale up to 225%. Confirm the title, status, caption, countdown and ring do not overlap. With Narrator, verify the native countdown, caption and state labels remain available. If safe and available, inspect CPU use and the app's GDI object count during several minutes of ordinary running and repeated resizing; report the measurements rather than inferring them from source.
 
 Do not mark these checks passed from screenshots of an offscreen harness. Record actual Windows results separately; the 0/25/50/75/100% sweep and layout calculations are covered only by the deterministic core tests.
+
+## v1.2.0 automated acceptance results (2026-11-11)
+
+The final isolated Windows GUI run passed **128 assertions** and captured **37 screenshots** under `build/gui-test/evidence`. The app ran in visible native windows, automated through Windows UI Automation and process-bound Win32 control handles; screenshots capture those HWNDs. Its test build used only a separate mutex and `build/gui-test/test-data`, a 10x monotonic clock and test-only HTTP fixtures. The installed app's data and process were left untouched.
+
+The host registry reported DisplayVersion 26H2/build 26300.9974, `GetDpiForWindow` returned 144 DPI (150%), and Windows text scaling was 100%. All five app themes were exercised on Timer, History, Settings and break windows. The run also checked theme persistence, visible high-contrast focus, break colors and the optional accent toggle, timer transitions, dynamic interval persistence, two resized layouts, the two-line Timer footer, and update-check success/error fixtures. Status and ring centers matched within 0 pixels in the measured default and resized geometries.
+
+The live public GitHub request returned an offline error on this host; the UI reported the network failure and did not claim the app was current. A successful live response was not verified. Global Forced Colors/reduced-motion settings, a system theme switch, other DPI/text-scale settings, Narrator, hardware audio, tray/notification behavior, multi-monitor behavior, installer execution and uninstall remain untested by this v1.2.0 run. The full record and artifact/package results are in [VERIFICATION.md](VERIFICATION.md).

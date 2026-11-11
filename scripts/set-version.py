@@ -13,7 +13,7 @@ version_path = root / "VERSION"
 version_bytes = version_path.read_bytes()
 old = version_bytes.decode("utf-8").strip()
 changes = []
-for name in ["src/app.cpp", "src/app.manifest", "src/resources.rc", "installer/setup.nsi", "README.md"]:
+for name in ["src/app.manifest", "src/resources.rc", "installer/setup.nsi", "README.md"]:
     path = root / name
     original = path.read_bytes().decode("utf-8")
     if old not in original:

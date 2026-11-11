@@ -1,4 +1,4 @@
-# Eye Break Reminder 1.1.0 — Windows 11 x64
+# Eye Break Reminder 1.2.0 — Windows 11 x64
 
 A native Windows desktop eye-break utility, compiled from Linux with C++17 and MinGW-w64. It uses Win32 system controls, Windows common dialogs, native title bars, native tray integration, and a custom timer dial. It has no browser, console, .NET dependency or external assets at runtime.
 
@@ -22,11 +22,15 @@ Normal break windows are the default. Compact and explicitly selected fullscreen
 
 Alarm choices are Gentle, Bell, Chime, Clear and Soft. Volume scales this app's PCM samples, leaving global Windows volume alone. Preview and Stop preview are provided. Optional repeat lasts until the break ends or is acknowledged; pause also stops the sound. The same alarm plays once more when a break runs to zero by itself, also while the app is hidden in the tray; skipping, acknowledging early, snoozing, resetting, pausing, and recovery after sleep, lock or restart do not play it, and turning the alarm off silences both. Audio uses the default Windows output.
 
-Light, dark and system themes set app surfaces and the native title bar. Buttons use rounded surfaces, blue primary actions and a selected-tab outline. Checkboxes and input colors follow the app palette; section headings, input padding and compact labels make Settings easier to scan. Native control behavior is retained, and high contrast falls back to Windows button rendering. Dropdowns, sliders and scrollbars retain their native Windows presentation. Native controls, high contrast, Windows text scaling and per-monitor DPI are supported in source but need the Windows runtime checks below.
+Open Settings → General → Appearance to choose **Dark**, **Light**, **High Contrast Dark**, **High Contrast Light**, or **Follow Windows Theme**. New installations use Dark; saved theme choices are kept when upgrading. Theme changes apply immediately and are saved. High contrast uses black/white or white/black surfaces, bright focus indicators and separate work/break accents; the palette targets at least 4.5:1 text contrast and 3:1 indicator contrast. The app also follows Windows Forced Colors when that accessibility setting is enabled. Focus remains visible to keyboard users, and timer rendering slows when Windows reduced-motion is enabled.
+
+During work the timer uses the familiar blue accent and says **Running**. During an eye break, the status reads **Taking an eye break** and the progress ring and primary action use a calm teal/green accent. Settings → General can turn off the distinct break accent in normal themes; high contrast always distinguishes the states. Pause, snooze and scheduled hold have separate status labels. The timer information below the controls keeps the 20-20-20 reminder and a dynamic schedule summary.
+
+Settings → About shows the installed version and includes **Check for Updates**. It queries the public GitHub Releases endpoint for `REMEDIOSSAMUEL/EYE-BREAK-REMINDER` over HTTPS, compares semantic versions and ignores prereleases. It does not send credentials, download files or install updates. When a newer stable release exists, **Open Official Release** opens that GitHub release page. Offline, timeout, rate-limit and invalid-response errors are reported as errors rather than as “up to date.”
 
 ## Operating schedule
 
-*New in the unpublished v1.1.0 release candidate. The published v1.0.6 downloads do not contain this feature.*
+Added in the published v1.1.0 release.
 
 The operating schedule limits automatic eye-break reminders to the days and hours you choose, for example Monday to Friday 09:00–17:00, Saturday 10:00–14:00 and Sunday off. It is **off by default**, including after upgrading, and while it is off the app behaves exactly as before.
 
@@ -70,7 +74,7 @@ See [CHANGELOG.md](CHANGELOG.md) for releases and [CONTRIBUTING.md](CONTRIBUTING
 
 ## Build on Windows (MSYS2)
 
-The 1.0.6 release was built on Windows 11 with MSYS2 instead of Linux. The `mingw64` (msvcrt) toolchain is required: `ucrt64` links `api-ms-win-crt-*` DLLs and fails the import check in `scripts/verify.py`. Install `mingw-w64-x86_64-gcc`, `mingw-w64-x86_64-binutils`, `make` and, for the installer, `mingw-w64-i686-nsis`, whose x86 stubs give the 32-bit bootstrap (the `ucrt64` NSIS package has only amd64 stubs). Compared with the Linux commands below:
+The v1.2.0 candidate was built with MSYS2 on a Windows host. The `mingw64` (msvcrt) toolchain is required: `ucrt64` links `api-ms-win-crt-*` DLLs and fails the import check in `scripts/verify.py`. Install `mingw-w64-x86_64-gcc`, `mingw-w64-x86_64-binutils`, `make` and, for the installer, `mingw-w64-i686-nsis`, whose x86 stubs give the 32-bit bootstrap (the `ucrt64` NSIS package has only amd64 stubs). Compared with the Linux commands below:
 
 - pass `WINDRES=windres PYTHON=python` and `CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00'` (MSYS2 headers default to an older Windows target and omit `GetDpiForWindow`);
 - make `x86_64-w64-mingw32-strip` resolvable (the Makefile hardcodes that name; a copy of `strip.exe` under that name on `PATH` works);
@@ -85,6 +89,7 @@ On Ubuntu/Debian, install `g++`, `make`, `python3`, `g++-mingw-w64-x86-64`, `bin
 ```sh
 make all      # execute native Linux core tests; cross-compile and strip the Windows x64 GUI EXE
 make package  # build graphical installer, portable/source archives and SHA-256 checksums; verify PEs/resources
+make gui-test # optional isolated Windows UI test build (10x clock; separate test-data folder)
 ```
 
 The output is under `release/`. Flags statically link GCC/C++ runtimes, set the Windows GUI subsystem, and enable ASLR/NX/high-entropy VA. Windows DLLs used are built-in system components. Assets are embedded through `resources.rc`; no asset generation is required. `scripts/generate-assets.py` can recreate the icon/sounds with Pillow.
@@ -97,7 +102,7 @@ For a legitimate signing certificate, sign the app before installer packaging, t
 
 ## Verification boundary
 
-The executable and installer are compiled with MinGW-w64 and NSIS, with actual core test execution and binary/resource checks. Releases 1.0.4 and 1.0.5 were launched on a real Windows 11 x64 machine and exercised with scripted input and audio-session measurements; release 1.0.6 was launched there and its live-resize repainting was measured with scripted window sizing and screen capture (see `docs/VERIFICATION.md`). The v1.1.0 operating schedule was exercised on Windows 11 with scripted input, UI Automation and screenshots; sleep, lock, clock and time-zone changes are covered by core tests only. **A test-only v1.1.0 candidate passed automated installation, upgrade and uninstall checks on a disposable Windows Server 2025 x64 runner. The final versioned production package has not yet undergone that acceptance workflow, and the interactive UI checklist in `docs/WINDOWS-TESTING.md` has not been completed by a person.** Successful compilation does not establish runtime correctness. See `docs/VERIFICATION.md` and `docs/WINDOWS-TESTING.md` for the actual evidence and open checks.
+The executable and installer are compiled with MinGW-w64 and NSIS, with native core tests and binary/resource checks. Prior Windows acceptance results and the v1.2.0 test record are in `docs/VERIFICATION.md`; the repeatable GUI checklist is in `docs/WINDOWS-TESTING.md`. The optional `make gui-test` build uses a separate `test-data` directory beside the test executable and a 10x monotonic clock; it does not use the installed app's data folder. A test-only response file can supply deterministic release-check results. Successful compilation alone does not establish runtime correctness; see the verification record for what was actually run.
 
 ## Publishing releases
 

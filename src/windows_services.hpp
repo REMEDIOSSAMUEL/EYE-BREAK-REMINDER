@@ -26,9 +26,20 @@ namespace eye::win {
 inline std::wstring wide(const std::string&s){if(s.empty())return{};int n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),int(s.size()),nullptr,0);if(!n)return{};std::wstring out(n,L' ');MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),int(s.size()),out.data(),n);return out;}
 inline std::string utf8(const std::wstring&s){if(s.empty())return{};int n=WideCharToMultiByte(CP_UTF8,0,s.data(),int(s.size()),nullptr,0,nullptr,nullptr);std::string out(n,' ');WideCharToMultiByte(CP_UTF8,0,s.data(),int(s.size()),out.data(),n,nullptr,nullptr);return out;}
 inline std::wstring executable(){std::wstring path(32768,L' ');DWORD n=GetModuleFileNameW(nullptr,path.data(),DWORD(path.size()));if(!n||n==path.size())throw std::runtime_error("Executable path unavailable");path.resize(n);return path;}
+#ifdef EYEBREAK_TEST_BUILD
+inline constexpr double monotonicScale=10.0;
+inline std::wstring dataDirectory(){std::wstring path=executable();const auto slash=path.find_last_of(L"\\/");if(slash==std::wstring::npos)throw std::runtime_error("Test executable folder unavailable");path.resize(slash+1);path+=L"test-data";std::filesystem::create_directories(path);return path;}
+#else
 inline std::wstring dataDirectory(){PWSTR raw=nullptr;if(FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,0,nullptr,&raw)))throw std::runtime_error("Local data folder unavailable");std::wstring dir=raw;CoTaskMemFree(raw);dir+=L"\\EyeBreakReminder";std::filesystem::create_directories(dir);return dir;}
+#endif
 inline std::int64_t utc(){return std::int64_t(std::time(nullptr));}
-inline double monotonic(){LARGE_INTEGER t,f;QueryPerformanceCounter(&t);QueryPerformanceFrequency(&f);return double(t.QuadPart)/double(f.QuadPart);}
+inline double monotonic(){LARGE_INTEGER t,f;QueryPerformanceCounter(&t);QueryPerformanceFrequency(&f);double value=double(t.QuadPart)/double(f.QuadPart);
+#ifdef EYEBREAK_TEST_BUILD
+ return value*monotonicScale;
+#else
+ return value;
+#endif
+}
 // Wall time with sub-second precision, used only to place operating-schedule deadlines on their exact second.
 inline double preciseUtc(){FILETIME f{};GetSystemTimePreciseAsFileTime(&f);ULARGE_INTEGER u{};u.LowPart=f.dwLowDateTime;u.HighPart=f.dwHighDateTime;return double(u.QuadPart)/1e7-11644473600.0;}
 // The Windows local calendar for one instant, read from the current time zone (including its daylight-saving rules for that
@@ -70,8 +81,12 @@ inline int calendarDay(std::int64_t stamp){std::time_t t=std::time_t(stamp);std:
  int y=tm.tm_year+1900,m=tm.tm_mon+1,d=tm.tm_mday;y-=m<=2;int era=(y>=0?y:y-399)/400;unsigned yo=unsigned(y-era*400),doy=(153*(m+(m>2?-3:9))+2)/5+d-1;return era*146097+int(yo*365+yo/4-yo/100+doy);}
 inline std::wstring formatDate(std::int64_t stamp){std::time_t t=std::time_t(stamp);std::tm tm{};localtime_s(&tm,&t);wchar_t text[100]{};std::wcsftime(text,100,L"%x %H:%M",&tm);return text;}
 inline std::wstring timeText(double remaining){int n=int(std::ceil(remaining));wchar_t text[32]{};swprintf(text,32,L"%02d:%02d",n/60,n%60);return text;}
-inline bool confirm(HWND parent,const wchar_t*title,const wchar_t*message){TASKDIALOGCONFIG cfg{};cfg.cbSize=sizeof(cfg);cfg.hwndParent=parent;cfg.dwFlags=TDF_ALLOW_DIALOG_CANCELLATION|TDF_SIZE_TO_CONTENT;cfg.pszWindowTitle=L"Eye Break Reminder";cfg.pszMainInstruction=title;cfg.pszContent=message;cfg.dwCommonButtons=TDCBF_YES_BUTTON|TDCBF_CANCEL_BUTTON;cfg.nDefaultButton=IDCANCEL;int result=0;return SUCCEEDED(TaskDialogIndirect(&cfg,&result,nullptr,nullptr))&&result==IDYES;}
-inline void inform(HWND parent,const wchar_t*title,const wchar_t*message){TaskDialog(parent,nullptr,L"Eye Break Reminder",title,message,TDCBF_OK_BUTTON,nullptr,nullptr);}
+inline HRESULT CALLBACK taskDialogAppearance(HWND dialog,UINT notification,WPARAM,LPARAM,LONG_PTR appearance){
+ if(notification==TDN_CREATED&&(appearance&2)==0){BOOL dark=(appearance&1)!=0;DwmSetWindowAttribute(dialog,20,&dark,sizeof(dark));SetWindowTheme(dialog,dark?L"DarkMode_Explorer":nullptr,nullptr);}
+ return S_OK;
+}
+inline bool confirm(HWND parent,const wchar_t*title,const wchar_t*message,bool dark=false,bool forcedColors=false){TASKDIALOGCONFIG cfg{};cfg.cbSize=sizeof(cfg);cfg.hwndParent=parent;cfg.dwFlags=TDF_ALLOW_DIALOG_CANCELLATION|TDF_SIZE_TO_CONTENT;cfg.pszWindowTitle=L"Eye Break Reminder";cfg.pszMainInstruction=title;cfg.pszContent=message;cfg.dwCommonButtons=TDCBF_YES_BUTTON|TDCBF_CANCEL_BUTTON;cfg.nDefaultButton=IDCANCEL;cfg.pfCallback=taskDialogAppearance;cfg.lpCallbackData=(dark?1:0)|(forcedColors?2:0);int result=0;return SUCCEEDED(TaskDialogIndirect(&cfg,&result,nullptr,nullptr))&&result==IDYES;}
+inline void inform(HWND parent,const wchar_t*title,const wchar_t*message,bool dark=false,bool forcedColors=false){TASKDIALOGCONFIG cfg{};cfg.cbSize=sizeof(cfg);cfg.hwndParent=parent;cfg.dwFlags=TDF_SIZE_TO_CONTENT;cfg.pszWindowTitle=L"Eye Break Reminder";cfg.pszMainInstruction=title;cfg.pszContent=message;cfg.dwCommonButtons=TDCBF_OK_BUTTON;cfg.pfCallback=taskDialogAppearance;cfg.lpCallbackData=(dark?1:0)|(forcedColors?2:0);TaskDialogIndirect(&cfg,nullptr,nullptr,nullptr);}
 class Audio {
  HWAVEOUT device=nullptr;WAVEHDR header{};std::vector<BYTE> pcm;bool prepared=false;HWND window=nullptr;
 public:

@@ -1,8 +1,22 @@
 # Changelog
 
-## 1.1.0 (release candidate prepared 2026-11-06; not published)
+## 1.2.0 (prepared from the published v1.1.0 release)
 
-This is an unpublished release candidate. The product version is now 1.1.0, but no v1.1.0 release or installer has been published.
+Added
+
+- **Selectable themes** in Settings: Dark, Light, High Contrast Dark, High Contrast Light and Follow Windows Theme. New installations default to Dark, existing saved choices remain intact, and theme changes apply immediately and persist. Windows Forced Colors, keyboard focus and reduced-motion settings are respected.
+- **Distinct eye-break styling**: work uses the familiar blue accent; breaks use a calming teal/green accent, the clear “Taking an eye break” status and a “Break time remaining” countdown caption. The optional distinction can be disabled in normal themes; high contrast always differentiates work from break.
+- **Check for Updates** in Settings → About. A background HTTPS request checks only the official public Eye Break Reminder GitHub Releases API, compares semantic versions and stable releases, reports network/API failures, and opens the official release page without downloading or executing binaries.
+- Deterministic release-response tests and an isolated Windows GUI test build with its own test-data directory, accelerated clock and optional response fixture.
+
+Changed
+
+- The Timer status is centered over the countdown circle at every window size and DPI. Minimum sizing and footer measurement keep the controls and two-line reminder area from overlapping at larger text sizes.
+- The Timer footer keeps the 20-20-20 reminder and dynamic schedule summary, and removes the redundant explanatory sentence.
+
+## 1.1.0 (published 2026-11-06)
+
+This release added the operating schedule described below. It is the source baseline for v1.2.0.
 
 Added
 

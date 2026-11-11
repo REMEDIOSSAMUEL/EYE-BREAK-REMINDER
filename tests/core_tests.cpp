@@ -1,4 +1,6 @@
 #include "../src/core.hpp"
+#include "../src/theme.hpp"
+#include "../src/update_checker.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <iomanip>
@@ -19,6 +21,42 @@ struct Fixture {double mono=0;std::int64_t wall=1791288000,zone=0,dstFrom=0,dstT
 void geometryTests();
 void scheduleTests();
 int main(int argc,char**argv){
+ block("theme palette contrast and Windows preference resolution");
+ for(auto mode:{theme::Mode::Light,theme::Mode::Dark,theme::Mode::HighContrastDark,theme::Mode::HighContrastLight}){
+  const auto palette=theme::resolve(mode,false);combination();expect(theme::contrastRatio(palette.foreground,palette.background)>=4.5,"normal text reaches AA contrast against the theme background");
+  combination();expect(theme::contrastRatio(palette.secondary,palette.background)>=4.5,"secondary text remains readable");
+  combination();expect(theme::contrastRatio(palette.workAccent,palette.background)>=3.0&&theme::contrastRatio(palette.breakAccent,palette.background)>=3.0,"work and break indicators remain distinct from the background");
+  combination();expect(theme::contrastRatio(palette.workButtonText,palette.workAccent)>=4.5&&theme::contrastRatio(palette.breakButtonText,palette.breakAccent)>=4.5,"primary button labels remain readable");
+  if(palette.highContrast){combination();expect(theme::contrastRatio(palette.foreground,palette.background)>=7.0,"high contrast theme exceeds AAA text contrast");}
+ }
+ combination();expect(theme::resolve(theme::Mode::FollowWindows,true).dark,"Follow Windows resolves to dark");
+ combination();expect(!theme::resolve(theme::Mode::FollowWindows,false).dark,"Follow Windows resolves to light");
+ combination();expect(Settings{}.theme==int(theme::Mode::Dark),"fresh settings default to the existing dark appearance");
+ block("semantic versions and deterministic release-check responses");
+ {updates::Version stable,preview;combination();expect(updates::detail::parseVersion("v1.2.3",stable),"parse a GitHub v-prefixed release tag");
+  combination();expect(updates::detail::parseVersion("1.2.3-rc.2",preview)&&updates::detail::compare(preview,stable)<0,"stable version sorts after its prerelease");
+  updates::Version rc10,rc2;updates::detail::parseVersion("1.2.3-rc.10",rc10);updates::detail::parseVersion("1.2.3-rc.2",rc2);combination();expect(updates::detail::compare(rc10,rc2)>0,"numeric prerelease identifiers compare numerically");
+  updates::Version buildA,buildB;updates::detail::parseVersion("1.2.3+build.1",buildA);updates::detail::parseVersion("1.2.3+build.2",buildB);combination();expect(updates::detail::compare(buildA,buildB)==0,"build metadata does not change semantic precedence");
+  combination();expect(!updates::detail::parseVersion("1.02.3",preview),"reject non-semantic leading zeroes");
+  const std::string body=R"({"tag_name":"v1.2.0","html_url":"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.2.0","draft":false,"prerelease":false,"assets":[]})";
+  auto result=updates::evaluate({200,body,updates::Failure::None,0},"1.1.0");combination();expect(result.state==updates::State::UpdateAvailable&&result.latestVersion=="1.2.0"&&!result.releaseUrl.empty(),"newer official stable release is available");
+  result=updates::evaluate({200,body,updates::Failure::None,0},"1.2.0");combination();expect(result.state==updates::State::UpToDate,"same installed version reports current");
+  result=updates::evaluate({200,body,updates::Failure::None,0},"1.3.0");combination();expect(result.state==updates::State::InstalledNewer,"older latest release does not claim an update is available");
+  const std::string prerelease=R"({"tag_name":"v1.3.0-rc.1","html_url":"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.3.0-rc.1","draft":false,"prerelease":true})";
+  result=updates::evaluate({200,prerelease,updates::Failure::None,0},"1.2.0");combination();expect(result.state==updates::State::Failed,"prerelease API response is not treated as a stable update");
+  result=updates::evaluate({200,body,updates::Failure::None,0},"broken");combination();expect(result.state==updates::State::Failed,"invalid installed version is an error");
+  result=updates::evaluate({0,{},updates::Failure::Offline,12029},"1.2.0");combination();expect(result.state==updates::State::Failed&&result.error.find("internet")!=std::string::npos,"offline errors are explicit");
+  result=updates::evaluate({0,{},updates::Failure::Timeout,12002},"1.2.0");combination();expect(result.state==updates::State::Failed&&result.error.find("timed out")!=std::string::npos,"timeout errors are explicit");
+  result=updates::evaluate({0,{},updates::Failure::SecureConnection,12175},"1.2.0");combination();expect(result.state==updates::State::Failed&&result.error.find("secure")!=std::string::npos,"TLS errors are explicit");
+  result=updates::evaluate({429,{},updates::Failure::None,0},"1.2.0");combination();expect(result.state==updates::State::Failed&&result.error.find("rate limit")!=std::string::npos,"GitHub rate limits are explicit");
+  result=updates::evaluate({401,{},updates::Failure::None,0},"1.2.0");combination();expect(result.state==updates::State::Failed&&result.error.find("does not store")!=std::string::npos,"authentication failures do not request or imply embedded credentials");
+  result=updates::evaluate({503,{},updates::Failure::None,0},"1.2.0");combination();expect(result.state==updates::State::Failed&&result.error.find("temporarily unavailable")!=std::string::npos,"GitHub server failures are explicit");
+  result=updates::evaluate({404,{},updates::Failure::None,0},"1.2.0");combination();expect(result.state==updates::State::Failed&&result.error.find("Private repositories")!=std::string::npos,"private or unpublished repository response is explained");
+  result=updates::evaluate({200,"not json",updates::Failure::None,0},"1.2.0");combination();expect(result.state==updates::State::Failed,"invalid API JSON is never reported as current");
+  result=updates::evaluate({200,std::string(65537,' '),updates::Failure::None,0},"1.2.0");combination();expect(result.state==updates::State::Failed&&result.error.find("oversized")!=std::string::npos,"oversized API responses are rejected");
+  std::string foreign=body;const std::string official="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.2.0";auto at=foreign.find(official);if(at!=std::string::npos)foreign.replace(at,official.size(),"https://example.com/download");
+  result=updates::evaluate({200,foreign,updates::Failure::None,0},"1.1.0");combination();expect(result.state==updates::State::Failed,"foreign release URLs are rejected");
+ }
  block("timer engine, recovery, persistence");
  {Fixture f;f.advance(397);expect(f.e.snapshot().remaining==803,"elapsed countdown after UI stall");f.wall+=86400;expect(f.e.snapshot().remaining==803,"wall correction does not change work");}
  {Fixture f;f.advance(11.5);f.e.pause();f.advance(500);f.e.resume();f.advance(2.25);expect(f.e.snapshot().remaining==1186.25,"pause/resume precision");}
@@ -41,7 +79,7 @@ int main(int argc,char**argv){
  {Fixture f;f.e.takeBreak();Fixture g;g.e.restore(f.e.save());expect(g.e.snapshot().phase==Phase::Work,"interrupted break fresh work");}
  {Fixture f;auto saved=f.e.save();saved.remaining=NAN;expect(!f.e.restore(saved),"NaN state rejected");saved=f.e.save();saved.remaining=20000;expect(!f.e.restore(saved),"inconsistent duration rejected");}
  {Fixture f;f.advance(86400);f.e.tick();expect(f.reminders==1&&f.e.snapshot().remaining==20,"no missed cycle backlog");}
- {Settings s;s.workMinutes=37;s.volume=30;s.theme=2;s.selectedMonitor="DISPLAY2";Settings d;expect(decodeSettings(encodeSettings(s),d)&&d.workMinutes==37&&d.volume==30&&d.theme==2&&d.selectedMonitor=="DISPLAY2","settings round trip");expect(!decodeSettings("broken",d),"corrupted settings recovery");expect(!decodeSettings("alarm=2",d),"invalid Boolean rejected");expect(!decodeSettings("workMinutes=1x",d),"trailing number rejected");expect(!decodeSettings("",d),"empty settings rejected");expect(decodeSettings("workMinutes=-10\nbreakSeconds=999",d)&&d.workMinutes==1&&d.breakSeconds==300,"settings bounded");}
+ {Settings s;s.workMinutes=37;s.volume=30;s.theme=4;s.breakModeColors=false;s.selectedMonitor="DISPLAY2";Settings d;expect(decodeSettings(encodeSettings(s),d)&&d.workMinutes==37&&d.volume==30&&d.theme==4&&!d.breakModeColors&&d.selectedMonitor=="DISPLAY2","theme and break-color settings round trip");expect(decodeSettings("theme=0",d)&&d.theme==0&&d.breakModeColors,"older settings preserve theme choice and default the new break accent on");expect(!decodeSettings("broken",d),"corrupted settings recovery");expect(!decodeSettings("alarm=2",d),"invalid Boolean rejected");expect(!decodeSettings("workMinutes=1x",d),"trailing number rejected");expect(!decodeSettings("",d),"empty settings rejected");expect(decodeSettings("workMinutes=-10\nbreakSeconds=999",d)&&d.workMinutes==1&&d.breakSeconds==300,"settings bounded");}
  {Fixture f;Saved d;expect(decodeTimer(encodeTimer(f.e.save()),d)&&d.remaining==1200,"timer round trip");expect(!decodeTimer("0 5 20 20 1 1791288000",d),"timer corrupt Boolean rejected");expect(!decodeTimer("0 0 20 20 1 1791288000 extra",d),"timer garbage rejected");}
  {std::vector<Record> in={{1791288000,true,20},{1791288000,false,7}},out;expect(decodeHistory(encodeHistory(in),out,1791288000)&&out.size()==2,"history round trip");expect(!decodeHistory("broken",out,1791288000),"history corruption recovery");expect(!decodeHistory("1791288000 1 -1",out,1791288000),"negative history rejected");}
  {std::vector<Record> r={{100,true,20},{100,false,2},{99,true,20},{98,true,20}};auto s=statistics(r,100,99,[](auto t){return int(t);});expect(s.todayCompleted==1&&s.todaySkipped==1&&s.completion==50,"today completion statistics");expect(s.weekCompleted==2&&s.streak==3&&s.totalCompleted==3,"week streak and total");auto empty=statistics({},100,99,[](auto t){return int(t);});expect(empty.totalCompleted==0&&empty.streak==0&&empty.completion==0,"empty history");expect(statistics({{99,true,20},{98,true,20}},100,99,[](auto t){return int(t);}).streak==2,"streak includes yesterday");}
@@ -136,8 +174,8 @@ void geometryTests(){
   combination();expect(fits(countWidth,countTop,countHeight),"countdown STATIC bounds stay inside the ring at supported DPIs and sizes");
     int headingHeight=geometry::timerHeaderHeight(dpi,textScale),captionOffset=geometry::timerHeaderCaptionOffset(dpi,textScale),ringTop=geometry::timerRingTopOffset(dpi);
     combination();expect(captionOffset+headingHeight<=ringTop,"full-width caption STATIC fits above the ring at supported DPIs and text scales");
-    int titleWidth=geometry::scaled(geometry::timerHeaderTitleWidth,dpi),statusLeft=titleWidth+geometry::scaled(geometry::timerHeaderStatusGap,dpi),minimumContentWidth=geometry::scaled(460,dpi);
-    combination();expect(statusLeft>titleWidth&&statusLeft<minimumContentWidth,"Timer title and state occupy separate horizontal space at minimum content width");}
+    int ringLeft=geometry::scaled(100,dpi),statusDiameter=geometry::scaled(logical,dpi);auto status=geometry::timerStatusBounds(ringLeft,statusDiameter);
+    combination();expect(status.left+status.width/2==ringLeft+statusDiameter/2,"Timer status is centred on the countdown circle at supported DPIs and ring sizes");}
 
  // ---- section navigation (segment rows) -----------------------------------------------------------------------------------
  block("section navigation (geometry::segmentRows)");

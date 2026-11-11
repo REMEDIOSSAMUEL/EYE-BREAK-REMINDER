@@ -107,16 +107,16 @@ inline bool parseClock(const std::string&text,bool end,int&minutes){
     minutes=h*60+m;return true;
 }
 struct Settings {
-    int workMinutes=20, breakSeconds=20, sound=0, volume=55, mode=0, monitor=0, theme=0;
+    int workMinutes=20, breakSeconds=20, sound=0, volume=55, mode=0, monitor=0, theme=2;
     bool alarm=true, repeat=false, notifications=true, snooze=true, autoStart=true;
-    bool startup=false, tray=true, restore=true, pauseLocked=true, history=true, trayExplained=false;
+    bool startup=false, tray=true, restore=true, pauseLocked=true, history=true, trayExplained=false, breakModeColors=true;
     int width=820, height=720, x=-32000, y=-32000;
     std::string selectedMonitor;
     Schedule schedule;
     void validate() {
         workMinutes=std::clamp(workMinutes,1,180); breakSeconds=std::clamp(breakSeconds,5,300);
         sound=std::clamp(sound,0,4); volume=std::clamp(volume,0,100); mode=std::clamp(mode,0,2);
-        monitor=std::clamp(monitor,0,2); theme=std::clamp(theme,0,2);
+        monitor=std::clamp(monitor,0,2); theme=std::clamp(theme,0,4);
         width=std::clamp(width,520,2560); height=std::clamp(height,480,2160);
         if(selectedMonitor.size()>128) selectedMonitor.clear();
         schedule.validate();
@@ -252,7 +252,7 @@ inline bool decodePeriod(int value,Period&out){
 inline std::string encodeSettings(const Settings&s) {
     std::ostringstream o;
 #define EYE_WRITE(field) o<<#field<<'='<<s.field<<'\n'
-    EYE_WRITE(workMinutes);EYE_WRITE(breakSeconds);EYE_WRITE(sound);EYE_WRITE(volume);EYE_WRITE(mode);EYE_WRITE(monitor);EYE_WRITE(theme);
+    EYE_WRITE(workMinutes);EYE_WRITE(breakSeconds);EYE_WRITE(sound);EYE_WRITE(volume);EYE_WRITE(mode);EYE_WRITE(monitor);EYE_WRITE(theme);EYE_WRITE(breakModeColors);
     EYE_WRITE(alarm);EYE_WRITE(repeat);EYE_WRITE(notifications);EYE_WRITE(snooze);EYE_WRITE(autoStart);EYE_WRITE(startup);EYE_WRITE(tray);
     EYE_WRITE(restore);EYE_WRITE(pauseLocked);EYE_WRITE(history);EYE_WRITE(trayExplained);EYE_WRITE(width);EYE_WRITE(height);EYE_WRITE(x);EYE_WRITE(y);EYE_WRITE(selectedMonitor);
 #undef EYE_WRITE
@@ -274,7 +274,7 @@ inline bool decodeSettings(const std::string& text, Settings& out) {
 #define EYE_INT(field) if(key==#field){s.field=n;continue;}
 #define EYE_BOOL(field) if(key==#field){if(n!=0&&n!=1)return false;s.field=n!=0;continue;}
         EYE_INT(workMinutes);EYE_INT(breakSeconds);EYE_INT(sound);EYE_INT(volume);EYE_INT(mode);EYE_INT(monitor);EYE_INT(theme);EYE_INT(width);EYE_INT(height);EYE_INT(x);EYE_INT(y);
-        EYE_BOOL(alarm);EYE_BOOL(repeat);EYE_BOOL(notifications);EYE_BOOL(snooze);EYE_BOOL(autoStart);EYE_BOOL(startup);EYE_BOOL(tray);EYE_BOOL(restore);EYE_BOOL(pauseLocked);EYE_BOOL(history);EYE_BOOL(trayExplained);
+        EYE_BOOL(alarm);EYE_BOOL(repeat);EYE_BOOL(notifications);EYE_BOOL(snooze);EYE_BOOL(autoStart);EYE_BOOL(startup);EYE_BOOL(tray);EYE_BOOL(restore);EYE_BOOL(pauseLocked);EYE_BOOL(history);EYE_BOOL(trayExplained);EYE_BOOL(breakModeColors);
 #undef EYE_INT
 #undef EYE_BOOL
         if(key=="schedule"){if(n!=0&&n!=1)return false;s.schedule.enabled=n!=0;continue;}
@@ -318,10 +318,12 @@ inline int scaled(double logical,int dpi){return int(std::lround(logical*dpi/96.
 inline constexpr double timerProgressStartDegrees=-90.0; // GDI+ uses a downward y-axis, so -90 degrees is 12 o'clock.
 // Clockwise sweep for a clamped Timer ring. Kept pure so the 0/25/50/75/100% geometry can be checked without GDI+.
 inline double timerProgressSweep(double progress){return 360.0*std::clamp(progress,0.0,1.0);}
-inline constexpr int timerHeaderTitleWidth=120,timerHeaderStatusGap=4,timerHeaderTopInset=1,timerHeaderRowGap=4;
+inline constexpr int timerHeaderTitleWidth=120,timerHeaderTopInset=1,timerHeaderRowGap=4;
 inline int timerHeaderHeight(int dpi,double textScale){return scaled(std::max(38.0,20.0*textScale),dpi);}
 inline int timerHeaderCaptionOffset(int dpi,double textScale){return scaled(timerHeaderTopInset,dpi)+timerHeaderHeight(dpi,textScale)+scaled(timerHeaderRowGap,dpi);}
 inline int timerRingTopOffset(int dpi){return scaled(88,dpi)+scaled(8,dpi);}
+struct TimerStatusBounds {int left=0,width=0;};
+inline TimerStatusBounds timerStatusBounds(int ringLeft,int ringDiameter){return {ringLeft,std::max(1,ringDiameter)};}
 // Maximum width of a rectangular label that stays inside a stroked circular ring. `top` is relative to the ring ellipse.
 inline int circleLabelWidth(int diameter,int strokeWidth,int top,int height){
     if(diameter<=0||strokeWidth<0||height<=0)return 0;
