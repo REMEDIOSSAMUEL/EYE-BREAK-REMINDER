@@ -856,6 +856,12 @@ function Test-OsAppearanceAndTextScale {
     foreach($key in $script:osOriginal.Keys){$parts=$key.Split('|',2);Restore-RegistryValue $parts[0] $parts[1] $script:osOriginal[$key]}
     if($script:mainWindow -ne [IntPtr]::Zero){[void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'ImmersiveColorSet');[void][EBR_PRE_NATIVE]::SendMessageW($script:mainWindow,0x031A,[IntPtr]::Zero,[IntPtr]::Zero)}
   }
+  if($script:mainWindow -ne [IntPtr]::Zero){
+    Switch-Settings 4
+    Set-Combo $script:mainWindow 106 1 'Restore Light theme after Windows appearance testing'
+    Require ((Get-Combo $script:mainWindow 106 'Restored test theme') -eq 1) 'Appearance integration restores the Light theme test fixture'
+    Switch-Timer
+  }
 }
 function Assert-InstallationMetadata([string]$ExpectedVersion) {
   $exeVersion=(Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
