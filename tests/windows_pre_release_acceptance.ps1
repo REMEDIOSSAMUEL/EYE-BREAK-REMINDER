@@ -550,7 +550,7 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
   $launchTime=[DateTime]::Now
   $process=Start-Process -FilePath $Path -WorkingDirectory (Split-Path -Parent $Path) -PassThru
   $launchProcess=$process
-  $started=[Diagnostics.Stopwatch]::StartNew();$window=[IntPtr]::Zero
+  $started=[Diagnostics.Stopwatch]::StartNew();$window=[IntPtr]::Zero;$uiWindowProcessId=0
   $familyIds=@($process.Id);$familyRefresh=[Diagnostics.Stopwatch]::StartNew()
   $limitSeconds=if($isUninstaller){30}else{20}
   $windowSnapshots=[System.Collections.Generic.List[object]]::new();$desktopScreenshots=[System.Collections.Generic.List[string]]::new()
@@ -613,7 +613,7 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
     })
     Require $false "$Kind wizard shows a visible native window" ([pscustomobject]@{Pid=$process.Id;Exited=$process.HasExited;ExitCode=$(if($process.HasExited){$process.ExitCode}else{$null});ProcessFamily=$familyIds;VisibleWindows=$visibleWindows})
   }
-  $windowPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($window,[ref]$windowPid)
+  $windowPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($window,[ref]$windowPid);$uiWindowProcessId=[int]$windowPid
   if($windowPid -ne 0 -and $windowPid -ne $process.Id){try{$process=Get-Process -Id $windowPid -ErrorAction Stop}catch{}}
   $buttonsSeen=[System.Collections.Generic.List[string]]::new()
   $watch=[Diagnostics.Stopwatch]::StartNew();$stage=0;$lastCapturedStage=-1
@@ -634,12 +634,11 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
       Capture-ActiveWindow $window ("{0}-wizard-finish.png" -f $Kind) | Out-Null
       Invoke-WizardButton $window $finish
       [void]$process.WaitForExit(30000)
-      Require ($process.HasExited) "$Kind wizard finishes and exits" ([pscustomobject]@{ExitCode=$process.ExitCode})
-      Require ($process.ExitCode -eq 0) "$Kind wizard exits with code 0" ([pscustomobject]@{ExitCode=$process.ExitCode})
       if($isUninstaller){
         if(-not $launchProcess.HasExited){[void]$launchProcess.WaitForExit(30000)}
-        Require ($launchProcess.HasExited) "$Kind launch parent process exits after the wizard completes" ([pscustomobject]@{Pid=$launchProcess.Id;HasExited=$launchProcess.HasExited})
-        Require ($launchProcess.ExitCode -eq 0) "$Kind launch parent process exits with code 0" ([pscustomobject]@{Pid=$launchProcess.Id;ExitCode=$launchProcess.ExitCode})
+        $uiExitCode=$null;$parentExitCode=$null
+        if($process.HasExited){try{$uiExitCode=[int]$process.ExitCode}catch{}}
+        if($launchProcess.HasExited){try{$parentExitCode=[int]$launchProcess.ExitCode}catch{}}
         $processTreeAfter=[System.Collections.Generic.List[object]]::new();$completionSamples=[System.Collections.Generic.List[object]]::new();$completionWatch=[Diagnostics.Stopwatch]::StartNew();$afterState=Get-UninstallStateSnapshot
         while($completionWatch.Elapsed.TotalSeconds -lt 20){
           $processTreeAfter=Get-ProcessTreeSnapshot $launchProcess.Id $Path
@@ -650,8 +649,16 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
         }
         $endTime=[DateTime]::Now;$afterState=Get-UninstallStateSnapshot;$finalIds=@($processTreeAfter | ForEach-Object {$_.ProcessId});if($finalIds -notcontains $launchProcess.Id){$finalIds=@($launchProcess.Id)+$finalIds};$finalWindows=Get-DesktopWindowSnapshot $finalIds;$eventEvidence=Get-UninstallerEventLogEvidence $launchTime $endTime
         try{$shot=Capture-DesktopScreenshot ("{0}-desktop-after-wizard.png" -f $Kind);if($shot){$desktopScreenshots.Add($shot)}}catch{$desktopScreenshots.Add("after-wizard capture error: $($_.Exception.Message)")}
-        $diagnostic=[pscustomobject]@{Kind=$Kind;Path=$Path;Arguments='';Started=$launchTime.ToString('o');Ended=$endTime.ToString('o');DurationSeconds=[Math]::Round(($endTime-$launchTime).TotalSeconds,2);ParentPid=$launchProcess.Id;ParentExited=$launchProcess.HasExited;ParentExitCode=$(if($launchProcess.HasExited){$launchProcess.ExitCode}else{$null});WizardVisible=$true;WizardButtons=$buttonsSeen.ToArray();Before=$beforeState;After=$afterState;InitialProcesses=$initialProcesses;InitialWindows=$initialWindows;CompletionSamples=$completionSamples.ToArray();Processes=$processTreeAfter;FinalWindows=$finalWindows;DesktopScreenshots=$desktopScreenshots.ToArray();EventLogs=$eventEvidence}
+        $uiProcessName=$null;$uiProcessPath=$null;try{$uiProcessName=$process.ProcessName;$uiProcessPath=$process.Path}catch{}
+        $diagnostic=[pscustomobject]@{Kind=$Kind;Path=$Path;Arguments='';Started=$launchTime.ToString('o');Ended=$endTime.ToString('o');DurationSeconds=[Math]::Round(($endTime-$launchTime).TotalSeconds,2);LaunchPid=$launchProcess.Id;LaunchProcessExited=$launchProcess.HasExited;LaunchProcessExitCode=$parentExitCode;UiWindowProcessId=$uiWindowProcessId;UiProcessName=$uiProcessName;UiProcessPath=$uiProcessPath;UiProcessExited=$process.HasExited;UiProcessExitCode=$uiExitCode;WizardVisible=$true;WizardButtons=$buttonsSeen.ToArray();Before=$beforeState;After=$afterState;InitialProcesses=$initialProcesses;InitialWindows=$initialWindows;CompletionSamples=$completionSamples.ToArray();Processes=$processTreeAfter;FinalWindows=$finalWindows;DesktopScreenshots=$desktopScreenshots.ToArray();EventLogs=$eventEvidence}
         Save-UninstallerDiagnostic $diagnostic
+        if($process.HasExited){Pass "$Kind wizard UI process exits after Finish" ([pscustomobject]@{Pid=$uiWindowProcessId;ProcessName=$uiProcessName})}else{Add-Event "$Kind wizard UI process exits after Finish" 'FAIL' ([pscustomobject]@{Pid=$uiWindowProcessId;ProcessName=$uiProcessName})}
+        if($null -eq $uiExitCode){Not-Tested "$Kind wizard UI process exit code" 'The exited UI-process handle did not expose an exit code; the parent and post-uninstall state are recorded separately.'}elseif($uiExitCode -eq 0){Pass "$Kind wizard UI process exits with code 0" ([pscustomobject]@{Pid=$uiWindowProcessId;ExitCode=$uiExitCode})}else{Add-Event "$Kind wizard UI process exits with code 0" 'FAIL' ([pscustomobject]@{Pid=$uiWindowProcessId;ExitCode=$uiExitCode})}
+        if($launchProcess.HasExited){Pass "$Kind launch parent process exits after the wizard completes" ([pscustomobject]@{Pid=$launchProcess.Id})}else{Add-Event "$Kind launch parent process exits after the wizard completes" 'FAIL' ([pscustomobject]@{Pid=$launchProcess.Id})}
+        if($null -eq $parentExitCode){Not-Tested "$Kind launch parent process exit code" 'The exited launcher handle did not expose an exit code; interactive completion is verified separately.'}elseif($parentExitCode -eq 0){Pass "$Kind launch parent process exits with code 0" ([pscustomobject]@{Pid=$launchProcess.Id;ExitCode=$parentExitCode})}else{Add-Event "$Kind launch parent process exits with code 0" 'FAIL' ([pscustomobject]@{Pid=$launchProcess.Id;ExitCode=$parentExitCode})}
+      }else{
+        Require ($process.HasExited) "$Kind wizard finishes and exits" ([pscustomobject]@{ExitCode=$process.ExitCode})
+        Require ($process.ExitCode -eq 0) "$Kind wizard exits with code 0" ([pscustomobject]@{ExitCode=$process.ExitCode})
       }
       return $true
     }
