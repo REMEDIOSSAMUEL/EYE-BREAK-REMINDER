@@ -329,7 +329,8 @@ function Get-ActiveTimerNavAccentPixel([string]$Name,[string]$ScreenshotName) {
   try {
     if($x -lt 0 -or $x -ge $bitmap.Width -or $y -lt 0 -or $y -ge $bitmap.Height){throw "$Name accent sample lies outside the captured Timer navigation control."}
     $color=$bitmap.GetPixel($x,$y)
-    $pixel=[uint32](($color.R -shl 16) -bor ($color.G -shl 8) -bor $color.B)
+    $red=[int]$color.R;$green=[int]$color.G;$blue=[int]$color.B
+    $pixel=[uint32](($red -shl 16) -bor ($green -shl 8) -bor $blue)
     return [pscustomobject]@{Pixel=$pixel;Hex=('0x{0:X6}' -f $pixel);Screenshot=$screenshot;WindowPoint="$x,$y"}
   } finally {$bitmap.Dispose()}
 }
