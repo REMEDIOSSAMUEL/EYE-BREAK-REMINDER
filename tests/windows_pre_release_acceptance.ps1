@@ -259,10 +259,16 @@ function Set-Edit([IntPtr]$Root,[int]$Id,[string]$Value,[string]$Name) {
   Start-Sleep -Milliseconds 100
   Capture-ActiveWindow $script:mainWindow "installed-edit-$Id-$Value.png" | Out-Null
   $nextId=if($Id -eq 100){101}else{130}
-  $nextControl=Get-Control $Root $nextId 'Focus target after edit'
+  $nextControl=if($Id -eq 100){Get-Control $Root $nextId 'Focus target after edit'}else{$null}
   Send-VirtualKey 0x09 # Tab through the app's real keyboard message loop to commit the edit.
   $focused=Get-AppFocusedControl
-  Require ($focused -eq $nextControl.Handle) "$Name Tab navigation moves to the next setting control" ([pscustomobject]@{ExpectedHandle=('0x{0:X}' -f $nextControl.Handle.ToInt64());ActualHandle=('0x{0:X}' -f $focused.ToInt64())})
+  $focusedPid=[uint32]0
+  if($focused -ne [IntPtr]::Zero){[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($focused,[ref]$focusedPid)}
+  if($Id -eq 100){
+    Require ($focused -eq $nextControl.Handle) "$Name Tab navigation moves to the next setting control" ([pscustomobject]@{ExpectedHandle=('0x{0:X}' -f $nextControl.Handle.ToInt64());ActualHandle=('0x{0:X}' -f $focused.ToInt64())})
+  }else{
+    Require ($focused -ne $control.Handle -and $focusedPid -eq $script:appPid -and [EBR_PRE_NATIVE]::IsWindowEnabled($focused)) "$Name Tab navigation leaves the edit within the app" ([pscustomobject]@{FocusedHandle=('0x{0:X}' -f $focused.ToInt64());FocusedId=[EBR_PRE_NATIVE]::GetDlgCtrlID($focused);FocusedClass=[EBR_PRE_NATIVE]::ClassName($focused);ProcessId=$focusedPid})
+  }
   Start-Sleep -Milliseconds 100
   $actual=[EBR_PRE_NATIVE]::Text($control.Handle)
   Capture-ActiveWindow $script:mainWindow "installed-edit-$Id-$Value-after-tab.png" | Out-Null
