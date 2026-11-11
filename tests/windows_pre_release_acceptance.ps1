@@ -578,10 +578,13 @@ function Test-InstalledUpdateCheck {
   Capture-ActiveWindow $script:mainWindow 'installed-live-update-check.png' | Out-Null
   if($script:liveRelease){
     $tag=[string]$script:liveRelease.tag_name
-    Require ($latest -match [regex]::Escape($tag)) 'Installed app displays the live latest stable version from GitHub' ([pscustomobject]@{ExpectedTag=$tag;LatestLabel=$latest;Status=$status})
     $officialUrl="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/$tag"
     Require ($script:liveRelease.html_url -ceq $officialUrl) 'Live release link is the official Eye Break Reminder tag URL' $officialUrl
     $latestSemVer=[version]([regex]::Match($tag,'^v?(\d+\.\d+\.\d+)').Groups[1].Value)
+    $displayedVersionMatch=[regex]::Match($latest,'(?i)^Latest stable version:\s*v?(\d+\.\d+\.\d+)\s*$')
+    $displayedSemVer=$null
+    if($displayedVersionMatch.Success){$displayedSemVer=[version]::Parse($displayedVersionMatch.Groups[1].Value)}
+    Require ($displayedVersionMatch.Success -and $displayedSemVer -eq $latestSemVer) 'Installed app displays the live latest stable semantic version from GitHub' ([pscustomobject]@{ExpectedTag=$tag;ExpectedVersion=$latestSemVer.ToString();LatestLabel=$latest;Status=$status})
     $installedSemVer=[version]'1.2.0'
     if($latestSemVer -lt $installedSemVer){
       Require ($status -match 'installed version is newer') 'v1.2.0 reports that it is newer than the published stable release' $status
