@@ -81,6 +81,8 @@ public static class EBR_PRE_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  [DllImport("user32.dll")] private static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+  public static void Key(byte key,bool up){keybd_event(key,0,up?2u:0u,UIntPtr.Zero);}
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetDC(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
   [DllImport("gdi32.dll", SetLastError=true)] public static extern uint GetPixel(IntPtr dc, int x, int y);
@@ -215,16 +217,39 @@ function Focus-AppControl([IntPtr]$Handle) {
   finally {[void][EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$false)}
   if($actual -ne $Handle){throw 'The expected app control did not receive focus.'}
 }
+function Click-Edit([IntPtr]$Handle) {
+  $rect=Get-Rect $Handle
+  $x=[int](($rect.Left+$rect.Right)/2);$y=[int](($rect.Top+$rect.Bottom)/2)
+  if(-not [EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow) -or -not [EBR_PRE_NATIVE]::SetCursorPos($x,$y)){throw 'Could not position the pointer over the installed edit control.'}
+  [EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 50
+  [EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 100
+  Focus-AppControl $Handle
+  $foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0
+  [void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid)
+  Require ($foregroundPid -eq $script:appPid) 'Installed app owns the foreground before keyboard settings input' ([pscustomobject]@{ForegroundPid=$foregroundPid;AppPid=$script:appPid;ControlRect=$rect})
+}
+function Send-VirtualKey([byte]$Key) {
+  [EBR_PRE_NATIVE]::Key($Key,$false)
+  Start-Sleep -Milliseconds 25
+  [EBR_PRE_NATIVE]::Key($Key,$true)
+  Start-Sleep -Milliseconds 25
+}
 function Set-Edit([IntPtr]$Root,[int]$Id,[string]$Value,[string]$Name) {
   $control=Get-Control $Root $Id $Name
   if($control.Class -ne 'Edit' -or -not $control.Enabled){throw "$Name is not an enabled Edit control."}
-  Focus-AppControl $control.Handle
+  Click-Edit $control.Handle
+  [EBR_PRE_NATIVE]::Key(0x11,$false) # Ctrl down
+  [EBR_PRE_NATIVE]::Key(0x41,$false) # A down
+  Start-Sleep -Milliseconds 25
+  [EBR_PRE_NATIVE]::Key(0x41,$true)
+  [EBR_PRE_NATIVE]::Key(0x11,$true)
+  foreach($digit in $Value.ToCharArray()){Send-VirtualKey ([byte][int]$digit)}
   Start-Sleep -Milliseconds 100
-  [System.Windows.Forms.SendKeys]::SendWait('^a')
-  [System.Windows.Forms.SendKeys]::SendWait($Value)
   $typed=[EBR_PRE_NATIVE]::Text($control.Handle)
-  Require ($typed.Trim() -eq $Value) "$Name accepts visible keyboard input" ([pscustomobject]@{Expected=$Value;Actual=$typed})
   Capture-ActiveWindow $script:mainWindow "installed-edit-$Id-$Value.png" | Out-Null
+  Require ($typed.Trim() -eq $Value) "$Name accepts visible keyboard input" ([pscustomobject]@{Expected=$Value;Actual=$typed})
   $nextId=if($Id -eq 100){101}else{130}
   Focus-AppControl (Get-Control $Root $nextId 'Focus target after edit').Handle
   $actual=[EBR_PRE_NATIVE]::Text($control.Handle)
