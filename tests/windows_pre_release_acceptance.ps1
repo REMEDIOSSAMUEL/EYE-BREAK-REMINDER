@@ -162,6 +162,22 @@ function Get-Control([IntPtr]$Root, [int]$Id, [string]$Name) {
   }
   return $found[0]
 }
+function Get-StaticControlByText([IntPtr]$Root,[string]$ExpectedText,[string]$Name) {
+  $found=@()
+  foreach($handle in [EBR_PRE_NATIVE]::Children($Root)) {
+    $pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($handle,[ref]$pidValue)
+    if($pidValue -ne $script:appPid -or -not [EBR_PRE_NATIVE]::IsWindowVisible($handle)){continue}
+    if([EBR_PRE_NATIVE]::ClassName($handle) -eq 'Static' -and [EBR_PRE_NATIVE]::Text($handle) -ceq $ExpectedText){
+      $found+=,[pscustomobject]@{Handle=$handle;Text=$ExpectedText;Rect=(Get-Rect $handle)}
+    }
+  }
+  if($found.Count -ne 1){
+    $visible=Get-VisibleControlSummary $Root
+    $detail=($visible | ForEach-Object {"ID=$($_.Id) Class=$($_.Class) Enabled=$($_.Enabled) Text='$($_.Text)'"}) -join '; '
+    throw "Expected one visible $Name static with text '$ExpectedText', found $($found.Count). Visible app controls: $detail"
+  }
+  return $found[0]
+}
 function Click-Control([IntPtr]$Root, [int]$Id, [string]$Name) {
   $control=Get-Control $Root $Id $Name
   if(-not $control.Enabled){throw "$Name control is disabled."}
@@ -526,15 +542,14 @@ function Test-InstalledUpdateCheck {
   $secondsBefore=Get-TimerSeconds
   Switch-Settings 5
   Capture-ActiveWindow $script:mainWindow 'installed-about-before-live-update.png' | Out-Null
-  $installedControl=$null;$aboutWait=[Diagnostics.Stopwatch]::StartNew();$aboutError=''
-  while($aboutWait.Elapsed.TotalSeconds -lt 3 -and -not $installedControl){
-    try{$installedControl=Get-Control $script:mainWindow 164 'Installed version'}catch{$aboutError=$_.Exception.Message;Start-Sleep -Milliseconds 100}
-  }
-  if(-not $installedControl){throw "Installed About section did not expose the version label after Settings section 5 selection. Last control inventory: $aboutError"}
+  # These are Win32 Static labels. The app's logical ids are used by its internal
+  # control table, while the native label HWNDs intentionally retain control ID -1.
+  # Match their visible initial text, as the existing GUI acceptance suite does.
+  $installedControl=Get-StaticControlByText $script:mainWindow 'Installed version: 1.2.0' 'Installed version'
   $installed=[EBR_PRE_NATIVE]::Text($installedControl.Handle)
   Require ($installed -match '1\.2\.0') 'Installed About screen identifies version 1.2.0' $installed
-  $latestHandle=(Get-Control $script:mainWindow 163 'Latest version label').Handle
-  $statusHandle=(Get-Control $script:mainWindow 162 'Update status').Handle
+  $latestHandle=(Get-StaticControlByText $script:mainWindow 'Latest stable version: not checked' 'Initial latest version label').Handle
+  $statusHandle=(Get-StaticControlByText $script:mainWindow 'Select Check for Updates to query the official public GitHub Releases API.' 'Initial update status').Handle
   $check=Get-Control $script:mainWindow 160 'Check for Updates'
   Click-Control $script:mainWindow 160 'Check for Updates'
   $after=Get-Control $script:mainWindow 160 'Check for Updates'
