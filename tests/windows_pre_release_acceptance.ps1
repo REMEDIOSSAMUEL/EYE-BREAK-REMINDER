@@ -319,6 +319,16 @@ function Switch-Settings([int]$Section) {
 }
 function Switch-Timer { Click-Control $script:mainWindow 10 'Timer navigation' }
 function Get-Status { [EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 41 'Timer status').Handle) }
+function Get-ActiveTimerNavAccentPixel([string]$Name) {
+  $nav=Get-Control $script:mainWindow 10 "$Name Timer navigation accent"
+  $client=Get-ClientGeometry $script:mainWindow
+  $x=[int][Math]::Floor($nav.Rect.Left+$nav.Rect.Width/2.0-$client.Left)
+  $y=[int]($nav.Rect.Bottom-$client.Top-2)
+  if($x -lt 0 -or $x -ge $client.Width -or $y -lt 0 -or $y -ge $client.Height){throw "$Name accent sample lies outside the Timer navigation control's client area."}
+  $pixel=[EBR_PRE_NATIVE]::ClientPixel($script:mainWindow,$x,$y)
+  if($pixel -eq [uint32]::MaxValue){throw "GetPixel could not sample the $Name Timer navigation accent."}
+  return [uint32]$pixel
+}
 function Get-TimerSeconds {
   $text=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 40 'Timer countdown').Handle)
   if($text -notmatch '^(\d+):(\d{2})$'){throw "Unexpected timer format: $text"}
@@ -1107,6 +1117,49 @@ function Test-FreshInstallApp {
   Set-Edit $script:mainWindow 101 '30' 'Break duration'
   Switch-Settings 2
   Set-Check $script:mainWindow 32 $false 'Alarm enabled'
+  $themeNames=@('follow-windows','light','dark','high-contrast-dark','high-contrast-light')
+  foreach($themeIndex in 0..4){
+    $themeName=$themeNames[$themeIndex]
+    Switch-Settings 4
+    Set-Combo $script:mainWindow 106 $themeIndex "Published binary theme: $themeName"
+    Require ((Get-Combo $script:mainWindow 106 "Published theme $themeName") -eq $themeIndex) "Published binary selects $themeName" $themeIndex
+    $accessibleNames=Probe-UiaNames $script:mainWindow
+    Require (@('Timer','History','Settings' | Where-Object {$accessibleNames -contains $_}).Count -eq 3) "Published binary $themeName Settings screen retains accessible navigation" $accessibleNames
+    Capture-ActiveWindow $script:mainWindow "published-theme-$themeName-settings.png" | Out-Null
+    Switch-Timer
+    Require ((Wait-ForStatus 'Running') -like '*Running*') "Published binary $themeName timer screen remains operational"
+    Assert-StatusCentered "published $themeName work state"
+    $workAccent=Get-ActiveTimerNavAccentPixel "$themeName work"
+    Capture-ActiveWindow $script:mainWindow "published-theme-$themeName-timer-work.png" | Out-Null
+    Click-Control $script:mainWindow 22 "Published binary $themeName manual break"
+    $breakWait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
+    while($breakWait.Elapsed.TotalSeconds -lt 10){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$breakWindow=$breaks[0];break};Start-Sleep -Milliseconds 100}
+    Require ($breakWindow -ne [IntPtr]::Zero) "Published binary $themeName opens its reminder window"
+    Require ((Wait-ForStatus 'Taking an eye break') -like '*Taking an eye break*') "Published binary $themeName reports the break state"
+    Assert-StatusCentered "published $themeName break state"
+    Start-Sleep -Milliseconds 200
+    $breakAccent=Get-ActiveTimerNavAccentPixel "$themeName break"
+    Require ($workAccent -ne $breakAccent) "Published binary $themeName uses a distinct work and break accent" ([pscustomobject]@{WorkPixel=('0x{0:X6}' -f $workAccent);BreakPixel=('0x{0:X6}' -f $breakAccent);Sample='Selected Timer navigation underline, client-relative pixel'})
+    Capture-ActiveWindow $script:mainWindow "published-theme-$themeName-timer-break.png" | Out-Null
+    Capture-ActiveWindow $breakWindow "published-theme-$themeName-reminder.png" | Out-Null
+    Require ([EBR_PRE_NATIVE]::Text((Get-Control $breakWindow 40 "$themeName break countdown").Handle) -match '^\d+:\d{2}$') "Published binary $themeName reminder shows its countdown"
+    Click-Control $breakWindow 23 "Acknowledge published binary $themeName break"
+    Require ((Wait-ForStatus 'Running') -like '*Running*') "Published binary $themeName returns to work after break completion"
+    Switch-Settings 4
+    Capture-ActiveWindow $script:mainWindow "published-theme-$themeName-settings-after-break.png" | Out-Null
+    Switch-Timer
+    Click-Control $script:mainWindow 11 "Published binary $themeName History navigation"
+    $historyList=Get-Control $script:mainWindow 200 "$themeName History list"
+    $historyRows=[EBR_PRE_NATIVE]::SendMessageW($historyList.Handle,0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+    Require ($historyRows -ge 1) "Published binary $themeName History screen contains the completed break" $historyRows
+    Capture-ActiveWindow $script:mainWindow "published-theme-$themeName-history.png" | Out-Null
+    Switch-Timer
+    Stop-InstalledApp
+    Require (Start-InstalledApp) "Published binary restarts after $themeName persistence check"
+    Switch-Settings 4
+    Require ((Get-Combo $script:mainWindow 106 "Restarted $themeName theme") -eq $themeIndex) "Published binary persists $themeName across restart" $themeIndex
+  }
+  Set-Combo $script:mainWindow 106 1 'Restore Light theme test fixture after published all-theme loop'
   Switch-Timer
   Click-Control $script:mainWindow 21 'Reset one-minute work timer'
   Require ((Wait-ForStatus 'Running') -like '*Running*') 'Installed app timer starts in the work state'
