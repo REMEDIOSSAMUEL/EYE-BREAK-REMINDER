@@ -179,8 +179,8 @@ jobs:
           $gui = Get-Content -LiteralPath 'build/gui-test/evidence/gui-acceptance-results.json' -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
           $coreText = if(Test-Path -LiteralPath (Join-Path $evidence 'make-test.log')){Get-Content -LiteralPath (Join-Path $evidence 'make-test.log') -Raw}else{''}
           $packageText = if(Test-Path -LiteralPath (Join-Path $evidence 'make-package.log')){Get-Content -LiteralPath (Join-Path $evidence 'make-package.log') -Raw}else{''}
-          $coreMatch = [regex]::Match($coreText,'(?i)([0-9,]+) assertions passed')
-          $packageMatch = [regex]::Match($packageText,'(?i)([0-9,]+) (?:binary/package )?assertions passed')
+          $coreMatch = [regex]::Match($coreText,'(?im)PASS:\s*([0-9,]+)\s+core assertions executed')
+          $packageMatch = [regex]::Match($packageText,'(?im)PASS:\s*([0-9,]+)\s+binary/package assertions')
           $coreCount = if($coreMatch.Success){[int]($coreMatch.Groups[1].Value -replace ',','')}else{$null}
           $packageCount = if($packageMatch.Success){[int]($packageMatch.Groups[1].Value -replace ',','')}else{$null}
           $result = [pscustomobject]@{

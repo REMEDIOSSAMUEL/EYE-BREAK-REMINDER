@@ -319,15 +319,19 @@ function Switch-Settings([int]$Section) {
 }
 function Switch-Timer { Click-Control $script:mainWindow 10 'Timer navigation' }
 function Get-Status { [EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 41 'Timer status').Handle) }
-function Get-ActiveTimerNavAccentPixel([string]$Name) {
+function Get-ActiveTimerNavAccentPixel([string]$Name,[string]$ScreenshotName) {
   $nav=Get-Control $script:mainWindow 10 "$Name Timer navigation accent"
-  $client=Get-ClientGeometry $script:mainWindow
-  $x=[int][Math]::Floor($nav.Rect.Left+$nav.Rect.Width/2.0-$client.Left)
-  $y=[int]($nav.Rect.Bottom-$client.Top-2)
-  if($x -lt 0 -or $x -ge $client.Width -or $y -lt 0 -or $y -ge $client.Height){throw "$Name accent sample lies outside the Timer navigation control's client area."}
-  $pixel=[EBR_PRE_NATIVE]::ClientPixel($script:mainWindow,$x,$y)
-  if($pixel -eq [uint32]::MaxValue){throw "GetPixel could not sample the $Name Timer navigation accent."}
-  return [uint32]$pixel
+  $bounds=Get-Rect $script:mainWindow
+  $x=[int][Math]::Floor($nav.Rect.Left+$nav.Rect.Width/2.0-$bounds.Left)
+  $y=[int]($nav.Rect.Bottom-$bounds.Top-2)
+  $screenshot=Capture-ActiveWindow $script:mainWindow $ScreenshotName
+  $bitmap=[System.Drawing.Bitmap]::FromFile($screenshot)
+  try {
+    if($x -lt 0 -or $x -ge $bitmap.Width -or $y -lt 0 -or $y -ge $bitmap.Height){throw "$Name accent sample lies outside the captured Timer navigation control."}
+    $color=$bitmap.GetPixel($x,$y)
+    $pixel=[uint32](($color.B -shl 16) -bor ($color.G -shl 8) -bor $color.R)
+    return [pscustomobject]@{Pixel=$pixel;Hex=('0x{0:X6}' -f $pixel);Screenshot=$screenshot;WindowPoint="$x,$y"}
+  } finally {$bitmap.Dispose()}
 }
 function Get-TimerSeconds {
   $text=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 40 'Timer countdown').Handle)
@@ -1129,8 +1133,7 @@ function Test-FreshInstallApp {
     Switch-Timer
     Require ((Wait-ForStatus 'Running') -like '*Running*') "Published binary $themeName timer screen remains operational"
     Assert-StatusCentered "published $themeName work state"
-    $workAccent=Get-ActiveTimerNavAccentPixel "$themeName work"
-    Capture-ActiveWindow $script:mainWindow "published-theme-$themeName-timer-work.png" | Out-Null
+    $workSample=Get-ActiveTimerNavAccentPixel "$themeName work" "published-theme-$themeName-timer-work.png"
     Click-Control $script:mainWindow 22 "Published binary $themeName manual break"
     $breakWait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
     while($breakWait.Elapsed.TotalSeconds -lt 10){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$breakWindow=$breaks[0];break};Start-Sleep -Milliseconds 100}
@@ -1138,9 +1141,8 @@ function Test-FreshInstallApp {
     Require ((Wait-ForStatus 'Taking an eye break') -like '*Taking an eye break*') "Published binary $themeName reports the break state"
     Assert-StatusCentered "published $themeName break state"
     Start-Sleep -Milliseconds 200
-    $breakAccent=Get-ActiveTimerNavAccentPixel "$themeName break"
-    Require ($workAccent -ne $breakAccent) "Published binary $themeName uses a distinct work and break accent" ([pscustomobject]@{WorkPixel=('0x{0:X6}' -f $workAccent);BreakPixel=('0x{0:X6}' -f $breakAccent);Sample='Selected Timer navigation underline, client-relative pixel'})
-    Capture-ActiveWindow $script:mainWindow "published-theme-$themeName-timer-break.png" | Out-Null
+    $breakSample=Get-ActiveTimerNavAccentPixel "$themeName break" "published-theme-$themeName-timer-break.png"
+    Require ($workSample.Pixel -ne $breakSample.Pixel) "Published binary $themeName uses a distinct work and break accent" ([pscustomobject]@{WorkPixel=$workSample.Hex;BreakPixel=$breakSample.Hex;WorkScreenshot=$workSample.Screenshot;BreakScreenshot=$breakSample.Screenshot;Sample='Selected Timer navigation underline, pixel measured from active desktop captures'})
     Capture-ActiveWindow $breakWindow "published-theme-$themeName-reminder.png" | Out-Null
     Require ([EBR_PRE_NATIVE]::Text((Get-Control $breakWindow 40 "$themeName break countdown").Handle) -match '^\d+:\d{2}$') "Published binary $themeName reminder shows its countdown"
     Click-Control $breakWindow 23 "Acknowledge published binary $themeName break"
