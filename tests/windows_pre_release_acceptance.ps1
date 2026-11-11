@@ -134,6 +134,19 @@ function Get-ClientGeometry([IntPtr]$Handle) {
   if (-not [EBR_PRE_NATIVE]::ClientToScreen($Handle, [ref]$origin)) { throw 'ClientToScreen failed.' }
   [pscustomobject]@{Left=$origin.X;Top=$origin.Y;Width=$rect.Right-$rect.Left;Height=$rect.Bottom-$rect.Top}
 }
+function Get-VisibleControlSummary([IntPtr]$Root) {
+  $summary=@()
+  foreach($handle in [EBR_PRE_NATIVE]::Children($Root)) {
+    $pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($handle,[ref]$pidValue)
+    if($pidValue -ne $script:appPid -or -not [EBR_PRE_NATIVE]::IsWindowVisible($handle)){continue}
+    $id=[int][EBR_PRE_NATIVE]::GetDlgCtrlID($handle)
+    $class=[EBR_PRE_NATIVE]::ClassName($handle)
+    $text=[EBR_PRE_NATIVE]::Text($handle).Replace("`r",' ').Replace("`n",' ')
+    if($text.Length -gt 100){$text=$text.Substring(0,100)}
+    $summary+=,[pscustomobject]@{Id=$id;Class=$class;Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($handle);Text=$text}
+  }
+  return $summary
+}
 function Get-Control([IntPtr]$Root, [int]$Id, [string]$Name) {
   $found=@()
   foreach($handle in [EBR_PRE_NATIVE]::Children($Root)) {
@@ -142,7 +155,11 @@ function Get-Control([IntPtr]$Root, [int]$Id, [string]$Name) {
     $actual=[int][EBR_PRE_NATIVE]::GetDlgCtrlID($handle)
     if($actual -eq $Id){$found+=,[pscustomobject]@{Handle=$handle;Id=$actual;Class=[EBR_PRE_NATIVE]::ClassName($handle);Text=[EBR_PRE_NATIVE]::Text($handle);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($handle);Rect=(Get-Rect $handle)}}
   }
-  if($found.Count -ne 1){throw "Expected one visible $Name control ID $Id, found $($found.Count)."}
+  if($found.Count -ne 1){
+    $visible=Get-VisibleControlSummary $Root
+    $detail=($visible | ForEach-Object {"ID=$($_.Id) Class=$($_.Class) Enabled=$($_.Enabled) Text='$($_.Text)'"}) -join '; '
+    throw "Expected one visible $Name control ID $Id, found $($found.Count). Visible app controls: $detail"
+  }
   return $found[0]
 }
 function Click-Control([IntPtr]$Root, [int]$Id, [string]$Name) {
@@ -212,6 +229,10 @@ function Get-BreakWindow([int]$ProcessId) {
 function Switch-Settings([int]$Section) {
   Click-Control $script:mainWindow 12 'Settings navigation'
   Click-Control $script:mainWindow (130+$Section) "Settings section $Section"
+  Start-Sleep -Milliseconds 100
+  $sectionControl=Get-Control $script:mainWindow (130+$Section) "Settings section $Section"
+  $selected=([EBR_PRE_NATIVE]::SendMessageW($sectionControl.Handle,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero)).ToInt32() -eq 1
+  Require $selected 'Installed application selected the requested Settings section' ([pscustomobject]@{Section=$Section;Label=$sectionControl.Text;Selected=$selected})
 }
 function Switch-Timer { Click-Control $script:mainWindow 10 'Timer navigation' }
 function Get-Status { [EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 41 'Timer status').Handle) }
@@ -504,7 +525,13 @@ function Test-InstalledUpdateCheck {
   Switch-Timer
   $secondsBefore=Get-TimerSeconds
   Switch-Settings 5
-  $installed=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 164 'Installed version').Handle)
+  Capture-ActiveWindow $script:mainWindow 'installed-about-before-live-update.png' | Out-Null
+  $installedControl=$null;$aboutWait=[Diagnostics.Stopwatch]::StartNew();$aboutError=''
+  while($aboutWait.Elapsed.TotalSeconds -lt 3 -and -not $installedControl){
+    try{$installedControl=Get-Control $script:mainWindow 164 'Installed version'}catch{$aboutError=$_.Exception.Message;Start-Sleep -Milliseconds 100}
+  }
+  if(-not $installedControl){throw "Installed About section did not expose the version label after Settings section 5 selection. Last control inventory: $aboutError"}
+  $installed=[EBR_PRE_NATIVE]::Text($installedControl.Handle)
   Require ($installed -match '1\.2\.0') 'Installed About screen identifies version 1.2.0' $installed
   $latestHandle=(Get-Control $script:mainWindow 163 'Latest version label').Handle
   $statusHandle=(Get-Control $script:mainWindow 162 'Update status').Handle
