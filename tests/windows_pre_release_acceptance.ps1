@@ -217,6 +217,16 @@ function Focus-AppControl([IntPtr]$Handle) {
   finally {[void][EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$false)}
   if($actual -ne $Handle){throw 'The expected app control did not receive focus.'}
 }
+function Get-AppFocusedControl {
+  $targetPid=[uint32]0;$targetThread=[EBR_PRE_NATIVE]::GetWindowThreadProcessId($script:mainWindow,[ref]$targetPid)
+  $currentThread=[EBR_PRE_NATIVE]::GetCurrentThreadId()
+  if($targetPid -ne $script:appPid){throw 'The installed app main window belongs to another process.'}
+  $attached=[EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$true)
+  if(-not $attached){throw 'Could not observe keyboard focus in the installed test app.'}
+  try {$actual=[EBR_PRE_NATIVE]::GetFocus()}
+  finally {[void][EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$false)}
+  return $actual
+}
 function Click-Edit([IntPtr]$Handle) {
   $rect=Get-Rect $Handle
   $x=[int](($rect.Left+$rect.Right)/2);$y=[int](($rect.Top+$rect.Bottom)/2)
@@ -249,7 +259,10 @@ function Set-Edit([IntPtr]$Root,[int]$Id,[string]$Value,[string]$Name) {
   Start-Sleep -Milliseconds 100
   Capture-ActiveWindow $script:mainWindow "installed-edit-$Id-$Value.png" | Out-Null
   $nextId=if($Id -eq 100){101}else{130}
-  Focus-AppControl (Get-Control $Root $nextId 'Focus target after edit').Handle
+  $nextControl=Get-Control $Root $nextId 'Focus target after edit'
+  Send-VirtualKey 0x09 # Tab through the app's real keyboard message loop to commit the edit.
+  $focused=Get-AppFocusedControl
+  Require ($focused -eq $nextControl.Handle) "$Name Tab navigation moves to the next setting control" ([pscustomobject]@{ExpectedHandle=('0x{0:X}' -f $nextControl.Handle.ToInt64());ActualHandle=('0x{0:X}' -f $focused.ToInt64())})
   Start-Sleep -Milliseconds 100
   $actual=[EBR_PRE_NATIVE]::Text($control.Handle)
   Require ($actual.Trim() -eq $Value) "$Name accepts keyboard input and commits on focus loss" ([pscustomobject]@{Expected=$Value;Actual=$actual})
