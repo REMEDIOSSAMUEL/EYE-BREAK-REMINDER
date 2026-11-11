@@ -70,7 +70,6 @@ public static class EBR_PRE_NATIVE {
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern int GetClassNameW(IntPtr hwnd, StringBuilder name, int maxCount);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr FindWindowW(string className, string windowName);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetParent(IntPtr hwnd);
-  public static bool SetRemoteControlText(IntPtr hwnd,string value) { IntPtr text=Marshal.StringToHGlobalUni(value);try{return SendMessageW(hwnd,0x000C,IntPtr.Zero,text)!=IntPtr.Zero;}finally{Marshal.FreeHGlobal(text);} }
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
@@ -220,7 +219,12 @@ function Set-Edit([IntPtr]$Root,[int]$Id,[string]$Value,[string]$Name) {
   $control=Get-Control $Root $Id $Name
   if($control.Class -ne 'Edit' -or -not $control.Enabled){throw "$Name is not an enabled Edit control."}
   Focus-AppControl $control.Handle
-  if(-not [EBR_PRE_NATIVE]::SetRemoteControlText($control.Handle,$Value)){throw "WM_SETTEXT failed for $Name."}
+  Start-Sleep -Milliseconds 100
+  [System.Windows.Forms.SendKeys]::SendWait('^a')
+  [System.Windows.Forms.SendKeys]::SendWait($Value)
+  $typed=[EBR_PRE_NATIVE]::Text($control.Handle)
+  Require ($typed.Trim() -eq $Value) "$Name accepts visible keyboard input" ([pscustomobject]@{Expected=$Value;Actual=$typed})
+  Capture-ActiveWindow $script:mainWindow "installed-edit-$Id-$Value.png" | Out-Null
   $nextId=if($Id -eq 100){101}else{130}
   Focus-AppControl (Get-Control $Root $nextId 'Focus target after edit').Handle
   $actual=[EBR_PRE_NATIVE]::Text($control.Handle)
