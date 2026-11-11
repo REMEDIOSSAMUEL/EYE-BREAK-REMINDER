@@ -1229,20 +1229,21 @@ function Test-UpgradeFromV11([string]$OldInstaller) {
   $settingsPath=Join-Path $dataDir 'settings.ini';$historyPath=Join-Path $dataDir 'history.dat'
   $v11Settings=Read-SettingsMap $settingsPath
   $v11History=@(Get-Content -LiteralPath $historyPath | Where-Object {$_.Trim()})
-  Require ($v11Settings['workMinutes'] -eq '7' -and $v11Settings['breakSeconds'] -eq '45' -and $v11Settings['startup'] -eq '1') 'v1.1 representative settings persisted before upgrade' ([pscustomobject]@{Path=$settingsPath;Observed=[pscustomobject]@{WorkMinutes=$v11Settings['workMinutes'];BreakSeconds=$v11Settings['breakSeconds'];Startup=$v11Settings['startup']}})
+  Require ($v11Settings['workMinutes'] -eq '7' -and $v11Settings['breakSeconds'] -eq '45' -and $v11Settings['startup'] -eq '1' -and $v11Settings['theme'] -eq '0') 'v1.1 representative settings and system-theme preference persisted before upgrade' ([pscustomobject]@{Path=$settingsPath;Observed=[pscustomobject]@{WorkMinutes=$v11Settings['workMinutes'];BreakSeconds=$v11Settings['breakSeconds'];Startup=$v11Settings['startup'];Theme=$v11Settings['theme']}})
   Require ($v11History.Count -ge 1) 'v1.1 generated a history/statistics record before upgrade' $v11History.Count
   $beforeHistory=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
   Invoke-Install $InstallerPath 'v1.2.0 in-place upgrade from v1.1.0' $false
   Assert-InstallationMetadata '1.2.0'
   $afterSettings=Read-SettingsMap $settingsPath
-  Require ($afterSettings['workMinutes'] -eq '7' -and $afterSettings['breakSeconds'] -eq '45' -and $afterSettings['startup'] -eq '1') 'v1.2.0 preserves v1.1.0 settings and startup preference during upgrade' ([pscustomobject]@{Path=$settingsPath;Observed=[pscustomobject]@{WorkMinutes=$afterSettings['workMinutes'];BreakSeconds=$afterSettings['breakSeconds'];Startup=$afterSettings['startup']}})
+  Require ($afterSettings['workMinutes'] -eq '7' -and $afterSettings['breakSeconds'] -eq '45' -and $afterSettings['startup'] -eq '1' -and $afterSettings['theme'] -eq '0') 'v1.2.0 preserves v1.1.0 settings and system-theme preference during upgrade' ([pscustomobject]@{Path=$settingsPath;Observed=[pscustomobject]@{WorkMinutes=$afterSettings['workMinutes'];BreakSeconds=$afterSettings['breakSeconds'];Startup=$afterSettings['startup'];Theme=$afterSettings['theme']}})
   $afterHistory=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
   Require ($afterHistory -eq $beforeHistory) 'v1.2.0 preserves v1.1.0 history bytes during in-place upgrade' ([pscustomobject]@{Before=$beforeHistory;After=$afterHistory;Rows=$v11History.Count})
   $runValues=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder' })
   Require ($runValues.Count -eq 1) 'In-place upgrade leaves exactly one Eye Break Reminder startup registration' $runValues.Count
   if(Start-And-CheckApp '1.2.0'){
     Switch-Settings 4
-    Require ((Get-Combo $script:mainWindow 106 'Theme') -eq 2) 'Legacy v1.1 preferences default to the compatible dark theme after upgrade' 2
+    $legacyThemeIndex=Get-Combo $script:mainWindow 106 'Theme'
+    Require ($legacyThemeIndex -eq 0) 'Legacy v1.1 Use system setting preference maps to Follow Windows Theme after upgrade' ([pscustomobject]@{LegacyThemeValue=$v11Settings['theme'];UpgradedThemeIndex=$legacyThemeIndex;ExpectedTheme='Follow Windows Theme'})
     Switch-Settings 0
     Require ([EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 100 'Migrated work interval').Handle) -eq '7') 'Upgraded app loads v1.1 work interval' '7'
     Click-Control $script:mainWindow 11 'History after upgrade'
