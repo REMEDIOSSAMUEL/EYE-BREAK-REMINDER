@@ -16,6 +16,8 @@ EXCLUDED_DIRS={'release','build','dist','__pycache__'}
 EXCLUDED_SUFFIXES={'.exe','.dll','.o','.obj','.pdb','.zip','.tmp','.pyc','.pfx','.pem','.p12','.key'}
 def in_source(relative):
  if any(p in EXCLUDED_DIRS or p.startswith('.') for p in relative.parts[:-1]):return False
+ # This final report contains the source ZIP's digest; excluding it avoids a self-referential archive hash.
+ if relative==Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'):return False
  return relative!=Path('tests/core-tests') and relative.suffix.lower() not in EXCLUDED_SUFFIXES
 with zipfile.ZipFile(release/'EyeBreakReminder-Source.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9) as archive:
  for path in sorted(root.rglob('*')):
