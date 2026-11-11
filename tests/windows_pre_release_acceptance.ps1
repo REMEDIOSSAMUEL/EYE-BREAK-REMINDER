@@ -365,7 +365,14 @@ function Start-InstalledApp {
   if($script:appPid){throw 'The test app is already tracked as running.'}
   $process=Start-Process -FilePath $appExe -PassThru
   $script:appPid=$process.Id
-  $actual=try{[IO.Path]::GetFullPath((Get-Process -Id $script:appPid -ErrorAction Stop).Path)}catch{''}
+  # The image path can be unavailable briefly while CreateProcess initializes the image.
+  $watch=[Diagnostics.Stopwatch]::StartNew();$actual='';$ownedProcess=$null
+  while($watch.Elapsed.TotalSeconds -lt 20){
+    try{$ownedProcess=Get-Process -Id $script:appPid -ErrorAction Stop;$path=[string]$ownedProcess.Path;if($path){$actual=[IO.Path]::GetFullPath($path)}}catch{$actual=''}
+    if($actual -ieq $appExe){break}
+    if($ownedProcess -and $ownedProcess.HasExited){break}
+    Start-Sleep -Milliseconds 100
+  }
   Require ($actual -ieq $appExe) 'Installed application launches from the installed executable' ([pscustomobject]@{Expected=$appExe;Actual=$actual;Pid=$script:appPid})
   $script:mainWindow=Get-AppMainWindow $script:appPid
   if($script:interactiveDesktop){Require ($script:mainWindow -ne [IntPtr]::Zero) 'Installed application creates a visible Win32 main window' $script:appPid}
