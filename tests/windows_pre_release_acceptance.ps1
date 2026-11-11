@@ -347,7 +347,7 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
     if($process.HasExited){break}
     [void][EBR_PRE_NATIVE]::SetForegroundWindow($window)
     if($stage -gt 0 -and $stage -le 6 -and $stage -ne $lastCapturedStage){Capture-ActiveWindow $window ("{0}-wizard-stage-{1}.png" -f $Kind,$stage) | Out-Null;$lastCapturedStage=$stage}
-    $finish=Find-WizardButton $window '^(Finish|Close)$'
+    $finish=Find-WizardButton $window '^&?(Finish|Close)$'
     if($finish){
       $checkboxes=@([System.Windows.Automation.AutomationElement]::FromHandle($window).FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and $_.Current.Name -match 'Open Eye Break Reminder' })
       if($checkboxes.Count -gt 0){try{$toggle=$checkboxes[0].GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern);if($toggle.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On){$toggle.Toggle()}}catch{}}
@@ -364,7 +364,7 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
       Require ($process.ExitCode -eq 0) "$Kind wizard exits with code 0" ([pscustomobject]@{ExitCode=$process.ExitCode})
       return $true
     }
-    $install=Find-WizardButton $window '^(Install|Uninstall|Remove)$'
+    $install=Find-WizardButton $window '^&?(Install|Uninstall|Remove)$'
     $next=Find-WizardButton $window '^(Next|Next >|&Next >)$'
     if($stage -eq 0){
       Capture-ActiveWindow $window ("{0}-wizard-first-page.png" -f $Kind) | Out-Null
