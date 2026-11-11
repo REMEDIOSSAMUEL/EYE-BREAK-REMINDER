@@ -1063,11 +1063,16 @@ function Invoke-TrayCommand([string]$Name) {
 function Wait-ForCloseToTrayExplanation([int]$TimeoutSeconds=5) {
   $watch=[Diagnostics.Stopwatch]::StartNew()
   while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){
-    foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){
-      if($window -eq $script:mainWindow -or -not [EBR_PRE_NATIVE]::IsWindowVisible($window)){continue}
+    $foreground=[EBR_PRE_NATIVE]::GetForegroundWindow()
+    $handles=@($foreground)+@([EBR_PRE_NATIVE]::TopWindows())
+    foreach($window in $handles | Select-Object -Unique){
+      if($window -eq [IntPtr]::Zero -or $window -eq $script:mainWindow -or -not [EBR_PRE_NATIVE]::IsWindowVisible($window)){continue}
+      $pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($window,[ref]$pidValue)
+      $class=[EBR_PRE_NATIVE]::ClassName($window);$title=[EBR_PRE_NATIVE]::Text($window)
+      if($pidValue -ne $script:appPid -and -not ($class -eq '#32770' -and $title -eq 'Eye Break Reminder')){continue}
       $texts=@(foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$text}})
       $combined=$texts -join ' '
-      if($combined -match 'Closing keeps your reminders active' -and $combined -match 'right-click the tray icon'){return [pscustomobject]@{Handle=$window;Texts=$texts;Class=[EBR_PRE_NATIVE]::ClassName($window)}}
+      if(($combined -match 'Closing keeps your reminders active' -and $combined -match 'right-click the tray icon') -or ($pidValue -eq $script:appPid -and $title -eq 'Eye Break Reminder')){return [pscustomobject]@{Handle=$window;Texts=$texts;Class=$class;Title=$title;MessageTextExposed=($combined -match 'Closing keeps your reminders active' -and $combined -match 'right-click the tray icon');ProcessId=$pidValue}}
     }
     Start-Sleep -Milliseconds 100
   }
@@ -1110,14 +1115,20 @@ function Test-ShellTrayAndNaturalNotification {
   Require ($breaks.Count -eq 1) 'Tray Take a break command opens the installed reminder window' $breaks.Count
   Click-Control $breaks[0] 24 'Skip break started from the tray menu'
   Require ((Wait-ForStatus 'Running') -like '*Running*') 'Tray-triggered break can be dismissed' (Get-Status)
+  Switch-Settings 4
+  Set-Check $script:mainWindow 112 $true 'Minimize to system tray'
+  Switch-Timer
   $prefsBeforeClose=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
+  Require ($prefsBeforeClose['tray'] -eq '1') 'Close-to-tray test explicitly enables the tray preference' $prefsBeforeClose['tray']
   $needsCloseExplanation=($prefsBeforeClose['trayExplained'] -ne '1')
-  [void][EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
+  Require ([EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)) 'Close-to-tray message was delivered to the main window' ([pscustomobject]@{Window=('0x{0:X}' -f $script:mainWindow.ToInt64());ProcessId=$script:appPid;Tray=$prefsBeforeClose['tray'];TrayExplained=$prefsBeforeClose['trayExplained']})
   if($needsCloseExplanation){
     $explanation=Wait-ForCloseToTrayExplanation
-    Require ($null -ne $explanation) 'First close-to-tray action shows the one-time reminder explanation' 'Expected the visible TaskDialog to explain that reminders continue in the tray.'
-    Pass 'Close-to-tray explanation content is visible in the native dialog' ([pscustomobject]@{Class=$explanation.Class;Texts=$explanation.Texts})
+    $visibleWindows=@(foreach($window in [EBR_PRE_NATIVE]::TopWindows()){if([EBR_PRE_NATIVE]::IsWindowVisible($window)){$pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($window,[ref]$pidValue);[pscustomobject]@{Handle=('0x{0:X}' -f $window.ToInt64());Pid=$pidValue;Class=[EBR_PRE_NATIVE]::ClassName($window);Title=[EBR_PRE_NATIVE]::Text($window)}}})
+    Require ($null -ne $explanation) 'First close-to-tray action shows the one-time reminder explanation' ([pscustomobject]@{Expected='Native TaskDialog titled Eye Break Reminder';Tray=$prefsBeforeClose['tray'];TrayExplained=$prefsBeforeClose['trayExplained'];VisibleWindows=$visibleWindows})
+    Pass 'Close-to-tray explanation is displayed in a visible native dialog' ([pscustomobject]@{Class=$explanation.Class;Title=$explanation.Title;ProcessId=$explanation.ProcessId;MessageTextExposed=$explanation.MessageTextExposed;Texts=$explanation.Texts})
     Capture-ActiveWindow $explanation.Handle 'tray-close-to-tray-explanation.png' | Out-Null
+    if($explanation.MessageTextExposed){Pass 'Close-to-tray explanation text is available through native dialog controls' $explanation.Texts}else{Not-Tested 'Close-to-tray explanation text through native controls' 'The TaskDialog was visible and captured, but Windows did not expose its instruction text through GetWindowText.'}
     Click-Control $explanation.Handle 1 'Acknowledge close-to-tray explanation'
     Pass 'One-time close-to-tray explanation was acknowledged through its native OK button'
   }
