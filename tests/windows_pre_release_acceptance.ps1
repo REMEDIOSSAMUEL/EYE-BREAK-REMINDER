@@ -1442,11 +1442,16 @@ function Test-ShellTrayAndNaturalNotification {
   Switch-Settings 3
   Set-Check $script:mainWindow 108 $true 'Windows notifications enabled'
   Switch-Timer
+  $resourceSamples=[System.Collections.Generic.List[object]]::new()
+  $resourceProc=Get-Process -Id $script:appPid -ErrorAction Stop;$resourceProc.Refresh()
+  $resourceSamples.Add([pscustomobject]@{Checkpoint='before first scheduled reminder';PrivateBytes=[long]$resourceProc.PrivateMemorySize64;WorkingSetBytes=[long]$resourceProc.WorkingSet64;HandleCount=[int]$resourceProc.HandleCount;ThreadCount=[int]$resourceProc.Threads.Count})
   Click-Control $script:mainWindow 21 'Reset real one-minute notification timer'
   [void][EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
   $dueWatch=[Diagnostics.Stopwatch]::StartNew();$naturalBreak=[IntPtr]::Zero
   while($dueWatch.Elapsed.TotalSeconds -lt 80){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$naturalBreak=$breaks[0];break};Start-Sleep -Milliseconds 200}
   Require ($naturalBreak -ne [IntPtr]::Zero) 'Installed one-minute work timer reaches its real scheduled break after hide-to-tray' ([pscustomobject]@{WaitSeconds=[Math]::Round($dueWatch.Elapsed.TotalSeconds,1)})
+  $resourceProc=Get-Process -Id $script:appPid -ErrorAction Stop;$resourceProc.Refresh()
+  $resourceSamples.Add([pscustomobject]@{Checkpoint='first scheduled reminder';PrivateBytes=[long]$resourceProc.PrivateMemorySize64;WorkingSetBytes=[long]$resourceProc.WorkingSet64;HandleCount=[int]$resourceProc.HandleCount;ThreadCount=[int]$resourceProc.Threads.Count})
   Capture-ActiveWindow $naturalBreak 'installed-natural-reminder-after-hidden-work.png' | Out-Null
   $shellNames=@()
   try {
@@ -1463,9 +1468,38 @@ function Test-ShellTrayAndNaturalNotification {
   $snoozeWatch=[Diagnostics.Stopwatch]::StartNew();$returned=[IntPtr]::Zero
   while($snoozeWatch.Elapsed.TotalSeconds -lt 80){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$returned=$breaks[0];break};Start-Sleep -Milliseconds 200}
   Require ($returned -ne [IntPtr]::Zero) 'Installed one-minute snooze reschedules a real reminder' ([pscustomobject]@{WaitSeconds=[Math]::Round($snoozeWatch.Elapsed.TotalSeconds,1)})
+  $resourceProc=Get-Process -Id $script:appPid -ErrorAction Stop;$resourceProc.Refresh()
+  $resourceSamples.Add([pscustomobject]@{Checkpoint='snoozed reminder';PrivateBytes=[long]$resourceProc.PrivateMemorySize64;WorkingSetBytes=[long]$resourceProc.WorkingSet64;HandleCount=[int]$resourceProc.HandleCount;ThreadCount=[int]$resourceProc.Threads.Count})
   Click-Control $returned 24 'Dismiss the snoozed reminder'
   Invoke-TrayCommand 'Open Eye Break Reminder'
   Require ((Wait-ForStatus 'Running') -like '*Running*') 'Installed timer returns to work after the snoozed reminder is dismissed'
+
+
+  [void][EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
+  $repeatWatch=[Diagnostics.Stopwatch]::StartNew();$repeatBreak=[IntPtr]::Zero;$duplicateRepeatBreaks=$false
+  while($repeatWatch.Elapsed.TotalSeconds -lt 80){
+    $breaks=Get-BreakWindow $script:appPid
+    if($breaks.Count -gt 1){$duplicateRepeatBreaks=$true;break}
+    if($breaks.Count -eq 1){$repeatBreak=$breaks[0];break}
+    Start-Sleep -Milliseconds 200
+  }
+  Require ($repeatBreak -ne [IntPtr]::Zero) 'Next one-minute work interval reaches another real break reminder' ([pscustomobject]@{WaitSeconds=[Math]::Round($repeatWatch.Elapsed.TotalSeconds,1)})
+  Require (-not $duplicateRepeatBreaks) 'Repeated work/break cycle creates exactly one reminder window'
+  $resourceProc=Get-Process -Id $script:appPid -ErrorAction Stop;$resourceProc.Refresh()
+  $resourceSamples.Add([pscustomobject]@{Checkpoint='next scheduled reminder';PrivateBytes=[long]$resourceProc.PrivateMemorySize64;WorkingSetBytes=[long]$resourceProc.WorkingSet64;HandleCount=[int]$resourceProc.HandleCount;ThreadCount=[int]$resourceProc.Threads.Count})
+  Capture-ActiveWindow $repeatBreak 'installed-repeated-reminder-cycle.png' | Out-Null
+  Click-Control $repeatBreak 24 'Dismiss the repeated real break reminder'
+  Invoke-TrayCommand 'Open Eye Break Reminder'
+  Require ((Wait-ForStatus 'Running') -like '*Running*') 'Repeated break completion returns the installed timer to work'
+  $resourceAfter=Get-Process -Id $script:appPid -ErrorAction Stop
+  $resourceAfter.Refresh()
+  $resourceSamples.Add([pscustomobject]@{Checkpoint='after repeated reminder dismissal';PrivateBytes=[long]$resourceAfter.PrivateMemorySize64;WorkingSetBytes=[long]$resourceAfter.WorkingSet64;HandleCount=[int]$resourceAfter.HandleCount;ThreadCount=[int]$resourceAfter.Threads.Count})
+  $baseline=$resourceSamples[0]
+  $peakPrivateBytes=[long](($resourceSamples | Measure-Object -Property PrivateBytes -Maximum).Maximum)
+  $peakHandles=[int](($resourceSamples | Measure-Object -Property HandleCount -Maximum).Maximum)
+  $privateGrowth=$peakPrivateBytes-[long]$baseline.PrivateBytes
+  $handleGrowth=$peakHandles-[int]$baseline.HandleCount
+  Require ($privateGrowth -le 33554432 -and $handleGrowth -le 128) 'Three real reminder transitions show bounded process memory and handle growth' ([pscustomobject]@{Cycles='scheduled reminder, snooze reminder, next scheduled reminder';PrivateBytesStart=[long]$baseline.PrivateBytes;PeakPrivateBytes=$peakPrivateBytes;PeakPrivateGrowth=$privateGrowth;HandlesStart=[int]$baseline.HandleCount;PeakHandles=$peakHandles;PeakHandleGrowth=$handleGrowth;Samples=$resourceSamples.ToArray()})
   Stop-InstalledApp
   Not-Tested 'Production audio playback' 'Hosted runners do not provide physically verified speaker hardware; alarm sounds were disabled during unattended timer tests.'
 }
