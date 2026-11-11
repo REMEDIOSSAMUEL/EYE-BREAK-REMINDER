@@ -1,0 +1,1004 @@
+param(
+  [string]$InstallerPath = (Join-Path $PSScriptRoot '..\release\EyeBreakReminder-Setup-x64.exe'),
+  [string]$EvidenceDirectory = (Join-Path $PSScriptRoot '..\build\pre-release-evidence')
+)
+$ErrorActionPreference = 'Stop'
+$repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$expectedInstaller = [IO.Path]::GetFullPath((Join-Path $repoRoot 'release\EyeBreakReminder-Setup-x64.exe'))
+$expectedEvidence = [IO.Path]::GetFullPath((Join-Path $repoRoot 'build\pre-release-evidence'))
+$InstallerPath = [IO.Path]::GetFullPath($InstallerPath)
+$EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
+if ($InstallerPath -ine $expectedInstaller) { throw "Refusing to execute an installer outside the just-built Eye Break Reminder package: $expectedInstaller" }
+if ($EvidenceDirectory -ine $expectedEvidence) { throw "Refusing to write evidence outside the isolated build folder: $expectedEvidence" }
+if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) { throw "The v1.2.0 installer is missing: $InstallerPath" }
+[void][IO.Directory]::CreateDirectory($EvidenceDirectory)
+
+$installDir = Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder'
+$dataDir = Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'
+$startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Eye Break Reminder'
+$startMenuLink = Join-Path $startMenuDir 'Eye Break Reminder.lnk'
+$desktopLink = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Eye Break Reminder.lnk'
+$uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder'
+$appKey = 'HKCU:\Software\EyeBreakReminder'
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$personalizeKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+$accessibilityKey = 'HKCU:\Software\Microsoft\Accessibility'
+$appExe = Join-Path $installDir 'EyeBreakReminder.exe'
+$script:events = [System.Collections.Generic.List[object]]::new()
+$script:passCount = 0
+$script:failCount = 0
+$script:notTestedCount = 0
+$script:appPid = 0
+$script:mainWindow = [IntPtr]::Zero
+$script:ownedInstall = $false
+$script:ownedData = $false
+$script:interactiveDesktop = $false
+$script:liveRelease = $null
+$script:liveApiError = ''
+$script:liveLatestError = ''
+$script:osOriginal = @{}
+$script:highContrastOriginal = $null
+$script:transcriptStarted = $false
+$fatal = $false
+
+$native = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+[StructLayout(LayoutKind.Sequential)] public struct EBR_PRE_RECT { public int Left, Top, Right, Bottom; }
+[StructLayout(LayoutKind.Sequential)] public struct EBR_PRE_POINT { public int X, Y; }
+[StructLayout(LayoutKind.Sequential)] public struct EBR_PRE_HIGHCONTRAST { public uint cbSize, dwFlags; public IntPtr lpszDefaultScheme; }
+[StructLayout(LayoutKind.Sequential)] public struct EBR_PRE_NOTIFYICONIDENTIFIER { public uint cbSize; public IntPtr hWnd; public uint uID; public Guid guidItem; }
+public static class EBR_PRE_NATIVE {
+  public delegate bool EnumCallback(IntPtr hwnd, IntPtr data);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool EnumWindows(EnumCallback callback, IntPtr data);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool EnumChildWindows(IntPtr parent, EnumCallback callback, IntPtr data);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool AttachThreadInput(uint attach, uint attachTo, bool attachState);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SetFocus(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetFocus();
+  [DllImport("user32.dll", SetLastError=true)] public static extern int GetDlgCtrlID(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool IsWindowEnabled(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd, out EBR_PRE_RECT rect);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool GetClientRect(IntPtr hwnd, out EBR_PRE_RECT rect);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool ClientToScreen(IntPtr hwnd, ref EBR_PRE_POINT point);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern int GetWindowTextW(IntPtr hwnd, StringBuilder text, int maxCount);
+  [DllImport("user32.dll", SetLastError=true)] private static extern int GetWindowTextLengthW(IntPtr hwnd);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern int GetClassNameW(IntPtr hwnd, StringBuilder name, int maxCount);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr FindWindowW(string className, string windowName);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetParent(IntPtr hwnd);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool SetWindowTextW(IntPtr hwnd, string text);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint GetDpiForWindow(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern int GetSystemMetrics(int index);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetDC(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
+  [DllImport("gdi32.dll", SetLastError=true)] public static extern uint GetPixel(IntPtr dc, int x, int y);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool SystemParametersInfoW(uint action, uint parameter, ref EBR_PRE_HIGHCONTRAST value, uint flags);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool SystemParametersInfoSimpleW(uint action, uint parameter, IntPtr value, uint flags);
+  [DllImport("shell32.dll", SetLastError=true)] public static extern int Shell_NotifyIconGetRect(ref EBR_PRE_NOTIFYICONIDENTIFIER id, out EBR_PRE_RECT rect);
+  public static string Text(IntPtr hwnd) { int n=GetWindowTextLengthW(hwnd);StringBuilder b=new StringBuilder(Math.Max(2,n+2));GetWindowTextW(hwnd,b,b.Capacity);return b.ToString(); }
+  public static string ClassName(IntPtr hwnd) { StringBuilder b=new StringBuilder(256);GetClassNameW(hwnd,b,b.Capacity);return b.ToString(); }
+  public static IntPtr[] TopWindowsForProcess(int pid) { List<IntPtr> r=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){uint actual;GetWindowThreadProcessId(h,out actual);if(actual==(uint)pid)r.Add(h);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return r.ToArray(); }
+  public static IntPtr[] TopWindows() { List<IntPtr> r=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){r.Add(h);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return r.ToArray(); }
+  public static IntPtr[] Children(IntPtr root) { List<IntPtr> r=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){r.Add(h);return true;};EnumChildWindows(root,cb,IntPtr.Zero);GC.KeepAlive(cb);return r.ToArray(); }
+  public static bool AppResponds(IntPtr hwnd,uint timeout){IntPtr result;return SendMessageTimeoutW(hwnd,0,IntPtr.Zero,IntPtr.Zero,2,timeout,out result)!=IntPtr.Zero;}
+  public static bool GetTrayRect(IntPtr hwnd,uint uid,out EBR_PRE_RECT rect){EBR_PRE_NOTIFYICONIDENTIFIER id=new EBR_PRE_NOTIFYICONIDENTIFIER();id.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_NOTIFYICONIDENTIFIER));id.hWnd=hwnd;id.uID=uid;id.guidItem=Guid.Empty;return Shell_NotifyIconGetRect(ref id,out rect)==0;}
+  public static bool GetHighContrast(out uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));bool ok=SystemParametersInfoW(0x0042,h.cbSize,ref h,0);flags=h.dwFlags;return ok;}
+  public static bool SetHighContrast(uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));h.dwFlags=flags;return SystemParametersInfoW(0x0043,h.cbSize,ref h,2);}
+  public static bool BroadcastSetting(IntPtr hwnd,string name){IntPtr text=Marshal.StringToHGlobalUni(name);try{IntPtr result;return SendMessageTimeoutW(hwnd,0x001A,IntPtr.Zero,text,2,1500,out result)!=IntPtr.Zero;}finally{Marshal.FreeHGlobal(text);}}
+  public static uint ClientPixel(IntPtr hwnd,int x,int y){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)return 0;try{return GetPixel(dc,x,y);}finally{ReleaseDC(hwnd,dc);}}
+}
+'@
+Add-Type -TypeDefinition $native -ErrorAction Stop
+Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
+Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
+Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+
+function Add-Event([string]$Name, [string]$Status, $Details=$null) {
+  $script:events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')})
+  switch ($Status) {
+    'PASS' { $script:passCount++ }
+    'FAIL' { $script:failCount++ }
+    'NOT TESTED' { $script:notTestedCount++ }
+  }
+}
+function Pass([string]$Name, $Details=$null) { Add-Event $Name 'PASS' $Details }
+function Not-Tested([string]$Name, [string]$Reason) { Add-Event $Name 'NOT TESTED' $Reason }
+function Require([bool]$Condition, [string]$Name, $Details=$null) {
+  if (-not $Condition) { Add-Event $Name 'FAIL' $Details; throw "Acceptance failed: $Name ($Details)" }
+  Pass $Name $Details
+}
+function Get-Rect([IntPtr]$Handle) {
+  $rect = New-Object EBR_PRE_RECT
+  if (-not [EBR_PRE_NATIVE]::GetWindowRect($Handle, [ref]$rect)) { throw "GetWindowRect failed for $Handle" }
+  [pscustomobject]@{Left=$rect.Left;Top=$rect.Top;Right=$rect.Right;Bottom=$rect.Bottom;Width=$rect.Right-$rect.Left;Height=$rect.Bottom-$rect.Top}
+}
+function Get-ClientGeometry([IntPtr]$Handle) {
+  $rect = New-Object EBR_PRE_RECT
+  if (-not [EBR_PRE_NATIVE]::GetClientRect($Handle, [ref]$rect)) { throw 'GetClientRect failed.' }
+  $origin = New-Object EBR_PRE_POINT
+  if (-not [EBR_PRE_NATIVE]::ClientToScreen($Handle, [ref]$origin)) { throw 'ClientToScreen failed.' }
+  [pscustomobject]@{Left=$origin.X;Top=$origin.Y;Width=$rect.Right-$rect.Left;Height=$rect.Bottom-$rect.Top}
+}
+function Get-Control([IntPtr]$Root, [int]$Id, [string]$Name) {
+  $found=@()
+  foreach($handle in [EBR_PRE_NATIVE]::Children($Root)) {
+    $pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($handle,[ref]$pidValue)
+    if($pidValue -ne $script:appPid -or -not [EBR_PRE_NATIVE]::IsWindowVisible($handle)){continue}
+    $actual=[int][EBR_PRE_NATIVE]::GetDlgCtrlID($handle)
+    if($actual -eq $Id){$found+=,[pscustomobject]@{Handle=$handle;Id=$actual;Class=[EBR_PRE_NATIVE]::ClassName($handle);Text=[EBR_PRE_NATIVE]::Text($handle);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($handle);Rect=(Get-Rect $handle)}}
+  }
+  if($found.Count -ne 1){throw "Expected one visible $Name control ID $Id, found $($found.Count)."}
+  return $found[0]
+}
+function Click-Control([IntPtr]$Root, [int]$Id, [string]$Name) {
+  $control=Get-Control $Root $Id $Name
+  if(-not $control.Enabled){throw "$Name control is disabled."}
+  [void][EBR_PRE_NATIVE]::SendMessageW($control.Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+}
+function Get-Combo([IntPtr]$Root, [int]$Id, [string]$Name) {
+  $control=Get-Control $Root $Id $Name
+  if($control.Class -ne 'ComboBox'){throw "$Name is not a ComboBox."}
+  return [EBR_PRE_NATIVE]::SendMessageW($control.Handle,0x0147,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+}
+function Set-Combo([IntPtr]$Root,[int]$Id,[int]$Index,[string]$Name) {
+  $control=Get-Control $Root $Id $Name
+  if($control.Class -ne 'ComboBox'){throw "$Name is not a ComboBox."}
+  [void][EBR_PRE_NATIVE]::SendMessageW($control.Handle,0x014E,[IntPtr]::new($Index),[IntPtr]::Zero)
+  $parent=[EBR_PRE_NATIVE]::GetParent($control.Handle)
+  $wParam=[IntPtr]::new([long](($Id -band 0xffff) -bor (1 -shl 16)))
+  [void][EBR_PRE_NATIVE]::SendMessageW($parent,0x0111,$wParam,$control.Handle)
+  Require ((Get-Combo $Root $Id $Name) -eq $Index) "$Name selected index" $Index
+}
+function Get-Check([IntPtr]$Root,[int]$Id,[string]$Name) {
+  $control=Get-Control $Root $Id $Name
+  return ([EBR_PRE_NATIVE]::SendMessageW($control.Handle,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero)).ToInt32() -eq 1
+}
+function Set-Check([IntPtr]$Root,[int]$Id,[bool]$Value,[string]$Name) {
+  if((Get-Check $Root $Id $Name) -ne $Value){Click-Control $Root $Id $Name}
+  Require ((Get-Check $Root $Id $Name) -eq $Value) "$Name checkbox value" $Value
+}
+function Focus-AppControl([IntPtr]$Handle) {
+  $targetPid=[uint32]0;$targetThread=[EBR_PRE_NATIVE]::GetWindowThreadProcessId($Handle,[ref]$targetPid)
+  $currentThread=[EBR_PRE_NATIVE]::GetCurrentThreadId()
+  if($targetPid -ne $script:appPid -or -not [EBR_PRE_NATIVE]::IsWindowEnabled($Handle)){throw 'Refusing to focus a control outside the installed test app.'}
+  [void][EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow)
+  $attached=[EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$true)
+  if(-not $attached){throw 'Could not attach keyboard input to the installed test app.'}
+  try {[void][EBR_PRE_NATIVE]::SetFocus($Handle);$actual=[EBR_PRE_NATIVE]::GetFocus()}
+  finally {[void][EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$false)}
+  if($actual -ne $Handle){throw 'The expected app control did not receive focus.'}
+}
+function Set-Edit([IntPtr]$Root,[int]$Id,[string]$Value,[string]$Name) {
+  $control=Get-Control $Root $Id $Name
+  if($control.Class -ne 'Edit' -or -not $control.Enabled){throw "$Name is not an enabled Edit control."}
+  Focus-AppControl $control.Handle
+  [void][EBR_PRE_NATIVE]::SetWindowTextW($control.Handle,$Value)
+  $nextId=if($Id -eq 100){101}else{130}
+  Focus-AppControl (Get-Control $Root $nextId 'Focus target after edit').Handle
+  $actual=[EBR_PRE_NATIVE]::Text($control.Handle)
+  Require ($actual.Trim() -eq $Value) "$Name edit value" ([pscustomobject]@{Expected=$Value;Actual=$actual})
+}
+function Get-AppMainWindow([int]$ProcessId,[int]$TimeoutSeconds=20) {
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){
+    foreach($h in [EBR_PRE_NATIVE]::TopWindowsForProcess($ProcessId)){
+      if([EBR_PRE_NATIVE]::ClassName($h) -eq 'EyeBreakReminder.Native' -and [EBR_PRE_NATIVE]::IsWindowVisible($h)){return $h}
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  return [IntPtr]::Zero
+}
+function Get-AppWindows([int]$ProcessId) {
+  @([EBR_PRE_NATIVE]::TopWindowsForProcess($ProcessId) | Where-Object { [EBR_PRE_NATIVE]::IsWindowVisible($_) })
+}
+function Get-BreakWindow([int]$ProcessId) {
+  @([EBR_PRE_NATIVE]::TopWindowsForProcess($ProcessId) | Where-Object { [EBR_PRE_NATIVE]::ClassName($_) -eq 'EyeBreakReminder.Break' -and [EBR_PRE_NATIVE]::IsWindowVisible($_) })
+}
+function Switch-Settings([int]$Section) {
+  Click-Control $script:mainWindow 12 'Settings navigation'
+  Click-Control $script:mainWindow (130+$Section) "Settings section $Section"
+}
+function Switch-Timer { Click-Control $script:mainWindow 10 'Timer navigation' }
+function Get-Status { [EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 41 'Timer status').Handle) }
+function Get-TimerSeconds {
+  $text=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 40 'Timer countdown').Handle)
+  if($text -notmatch '^(\d+):(\d{2})$'){throw "Unexpected timer format: $text"}
+  return ([int]$Matches[1]*60+[int]$Matches[2])
+}
+function Wait-ForStatus([string]$Expected,[int]$TimeoutSeconds=8) {
+  $watch=[Diagnostics.Stopwatch]::StartNew();$last=''
+  while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){$last=Get-Status;if($last -like "*$Expected*"){return $last};Start-Sleep -Milliseconds 100}
+  throw "Expected status '$Expected'; last observed '$last'."
+}
+function Get-UiaElements([IntPtr]$Window) {
+  $root=[System.Windows.Automation.AutomationElement]::FromHandle($Window)
+  if(-not $root){return @()}
+  @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object { try { $_.Current.ProcessId -eq $script:appPid } catch { $false } })
+}
+function Capture-ActiveWindow([IntPtr]$Window,[string]$Name) {
+  if(-not $script:interactiveDesktop){Not-Tested "Active desktop screenshot: $Name" 'Runner has no interactive Explorer desktop.';return $null}
+  [void][EBR_PRE_NATIVE]::SetForegroundWindow($Window)
+  Start-Sleep -Milliseconds 250
+  $bounds=Get-Rect $Window
+  if($bounds.Width -lt 100 -or $bounds.Height -lt 80){throw "Invalid screenshot bounds for $Name."}
+  $path=Join-Path $EvidenceDirectory $Name
+  $bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height)
+  $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+  try {$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$bitmap.Save($path,[System.Drawing.Imaging.ImageFormat]::Png)}
+  finally {$graphics.Dispose();$bitmap.Dispose()}
+  if((Get-Item -LiteralPath $path).Length -lt 1024){throw "Active-screen screenshot appears empty: $path"}
+  Pass "Active desktop screenshot: $Name" ([pscustomobject]@{Path=$path;Method='CopyFromScreen';WindowBounds=$bounds})
+  return $path
+}
+function Capture-PrintWindow([IntPtr]$Window,[string]$Name) {
+  $bounds=Get-Rect $Window;$bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+  try {$dc=$graphics.GetHdc();try{$ok=[EBR_PRE_NATIVE]::PrintWindow($Window,$dc,2);if(-not $ok){$ok=[EBR_PRE_NATIVE]::PrintWindow($Window,$dc,0)};if(-not $ok){throw "PrintWindow failed for $Name"}}finally{$graphics.ReleaseHdc($dc)};$path=Join-Path $EvidenceDirectory $Name;$bitmap.Save($path,[System.Drawing.Imaging.ImageFormat]::Png)}
+  finally {$graphics.Dispose();$bitmap.Dispose()}
+  Pass "PrintWindow comparison capture: $Name" ([pscustomobject]@{Path=$path;Method='PrintWindow';WindowBounds=$bounds})
+  return $path
+}
+function Assert-StatusCentered([string]$Name) {
+  $client=Get-ClientGeometry $script:mainWindow
+  $status=Get-Control $script:mainWindow 41 'Timer status'
+  $actual=($status.Rect.Left+$status.Rect.Right)/2.0
+  $expected=$client.Left+$client.Width/2.0
+  $difference=[Math]::Abs($actual-$expected)
+  Require ($difference -le 1.0) "Timer status centered over countdown ($Name)" ([pscustomobject]@{Dpi=[EBR_PRE_NATIVE]::GetDpiForWindow($script:mainWindow);ActualCenter=$actual;ExpectedCenter=$expected;DifferencePx=$difference;ClientWidth=$client.Width})
+}
+function Start-InstalledApp {
+  if($script:appPid){throw 'The test app is already tracked as running.'}
+  $process=Start-Process -FilePath $appExe -PassThru
+  $script:appPid=$process.Id
+  $actual=try{[IO.Path]::GetFullPath((Get-Process -Id $script:appPid -ErrorAction Stop).Path)}catch{''}
+  Require ($actual -ieq $appExe) 'Installed application launches from the installed executable' ([pscustomobject]@{Expected=$appExe;Actual=$actual;Pid=$script:appPid})
+  $script:mainWindow=Get-AppMainWindow $script:appPid
+  if($script:interactiveDesktop){Require ($script:mainWindow -ne [IntPtr]::Zero) 'Installed application creates a visible Win32 main window' $script:appPid}
+  elseif($script:mainWindow -eq [IntPtr]::Zero){Not-Tested 'Installed application GUI launch' 'The runner has no interactive desktop and did not expose a visible app window.';return $false}
+  Pass 'Installed application process started' ([pscustomobject]@{Pid=$script:appPid;Window=('0x{0:X}' -f $script:mainWindow.ToInt64())})
+  return $true
+}
+function Start-InstalledAppFromShortcut {
+  if(-not $script:interactiveDesktop){Not-Tested 'Launching the application from the Start Menu shortcut' 'A visible Windows desktop is required to invoke a shell shortcut.';return Start-InstalledApp}
+  if($script:appPid){throw 'The test app is already tracked as running.'}
+  Start-Process -FilePath $startMenuLink | Out-Null
+  $watch=[Diagnostics.Stopwatch]::StartNew();$found=$null
+  while($watch.Elapsed.TotalSeconds -lt 20){
+    $found=@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue | Where-Object { try{[IO.Path]::GetFullPath($_.Path) -ieq $appExe}catch{$false} }) | Select-Object -First 1
+    if($found){break}
+    Start-Sleep -Milliseconds 150
+  }
+  if(-not $found){throw 'The installed Start Menu shortcut did not launch EyeBreakReminder.exe.'}
+  $script:appPid=$found.Id
+  Require ([IO.Path]::GetFullPath($found.Path) -ieq $appExe) 'Start Menu shortcut launches the installed executable' ([pscustomobject]@{Path=$found.Path;Pid=$found.Id})
+  $script:mainWindow=Get-AppMainWindow $script:appPid
+  Require ($script:mainWindow -ne [IntPtr]::Zero) 'Start Menu shortcut creates a visible app window' $script:appPid
+  return $true
+}
+function Stop-InstalledApp {
+  if(-not $script:appPid){return}
+  $process=Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
+  if($process){
+    if($script:mainWindow -ne [IntPtr]::Zero){$message=[EBR_PRE_NATIVE]::RegisterWindowMessageW('EyeBreakReminder.Exit.Native.1');[void][EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,$message,[IntPtr]::Zero,[IntPtr]::Zero)}
+    if(-not $process.WaitForExit(10000)){
+      # Only terminate the PID started by this isolated runner script.
+      $actual='';try{$actual=[IO.Path]::GetFullPath((Get-Process -Id $script:appPid -ErrorAction Stop).Path)}catch{}
+      if($actual -ieq $appExe){Stop-Process -Id $script:appPid -Force -ErrorAction SilentlyContinue;Pass 'Test app cleanup used its owned process ID' $script:appPid}
+    }
+  }
+  $script:appPid=0;$script:mainWindow=[IntPtr]::Zero
+}
+function Find-WizardButton([IntPtr]$Window,[string]$Pattern) {
+  try {
+    $root=[System.Windows.Automation.AutomationElement]::FromHandle($Window)
+    $all=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+    foreach($item in $all){
+      if($item.Current.ControlType -ne [System.Windows.Automation.ControlType]::Button){continue}
+      if($item.Current.IsOffscreen -or -not $item.Current.IsEnabled){continue}
+      if($item.Current.Name -match $Pattern){return $item}
+    }
+  } catch {}
+  return $null
+}
+function Invoke-Wizard([string]$Path,[string]$Kind) {
+  if(-not $script:interactiveDesktop){Not-Tested "$Kind visible wizard" 'The runner has no interactive Explorer desktop.';return $false}
+  $process=Start-Process -FilePath $Path -PassThru
+  $started=[Diagnostics.Stopwatch]::StartNew();$window=[IntPtr]::Zero
+  while($started.Elapsed.TotalSeconds -lt 20 -and $window -eq [IntPtr]::Zero){
+    foreach($h in [EBR_PRE_NATIVE]::TopWindowsForProcess($process.Id)){if([EBR_PRE_NATIVE]::IsWindowVisible($h)){$window=$h;break}}
+    Start-Sleep -Milliseconds 100
+  }
+  Require ($window -ne [IntPtr]::Zero) "$Kind wizard shows a visible native window" $process.Id
+  $buttonsSeen=[System.Collections.Generic.List[string]]::new()
+  $watch=[Diagnostics.Stopwatch]::StartNew();$stage=0
+  while($watch.Elapsed.TotalMinutes -lt 3){
+    if($process.HasExited){break}
+    [void][EBR_PRE_NATIVE]::SetForegroundWindow($window)
+    $finish=Find-WizardButton $window '^(Finish|Close)$'
+    if($finish){
+      Capture-ActiveWindow $window ("{0}-wizard-finish.png" -f $Kind) | Out-Null
+      $checkboxes=@([System.Windows.Automation.AutomationElement]::FromHandle($window).FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and $_.Current.Name -match 'Open Eye Break Reminder' })
+      if($checkboxes.Count -gt 0){try{$toggle=$checkboxes[0].GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern);if($toggle.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On){$toggle.Toggle()}}catch{}}
+      $finish.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+      [void]$process.WaitForExit(30000)
+      Require ($process.HasExited) "$Kind wizard finishes and exits" ([pscustomobject]@{ExitCode=$process.ExitCode})
+      Require ($process.ExitCode -eq 0) "$Kind wizard exits with code 0" ([pscustomobject]@{ExitCode=$process.ExitCode})
+      return $true
+    }
+    $install=Find-WizardButton $window '^(Install|Uninstall|Remove)$'
+    $next=Find-WizardButton $window '^(Next|Next >|&Next >)$'
+    if($stage -eq 0){Capture-ActiveWindow $window ("{0}-wizard-first-page.png" -f $Kind) | Out-Null;Require ($next -ne $null -or $install -ne $null) "$Kind wizard exposes a usable navigation button" $Kind}
+    if($install){
+      $name=$install.Current.Name
+      if(-not $buttonsSeen.Contains($name)){$buttonsSeen.Add($name)}
+      $install.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();$stage++
+    } elseif($next){
+      $name=$next.Current.Name
+      if(-not $buttonsSeen.Contains($name)){$buttonsSeen.Add($name)}
+      $next.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();$stage++
+    }
+    Start-Sleep -Milliseconds 200
+    foreach($h in [EBR_PRE_NATIVE]::TopWindowsForProcess($process.Id)){if([EBR_PRE_NATIVE]::IsWindowVisible($h)){$window=$h;break}}
+  }
+  if(-not $process.HasExited){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue}
+  throw "$Kind wizard did not reach its finish page within three minutes; buttons seen: $($buttonsSeen -join ', ')"
+}
+function Invoke-SilentInstaller([string]$Path,[string]$Kind) {
+  $process=Start-Process -FilePath $Path -ArgumentList '/S' -PassThru
+  if(-not $process.WaitForExit(120000)){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue;throw "$Kind silent installer timed out."}
+  Require ($process.ExitCode -eq 0) "$Kind silent installer exits successfully" ([pscustomobject]@{ExitCode=$process.ExitCode})
+}
+function Invoke-Install([string]$Path,[string]$Kind,[bool]$UseWizard) {
+  $script:ownedInstall=$true
+  if($UseWizard -and $script:interactiveDesktop){[void](Invoke-Wizard $Path $Kind)}else{Invoke-SilentInstaller $Path $Kind}
+  if(-not (Test-Path -LiteralPath $appExe -PathType Leaf)){throw "$Kind did not create the expected installed executable $appExe"}
+  Require ((Test-Path -LiteralPath $appExe -PathType Leaf)) "$Kind installs executable at the expected per-user path" $appExe
+  Require ((Test-Path -LiteralPath (Join-Path $installDir 'Uninstall.exe') -PathType Leaf)) "$Kind installs its uninstaller" (Join-Path $installDir 'Uninstall.exe')
+}
+function Invoke-Uninstall([string]$Kind,[bool]$UseWizard) {
+  $uninstaller=Join-Path $installDir 'Uninstall.exe'
+  Require (Test-Path -LiteralPath $uninstaller -PathType Leaf) "$Kind uninstaller exists before removal" $uninstaller
+  if($UseWizard -and $script:interactiveDesktop){[void](Invoke-Wizard $uninstaller "$Kind-uninstall")}else{
+    $process=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
+    if(-not $process.WaitForExit(90000)){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue;throw "$Kind uninstaller timed out."}
+    Require ($process.ExitCode -eq 0) "$Kind uninstaller exits successfully" ([pscustomobject]@{ExitCode=$process.ExitCode})
+  }
+  Require (-not (Test-Path -LiteralPath $appExe)) "$Kind removes the installed executable" $appExe
+  Require (-not (Test-Path -LiteralPath $installDir)) "$Kind removes the installation directory" $installDir
+  Require (-not (Test-Path -LiteralPath $startMenuLink)) "$Kind removes its Start Menu shortcut" $startMenuLink
+  Require (-not (Test-Path -LiteralPath $desktopLink)) "$Kind removes an optional desktop shortcut" $desktopLink
+  Require (-not (Test-Path -LiteralPath $uninstallKey)) "$Kind removes its uninstall registration" $uninstallKey
+  Require (-not (Test-Path -LiteralPath $appKey)) "$Kind removes its install-directory registration" $appKey
+  $startupRemaining=@()
+  if(Test-Path -LiteralPath $runKey){$startupRemaining=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties | Where-Object {$_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder'})}
+  Require ($startupRemaining.Count -eq 0) "$Kind removes the owned startup registration" $startupRemaining.Count
+  $script:ownedInstall=$false
+}
+function Get-DesktopCapability {
+  $shell=[EBR_PRE_NATIVE]::GetForegroundWindow()
+  $explorerShell=[EBR_PRE_NATIVE]::FindWindowW('Shell_TrayWnd',$null)
+  $session=[Diagnostics.Process]::GetCurrentProcess().SessionId
+  return [Environment]::UserInteractive -and $session -gt 0 -and $explorerShell -ne [IntPtr]::Zero
+}
+function Get-SavedRegistryValue([string]$Path,[string]$Name) {
+  $exists=Test-Path -LiteralPath $Path
+  $value=$null
+  if($exists){try{$item=Get-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop;$value=$item.$Name}catch{}}
+  [pscustomobject]@{KeyExists=$exists;ValueExists=($null -ne $value);Value=$value}
+}
+function Restore-RegistryValue([string]$Path,[string]$Name,$Saved) {
+  if($Saved.ValueExists){if(-not (Test-Path -LiteralPath $Path)){New-Item -Path $Path -Force | Out-Null};Set-ItemProperty -LiteralPath $Path -Name $Name -Value $Saved.Value -Force}
+  elseif(Test-Path -LiteralPath $Path){
+    Remove-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction SilentlyContinue
+    if(-not $Saved.KeyExists){
+      $remaining=@((Get-ItemProperty -LiteralPath $Path -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object {$_.Name -notmatch '^PS'})
+      if($remaining.Count -eq 0){Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue}
+    }
+  }
+}
+function Set-DwordRegistryValue([string]$Path,[string]$Name,[int]$Value) {
+  if(-not (Test-Path -LiteralPath $Path)){New-Item -Path $Path -Force | Out-Null}
+  if((Get-SavedRegistryValue $Path $Name).ValueExists){Set-ItemProperty -LiteralPath $Path -Name $Name -Value $Value -Force}
+  else{New-ItemProperty -LiteralPath $Path -Name $Name -Value $Value -PropertyType DWord -Force | Out-Null}
+}
+function Get-OfficialRelease([string]$Uri,[string]$Name) {
+  try {
+    $response=Invoke-WebRequest -UseBasicParsing -Uri $Uri -TimeoutSec 20 -Headers @{Accept='application/vnd.github+json';'User-Agent'='EyeBreakReminder-PreReleaseValidation'}
+    $status=[int]$response.StatusCode
+    if($status -ne 200){$script:liveApiError="HTTP $status";return $null}
+    $json=$response.Content | ConvertFrom-Json
+    Pass "$Name official GitHub HTTPS endpoint responds" ([pscustomobject]@{Uri=$Uri;HttpStatus=$status;Unauthenticated=$true})
+    return $json
+  } catch {
+    $status=''
+    try{$status=[string]$_.Exception.Response.StatusCode.value__}catch{}
+    $script:liveApiError=if($status){"HTTP $status"}else{$_.Exception.Message}
+    return $null
+  }
+}
+function Get-AssetDigest($ReleaseAsset,$ManifestText) {
+  if($ReleaseAsset.digest -and $ReleaseAsset.digest -match '^sha256:([0-9a-fA-F]{64})$'){return $Matches[1].ToLowerInvariant()}
+  if($ManifestText){
+    $escaped=[regex]::Escape([string]$ReleaseAsset.name)
+    $match=[regex]::Match($ManifestText,"(?im)^\s*([0-9a-f]{64})\s+\*?$escaped\s*$")
+    if($match.Success){return $match.Groups[1].Value.ToLowerInvariant()}
+  }
+  return ''
+}
+function Download-OfficialV11Installer {
+  $release=Get-OfficialRelease 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tags/v1.1.0' 'Official v1.1.0 release-tag API'
+  if(-not $release){$release=Get-OfficialRelease 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tags/1.1.0' 'Official v1.1.0 release-tag API fallback'}
+  if(-not $release){Not-Tested 'Official v1.1.0 installer availability' "Unauthenticated release API request failed: $script:liveApiError";return $null}
+  if($release.draft -or $release.prerelease -or $release.html_url -notmatch '^https://github\.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/'){
+    Add-Event 'Official v1.1.0 release metadata is stable and points to Eye Break Reminder' 'FAIL' ([pscustomobject]@{Tag=$release.tag_name;Url=$release.html_url;Draft=$release.draft;Prerelease=$release.prerelease});throw 'The v1.1.0 release metadata did not identify an official stable Eye Break Reminder release.'
+  }
+  $setup=@($release.assets | Where-Object { $_.name -eq 'EyeBreakReminder-Setup-x64.exe' }) | Select-Object -First 1
+  if(-not $setup){Not-Tested 'Official v1.1.0 installer download' 'The official v1.1.0 release exposes no EyeBreakReminder-Setup-x64.exe asset.';return $null}
+  if($setup.browser_download_url -notmatch '^https://github\.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/'){
+    Add-Event 'Official v1.1.0 installer URL remains in the Eye Break Reminder repository' 'FAIL' $setup.browser_download_url
+    throw 'Refusing to download an older installer from outside the official Eye Break Reminder release assets.'
+  }
+  $manifestAsset=@($release.assets | Where-Object { $_.name -eq 'EyeBreakReminder-SHA256.txt' }) | Select-Object -First 1
+  $manifestText=''
+  if($manifestAsset){try{$manifestResponse=Invoke-WebRequest -UseBasicParsing -Uri $manifestAsset.browser_download_url -TimeoutSec 20 -Headers @{'User-Agent'='EyeBreakReminder-PreReleaseValidation'};$manifestText=$manifestResponse.Content}catch{}}
+  $path=Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-v1.1.0-Setup-x64.exe'
+  try{Invoke-WebRequest -UseBasicParsing -Uri $setup.browser_download_url -OutFile $path -TimeoutSec 90 -Headers @{'User-Agent'='EyeBreakReminder-PreReleaseValidation'}}
+  catch{Not-Tested 'Official v1.1.0 installer download' "The official asset endpoint could not be reached: $($_.Exception.Message)";return $null}
+  $expectedDigest=Get-AssetDigest $setup $manifestText
+  $actualDigest=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+  if(-not $expectedDigest){Not-Tested 'Official v1.1.0 installer digest verification' 'The release provided no asset digest and no matching SHA-256 manifest entry; the downloaded installer was not executed.';Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue;return $null}
+  Require ($actualDigest -eq $expectedDigest) 'Official v1.1.0 installer matches the release SHA-256 digest' ([pscustomobject]@{Expected=$expectedDigest;Actual=$actualDigest;Asset=$setup.name})
+  $version=(Get-Item -LiteralPath $path).VersionInfo.ProductVersion
+  Require ($version -match '^1\.1\.0(\.0)?$') 'Official v1.1.0 installer has 1.1.0 metadata' $version
+  Pass 'Official v1.1.0 installer downloaded only from the Eye Break Reminder release' ([pscustomobject]@{Path=$path;Asset=$setup.name;Sha256=$actualDigest;ReleaseUrl=$release.html_url})
+  return $path
+}
+function Probe-UiaNames([IntPtr]$Window) {
+  try {@(Get-UiaElements $Window | ForEach-Object { try { $_.Current.Name } catch { '' } } | Where-Object { $_ })} catch {@()}
+}
+function Test-InstalledUpdateCheck {
+  if(-not $script:interactiveDesktop -or $script:mainWindow -eq [IntPtr]::Zero){Not-Tested 'Installed v1.2.0 in-app live update check' 'No interactive app window was available on this runner.';return}
+  Switch-Timer
+  $secondsBefore=Get-TimerSeconds
+  Switch-Settings 5
+  $installed=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 164 'Installed version').Handle)
+  Require ($installed -match '1\.2\.0') 'Installed About screen identifies version 1.2.0' $installed
+  $latestHandle=(Get-Control $script:mainWindow 163 'Latest version label').Handle
+  $statusHandle=(Get-Control $script:mainWindow 162 'Update status').Handle
+  $check=Get-Control $script:mainWindow 160 'Check for Updates'
+  Click-Control $script:mainWindow 160 'Check for Updates'
+  $after=Get-Control $script:mainWindow 160 'Check for Updates'
+  $busyObserved=(-not $after.Enabled)
+  if($busyObserved){Pass 'Installed update check enters a visible busy state' ([EBR_PRE_NATIVE]::Text($statusHandle))}
+  else{Not-Tested 'Live update busy-state timing' 'The live request completed before the UI Automation sample; the controlled delayed-response suite separately exercises the busy state.'}
+  $watch=[Diagnostics.Stopwatch]::StartNew();$responsive=$false
+  while($watch.Elapsed.TotalSeconds -lt 5){if([EBR_PRE_NATIVE]::AppResponds($script:mainWindow,800)){$responsive=$true;break};Start-Sleep -Milliseconds 100}
+  Require $responsive 'Installed application main window remains responsive during the update request' ([pscustomobject]@{ElapsedMilliseconds=$watch.ElapsedMilliseconds})
+  Click-Control $script:mainWindow 10 'Timer navigation during the live update request'
+  $timerWatch=[Diagnostics.Stopwatch]::StartNew();$secondsAfter=$secondsBefore;$timerAdvanced=$false;$timerAdvancedDuringRequest=$false
+  while($timerWatch.Elapsed.TotalSeconds -lt 4){
+    $secondsAfter=Get-TimerSeconds
+    $requestStillBusy=(-not [EBR_PRE_NATIVE]::IsWindowEnabled($check.Handle))
+    if($secondsAfter -lt $secondsBefore){$timerAdvanced=$true;if($requestStillBusy){$timerAdvancedDuringRequest=$true};break}
+    Start-Sleep -Milliseconds 150
+  }
+  Require $timerAdvanced 'Installed timer countdown continues across the real live update workflow' ([pscustomobject]@{Before=$secondsBefore;After=$secondsAfter;WaitMilliseconds=$timerWatch.ElapsedMilliseconds})
+  if($timerAdvancedDuringRequest){Pass 'Installed countdown advances while the real update request is still busy' ([pscustomobject]@{Before=$secondsBefore;After=$secondsAfter})}
+  else{Not-Tested 'Timer tick overlapping the live network request' 'The real response completed before the next displayed countdown tick; the controlled delayed-response GUI acceptance test covers overlap with an active request.'}
+  Switch-Settings 5
+  $watch=[Diagnostics.Stopwatch]::StartNew();$enabled=$false
+  while($watch.Elapsed.TotalSeconds -lt 35){try{$enabled=(Get-Control $script:mainWindow 160 'Check for Updates').Enabled}catch{};if($enabled){break};Start-Sleep -Milliseconds 150}
+  Require $enabled 'Installed update request returns and re-enables its button' ([EBR_PRE_NATIVE]::Text($statusHandle))
+  $latest=[EBR_PRE_NATIVE]::Text($latestHandle);$status=[EBR_PRE_NATIVE]::Text($statusHandle)
+  Capture-ActiveWindow $script:mainWindow 'installed-live-update-check.png' | Out-Null
+  if($script:liveRelease){
+    $tag=[string]$script:liveRelease.tag_name
+    Require ($latest -match [regex]::Escape($tag)) 'Installed app displays the live latest stable version from GitHub' ([pscustomobject]@{ExpectedTag=$tag;LatestLabel=$latest;Status=$status})
+    $officialUrl="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/$tag"
+    Require ($script:liveRelease.html_url -ceq $officialUrl) 'Live release link is the official Eye Break Reminder tag URL' $officialUrl
+    $latestSemVer=[version]([regex]::Match($tag,'^v?(\d+\.\d+\.\d+)').Groups[1].Value)
+    $installedSemVer=[version]'1.2.0'
+    if($latestSemVer -lt $installedSemVer){
+      Require ($status -match 'installed version is newer') 'v1.2.0 reports that it is newer than the published stable release' $status
+      Require (-not (Get-Control $script:mainWindow 161 'Open Official Release').Enabled) 'v1.2.0 does not offer a downgrade to the older stable release' $tag
+    } elseif($latestSemVer -eq $installedSemVer){
+      Require ($status -match 'up to date') 'Installed app reports current when live stable version is equal' $status
+    } else {
+      Require ($status -match 'update is available') 'Installed app reports an available newer stable release' $status
+      Require ((Get-Control $script:mainWindow 161 'Open Official Release').Enabled) 'Official release button enables for an available update' $officialUrl
+    }
+  } else {
+    $latestMatch=[regex]::Match($latest,'(?i)^Latest stable version:\s*v?(\d+\.\d+\.\d+)\s*$')
+    if($latestMatch.Success){
+      $appLatest=[version]$latestMatch.Groups[1].Value
+      $installedSemVer=[version]'1.2.0'
+      Require (($appLatest -lt $installedSemVer -and $status -match 'installed version is newer') -or ($appLatest -eq $installedSemVer -and $status -match 'up to date') -or ($appLatest -gt $installedSemVer -and $status -match 'update is available')) 'Installed app compares its live version label with v1.2.0 correctly' ([pscustomobject]@{Latest=$latest;Status=$status})
+      if($appLatest -lt $installedSemVer){Require (-not (Get-Control $script:mainWindow 161 'Open Official Release').Enabled) 'Installed app does not offer a downgrade when live GitHub is older' $latest}
+      Pass 'Installed app displayed and compared a live version despite the separate API probe failing' ([pscustomobject]@{Latest=$latest;Status=$status})
+      Not-Tested 'Independent live API response and official release-link cross-check' "PowerShell API probe was unavailable: $script:liveLatestError"
+    } else {
+      Require ($status -notmatch 'up to date|update is available|installed version is newer') 'App does not claim a version result when the live API request failed' ([pscustomobject]@{NetworkError=$script:liveLatestError;Status=$status;Latest=$latest})
+      Pass 'Installed app shows an understandable honest network/API error' $status
+      Not-Tested 'Live version comparison inside the installed app' "GitHub live stable release endpoint unavailable: $script:liveLatestError"
+    }
+  }
+}
+function Test-UiaAndKeyboard {
+  $names=Probe-UiaNames $script:mainWindow
+  Require (@('Timer','History','Settings' | Where-Object { $names -contains $_ }).Count -eq 3) 'UI Automation exposes the main navigation names' $names
+  $elements=Get-UiaElements $script:mainWindow
+  $named=@($elements | Where-Object { $_.Current.IsControlElement -and $_.Current.Name -and $_.Current.IsEnabled -and -not $_.Current.IsOffscreen })
+  Require ($named.Count -ge 10) 'UI Automation exposes enabled named controls' ([pscustomobject]@{NamedEnabledVisibleControls=$named.Count;Examples=@($named | Select-Object -First 20 | ForEach-Object {$_.Current.Name})})
+  if(-not $script:interactiveDesktop){Not-Tested 'Keyboard-only focus order' 'No interactive Windows desktop was exposed.';return}
+  $nav=Get-Control $script:mainWindow 10 'Timer navigation'
+  Focus-AppControl $nav.Handle
+  [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
+  Start-Sleep -Milliseconds 100
+  $focus=[EBR_PRE_NATIVE]::GetFocus();$focusPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($focus,[ref]$focusPid)
+  $focused=@($elements | Where-Object { $_.Current.HasKeyboardFocus } | ForEach-Object {$_.Current.Name})
+  Require ($focusPid -eq $script:appPid -or $focused.Count -gt 0) 'Keyboard Tab input moves focus within the installed application' ([pscustomobject]@{FocusWindow=('0x{0:X}' -f $focus.ToInt64());FocusProcessId=$focusPid;AutomationFocus=$focused})
+  Pass 'Screen-reader accessible names and focus properties are available through Windows UI Automation' ([pscustomobject]@{NamedControlCount=$named.Count;FocusedNames=$focused})
+  Not-Tested 'Narrator or other screen-reader speech' 'UI Automation properties were inspected; no screen-reader speech engine was started or verified.'
+}
+function Test-OsAppearanceAndTextScale {
+  if(-not $script:interactiveDesktop){
+    Not-Tested 'Actual Windows light/dark appearance switching' 'No interactive Windows desktop was exposed.'
+    Not-Tested 'Windows High Contrast / Forced Colors integration' 'No interactive Windows desktop was exposed.'
+    Not-Tested 'Windows text scaling preference change' 'No interactive Windows desktop was exposed.'
+    return
+  }
+  foreach($entry in @(@($personalizeKey,'AppsUseLightTheme'),@($personalizeKey,'SystemUseLightTheme'),@($accessibilityKey,'TextScaleFactor'))){
+    $script:osOriginal["$($entry[0])|$($entry[1])"]=Get-SavedRegistryValue $entry[0] $entry[1]
+  }
+  $flags=[uint32]0
+  if([EBR_PRE_NATIVE]::GetHighContrast([ref]$flags)){$script:highContrastOriginal=$flags}else{$script:highContrastOriginal=$null}
+  try {
+    Switch-Settings 4
+    Set-Combo $script:mainWindow 106 0 'Follow Windows Theme'
+    Switch-Timer
+    if(-not (Test-Path -LiteralPath $personalizeKey)){New-Item -Path $personalizeKey -Force | Out-Null}
+    Set-DwordRegistryValue $personalizeKey 'AppsUseLightTheme' 1
+    Set-DwordRegistryValue $personalizeKey 'SystemUseLightTheme' 1
+    [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'ImmersiveColorSet')
+    [void][EBR_PRE_NATIVE]::SendMessageW($script:mainWindow,0x031A,[IntPtr]::Zero,[IntPtr]::Zero)
+    Start-Sleep -Milliseconds 350
+    $lightPixel=[EBR_PRE_NATIVE]::ClientPixel($script:mainWindow,8,[Math]::Max(8,(Get-ClientGeometry $script:mainWindow).Height-8))
+    Capture-ActiveWindow $script:mainWindow 'follow-windows-light-active.png' | Out-Null
+    Set-DwordRegistryValue $personalizeKey 'AppsUseLightTheme' 0
+    Set-DwordRegistryValue $personalizeKey 'SystemUseLightTheme' 0
+    [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'ImmersiveColorSet')
+    [void][EBR_PRE_NATIVE]::SendMessageW($script:mainWindow,0x031A,[IntPtr]::Zero,[IntPtr]::Zero)
+    Start-Sleep -Milliseconds 350
+    $darkPixel=[EBR_PRE_NATIVE]::ClientPixel($script:mainWindow,8,[Math]::Max(8,(Get-ClientGeometry $script:mainWindow).Height-8))
+    Capture-ActiveWindow $script:mainWindow 'follow-windows-dark-active.png' | Out-Null
+    Require ($lightPixel -ne $darkPixel -and $lightPixel -ne 0xffffffff -and $darkPixel -ne 0xffffffff) 'Follow Windows changes the installed app palette after actual per-user light/dark setting changes' ([pscustomobject]@{LightPixel=('0x{0:X8}' -f $lightPixel);DarkPixel=('0x{0:X8}' -f $darkPixel);Notification='ImmersiveColorSet and WM_THEMECHANGED'})
+    $flags=[uint32]0
+    if($script:highContrastOriginal -ne $null -and [EBR_PRE_NATIVE]::SetHighContrast(($script:highContrastOriginal -bor 1))){
+      [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')
+      [void][EBR_PRE_NATIVE]::SendMessageW($script:mainWindow,0x031A,[IntPtr]::Zero,[IntPtr]::Zero)
+      [void][EBR_PRE_NATIVE]::GetHighContrast([ref]$flags)
+      Require (($flags -band 1) -ne 0) 'Windows reports High Contrast enabled through SPI_GETHIGHCONTRAST' ([pscustomobject]@{Flags=$flags})
+      Start-Sleep -Milliseconds 300
+      Capture-ActiveWindow $script:mainWindow 'follow-windows-forced-colors-active.png' | Out-Null
+      $forcedPixel=[EBR_PRE_NATIVE]::ClientPixel($script:mainWindow,8,[Math]::Max(8,(Get-ClientGeometry $script:mainWindow).Height-8))
+      Require ($forcedPixel -ne $darkPixel) 'Follow Windows repaints with Windows Forced Colors palette' ([pscustomobject]@{DarkPixel=('0x{0:X8}' -f $darkPixel);ForcedColorsPixel=('0x{0:X8}' -f $forcedPixel)})
+      [void][EBR_PRE_NATIVE]::SetHighContrast($script:highContrastOriginal)
+      [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')
+      Pass 'Windows High Contrast system setting restored after the test'
+    } else {Not-Tested 'Windows High Contrast / Forced Colors integration' 'SPI_SET­HIGHCONTRAST was unavailable or rejected by the runner; no Forced Colors result is claimed.'}
+    $dpi=[EBR_PRE_NATIVE]::GetDpiForWindow($script:mainWindow)
+    $priorDpi=144
+    if($dpi -ne $priorDpi){Pass 'Installed application exercised at an additional DPI versus the earlier 144-DPI run' ([pscustomobject]@{EarlierDpi=$priorDpi;RunnerDpi=$dpi})}
+    else {Not-Tested 'Additional DPI configuration' 'The runner reported the same 144 DPI used in the earlier GUI campaign; changing display scaling requires an additional desktop configuration.'}
+    $beforeRect=(Get-Control $script:mainWindow 22 'Take a break button').Rect
+    $scaleValue=Get-SavedRegistryValue $accessibilityKey 'TextScaleFactor'
+    if(-not (Test-Path -LiteralPath $accessibilityKey)){New-Item -Path $accessibilityKey -Force | Out-Null}
+    Set-DwordRegistryValue $accessibilityKey 'TextScaleFactor' 150
+    [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')
+    [void][EBR_PRE_NATIVE]::SendMessageW($script:mainWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero)
+    Start-Sleep -Milliseconds 350
+    $afterRect=(Get-Control $script:mainWindow 22 'Take a break button').Rect
+    Require ($afterRect.Height -gt $beforeRect.Height) 'Installed app responds to a 150% Windows TextScaleFactor preference' ([pscustomobject]@{BeforeButtonHeight=$beforeRect.Height;AfterButtonHeight=$afterRect.Height;RegistryValue=150})
+    Assert-StatusCentered '150% Windows text scale'
+    Capture-ActiveWindow $script:mainWindow 'text-scale-150-active.png' | Out-Null
+    Restore-RegistryValue $accessibilityKey 'TextScaleFactor' $scaleValue
+    [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')
+    Pass 'Windows text-scale preference restored after the test'
+  } finally {
+    if($script:highContrastOriginal -ne $null){[void][EBR_PRE_NATIVE]::SetHighContrast($script:highContrastOriginal);[void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')}
+    foreach($key in $script:osOriginal.Keys){$parts=$key.Split('|',2);Restore-RegistryValue $parts[0] $parts[1] $script:osOriginal[$key]}
+    if($script:mainWindow -ne [IntPtr]::Zero){[void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'ImmersiveColorSet');[void][EBR_PRE_NATIVE]::SendMessageW($script:mainWindow,0x031A,[IntPtr]::Zero,[IntPtr]::Zero)}
+  }
+}
+function Assert-InstallationMetadata([string]$ExpectedVersion) {
+  $exeVersion=(Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
+  Require ($exeVersion -match "^$([regex]::Escape($ExpectedVersion))(\.0)?$") "Installed executable metadata is $ExpectedVersion" $exeVersion
+  $registered=Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Stop
+  Require ($registered.DisplayVersion -eq $ExpectedVersion) "Installed Apps registration is $ExpectedVersion" $registered.DisplayVersion
+  Require ([IO.Path]::GetFullPath($registered.InstallLocation) -ieq [IO.Path]::GetFullPath($installDir)) 'Installed Apps registration points at the expected location' $registered.InstallLocation
+  $registeredDir=(Get-ItemProperty -LiteralPath $appKey -Name InstallDir -ErrorAction Stop).InstallDir
+  Require ([IO.Path]::GetFullPath($registeredDir) -ieq [IO.Path]::GetFullPath($installDir)) 'Application install registry entry points at the expected location' $registeredDir
+  $shortcut=New-Object -ComObject WScript.Shell
+  $link=$shortcut.CreateShortcut($startMenuLink)
+  Require ([IO.Path]::GetFullPath($link.TargetPath) -ieq [IO.Path]::GetFullPath($appExe)) 'Start Menu shortcut targets the installed executable' $link.TargetPath
+  Require ((Test-Path -LiteralPath (Join-Path $installDir 'README.md')) -and (Test-Path -LiteralPath (Join-Path $installDir 'PRIVACY.md')) -and (Test-Path -LiteralPath (Join-Path $installDir 'VERIFICATION.md'))) 'Installed documentation files are present' $installDir
+  $startupValues=@()
+  if(Test-Path -LiteralPath $runKey){$startupValues=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder' })}
+  Require ($startupValues.Count -le 1) 'No duplicate Eye Break Reminder startup registration exists' $startupValues.Count
+  Pass 'Per-user install layout and version metadata' ([pscustomobject]@{InstallDirectory=$installDir;ExecutableVersion=$exeVersion;DisplayVersion=$registered.DisplayVersion;StartMenuLink=$startMenuLink;Uninstaller=(Join-Path $installDir 'Uninstall.exe')})
+}
+function Start-And-CheckApp([string]$ExpectedVersion) {
+  Assert-InstallationMetadata $ExpectedVersion
+  $visible=if($script:interactiveDesktop){Start-InstalledAppFromShortcut}else{Start-InstalledApp}
+  if(-not $visible){return $false}
+  if(-not $script:interactiveDesktop){Not-Tested 'Start Menu shortcut launch' 'The runner has no interactive Explorer desktop; shortcut target path was package-checked only.'}
+  $root=[System.Windows.Automation.AutomationElement]::FromHandle($script:mainWindow)
+  $names=Probe-UiaNames $script:mainWindow
+  Pass 'Installed app launched and exposes its native UI Automation tree' ([pscustomobject]@{WindowTitle=[EBR_PRE_NATIVE]::Text($script:mainWindow);NameCount=$names.Count;Names=@($names | Select-Object -First 20)})
+  return $true
+}
+function Test-FreshInstallApp {
+  if(-not $script:interactiveDesktop -or $script:mainWindow -eq [IntPtr]::Zero){Not-Tested 'Installed app settings, History, timer layout and UI interactions' 'No interactive app window was available.';return}
+  $names=Probe-UiaNames $script:mainWindow
+  Require (@('Timer','History','Settings' | Where-Object { $names -contains $_ }).Count -eq 3) 'Installed app exposes Timer, History and Settings navigation' $names
+  Switch-Settings 4
+  Require ((Get-Combo $script:mainWindow 106 'Theme') -eq 2) 'Fresh v1.2.0 installation keeps the dark theme default' 2
+  Set-Combo $script:mainWindow 106 1 'Theme'
+  Switch-Settings 0
+  Set-Edit $script:mainWindow 100 '1' 'Work interval'
+  Set-Edit $script:mainWindow 101 '30' 'Break duration'
+  Switch-Settings 2
+  Set-Check $script:mainWindow 32 $false 'Alarm enabled'
+  Switch-Timer
+  Click-Control $script:mainWindow 21 'Reset one-minute work timer'
+  Require ((Wait-ForStatus 'Running') -like '*Running*') 'Installed app timer starts in the work state'
+  Assert-StatusCentered 'installed work state'
+  Capture-ActiveWindow $script:mainWindow 'installed-timer-work-active.png' | Out-Null
+  Capture-PrintWindow $script:mainWindow 'installed-timer-printwindow-comparison.png' | Out-Null
+  $dpi=[EBR_PRE_NATIVE]::GetDpiForWindow($script:mainWindow)
+  foreach($size in @(@{Width=680;Height=660},@{Width=1100;Height=820})){
+    $screenWidth=[EBR_PRE_NATIVE]::GetSystemMetrics(0);$screenHeight=[EBR_PRE_NATIVE]::GetSystemMetrics(1)
+    $width=[Math]::Min([int]$size.Width,$screenWidth-60);$height=[Math]::Min([int]$size.Height,$screenHeight-60)
+    [void][EBR_PRE_NATIVE]::SetWindowPos($script:mainWindow,[IntPtr]::Zero,20,20,$width,$height,0x0004 -bor 0x0010)
+    Start-Sleep -Milliseconds 250
+    Assert-StatusCentered "installed $width x $height at $dpi DPI"
+  }
+  [void][EBR_PRE_NATIVE]::SetWindowPos($script:mainWindow,[IntPtr]::Zero,80,60,820,720,0x0004 -bor 0x0010)
+  Test-InstalledUpdateCheck
+  Switch-Timer
+  Click-Control $script:mainWindow 22 'Manual break for installed history and reminder test'
+  $breakWait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
+  while($breakWait.Elapsed.TotalSeconds -lt 10){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$breakWindow=$breaks[0];break};Start-Sleep -Milliseconds 100}
+  Require ($breakWindow -ne [IntPtr]::Zero) 'Installed app opens the native eye-break reminder window'
+  Require ((Wait-ForStatus 'Taking an eye break') -like '*Taking an eye break*') 'Installed app clearly labels the break state'
+  Capture-ActiveWindow $breakWindow 'installed-reminder-active.png' | Out-Null
+  Require ([EBR_PRE_NATIVE]::Text((Get-Control $breakWindow 40 'Break countdown').Handle) -match '^\d+:\d{2}$') 'Installed reminder exposes the remaining break duration'
+  Click-Control $breakWindow 23 'Acknowledge the installed app break'
+  Require ((Wait-ForStatus 'Running') -like '*Running*') 'Installed app returns to work after acknowledging a break'
+  $historyPath=Join-Path $dataDir 'history.dat'
+  $historyLines=@()
+  if(Test-Path -LiteralPath $historyPath){$historyLines=@(Get-Content -LiteralPath $historyPath | Where-Object { $_.Trim() })}
+  Require ($historyLines.Count -ge 1) 'Installed app records an acknowledged break in history' ([pscustomobject]@{HistoryRecords=$historyLines.Count;Path=$historyPath})
+  Switch-Settings 4
+  Switch-Timer
+  $settingsPath=Join-Path $dataDir 'settings.ini'
+  $settings=Get-Content -LiteralPath $settingsPath -Raw
+  Require ($settings -match '(?m)^theme=1$' -and $settings -match '(?m)^workMinutes=1$' -and $settings -match '(?m)^breakSeconds=30$') 'Installed app persists theme and configured schedule values' ([pscustomobject]@{Settings=$settingsPath})
+  $hashBefore=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
+  $restore=Start-InstalledApp
+  if($restore){
+    Switch-Settings 4
+    Require ((Get-Combo $script:mainWindow 106 'Theme') -eq 1) 'Installed app restores the selected theme after restart'
+    Switch-Settings 0
+    Require ([EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 100 'Restored work interval').Handle) -eq '1') 'Installed app restores the work interval after restart'
+    $listId=200
+    Switch-Settings 0
+    Switch-Timer
+    Click-Control $script:mainWindow 11 'History navigation'
+    $list=Get-Control $script:mainWindow $listId 'History list'
+    $rows=[EBR_PRE_NATIVE]::SendMessageW($list.Handle,0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+    Require ($rows -ge 1) 'Installed app reloads history into the visible History list after restart' $rows
+    Capture-ActiveWindow $script:mainWindow 'installed-history-statistics-active.png' | Out-Null
+  }
+  $hashAfter=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
+  Require ($hashBefore -eq $hashAfter) 'Installed app preserves the saved history bytes across restart' ([pscustomobject]@{Before=$hashBefore;After=$hashAfter})
+  if($restore){Test-OsAppearanceAndTextScale;Test-UiaAndKeyboard;Stop-InstalledApp}
+}
+function Open-TrayContextMenu {
+  $rect=New-Object EBR_PRE_RECT
+  if(-not [EBR_PRE_NATIVE]::GetTrayRect($script:mainWindow,1,[ref]$rect)){return [IntPtr]::Zero}
+  [void][EBR_PRE_NATIVE]::SetCursorPos([int](($rect.Left+$rect.Right)/2),[int](($rect.Top+$rect.Bottom)/2))
+  [EBR_PRE_NATIVE]::mouse_event(0x0008,0,0,0,[UIntPtr]::Zero)
+  [EBR_PRE_NATIVE]::mouse_event(0x0010,0,0,0,[UIntPtr]::Zero)
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds -lt 5){
+    $menus=@([EBR_PRE_NATIVE]::TopWindows() | Where-Object { [EBR_PRE_NATIVE]::ClassName($_) -eq '#32768' -and [EBR_PRE_NATIVE]::IsWindowVisible($_) })
+    if($menus.Count -eq 1){return $menus[0]}
+    Start-Sleep -Milliseconds 100
+  }
+  return [IntPtr]::Zero
+}
+function Get-TrayMenuItems([IntPtr]$MenuWindow) {
+  $menuRoot=[System.Windows.Automation.AutomationElement]::FromHandle($MenuWindow)
+  @($menuRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::MenuItem -and $_.Current.Name })
+}
+function Invoke-TrayCommand([string]$Name) {
+  $menu=Open-TrayContextMenu
+  if($menu -eq [IntPtr]::Zero){throw "Could not open the actual Windows tray menu to select '$Name'."}
+  $items=Get-TrayMenuItems $menu
+  $item=@($items | Where-Object { $_.Current.Name -eq $Name }) | Select-Object -First 1
+  if(-not $item){throw "The native tray menu did not expose an accessible '$Name' command. Found: $(@($items | ForEach-Object {$_.Current.Name}) -join ' | ')"}
+  try{$item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}
+  catch{$item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}
+  Start-Sleep -Milliseconds 350
+  Pass "Tray menu command invoked: $Name" $Name
+}
+function Test-ShellTrayAndNaturalNotification {
+  if(-not $script:interactiveDesktop -or $script:mainWindow -eq [IntPtr]::Zero){
+    Not-Tested 'Real system tray icon/menu, actions, hide/reopen and duplicate instance behavior' 'No interactive Explorer taskbar was exposed.'
+    Not-Tested 'Windows Shell reminder notification surface' 'No interactive Explorer taskbar was exposed.'
+    Not-Tested 'Production audio playback' 'Hosted runners do not provide a physically verified speaker output.'
+    return
+  }
+  $tray=New-Object EBR_PRE_RECT
+  if(-not [EBR_PRE_NATIVE]::GetTrayRect($script:mainWindow,1,[ref]$tray)){
+    Not-Tested 'Real system tray icon/menu, actions, hide/reopen and duplicate instance behavior' 'Shell_NotifyIconGetRect did not expose the app icon in the runner desktop.'
+    Not-Tested 'Windows Shell reminder notification surface' 'The application tray icon was not exposed by the shell.'
+    Not-Tested 'Production audio playback' 'Hosted runners do not provide a physically verified speaker output.'
+    return
+  }
+  Require ($tray.Right -gt $tray.Left -and $tray.Bottom -gt $tray.Top) 'Shell exposes a registered Eye Break Reminder tray icon rectangle' $tray
+  Switch-Timer
+  Click-Control $script:mainWindow 21 'Reset work timer before tray action checks'
+  $menu=Open-TrayContextMenu
+  if($menu -eq [IntPtr]::Zero){Not-Tested 'Actual tray context menu rendering and actions' 'The icon rectangle was present but no native context-menu window appeared after a right-click.';return}
+  Pass 'Actual tray context menu opened as a native popup' ([pscustomobject]@{MenuWindow=('0x{0:X}' -f $menu.ToInt64())})
+  Capture-ActiveWindow $menu 'tray-context-menu-active.png' | Out-Null
+  $menuItems=Get-TrayMenuItems $menu
+  $menuNames=@($menuItems | ForEach-Object {$_.Current.Name})
+  Require (@('Open Eye Break Reminder','Pause timer','Take a break now','Settings','Exit' | Where-Object {$menuNames -contains $_}).Count -ge 5) 'Tray menu exposes the expected accessible native commands' $menuNames
+  Invoke-TrayCommand 'Pause timer'
+  Require ((Wait-ForStatus 'Paused') -like '*Paused*') 'Tray Pause command pauses the installed timer' (Get-Status)
+  Invoke-TrayCommand 'Resume timer'
+  Require ((Wait-ForStatus 'Running') -like '*Running*') 'Tray Resume command resumes the installed timer' (Get-Status)
+  Invoke-TrayCommand 'Take a break now'
+  $breaks=Get-BreakWindow $script:appPid
+  Require ($breaks.Count -eq 1) 'Tray Take a break command opens the installed reminder window' $breaks.Count
+  Click-Control $breaks[0] 24 'Skip break started from the tray menu'
+  Require ((Wait-ForStatus 'Running') -like '*Running*') 'Tray-triggered break can be dismissed' (Get-Status)
+  [void][EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
+  Start-Sleep -Milliseconds 250
+  Require (-not [EBR_PRE_NATIVE]::IsWindowVisible($script:mainWindow)) 'Closing the app window keeps it running in the system tray'
+  Invoke-TrayCommand 'Open Eye Break Reminder'
+  Require ([EBR_PRE_NATIVE]::IsWindowVisible($script:mainWindow)) 'Tray Open command restores the installed app window'
+  $second=Start-Process -FilePath $appExe -PassThru
+  [void]$second.WaitForExit(8000)
+  Start-Sleep -Milliseconds 300
+  $owned=@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue | Where-Object { try{[IO.Path]::GetFullPath($_.Path) -ieq $appExe}catch{$false} })
+  $secondExit=if($second.HasExited){$second.ExitCode}else{'still running'}
+  Require ($owned.Count -eq 1) 'Second app launch is routed to the running instance without a duplicate process' ([pscustomobject]@{OwnedProcessCount=$owned.Count;PrimaryPid=$script:appPid;SecondLaunchExitCode=$secondExit})
+  Invoke-TrayCommand 'Exit'
+  $primary=Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
+  if($primary){Require ($primary.WaitForExit(10000)) 'Tray Exit command terminates the application process' $script:appPid}else{Pass 'Tray Exit command terminates the application process' $script:appPid}
+  $script:appPid=0;$script:mainWindow=[IntPtr]::Zero
+  if(-not (Start-InstalledApp)){Not-Tested 'Automatic break, Shell notification and snooze after tray restart' 'The runner stopped exposing the installed GUI after restarting from tray exit.';return}
+  Switch-Settings 3
+  Set-Check $script:mainWindow 108 $true 'Windows notifications enabled'
+  Switch-Timer
+  Click-Control $script:mainWindow 21 'Reset real one-minute notification timer'
+  [void][EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
+  $dueWatch=[Diagnostics.Stopwatch]::StartNew();$naturalBreak=[IntPtr]::Zero
+  while($dueWatch.Elapsed.TotalSeconds -lt 80){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$naturalBreak=$breaks[0];break};Start-Sleep -Milliseconds 200}
+  Require ($naturalBreak -ne [IntPtr]::Zero) 'Installed one-minute work timer reaches its real scheduled break after hide-to-tray' ([pscustomobject]@{WaitSeconds=[Math]::Round($dueWatch.Elapsed.TotalSeconds,1)})
+  Capture-ActiveWindow $naturalBreak 'installed-natural-reminder-after-hidden-work.png' | Out-Null
+  $shellNames=@()
+  try {
+    $uiaRoot=[System.Windows.Automation.AutomationElement]::RootElement
+    $desktopElements=$uiaRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+    $shellNames=@($desktopElements | ForEach-Object {try{$_.Current.Name}catch{''}} | Where-Object {$_ -match 'Time to rest your eyes|Look 20 feet'})
+  } catch {}
+  if($shellNames.Count -gt 0){Pass 'Windows Shell reminder notification surface observed in the desktop UIA tree' $shellNames}
+  else{Not-Tested 'Windows Shell notification surface acceptance/dismissal' 'The real hidden-app timer reached break mode and the reminder window appeared, but no separate Shell balloon/toast surface was observed. The in-app reminder is not counted as a toast.'}
+  Click-Control $naturalBreak 25 'Snooze one minute in the installed application'
+  Invoke-TrayCommand 'Open Eye Break Reminder'
+  Require ((Wait-ForStatus 'Snoozed') -like '*Snoozed*') 'Installed app clearly reports Snoozed after a real break reminder is snoozed'
+  [void][EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
+  $snoozeWatch=[Diagnostics.Stopwatch]::StartNew();$returned=[IntPtr]::Zero
+  while($snoozeWatch.Elapsed.TotalSeconds -lt 80){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$returned=$breaks[0];break};Start-Sleep -Milliseconds 200}
+  Require ($returned -ne [IntPtr]::Zero) 'Installed one-minute snooze reschedules a real reminder' ([pscustomobject]@{WaitSeconds=[Math]::Round($snoozeWatch.Elapsed.TotalSeconds,1)})
+  Click-Control $returned 24 'Dismiss the snoozed reminder'
+  Invoke-TrayCommand 'Open Eye Break Reminder'
+  Require ((Wait-ForStatus 'Running') -like '*Running*') 'Installed timer returns to work after the snoozed reminder is dismissed'
+  Stop-InstalledApp
+  Not-Tested 'Production audio playback' 'Hosted runners do not provide physically verified speaker hardware; alarm sounds were disabled during unattended timer tests.'
+}
+function Test-UpgradeFromV11([string]$OldInstaller) {
+  if(-not $OldInstaller){Not-Tested 'Official v1.1.0 to v1.2.0 in-place upgrade, settings/history/statistics/startup migration' 'No independently digest-verified official v1.1.0 installer was available.';return}
+  if(Test-Path -LiteralPath $dataDir){Remove-Item -LiteralPath $dataDir -Recurse -Force}
+  Invoke-Install $OldInstaller 'official v1.1.0' $false
+  Assert-InstallationMetadata '1.1.0'
+  if(-not (Start-And-CheckApp '1.1.0')){Not-Tested 'v1.1.0 application UI state preparation for upgrade' 'No interactive app window was available.';Not-Tested 'Official v1.1.0 to v1.2.0 in-place upgrade and migration' 'The old application could not be prepared through its actual UI.';Stop-InstalledApp;Invoke-Uninstall 'v1.1.0 pre-upgrade' $false;return}
+  if(-not $script:interactiveDesktop){Not-Tested 'v1.1.0 settings/history preparation through the actual UI' 'No interactive Explorer desktop was exposed.';Not-Tested 'Official v1.1.0 to v1.2.0 in-place upgrade and migration' 'No interactive session was available to configure and verify legacy settings/history.';Stop-InstalledApp;Invoke-Uninstall 'v1.1.0 pre-upgrade' $false;return}
+  # The v1.1 UI retains the same native control IDs for intervals, alarm, General, History, and manual breaks.
+  Switch-Settings 0
+  Set-Edit $script:mainWindow 100 '7' 'v1.1 work interval'
+  Set-Edit $script:mainWindow 101 '45' 'v1.1 break duration'
+  Switch-Settings 2
+  Set-Check $script:mainWindow 32 $false 'v1.1 alarm enabled'
+  Switch-Settings 4
+  Set-Check $script:mainWindow 111 $true 'v1.1 start with Windows'
+  Switch-Timer
+  Click-Control $script:mainWindow 22 'v1.1 manual break for migration history'
+  $breakWait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
+  while($breakWait.Elapsed.TotalSeconds -lt 10){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$breakWindow=$breaks[0];break};Start-Sleep -Milliseconds 100}
+  Require ($breakWindow -ne [IntPtr]::Zero) 'v1.1 creates a real manual break window before upgrade'
+  Click-Control $breakWindow 23 'Complete v1.1 migration history break'
+  Stop-InstalledApp
+  $settingsPath=Join-Path $dataDir 'settings.ini';$historyPath=Join-Path $dataDir 'history.dat'
+  $v11Settings=Get-Content -LiteralPath $settingsPath -Raw
+  $v11History=@(Get-Content -LiteralPath $historyPath | Where-Object {$_.Trim()})
+  Require ($v11Settings -match '(?m)^workMinutes=7$' -and $v11Settings -match '(?m)^breakSeconds=45$' -and $v11Settings -match '(?m)^startup=1$') 'v1.1 representative settings persisted before upgrade' ([pscustomobject]@{SettingsPath=$settingsPath})
+  Require ($v11History.Count -ge 1) 'v1.1 generated a history/statistics record before upgrade' $v11History.Count
+  $beforeHistory=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
+  Invoke-Install $InstallerPath 'v1.2.0 in-place upgrade from v1.1.0' $false
+  Assert-InstallationMetadata '1.2.0'
+  $afterSettings=Get-Content -LiteralPath $settingsPath -Raw
+  Require ($afterSettings -match '(?m)^workMinutes=7$' -and $afterSettings -match '(?m)^breakSeconds=45$' -and $afterSettings -match '(?m)^startup=1$') 'v1.2.0 preserves v1.1.0 settings and startup preference during upgrade' ([pscustomobject]@{SettingsPath=$settingsPath})
+  $afterHistory=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
+  Require ($afterHistory -eq $beforeHistory) 'v1.2.0 preserves v1.1.0 history bytes during in-place upgrade' ([pscustomobject]@{Before=$beforeHistory;After=$afterHistory;Rows=$v11History.Count})
+  $runValues=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder' })
+  Require ($runValues.Count -eq 1) 'In-place upgrade leaves exactly one Eye Break Reminder startup registration' $runValues.Count
+  if(Start-And-CheckApp '1.2.0'){
+    Switch-Settings 4
+    Require ((Get-Combo $script:mainWindow 106 'Theme') -eq 2) 'Legacy v1.1 preferences default to the compatible dark theme after upgrade' 2
+    Switch-Settings 0
+    Require ([EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 100 'Migrated work interval').Handle) -eq '7') 'Upgraded app loads v1.1 work interval' '7'
+    Click-Control $script:mainWindow 11 'History after upgrade'
+    $list=Get-Control $script:mainWindow 200 'Migrated history list'
+    $rows=[EBR_PRE_NATIVE]::SendMessageW($list.Handle,0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+    Require ($rows -ge $v11History.Count) 'Upgraded app loads v1.1 history rows and statistics source data' ([pscustomobject]@{Before=$v11History.Count;VisibleRows=$rows})
+    Capture-ActiveWindow $script:mainWindow 'upgrade-v11-history-statistics-active.png' | Out-Null
+    Stop-InstalledApp
+  }
+  Invoke-Uninstall 'v1.2.0 post-upgrade' $script:interactiveDesktop
+  $settingsStill=Test-Path -LiteralPath $settingsPath;$historyStill=Test-Path -LiteralPath $historyPath
+  Require ($settingsStill -and $historyStill) 'Final uninstall preserves the runner-created settings and history for cleanup verification' ([pscustomobject]@{SettingsPreserved=$settingsStill;HistoryPreserved=$historyStill})
+}
+
+try {
+  Start-Transcript -LiteralPath (Join-Path $EvidenceDirectory 'windows-pre-release-acceptance.log') -Force | Out-Null
+  $script:transcriptStarted=$true
+  $computer=Get-CimInstance Win32_OperatingSystem
+  $script:interactiveDesktop=Get-DesktopCapability
+  Pass 'Windows runner identity and interactive capability recorded' ([pscustomobject]@{Caption=$computer.Caption;Version=$computer.Version;Build=$computer.BuildNumber;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;SessionName=$env:SESSIONNAME;UserInteractive=[Environment]::UserInteractive;ExplorerTaskbar=([EBR_PRE_NATIVE]::FindWindowW('Shell_TrayWnd',$null) -ne [IntPtr]::Zero);InteractiveDesktop=$script:interactiveDesktop;SourceCommit=$env:GITHUB_SHA;RunUrl=if($env:GITHUB_RUN_ID){"$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"}else{''}})
+  $running=@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue)
+  Require ($running.Count -eq 0) 'No Eye Break Reminder process was running in the disposable runner before testing' $running.Count
+  $preExisting=@($installDir,$dataDir,$startMenuDir,$desktopLink) | Where-Object {Test-Path -LiteralPath $_}
+  $preExistingRegistry=@($appKey,$uninstallKey) | Where-Object {Test-Path -LiteralPath $_}
+  $preExistingStartup=$false
+  if(Test-Path -LiteralPath $runKey){$preExistingStartup=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties | Where-Object {$_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder'}).Count -gt 0}
+  Require ($preExisting.Count -eq 0 -and $preExistingRegistry.Count -eq 0 -and -not $preExistingStartup) 'Runner user profile, install path, shortcuts, registry and startup slot were empty before cleanup ownership' ([pscustomobject]@{Paths=$preExisting;Registry=$preExistingRegistry;Startup=$preExistingStartup})
+  $script:ownedData=$true
+
+  $script:liveRelease=Get-OfficialRelease 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' 'Live latest stable GitHub Releases API'
+  if($script:liveRelease){
+    Require (-not $script:liveRelease.draft -and -not $script:liveRelease.prerelease) 'The official latest endpoint returned a published stable release' ([pscustomobject]@{Tag=$script:liveRelease.tag_name;Draft=$script:liveRelease.draft;Prerelease=$script:liveRelease.prerelease})
+    Require ($script:liveRelease.html_url -ceq "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/$($script:liveRelease.tag_name)") 'Latest API link points to the official Eye Break Reminder release page' $script:liveRelease.html_url
+    $script:liveRelease | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'github-releases-latest.json') -Encoding UTF8
+    Pass 'Live latest stable version parsed as semantic version' ([pscustomobject]@{Tag=$script:liveRelease.tag_name;ReleaseUrl=$script:liveRelease.html_url;Prerelease=$script:liveRelease.prerelease})
+  } else {$script:liveLatestError=$script:liveApiError;Not-Tested 'Live latest stable GitHub release/version comparison' "Official unauthenticated endpoint unavailable: $script:liveLatestError"}
+
+  $oldInstaller=Download-OfficialV11Installer
+  if($script:interactiveDesktop){
+    Invoke-Install $InstallerPath 'v1.2.0 production installer' $true
+    Require ((Get-Item -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe')).VersionInfo.ProductVersion -match '^1\.2\.0') 'Installed application file version is 1.2.0' (Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
+    if(Start-And-CheckApp '1.2.0'){
+      Test-FreshInstallApp
+      if(Start-InstalledApp){Test-ShellTrayAndNaturalNotification;Stop-InstalledApp}
+    }
+    Stop-InstalledApp
+    Invoke-Uninstall 'v1.2.0 fresh uninstall' $true
+    $prefsPersist=Test-Path -LiteralPath (Join-Path $dataDir 'settings.ini')
+    $historyPersist=Test-Path -LiteralPath (Join-Path $dataDir 'history.dat')
+    Require ($prefsPersist -and $historyPersist) 'Uninstall preserves settings and history data outside the app folder' ([pscustomobject]@{Settings=$prefsPersist;History=$historyPersist})
+    Invoke-Install $InstallerPath 'v1.2.0 reinstall after uninstall' $false
+    Assert-InstallationMetadata '1.2.0'
+    if(Start-And-CheckApp '1.2.0'){
+      if($script:interactiveDesktop){Switch-Settings 4;Require ((Get-Combo $script:mainWindow 106 'Theme') -eq 1) 'Reinstalled app retains user settings' 'Light theme';Switch-Timer;Stop-InstalledApp}
+      else{Stop-InstalledApp}
+    }
+    Invoke-Uninstall 'v1.2.0 reinstall cleanup' $false
+  } else {
+    Invoke-Install $InstallerPath 'v1.2.0 production installer' $false
+    Assert-InstallationMetadata '1.2.0'
+    Not-Tested 'Visible NSIS installer wizard and rendered wizard screenshots' 'The runner exposes no interactive Explorer desktop; only the actual silent install path was exercised.'
+    if(Start-And-CheckApp '1.2.0'){Not-Tested 'Installed GUI workflow, themes, UIA, and live in-app update request' 'No interactive Windows desktop was available.';Stop-InstalledApp}
+    Invoke-Uninstall 'v1.2.0 fresh uninstall' $false
+    Invoke-Install $InstallerPath 'v1.2.0 reinstall after uninstall' $false
+    Assert-InstallationMetadata '1.2.0'
+    if(Start-And-CheckApp '1.2.0'){Stop-InstalledApp}
+    Invoke-Uninstall 'v1.2.0 reinstall cleanup' $false
+  }
+
+  Test-UpgradeFromV11 $oldInstaller
+  if(-not $script:interactiveDesktop){
+    Not-Tested 'Real Windows theme switching and Forced Colors' 'Runner desktop capability probe reported no Explorer shell/taskbar.'
+    Not-Tested 'Tray menu actions and actual Shell notification surface' 'Runner desktop capability probe reported no Explorer shell/taskbar.'
+    Not-Tested 'Keyboard-only application workflows and UIA focus order' 'Runner desktop capability probe reported no Explorer shell/taskbar.'
+    Not-Tested 'Additional DPI/text-scale configurations' 'Runner desktop capability probe reported no Explorer shell/taskbar.'
+  }
+  Not-Tested 'Real workstation lock/unlock' 'A hosted runner lock would strand the job in an inaccessible session; only the isolated runner was available.'
+  Not-Tested 'Physical sleep/resume' 'Suspending a hosted runner has no controlled wake guarantee; no physical suspend test was attempted.'
+  $monitorCount=[EBR_PRE_NATIVE]::GetSystemMetrics(80)
+  if($monitorCount -gt 1){Pass 'Windows runner exposes multiple monitor heads' $monitorCount}else{Not-Tested 'Multiple-monitor display configuration and restoration' "Runner exposed $monitorCount monitor; no additional physical or virtual monitor was available."}
+  Not-Tested 'Physical speaker output' 'Hosted Windows runners do not have verified physical speaker hardware.'
+  if($script:ownedInstall -and (Test-Path -LiteralPath (Join-Path $installDir 'Uninstall.exe'))){Stop-InstalledApp;Invoke-Uninstall 'final cleanup' $false}
+  if($script:ownedData -and (Test-Path -LiteralPath $dataDir)){Remove-Item -LiteralPath $dataDir -Recurse -Force;Require (-not (Test-Path -LiteralPath $dataDir)) 'Disposable runner user-data cleanup completed' $dataDir}
+} catch {
+  $fatal=$true
+  if($script:failCount -eq 0){Add-Event 'Windows pre-release acceptance runner' 'FAIL' $_.Exception.Message}
+  Write-Error $_
+} finally {
+  try { Stop-InstalledApp } catch { Add-Event 'Installed test process cleanup' 'FAIL' $_.Exception.Message }
+  if($script:highContrastOriginal -ne $null){[void][EBR_PRE_NATIVE]::SetHighContrast($script:highContrastOriginal)}
+  foreach($key in $script:osOriginal.Keys){$parts=$key.Split('|',2);try{Restore-RegistryValue $parts[0] $parts[1] $script:osOriginal[$key]}catch{Add-Event 'Windows appearance preference restoration' 'FAIL' $_.Exception.Message}}
+  if($script:ownedInstall){
+    $cleanupErrors=[System.Collections.Generic.List[string]]::new()
+    $uninstaller=Join-Path $installDir 'Uninstall.exe'
+    if(Test-Path -LiteralPath $uninstaller){
+      try{$u=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru;if($u.WaitForExit(90000) -and $u.ExitCode -ne 0){$cleanupErrors.Add("Uninstaller exit code $($u.ExitCode)")}elseif(-not $u.HasExited){Stop-Process -Id $u.Id -Force -ErrorAction SilentlyContinue;$cleanupErrors.Add('Uninstaller timed out')}}catch{$cleanupErrors.Add($_.Exception.Message)}
+    }
+    # The runner was proven empty before ownership was acquired. Remove only
+    # these exact per-user installation artifacts if a failed installer or
+    # uninstaller left a partial installation behind.
+    foreach($path in @($installDir,$startMenuDir,$desktopLink)){
+      if(Test-Path -LiteralPath $path){try{Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop}catch{$cleanupErrors.Add("$path :: $($_.Exception.Message)")}}
+    }
+    foreach($key in @($uninstallKey,$appKey)){
+      if(Test-Path -LiteralPath $key){try{Remove-Item -LiteralPath $key -Recurse -Force -ErrorAction Stop}catch{$cleanupErrors.Add("$key :: $($_.Exception.Message)")}}
+    }
+    if(Test-Path -LiteralPath $runKey){
+      $ownedStartupNames=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties | Where-Object {$_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder'} | ForEach-Object {$_.Name})
+      foreach($name in $ownedStartupNames){try{Remove-ItemProperty -LiteralPath $runKey -Name $name -ErrorAction Stop}catch{$cleanupErrors.Add("Startup value $name :: $($_.Exception.Message)")}}
+    }
+    if($cleanupErrors.Count -eq 0 -and -not (Test-Path -LiteralPath $installDir) -and -not (Test-Path -LiteralPath $startMenuDir) -and -not (Test-Path -LiteralPath $desktopLink) -and -not (Test-Path -LiteralPath $uninstallKey) -and -not (Test-Path -LiteralPath $appKey)){
+      Pass 'Owned partial installation cleanup removed only runner-created paths and registrations'
+      $script:ownedInstall=$false
+    }else{Add-Event 'Owned partial installation cleanup' 'FAIL' ([pscustomobject]@{Errors=$cleanupErrors.ToArray();InstallDir=(Test-Path -LiteralPath $installDir);StartMenu=(Test-Path -LiteralPath $startMenuDir);DesktopLink=(Test-Path -LiteralPath $desktopLink);UninstallKey=(Test-Path -LiteralPath $uninstallKey);AppKey=(Test-Path -LiteralPath $appKey)})}
+  }
+  if($script:ownedData -and (Test-Path -LiteralPath $dataDir)){try{Remove-Item -LiteralPath $dataDir -Recurse -Force}catch{Add-Event 'Runner user-data cleanup' 'FAIL' $_.Exception.Message}}
+  $summary=[pscustomobject]@{
+    Application='Eye Break Reminder'
+    Version='1.2.0'
+    SourceCommit=$env:GITHUB_SHA
+    ActionsRunUrl=if($env:GITHUB_RUN_ID){"$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"}else{''}
+    WindowsCaption=(Get-CimInstance Win32_OperatingSystem).Caption
+    WindowsVersion=(Get-CimInstance Win32_OperatingSystem).Version
+    WindowsBuild=(Get-CimInstance Win32_OperatingSystem).BuildNumber
+    InteractiveDesktopAvailable=$script:interactiveDesktop
+    Pass=$script:passCount
+    Fail=$script:failCount
+    NotTested=$script:notTestedCount
+    Events=$script:events.ToArray()
+  }
+  $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'windows-pre-release-results.json') -Encoding UTF8
+  $summaryLine="Windows pre-release acceptance: PASS=$($script:passCount) FAIL=$($script:failCount) NOT TESTED=$($script:notTestedCount)"
+  Write-Output $summaryLine
+  try { $summaryLine | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8 } catch {}
+  if($script:transcriptStarted){try{Stop-Transcript | Out-Null}catch{}}
+}
+if($fatal -or $script:failCount -gt 0){exit 1}

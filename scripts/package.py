@@ -15,7 +15,10 @@ with zipfile.ZipFile(release/'EyeBreakReminder-Portable-x64.zip','w',zipfile.ZIP
 EXCLUDED_DIRS={'release','build','dist','__pycache__'}
 EXCLUDED_SUFFIXES={'.exe','.dll','.o','.obj','.pdb','.zip','.tmp','.pyc','.pfx','.pem','.p12','.key'}
 def in_source(relative):
- if any(p in EXCLUDED_DIRS or p.startswith('.') for p in relative.parts[:-1]):return False
+ # A linked worktree stores its Git metadata in a root .git text file. Never
+ # ship that machine-specific pointer, while keeping the public CI workflow.
+ if relative==Path('.git'):return False
+ if any(p in EXCLUDED_DIRS or (p.startswith('.') and p!='.github') for p in relative.parts[:-1]):return False
  # This final report contains the source ZIP's digest; excluding it avoids a self-referential archive hash.
  if relative==Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'):return False
  return relative!=Path('tests/core-tests') and relative.suffix.lower() not in EXCLUDED_SUFFIXES

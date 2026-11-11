@@ -104,6 +104,8 @@ For a legitimate signing certificate, sign the app before installer packaging, t
 
 The executable and installer are compiled with MinGW-w64 and NSIS, with native core tests and binary/resource checks. Prior Windows acceptance results and the v1.2.0 test record are in `docs/VERIFICATION.md`; the repeatable GUI checklist is in `docs/WINDOWS-TESTING.md`. The optional `make gui-test` build uses a separate `test-data` directory beside the test executable and a 10x monotonic clock; it does not use the installed app's data folder. A test-only response file can supply deterministic release-check results. Successful compilation alone does not establish runtime correctness; see the verification record for what was actually run.
 
+The v1.2.0 feature branch also defines `.github/workflows/windows-pre-release-validation.yml`. It rebuilds and verifies the packages on an isolated `windows-2025` runner, probes whether Explorer exposes an interactive desktop, and records installer, update, appearance and application-lifecycle evidence. It never uploads the release binaries. If the runner has no interactive desktop, GUI-only checks are recorded as **NOT TESTED**. Run `tests/windows_pre_release_acceptance.ps1` only through that disposable runner workflow; it deliberately installs and uninstalls the just-built application in the runner's per-user profile.
+
 ## Publishing releases
 
 Build locally with `make package`, then publish the verified installer, portable ZIP and checksums as assets on a versioned GitHub Release. Do not commit generated binaries or signing keys to the source tree. The manual process in [docs/RELEASING.md](docs/RELEASING.md) does not use GitHub Actions minutes. Repository owner approval is needed before selecting a source license.

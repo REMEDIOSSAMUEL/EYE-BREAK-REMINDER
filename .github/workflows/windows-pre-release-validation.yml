@@ -1,0 +1,139 @@
+name: Windows v1.2.0 pre-release validation
+
+on:
+  push:
+    branches:
+      - feature/v1.2.0-theme-accessibility-break-mode
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-pre-release:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Check out the requested feature branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install the native Windows build toolchain
+        uses: msys2/setup-msys2@767c5b499449c4509d404e38812c2b6ce04d6620 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-python
+            mingw-w64-i686-nsis
+
+      - name: Build production and GUI-test executables and all release packages
+        shell: msys2 {0}
+        run: |
+          mkdir -p "$RUNNER_TEMP/eye-break-reminder-tmp"
+          export TMP="$(cygpath -u "$RUNNER_TEMP/eye-break-reminder-tmp")"
+          export TEMP="$TMP"
+          # The Makefile invokes the cross-prefixed strip name. Some MSYS2
+          # MINGW64 package revisions expose only the unprefixed binary.
+          if ! command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
+            strip_tool="$(command -v strip)"
+            cp "$strip_tool" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          fi
+          make -B package gui-test \
+            CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
+            WINDRES=x86_64-w64-mingw32-windres \
+            MAKENSIS=/mingw32/bin/makensis.exe \
+            PYTHON=python
+
+      - name: Record the five rebuilt release artifact identities
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(
+            'release/EyeBreakReminder.exe',
+            'release/EyeBreakReminder-Setup-x64.exe',
+            'release/EyeBreakReminder-Portable-x64.zip',
+            'release/EyeBreakReminder-Source.zip',
+            'release/EyeBreakReminder-SHA256.txt'
+          )
+          $identity = foreach ($relative in $files) {
+            if (Test-Path -LiteralPath $relative -PathType Leaf) {
+              $file = Get-Item -LiteralPath $relative
+              $hash = Get-FileHash -LiteralPath $relative -Algorithm SHA256
+              [pscustomobject]@{ Path = $relative; Bytes = $file.Length; SHA256 = $hash.Hash.ToLowerInvariant() }
+            } else {
+              [pscustomobject]@{ Path = $relative; Missing = $true }
+            }
+          }
+          New-Item -ItemType Directory -Force -Path 'build/pre-release-evidence' | Out-Null
+          $identity | ConvertTo-Json -Depth 4 | Set-Content 'build/pre-release-evidence/release-artifact-identities.json' -Encoding UTF8
+          if (Test-Path -LiteralPath 'release/EyeBreakReminder-SHA256.txt') {
+            Copy-Item 'release/EyeBreakReminder-SHA256.txt' 'build/pre-release-evidence/final-package-sha256.txt' -Force
+          }
+
+      - name: Detect whether this runner exposes an interactive Windows desktop
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'build/pre-release-evidence' | Out-Null
+          $probe = & .\tests\windows_runner_probe.ps1
+          $capabilities = $probe | ConvertFrom-Json
+          "GUI_DESKTOP_AVAILABLE=$($capabilities.interactiveDesktopAvailable.ToString().ToLowerInvariant())" |
+            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Run the existing native Win32 GUI acceptance suite
+        if: always() && env.GUI_DESKTOP_AVAILABLE == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'build/pre-release-evidence' | Out-Null
+          & .\tests\gui_acceptance.ps1
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Record the existing GUI suite as unavailable on a headless runner
+        if: always() && env.GUI_DESKTOP_AVAILABLE != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'build/gui-test/evidence' | Out-Null
+          $record = [pscustomobject]@{
+            Version = '1.2.0'
+            Assertions = 0
+            Events = @([pscustomobject]@{
+              Name = 'Existing native Win32 GUI acceptance suite'
+              Status = 'NOT TESTED'
+              Details = 'The GitHub-hosted runner exposed no interactive Explorer desktop and taskbar.'
+              Utc = [DateTime]::UtcNow.ToString('o')
+            })
+            EvidenceDirectory = (Join-Path (Get-Location) 'build/gui-test/evidence')
+          }
+          $record | ConvertTo-Json -Depth 6 | Set-Content 'build/gui-test/evidence/gui-acceptance-results.json' -Encoding UTF8
+          Write-Output $record.Events[0].Details
+
+      - name: Run installed-app, update, appearance, and lifecycle acceptance
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_pre_release_acceptance.ps1 `
+            -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -EvidenceDirectory '.\build\pre-release-evidence'
+
+      # Never upload release binaries or archives here. This artifact contains evidence only.
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.2.0-pre-release-evidence-${{ github.run_id }}
+          path: |
+            build/pre-release-evidence/**
+            build/gui-test/evidence/**
+          if-no-files-found: warn
+          retention-days: 30

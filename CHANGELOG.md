@@ -13,6 +13,7 @@ Changed
 
 - The Timer status is centered over the countdown circle at every window size and DPI. Minimum sizing and footer measurement keep the controls and two-line reminder area from overlapping at larger text sizes.
 - The Timer footer keeps the 20-20-20 reminder and dynamic schedule summary, and removes the redundant explanatory sentence.
+- The Source ZIP includes the public Windows validation workflow and excludes linked-worktree `.git` metadata that could disclose a local machine path.
 
 ## 1.1.0 (published 2026-11-06)
 
