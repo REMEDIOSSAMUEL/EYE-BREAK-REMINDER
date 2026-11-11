@@ -1,0 +1,218 @@
+name: Post-release v1.2.0 actual binary verification
+
+on:
+  push:
+    branches:
+      - 'post-release-verification-v1.2.0-actual-binaries-*'
+    paths:
+      - '.github/workflows/post-release-v1.2.0-actual-binaries.yml'
+      - 'tests/post_release_*'
+      - 'tests/windows_pre_release_acceptance.ps1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actual-published-release:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Check out isolated verification branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Confirm approved product source and isolated test-only changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $approved = '908a21531833eb2175fb7bd882db06b79a2b917b'
+          $tested = 'cbd2e467c3767765250ff11a701839a8a850134b'
+          $base = git merge-base $approved HEAD
+          if ($base -ne $approved) { throw "Verification branch is not based on approved main: $base" }
+          $changed = @(git diff --name-only "$approved..HEAD")
+          $product = @($changed | Where-Object { $_ -match '^(src|assets|installer)/|^(Makefile|VERSION)$|^scripts/' })
+          if ($product.Count -gt 0) { throw "Verification branch changed product/build inputs: $($product -join ', ')" }
+          $testedDiff = @(git diff --name-only "$tested..$approved")
+          $unexpected = @($testedDiff | Where-Object { $_ -ne 'docs/FINAL_PRE_RELEASE_VERIFICATION.md' })
+          if ($unexpected.Count -gt 0) { throw "Unexpected changes after validated source: $($unexpected -join ', ')" }
+          "PRODUCT_SOURCE_COMMIT=$approved" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TESTED_SOURCE_COMMIT=$tested" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          New-Item -ItemType Directory -Force -Path 'build/post-release-evidence' | Out-Null
+          [pscustomobject]@{ApprovedMain=$approved;TestedSource=$tested;VerificationCommit=(git rev-parse HEAD);ChangedFiles=$changed;PostTestProductChanges=$unexpected} |
+            ConvertTo-Json -Depth 6 | Set-Content 'build/post-release-evidence/source-scope.json' -Encoding UTF8
+
+      - name: Install native Windows build toolchain
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-python
+
+      - name: Set up upstream NSIS 3.11 x86 installer builder
+        uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1
+        with:
+          version: '3.11'
+
+      - name: Run fresh core, binary, package, and GUI-test builds
+        shell: msys2 {0}
+        run: |
+          set -eo pipefail
+          mkdir -p "$RUNNER_TEMP/eye-break-reminder-tmp" build/post-release-evidence
+          export TMP="$(cygpath -u "$RUNNER_TEMP/eye-break-reminder-tmp")"
+          export TEMP="$TMP"
+          if ! command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
+            strip_tool="$(command -v strip)"
+            cp "$strip_tool" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          fi
+          nsis_root="$(cygpath -u "$NSISDIR")"
+          makensis_path="$nsis_root/makensis.exe"
+          test -x "$makensis_path"
+          "$makensis_path" -VERSION | tee build/post-release-evidence/nsis-version.txt
+          build_args=(CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' WINDRES=windres MAKENSIS="$makensis_path" PYTHON=python)
+          make test "${build_args[@]}" 2>&1 | tee build/post-release-evidence/make-test.log
+          make -B all "${build_args[@]}" 2>&1 | tee build/post-release-evidence/make-all.log
+          make package "${build_args[@]}" 2>&1 | tee build/post-release-evidence/make-package.log
+          make gui-test "${build_args[@]}" 2>&1 | tee build/post-release-evidence/make-gui-test.log
+
+      - name: Probe the hosted Windows desktop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'build/post-release-evidence' | Out-Null
+          $probe = & ./tests/windows_runner_probe.ps1
+          $probe | Set-Content 'build/post-release-evidence/windows-runner-probe.json' -Encoding UTF8
+          $capability = $probe | ConvertFrom-Json
+          "GUI_DESKTOP_AVAILABLE=$($capability.interactiveDesktopAvailable.ToString().ToLowerInvariant())" |
+            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "Runner desktop: $($capability.interactiveDesktopAvailable)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Run native Win32 GUI regression suite
+        if: ${{ env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/gui_acceptance.ps1
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Record GUI regression suite as unavailable
+        if: ${{ env.GUI_DESKTOP_AVAILABLE != 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'build/gui-test/evidence' | Out-Null
+          [pscustomobject]@{Version='1.2.0';Assertions=0;Events=@([pscustomobject]@{Name='Native Win32 GUI regression';Status='NOT TESTED';Details='The hosted Windows runner did not expose an interactive Explorer desktop.';Utc=[DateTime]::UtcNow.ToString('o')})} |
+            ConvertTo-Json -Depth 6 | Set-Content 'build/gui-test/evidence/gui-acceptance-results.json' -Encoding UTF8
+
+      - name: Download and independently audit the public v1.2.0 assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = Join-Path $env:RUNNER_TEMP 'eye-break-reminder-v1.2.0-published-assets'
+          & ./tests/post_release_download_audit.ps1 -ArtifactsDirectory $assets -EvidenceDirectory 'build/post-release-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $expected = '121eaa8d14b8e3d342252edfc91bc25d6e8334b829c2824b7f90813062ded75f'
+          $downloaded = Join-Path $assets 'EyeBreakReminder-Setup-x64.exe'
+          $actual = (Get-FileHash -LiteralPath $downloaded -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "Downloaded installer hash mismatch: $actual" }
+          Copy-Item -LiteralPath $downloaded -Destination 'release/EyeBreakReminder-Setup-x64.exe' -Force
+          $copied = (Get-FileHash -LiteralPath 'release/EyeBreakReminder-Setup-x64.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($copied -cne $expected) { throw "Installer staging copy changed the published bytes: $copied" }
+          "EBR_EXPECTED_PUBLISHED_EXE_SHA256=2895c80f942dd03186305d913516700552524ec5ba9a77da0dab457a3265fcc6" |
+            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          [pscustomobject]@{DownloadedInstallerSHA256=$actual;StagedInstallerSHA256=$copied;PublishedInstallerPath=(Resolve-Path 'release/EyeBreakReminder-Setup-x64.exe').Path} |
+            ConvertTo-Json -Depth 4 | Set-Content 'build/post-release-evidence/published-installer-staging.json' -Encoding UTF8
+
+      - name: Install, operate, upgrade, uninstall, and live-check the exact published installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/windows_pre_release_acceptance.ps1 -InstallerPath 'release/EyeBreakReminder-Setup-x64.exe' -EvidenceDirectory 'build/pre-release-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Launch and operate the exact standalone and portable published executables
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = Join-Path $env:RUNNER_TEMP 'eye-break-reminder-v1.2.0-published-assets'
+          & ./tests/post_release_published_exe_smoke.ps1 -StandalonePath (Join-Path $assets 'EyeBreakReminder.exe') -PortableExecutablePath (Join-Path $assets 'portable-extracted/EyeBreakReminder.exe') -EvidenceDirectory 'build/post-release-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Attempt a separate standard-user install and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = Join-Path $env:RUNNER_TEMP 'eye-break-reminder-v1.2.0-published-assets'
+          & ./tests/post_release_standard_user.ps1 -InstallerPath (Join-Path $assets 'EyeBreakReminder-Setup-x64.exe') -EvidenceDirectory 'build/post-release-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Summarize independent evidence without replacing untested platform cases
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = 'build/post-release-evidence'
+          $suiteFiles = @(
+            (Join-Path $evidence 'published-release-download-audit.json'),
+            'build/pre-release-evidence/windows-pre-release-results.json',
+            'build/gui-test/evidence/gui-acceptance-results.json',
+            (Join-Path $evidence 'published-exe-smoke.json'),
+            (Join-Path $evidence 'standard-user-install.json')
+          )
+          $suiteData = @()
+          $allEvents = [System.Collections.Generic.List[object]]::new()
+          foreach ($file in $suiteFiles) {
+            if (-not (Test-Path -LiteralPath $file)) { continue }
+            try {
+              $suite = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+              $suiteData += [pscustomobject]@{File=$file;Pass=$suite.Pass;Fail=$suite.Fail;NotTested=$suite.NotTested;Assertions=$suite.Assertions}
+              foreach ($event in @($suite.Events)) { $allEvents.Add([pscustomobject]@{Suite=$file;Name=$event.Name;Status=$event.Status;Details=$event.Details;Utc=$event.Utc}) }
+            } catch { $allEvents.Add([pscustomobject]@{Suite=$file;Name='Evidence JSON could not be parsed';Status='FAIL';Details=$_.Exception.Message;Utc=[DateTime]::UtcNow.ToString('o')}) }
+          }
+          $gui = Get-Content -LiteralPath 'build/gui-test/evidence/gui-acceptance-results.json' -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
+          $coreText = if(Test-Path -LiteralPath (Join-Path $evidence 'make-test.log')){Get-Content -LiteralPath (Join-Path $evidence 'make-test.log') -Raw}else{''}
+          $packageText = if(Test-Path -LiteralPath (Join-Path $evidence 'make-package.log')){Get-Content -LiteralPath (Join-Path $evidence 'make-package.log') -Raw}else{''}
+          $coreMatch = [regex]::Match($coreText,'(?i)([0-9,]+) assertions passed')
+          $packageMatch = [regex]::Match($packageText,'(?i)([0-9,]+) (?:binary/package )?assertions passed')
+          $coreCount = if($coreMatch.Success){[int]($coreMatch.Groups[1].Value -replace ',','')}else{$null}
+          $packageCount = if($packageMatch.Success){[int]($packageMatch.Groups[1].Value -replace ',','')}else{$null}
+          $result = [pscustomobject]@{
+            Application='Eye Break Reminder'
+            Release='v1.2.0'
+            ReleaseUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.2.0'
+            ApprovedMainCommit=$env:PRODUCT_SOURCE_COMMIT
+            TestedProductSource=$env:TESTED_SOURCE_COMMIT
+            VerificationCommit=(git rev-parse HEAD)
+            CoreAssertions=$coreCount
+            GuiAssertions=$gui.Assertions
+            PackageAssertions=$packageCount
+            SuiteTotals=$suiteData
+            Events=$allEvents.ToArray()
+            Pass=(@($allEvents|Where-Object Status -eq 'PASS')).Count
+            Fail=(@($allEvents|Where-Object Status -eq 'FAIL')).Count
+            NotTested=(@($allEvents|Where-Object Status -eq 'NOT TESTED')).Count
+            CompletedUtc=[DateTime]::UtcNow.ToString('o')
+          }
+          $result | ConvertTo-Json -Depth 14 | Set-Content (Join-Path $evidence 'post-release-acceptance-summary.json') -Encoding UTF8
+          "Post-release events: PASS=$($result.Pass) FAIL=$($result.Fail) NOT TESTED=$($result.NotTested)" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          $result | ConvertTo-Json -Depth 6
+
+      - name: Upload logs, screenshots, and acceptance evidence only
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.2.0-post-release-evidence-${{ github.run_id }}
+          path: |
+            build/post-release-evidence/**
+            build/pre-release-evidence/**
+            build/gui-test/evidence/**
+          if-no-files-found: warn
+          retention-days: 14

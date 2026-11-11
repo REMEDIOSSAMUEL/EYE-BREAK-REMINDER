@@ -409,6 +409,11 @@ function Start-InstalledApp {
     Start-Sleep -Milliseconds 100
   }
   Require ($actual -ieq $appExe) 'Installed application launches from the installed executable' ([pscustomobject]@{Expected=$appExe;Actual=$actual;Pid=$script:appPid})
+  if ($env:EBR_EXPECTED_PUBLISHED_EXE_SHA256) {
+    $installedSha256 = (Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expectedSha256 = $env:EBR_EXPECTED_PUBLISHED_EXE_SHA256.ToLowerInvariant()
+    Require ($installedSha256 -ceq $expectedSha256) 'Installed application SHA-256 equals the downloaded published standalone executable' ([pscustomobject]@{Expected=$expectedSha256;Actual=$installedSha256;Path=$appExe})
+  }
   $script:mainWindow=Get-AppMainWindow $script:appPid
   if($script:interactiveDesktop){Require ($script:mainWindow -ne [IntPtr]::Zero) 'Installed application creates a visible Win32 main window' $script:appPid}
   elseif($script:mainWindow -eq [IntPtr]::Zero){Not-Tested 'Installed application GUI launch' 'The runner has no interactive desktop and did not expose a visible app window.';return $false}
@@ -619,7 +624,7 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
     Require $false "$Kind wizard shows a visible native window" ([pscustomobject]@{Pid=$process.Id;Exited=$process.HasExited;ExitCode=$(if($process.HasExited){$process.ExitCode}else{$null});ProcessFamily=$familyIds;VisibleWindows=$visibleWindows})
   }
   $windowPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($window,[ref]$windowPid);$uiWindowProcessId=[int]$windowPid
-  if($windowPid -ne 0 -and $windowPid -ne $process.Id){try{$process=Get-Process -Id $windowPid -ErrorAction Stop}catch{}}
+  if($windowPid -ne 0 -and $windowPid -ne $process.Id){try{$process=[Diagnostics.Process]::GetProcessById([int]$windowPid)}catch{}}
   $buttonsSeen=[System.Collections.Generic.List[string]]::new()
   $watch=[Diagnostics.Stopwatch]::StartNew();$stage=0;$lastCapturedStage=-1
   while($watch.Elapsed.TotalMinutes -lt 3){
@@ -639,6 +644,8 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
       Capture-ActiveWindow $window ("{0}-wizard-finish.png" -f $Kind) | Out-Null
       Invoke-WizardButton $window $finish
       [void]$process.WaitForExit(30000)
+      try{$process.Refresh()}catch{}
+      try{$launchProcess.Refresh()}catch{}
       if($isUninstaller){
         if(-not $launchProcess.HasExited){[void]$launchProcess.WaitForExit(30000)}
         $uiExitCode=Get-AvailableProcessExitCode $process
@@ -993,6 +1000,74 @@ function Test-OsAppearanceAndTextScale {
     Switch-Timer
   }
 }
+function Test-WindowsInstalledAppsPage {
+  if(-not $script:interactiveDesktop){Not-Tested 'Windows Settings > Installed Apps listing' 'The runner did not expose an interactive Explorer desktop.';return}
+  $settingsHandle=[IntPtr]::Zero
+  $pageNames=@()
+  $searchFound=$false
+  $resultFound=$false
+  try {
+    Start-Process -FilePath 'ms-settings:appsfeatures' | Out-Null
+    $settingsPids=@(Get-Process -Name SystemSettings,ApplicationFrameHost -ErrorAction SilentlyContinue | ForEach-Object {$_.Id})
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    $searchElement=$null
+    $settingsWindow=$null
+    while($watch.Elapsed.TotalSeconds -lt 25){
+      $elements=@()
+      try{$root=[System.Windows.Automation.AutomationElement]::RootElement;$elements=@($root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))}catch{}
+      $settingsWindow=@($elements | Where-Object {try{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and $_.Current.Name -match '(?i)Settings|Installed apps|Apps & features'}catch{$false}} | Select-Object -First 1)
+      if($settingsWindow.Count -gt 0){
+        try{$settingsHandle=[IntPtr]$settingsWindow[0].Current.NativeWindowHandle}catch{}
+        $windowPid=0;try{$windowPid=$settingsWindow[0].Current.ProcessId}catch{}
+        if($windowPid){$settingsPids=@($settingsPids)+@([int]$windowPid)}
+      }
+      $appElements=@($elements | Where-Object {
+        try{
+          $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
+          ($settingsPids -contains [int]$_.Current.ProcessId) -and
+          ($_.Current.Name -match '(?i)search' -or [string]::IsNullOrWhiteSpace($_.Current.Name))
+        }catch{$false}
+      })
+      if($appElements.Count -gt 0){$searchElement=$appElements[0];break}
+      Start-Sleep -Milliseconds 400
+    }
+    if(-not $searchElement){
+      $pageNames=@($elements | ForEach-Object {try{$_.Current.Name}catch{''}} | Where-Object {$_} | Select-Object -Unique | Select-Object -First 40)
+      Add-Event 'Windows Settings > Installed Apps search UI' 'NOT TESTED' ([pscustomobject]@{Reason='Settings launched, but its Installed Apps search edit was not exposed to UI Automation.';VisiblePageNames=$pageNames;SettingsProcesses=$settingsPids})
+      return
+    }
+    $searchFound=$true
+    try{
+      $valuePattern=$searchElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+      $valuePattern.SetValue('Eye Break Reminder')
+    }catch{
+      try{
+        [void]$searchElement.SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('^a')
+        [System.Windows.Forms.SendKeys]::SendWait('Eye Break Reminder')
+      }catch{throw "Could not enter the app name into the Settings Installed Apps search: $($_.Exception.Message)"}
+    }
+    $searchWatch=[Diagnostics.Stopwatch]::StartNew()
+    while($searchWatch.Elapsed.TotalSeconds -lt 8){
+      $elements=@()
+      try{$elements=@([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))}catch{}
+      $pageNames=@($elements | ForEach-Object {try{$_.Current.Name}catch{''}} | Where-Object {$_} | Select-Object -Unique | Select-Object -First 60)
+      if(@($pageNames | Where-Object {$_ -match '(?i)Eye Break Reminder'}).Count -gt 0){$resultFound=$true;break}
+      Start-Sleep -Milliseconds 400
+    }
+    if($settingsHandle -ne [IntPtr]::Zero){Capture-ActiveWindow $settingsHandle 'windows-settings-installed-apps.png' | Out-Null}
+    if($resultFound){
+      Pass 'Windows Settings > Installed Apps lists the published Eye Break Reminder installation' ([pscustomobject]@{SettingsPage=@($pageNames | Where-Object {$_ -match '(?i)Installed apps|Apps & features'});MatchingRows=@($pageNames | Where-Object {$_ -match '(?i)Eye Break Reminder'});SearchObserved=$searchFound})
+    }else{
+      Add-Event 'Windows Settings > Installed Apps lists the published Eye Break Reminder installation' 'FAIL' ([pscustomobject]@{SearchObserved=$searchFound;VisiblePageNames=$pageNames;SettingsProcesses=$settingsPids})
+    }
+  } catch {
+    Add-Event 'Windows Settings > Installed Apps UI automation' 'NOT TESTED' ([pscustomobject]@{Reason=("The Settings UI did not expose a stable searchable page: " + $_.Exception.Message);SearchObserved=$searchFound;VisiblePageNames=$pageNames})
+  } finally {
+    if($settingsHandle -ne [IntPtr]::Zero){[void][EBR_PRE_NATIVE]::PostMessageW($settingsHandle,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)}
+  }
+}
+
 function Assert-InstallationMetadata([string]$ExpectedVersion) {
   $exeVersion=(Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
   Require ($exeVersion -match "^$([regex]::Escape($ExpectedVersion))(\.0)?$") "Installed executable metadata is $ExpectedVersion" $exeVersion
@@ -1223,8 +1298,11 @@ function Wait-ForCloseToTrayExplanation([int]$TimeoutSeconds=5) {
       $class=[EBR_PRE_NATIVE]::ClassName($window);$title=[EBR_PRE_NATIVE]::Text($window)
       if($pidValue -ne $script:appPid -and -not ($class -eq '#32770' -and $title -eq 'Eye Break Reminder')){continue}
       $texts=@(foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$text}})
-      $combined=$texts -join ' '
-      if(($combined -match 'Closing keeps your reminders active' -and $combined -match 'right-click the tray icon') -or ($pidValue -eq $script:appPid -and $title -eq 'Eye Break Reminder')){return [pscustomobject]@{Handle=$window;Texts=$texts;Class=$class;Title=$title;MessageTextExposed=($combined -match 'Closing keeps your reminders active' -and $combined -match 'right-click the tray icon');ProcessId=$pidValue}}
+      $uiaTexts=@()
+      try{$uiaTexts=@([System.Windows.Automation.AutomationElement]::FromHandle($window).FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object {try{$name=$_.Current.Name;if($name){$name}}catch{}} | Where-Object {$_})}catch{}
+      $allTexts=@($texts)+@($uiaTexts) | Select-Object -Unique
+      $combined=$allTexts -join ' '
+      if(($combined -match 'Closing keeps your reminders active' -and $combined -match 'right-click the tray icon') -or ($pidValue -eq $script:appPid -and $title -eq 'Eye Break Reminder')){return [pscustomobject]@{Handle=$window;Texts=$allTexts;NativeTexts=$texts;UIAutomationTexts=$uiaTexts;Class=$class;Title=$title;MessageTextExposed=($combined -match 'Closing keeps your reminders active' -and $combined -match 'right-click the tray icon');ProcessId=$pidValue}}
     }
     Start-Sleep -Milliseconds 100
   }
@@ -1435,6 +1513,7 @@ try {
     Require ($prefsPersist -and $historyPersist) 'Uninstall preserves settings and history data outside the app folder' ([pscustomobject]@{Settings=$prefsPersist;History=$historyPersist})
     Invoke-Install $InstallerPath 'v1.2.0 reinstall after uninstall' $false
     Assert-InstallationMetadata '1.2.0'
+    Test-WindowsInstalledAppsPage
     if(Start-And-CheckApp '1.2.0'){
       if($script:interactiveDesktop){Switch-Settings 4;Require ((Get-Combo $script:mainWindow 106 'Theme') -eq 1) 'Reinstalled app retains user settings' 'Light theme';Switch-Timer;Stop-InstalledApp}
       else{Stop-InstalledApp}
