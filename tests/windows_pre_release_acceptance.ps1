@@ -573,12 +573,28 @@ function Invoke-Install([string]$Path,[string]$Kind,[bool]$UseWizard) {
 function Invoke-Uninstall([string]$Kind,[bool]$UseWizard) {
   $uninstaller=Join-Path $installDir 'Uninstall.exe'
   Require (Test-Path -LiteralPath $uninstaller -PathType Leaf) "$Kind uninstaller exists before removal" $uninstaller
-  if($UseWizard -and $script:interactiveDesktop){[void](Invoke-Wizard $uninstaller "$Kind-uninstall")}else{
+  $liveAppProcesses=@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue)
+  Require ($liveAppProcesses.Count -eq 0) "$Kind begins with the installed application process stopped" @($liveAppProcesses | ForEach-Object {[pscustomobject]@{Pid=$_.Id;Path=$_.Path}})
+  $wizardShown=$false
+  if($UseWizard -and $script:interactiveDesktop){$wizardShown=[bool](Invoke-Wizard $uninstaller "$Kind-uninstall")}else{
     $process=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
     if(-not $process.WaitForExit(90000)){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue;throw "$Kind uninstaller timed out."}
     Require ($process.ExitCode -eq 0) "$Kind uninstaller exits successfully" ([pscustomobject]@{ExitCode=$process.ExitCode})
   }
-  Require (-not (Test-Path -LiteralPath $appExe)) "$Kind removes the installed executable" $appExe
+  $removeWatch=[Diagnostics.Stopwatch]::StartNew()
+  while((Test-Path -LiteralPath $appExe) -and $removeWatch.Elapsed.TotalSeconds -lt 5){Start-Sleep -Milliseconds 200}
+  if((Test-Path -LiteralPath $appExe) -and $UseWizard -and $script:interactiveDesktop -and -not $wizardShown -and (Test-Path -LiteralPath $uninstaller)){
+    $process=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
+    if(-not $process.WaitForExit(90000)){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue;throw "$Kind silent uninstaller timed out."}
+    Require ($process.ExitCode -eq 0) "$Kind silent uninstaller exits successfully" ([pscustomobject]@{ExitCode=$process.ExitCode})
+    $removeWatch.Restart()
+    while((Test-Path -LiteralPath $appExe) -and $removeWatch.Elapsed.TotalSeconds -lt 5){Start-Sleep -Milliseconds 200}
+  }
+  $remainingFiles=@()
+  if(Test-Path -LiteralPath $installDir){$remainingFiles=@(Get-ChildItem -LiteralPath $installDir -Force -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)}
+  $remainingProcesses=@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue | ForEach-Object {[pscustomobject]@{Pid=$_.Id;Path=$_.Path}})
+  $removalEvidence=[pscustomobject]@{Executable=$appExe;Exists=(Test-Path -LiteralPath $appExe);RemainingFiles=$remainingFiles;RunningAppProcesses=$remainingProcesses;UninstallerExists=(Test-Path -LiteralPath $uninstaller);UninstallRegistrationExists=(Test-Path -LiteralPath $uninstallKey);InstallDirectoryExists=(Test-Path -LiteralPath $installDir)}
+  Require (-not (Test-Path -LiteralPath $appExe)) "$Kind removes the installed executable" $removalEvidence
   Require (-not (Test-Path -LiteralPath $installDir)) "$Kind removes the installation directory" $installDir
   Require (-not (Test-Path -LiteralPath $startMenuLink)) "$Kind removes its Start Menu shortcut" $startMenuLink
   Require (-not (Test-Path -LiteralPath $desktopLink)) "$Kind removes an optional desktop shortcut" $desktopLink
