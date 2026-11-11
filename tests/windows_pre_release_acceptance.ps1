@@ -838,6 +838,7 @@ function Test-FreshInstallApp {
   $persistedValues=[pscustomobject]@{Theme=$settings['theme'];WorkMinutes=$settings['workMinutes'];BreakSeconds=$settings['breakSeconds']}
   Require ($settings['theme'] -eq '1' -and $settings['workMinutes'] -eq '1' -and $settings['breakSeconds'] -eq '30') 'Installed app persists theme and configured schedule values' ([pscustomobject]@{Path=$settingsPath;Observed=$persistedValues})
   $hashBefore=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
+  Stop-InstalledApp
   $restore=Start-InstalledApp
   if($restore){
     Switch-Settings 4
