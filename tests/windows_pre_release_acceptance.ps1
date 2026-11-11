@@ -356,7 +356,10 @@ function Get-CapturedClientPixel([IntPtr]$Window,[string]$Path) {
   try {
     if($x -lt 0 -or $y -lt 0 -or $x -ge $bitmap.Width -or $y -ge $bitmap.Height){throw "Client sample $x,$y is outside screenshot $($bitmap.Width)x$($bitmap.Height)."}
     $pixel=$bitmap.GetPixel($x,$y)
-    return [uint32](($pixel.B -shl 16) -bor ($pixel.G -shl 8) -bor $pixel.R)
+    # Color channels are bytes; widen before shifting so PowerShell does not
+    # truncate the upper two channels and mistake a real #202020 match for #20.
+    $red=[int]$pixel.R;$green=[int]$pixel.G;$blue=[int]$pixel.B
+    return [uint32](($blue -shl 16) -bor ($green -shl 8) -bor $red)
   } finally {$bitmap.Dispose()}
 }
 function Capture-PrintWindow([IntPtr]$Window,[string]$Name) {
@@ -1057,6 +1060,19 @@ function Invoke-TrayCommand([string]$Name) {
   Start-Sleep -Milliseconds 350
   Pass "Tray menu command invoked: $Name" $Name
 }
+function Wait-ForCloseToTrayExplanation([int]$TimeoutSeconds=5) {
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){
+    foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){
+      if($window -eq $script:mainWindow -or -not [EBR_PRE_NATIVE]::IsWindowVisible($window)){continue}
+      $texts=@(foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$text}})
+      $combined=$texts -join ' '
+      if($combined -match 'Closing keeps your reminders active' -and $combined -match 'right-click the tray icon'){return [pscustomobject]@{Handle=$window;Texts=$texts;Class=[EBR_PRE_NATIVE]::ClassName($window)}}
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  return $null
+}
 function Test-ShellTrayAndNaturalNotification {
   if(-not $script:interactiveDesktop -or $script:mainWindow -eq [IntPtr]::Zero){
     Not-Tested 'Real system tray icon/menu, actions, hide/reopen and duplicate instance behavior' 'No interactive Explorer taskbar was exposed.'
@@ -1094,9 +1110,22 @@ function Test-ShellTrayAndNaturalNotification {
   Require ($breaks.Count -eq 1) 'Tray Take a break command opens the installed reminder window' $breaks.Count
   Click-Control $breaks[0] 24 'Skip break started from the tray menu'
   Require ((Wait-ForStatus 'Running') -like '*Running*') 'Tray-triggered break can be dismissed' (Get-Status)
+  $prefsBeforeClose=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
+  $needsCloseExplanation=($prefsBeforeClose['trayExplained'] -ne '1')
   [void][EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
-  Start-Sleep -Milliseconds 250
+  if($needsCloseExplanation){
+    $explanation=Wait-ForCloseToTrayExplanation
+    Require ($null -ne $explanation) 'First close-to-tray action shows the one-time reminder explanation' 'Expected the visible TaskDialog to explain that reminders continue in the tray.'
+    Pass 'Close-to-tray explanation content is visible in the native dialog' ([pscustomobject]@{Class=$explanation.Class;Texts=$explanation.Texts})
+    Capture-ActiveWindow $explanation.Handle 'tray-close-to-tray-explanation.png' | Out-Null
+    Click-Control $explanation.Handle 1 'Acknowledge close-to-tray explanation'
+    Pass 'One-time close-to-tray explanation was acknowledged through its native OK button'
+  }
+  $closeWait=[Diagnostics.Stopwatch]::StartNew()
+  while([EBR_PRE_NATIVE]::IsWindowVisible($script:mainWindow) -and $closeWait.Elapsed.TotalSeconds -lt 5){Start-Sleep -Milliseconds 100}
   Require (-not [EBR_PRE_NATIVE]::IsWindowVisible($script:mainWindow)) 'Closing the app window keeps it running in the system tray'
+  $afterClose=Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
+  Require ($null -ne $afterClose -and -not $afterClose.HasExited) 'Closing to the tray leaves the installed reminder process running' $script:appPid
   Invoke-TrayCommand 'Open Eye Break Reminder'
   Require ([EBR_PRE_NATIVE]::IsWindowVisible($script:mainWindow)) 'Tray Open command restores the installed app window'
   $second=Start-Process -FilePath $appExe -PassThru
