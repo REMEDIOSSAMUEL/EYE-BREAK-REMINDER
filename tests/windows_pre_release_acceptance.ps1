@@ -353,6 +353,24 @@ function Capture-PrintWindow([IntPtr]$Window,[string]$Name) {
   Pass "PrintWindow comparison capture: $Name" ([pscustomobject]@{Path=$path;Method='PrintWindow';WindowBounds=$bounds})
   return $path
 }
+function Capture-TrayPopup([IntPtr]$Window,[string]$Name) {
+  if(-not $script:interactiveDesktop){Not-Tested "Active desktop screenshot: $Name" 'Runner has no interactive Explorer desktop.';return $null}
+  try {
+    if(-not [EBR_PRE_NATIVE]::IsWindowVisible($Window)){throw 'The native tray popup closed before capture.'}
+    # Do not call SetForegroundWindow here: activating a #32768 popup can dismiss
+    # the very menu being measured. Capture its already visible screen rectangle.
+    $bounds=Get-Rect $Window
+    if($bounds.Width -lt 10 -or $bounds.Height -lt 10){throw "Invalid popup bounds: $($bounds.Width)x$($bounds.Height)."}
+    $path=Join-Path $EvidenceDirectory $Name
+    $bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height)
+    $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+    try {$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$bitmap.Save($path,[System.Drawing.Imaging.ImageFormat]::Png)}
+    finally {$graphics.Dispose();$bitmap.Dispose()}
+    if((Get-Item -LiteralPath $path).Length -lt 256){throw "Popup screenshot is unexpectedly small: $path"}
+    Pass "Active desktop screenshot: $Name" ([pscustomobject]@{Path=$path;Method='CopyFromScreen without activating popup';WindowBounds=$bounds})
+    return $path
+  } catch {Not-Tested "Tray popup screenshot capture: $Name" $_.Exception.Message;return $null}
+}
 function Assert-StatusCentered([string]$Name) {
   $client=Get-ClientGeometry $script:mainWindow
   $status=Get-Control $script:mainWindow 41 'Timer status'
@@ -996,7 +1014,7 @@ function Test-ShellTrayAndNaturalNotification {
   $menu=Open-TrayContextMenu
   if($menu -eq [IntPtr]::Zero){Not-Tested 'Actual tray context menu rendering and actions' 'The icon rectangle was present but no native context-menu window appeared after a right-click.';return}
   Pass 'Actual tray context menu opened as a native popup' ([pscustomobject]@{MenuWindow=('0x{0:X}' -f $menu.ToInt64())})
-  Capture-ActiveWindow $menu 'tray-context-menu-active.png' | Out-Null
+  Capture-TrayPopup $menu 'tray-context-menu-active.png' | Out-Null
   $menuItems=Get-TrayMenuItems $menu
   $menuNames=@($menuItems | ForEach-Object {$_.Current.Name})
   Require (@('Open Eye Break Reminder','Pause timer','Take a break now','Settings','Exit' | Where-Object {$menuNames -contains $_}).Count -ge 5) 'Tray menu exposes the expected accessible native commands' $menuNames
