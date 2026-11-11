@@ -440,15 +440,45 @@ function Invoke-WizardButton([IntPtr]$Window,$Button) {
   [EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
   Pass 'Installer wizard button clicked through the interactive Windows desktop' ([pscustomobject]@{Name=$Button.Name;LocatedBy=$Button.Source;Bounds=[pscustomobject]@{Left=$rect.Left;Top=$rect.Top;Right=$rect.Right;Bottom=$rect.Bottom};Window=('0x{0:X}' -f $Window.ToInt64())})
 }
+function Get-ProcessFamilyIds([int]$RootPid) {
+  $ids=[System.Collections.Generic.HashSet[int]]::new()
+  [void]$ids.Add($RootPid)
+  $processes=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+  $changed=$true
+  while($changed){
+    $changed=$false
+    foreach($entry in $processes){
+      $child=[int]$entry.ProcessId
+      if($ids.Contains([int]$entry.ParentProcessId) -and -not $ids.Contains($child)){[void]$ids.Add($child);$changed=$true}
+    }
+  }
+  return @($ids)
+}
 function Invoke-Wizard([string]$Path,[string]$Kind) {
   if(-not $script:interactiveDesktop){Not-Tested "$Kind visible wizard" 'The runner has no interactive Explorer desktop.';return $false}
-  $process=Start-Process -FilePath $Path -PassThru
+  $process=Start-Process -FilePath $Path -WorkingDirectory (Split-Path -Parent $Path) -PassThru
   $started=[Diagnostics.Stopwatch]::StartNew();$window=[IntPtr]::Zero
+  $familyIds=@($process.Id);$familyRefresh=[Diagnostics.Stopwatch]::StartNew()
   while($started.Elapsed.TotalSeconds -lt 20 -and $window -eq [IntPtr]::Zero){
-    foreach($h in [EBR_PRE_NATIVE]::TopWindowsForProcess($process.Id)){if([EBR_PRE_NATIVE]::IsWindowVisible($h)){$window=$h;break}}
+    if($familyRefresh.ElapsedMilliseconds -ge 400){$familyIds=Get-ProcessFamilyIds $process.Id;$familyRefresh.Restart()}
+    foreach($familyPid in $familyIds){foreach($h in [EBR_PRE_NATIVE]::TopWindowsForProcess($familyPid)){if([EBR_PRE_NATIVE]::IsWindowVisible($h)){$window=$h;break}};if($window -ne [IntPtr]::Zero){break}}
+    if($window -eq [IntPtr]::Zero){$process.Refresh();if($process.HasExited -and $familyIds.Count -le 1){break}}
     Start-Sleep -Milliseconds 100
   }
-  Require ($window -ne [IntPtr]::Zero) "$Kind wizard shows a visible native window" $process.Id
+  if($window -eq [IntPtr]::Zero){
+    $process.Refresh()
+    if($Kind -match '(?i)uninstall' -and $process.HasExited -and $process.ExitCode -eq 0){
+      Not-Tested "$Kind interactive wizard appearance" 'The owned uninstaller process exited successfully without exposing a visible wizard; subsequent checks verify actual file and registration removal.'
+      Pass "$Kind uninstaller process exits successfully without a visible wizard" ([pscustomobject]@{Pid=$process.Id;ExitCode=$process.ExitCode;ProcessFamily=$familyIds})
+      return $false
+    }
+    $visibleWindows=@(foreach($h in [EBR_PRE_NATIVE]::TopWindows()){
+      if([EBR_PRE_NATIVE]::IsWindowVisible($h)){$pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($h,[ref]$pidValue);[pscustomobject]@{Pid=$pidValue;Class=[EBR_PRE_NATIVE]::ClassName($h);Title=[EBR_PRE_NATIVE]::Text($h)}}
+    })
+    Require $false "$Kind wizard shows a visible native window" ([pscustomobject]@{Pid=$process.Id;Exited=$process.HasExited;ExitCode=$(if($process.HasExited){$process.ExitCode}else{$null});ProcessFamily=$familyIds;VisibleWindows=$visibleWindows})
+  }
+  $windowPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($window,[ref]$windowPid)
+  if($windowPid -ne 0 -and $windowPid -ne $process.Id){try{$process=Get-Process -Id $windowPid -ErrorAction Stop}catch{}}
   $buttonsSeen=[System.Collections.Generic.List[string]]::new()
   $watch=[Diagnostics.Stopwatch]::StartNew();$stage=0;$lastCapturedStage=-1
   while($watch.Elapsed.TotalMinutes -lt 3){
@@ -866,19 +896,70 @@ function Test-FreshInstallApp {
   Require ($hashBefore -eq $hashAfter) 'Installed app preserves the saved history bytes across restart' ([pscustomobject]@{Before=$hashBefore;After=$hashAfter})
   if($restore){Test-OsAppearanceAndTextScale;Test-UiaAndKeyboard;Stop-InstalledApp}
 }
+function Get-HiddenIconsButton {
+  $root=[System.Windows.Automation.AutomationElement]::RootElement
+  $condition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button)
+  $buttons=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$condition)
+  for($i=0;$i -lt $buttons.Count;$i++){
+    $button=$buttons.Item($i)
+    try{if($button.Current.Name -match '(?i)(hidden icons|more icons|overflow)' -and -not $button.Current.IsOffscreen -and $button.Current.BoundingRectangle.Width -gt 0){return $button}}catch{}
+  }
+  return $null
+}
+function Get-ShellTrayIconElement {
+  $iconRect=New-Object EBR_PRE_RECT
+  if(-not [EBR_PRE_NATIVE]::GetTrayRect($script:mainWindow,1,[ref]$iconRect)){return $null}
+  $iconX=($iconRect.Left+$iconRect.Right)/2.0;$iconY=($iconRect.Top+$iconRect.Bottom)/2.0
+  $root=[System.Windows.Automation.AutomationElement]::RootElement
+  $condition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button)
+  $buttons=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$condition)
+  for($i=0;$i -lt $buttons.Count;$i++){
+    $button=$buttons.Item($i)
+    try{$rect=$button.Current.BoundingRectangle;if($button.Current.Name -match '(?i)^Eye Break Reminder(\s*[—-].*)?$' -and -not $button.Current.IsOffscreen -and $rect.Width -gt 0 -and [Math]::Abs(($rect.Left+$rect.Width/2)-$iconX) -le 24 -and [Math]::Abs(($rect.Top+$rect.Height/2)-$iconY) -le 24){return $button}}catch{}
+  }
+  return $null
+}
+function Test-TrayOverflowOpen {
+  $iconRect=New-Object EBR_PRE_RECT
+  $hiddenButton=Get-HiddenIconsButton
+  if(-not $hiddenButton -or -not [EBR_PRE_NATIVE]::GetTrayRect($script:mainWindow,1,[ref]$iconRect)){return $false}
+  $hiddenRect=$hiddenButton.Current.BoundingRectangle
+  $hiddenX=$hiddenRect.Left+$hiddenRect.Width/2;$hiddenY=$hiddenRect.Top+$hiddenRect.Height/2
+  return ([Math]::Abs((($iconRect.Left+$iconRect.Right)/2)-$hiddenX) -gt 30 -or [Math]::Abs((($iconRect.Top+$iconRect.Bottom)/2)-$hiddenY) -gt 30)
+}
+function Open-TrayOverflow {
+  if(Test-TrayOverflowOpen){return $true}
+  $button=Get-HiddenIconsButton
+  if(-not $button){return $false}
+  try{$button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}
+  catch{$rect=$button.Current.BoundingRectangle;if($rect.Width -le 0 -or $rect.Height -le 0 -or -not [EBR_PRE_NATIVE]::SetCursorPos([int]($rect.Left+$rect.Width/2),[int]($rect.Top+$rect.Height/2))){return $false};[EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 60;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)}
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds -lt 3){if(Test-TrayOverflowOpen){return $true};Start-Sleep -Milliseconds 100}
+  return $false
+}
+function Wait-ForTrayPopup([int]$TimeoutSeconds=3) {
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){$menus=@([EBR_PRE_NATIVE]::TopWindows() | Where-Object { [EBR_PRE_NATIVE]::ClassName($_) -eq '#32768' -and [EBR_PRE_NATIVE]::IsWindowVisible($_) });if($menus.Count -eq 1){return $menus[0]};Start-Sleep -Milliseconds 100}
+  return [IntPtr]::Zero
+}
 function Open-TrayContextMenu {
+  $overflowOpened=Open-TrayOverflow
+  $icon=Get-ShellTrayIconElement
   $rect=New-Object EBR_PRE_RECT
   if(-not [EBR_PRE_NATIVE]::GetTrayRect($script:mainWindow,1,[ref]$rect)){return [IntPtr]::Zero}
-  [void][EBR_PRE_NATIVE]::SetCursorPos([int](($rect.Left+$rect.Right)/2),[int](($rect.Top+$rect.Bottom)/2))
-  [EBR_PRE_NATIVE]::mouse_event(0x0008,0,0,0,[UIntPtr]::Zero)
-  [EBR_PRE_NATIVE]::mouse_event(0x0010,0,0,0,[UIntPtr]::Zero)
-  $watch=[Diagnostics.Stopwatch]::StartNew()
-  while($watch.Elapsed.TotalSeconds -lt 5){
-    $menus=@([EBR_PRE_NATIVE]::TopWindows() | Where-Object { [EBR_PRE_NATIVE]::ClassName($_) -eq '#32768' -and [EBR_PRE_NATIVE]::IsWindowVisible($_) })
-    if($menus.Count -eq 1){return $menus[0]}
-    Start-Sleep -Milliseconds 100
+  $x=[int](($rect.Left+$rect.Right)/2);$y=[int](($rect.Top+$rect.Bottom)/2)
+  if($icon){$bounds=$icon.Current.BoundingRectangle;$x=[int]($bounds.Left+$bounds.Width/2);$y=[int]($bounds.Top+$bounds.Height/2)}
+  if([EBR_PRE_NATIVE]::SetCursorPos($x,$y)){
+    [EBR_PRE_NATIVE]::mouse_event(0x0008,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 60;[EBR_PRE_NATIVE]::mouse_event(0x0010,0,0,0,[UIntPtr]::Zero)
   }
-  return [IntPtr]::Zero
+  $menu=Wait-ForTrayPopup 3
+  $method='Shell tray icon right-click'
+  if($menu -eq [IntPtr]::Zero -and $icon){
+    try{$icon.SetFocus();[EBR_PRE_NATIVE]::Key(0x10,$false);[EBR_PRE_NATIVE]::Key(0x79,$false);Start-Sleep -Milliseconds 80;[EBR_PRE_NATIVE]::Key(0x79,$true);[EBR_PRE_NATIVE]::Key(0x10,$true)}catch{}
+    $menu=Wait-ForTrayPopup 2;$method='Accessible shell tray icon Shift+F10'
+  }
+  if($menu -ne [IntPtr]::Zero){Pass 'Actual tray context menu opened through the interactive shell' ([pscustomobject]@{MenuWindow=('0x{0:X}' -f $menu.ToInt64());OverflowOpened=$overflowOpened;ShellIconAccessible=($null -ne $icon);Method=$method})}
+  return $menu
 }
 function Get-TrayMenuItems([IntPtr]$MenuWindow) {
   $menuRoot=[System.Windows.Automation.AutomationElement]::FromHandle($MenuWindow)
