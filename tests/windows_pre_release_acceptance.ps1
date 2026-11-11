@@ -1041,7 +1041,7 @@ function Test-WindowsInstalledAppsPage {
         try{
           $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
           ($settingsPids -contains [int]$_.Current.ProcessId) -and
-          ($_.Current.Name -match '(?i)search' -or [string]::IsNullOrWhiteSpace($_.Current.Name))
+          ($_.Current.Name -match '(?i)^\s*Search apps\s*$')
         }catch{$false}
       })
       if($appElements.Count -gt 0){$searchElement=$appElements[0];break}
@@ -1049,9 +1049,11 @@ function Test-WindowsInstalledAppsPage {
     }
     if(-not $searchElement){
       $pageNames=@($elements | ForEach-Object {try{$_.Current.Name}catch{''}} | Where-Object {$_} | Select-Object -Unique | Select-Object -First 40)
-      Add-Event 'Windows Settings > Installed Apps search UI' 'NOT TESTED' ([pscustomobject]@{Reason='Settings launched, but its Installed Apps search edit was not exposed to UI Automation.';VisiblePageNames=$pageNames;SettingsProcesses=$settingsPids})
+      $visibleEdits=@($elements | Where-Object {try{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and ($settingsPids -contains [int]$_.Current.ProcessId)}catch{$false}} | ForEach-Object {try{[pscustomobject]@{Name=$_.Current.Name;AutomationId=$_.Current.AutomationId;ClassName=$_.Current.ClassName;ProcessId=$_.Current.ProcessId}}catch{}})
+      Add-Event 'Windows Settings > Installed Apps app-list search UI' 'NOT TESTED' ([pscustomobject]@{Reason='Settings launched, but the app-list Search apps edit was not exposed to UI Automation; the global Settings search is not accepted.';VisiblePageNames=$pageNames;VisibleEdits=$visibleEdits;SettingsProcesses=$settingsPids})
       return
     }
+    $searchControl=[pscustomobject]@{Name=$searchElement.Current.Name;AutomationId=$searchElement.Current.AutomationId;ClassName=$searchElement.Current.ClassName;ProcessId=$searchElement.Current.ProcessId}
     $searchFound=$true
     try{
       $valuePattern=$searchElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
@@ -1067,15 +1069,21 @@ function Test-WindowsInstalledAppsPage {
     while($searchWatch.Elapsed.TotalSeconds -lt 8){
       $elements=@()
       try{$elements=@([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))}catch{}
-      $pageNames=@($elements | ForEach-Object {try{$_.Current.Name}catch{''}} | Where-Object {$_} | Select-Object -Unique | Select-Object -First 60)
-      if(@($pageNames | Where-Object {$_ -match '(?i)Eye Break Reminder'}).Count -gt 0){$resultFound=$true;break}
+      $pageNames=@($elements | ForEach-Object {try{$_.Current.Name}catch{''}} | Where-Object {$_} | Select-Object -Unique)
+      $matchingRows=@($elements | Where-Object {
+        try{
+          ($settingsPids -contains [int]$_.Current.ProcessId) -and
+          ($_.Current.Name -match '(?i)^\s*Eye Break Reminder(?:\s|$)')
+        }catch{$false}
+      } | ForEach-Object {try{[pscustomobject]@{Name=$_.Current.Name;ControlType=$_.Current.ControlType.ProgrammaticName;AutomationId=$_.Current.AutomationId;ClassName=$_.Current.ClassName;ProcessId=$_.Current.ProcessId}}catch{}})
+      if($matchingRows.Count -gt 0){$resultFound=$true;break}
       Start-Sleep -Milliseconds 400
     }
     if($settingsHandle -ne [IntPtr]::Zero){Capture-ActiveWindow $settingsHandle 'windows-settings-installed-apps.png' | Out-Null}
     if($resultFound){
-      Pass 'Windows Settings > Installed Apps lists the published Eye Break Reminder installation' ([pscustomobject]@{SettingsPage=@($pageNames | Where-Object {$_ -match '(?i)Installed apps|Apps & features'});MatchingRows=@($pageNames | Where-Object {$_ -match '(?i)Eye Break Reminder'});SearchObserved=$searchFound})
+      Pass 'Windows Settings > Installed Apps lists the published Eye Break Reminder installation' ([pscustomobject]@{SearchControl=$searchControl;SettingsPage=@($pageNames | Where-Object {$_ -match '(?i)Installed apps|Apps & features'} | Select-Object -First 10);MatchingRows=$matchingRows})
     }else{
-      Add-Event 'Windows Settings > Installed Apps lists the published Eye Break Reminder installation' 'FAIL' ([pscustomobject]@{SearchObserved=$searchFound;VisiblePageNames=$pageNames;SettingsProcesses=$settingsPids})
+      Add-Event 'Windows Settings > Installed Apps lists the published Eye Break Reminder installation' 'FAIL' ([pscustomobject]@{SearchControl=$searchControl;VisibleMatchingText=@($pageNames | Where-Object {$_ -match '(?i)Eye Break Reminder'});MatchingRows=$matchingRows;SettingsProcesses=$settingsPids})
     }
   } catch {
     Add-Event 'Windows Settings > Installed Apps UI automation' 'NOT TESTED' ([pscustomobject]@{Reason=("The Settings UI did not expose a stable searchable page: " + $_.Exception.Message);SearchObserved=$searchFound;VisiblePageNames=$pageNames})
