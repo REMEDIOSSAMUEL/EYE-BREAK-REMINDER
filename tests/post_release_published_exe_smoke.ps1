@@ -288,9 +288,30 @@ function Get-TimerRingGeometry([IntPtr]$Window){
   return [pscustomobject]@{Dpi=$dpi;TextScale=$textScale;ClientWidth=$client.Right;ClientOriginX=$origin.X;ClientOriginY=$origin.Y;WindowLeft=$windowRect.Left;WindowTop=$windowRect.Top;CenterX=($origin.X-$windowRect.Left)+$ringX+$ringDiameter/2.0;CenterY=($origin.Y-$windowRect.Top)+$ringY+$ringDiameter/2.0;Radius=$ringDiameter/2.0;WindowWidth=$windowRect.Right-$windowRect.Left;WindowHeight=$windowRect.Bottom-$windowRect.Top}
 }
 function Test-TimerRingPixel([IntPtr]$Window,[string]$Label,[string]$ExpectedColor,[string]$ScreenshotName,[string]$ForbiddenColor=''){
+  $geometry=Get-TimerRingGeometry $Window
   $image=Capture $Window $ScreenshotName
   if(-not $image -or -not $image.Path){Add-Result "$Label timer-ring accent pixel" 'NOT TESTED' 'No verified app window surface could be captured.';return}
-  $geometry=Get-TimerRingGeometry $Window
+  # A foreground HWND does not guarantee that an unrelated topmost window is not
+  # covering the app's client area. Validate the real desktop owner at eight
+  # points on the ring after capture so overlays cannot turn a valid color probe
+  # into a false product failure.
+  $occluded=[System.Collections.Generic.List[object]]::new()
+  for($degrees=0;$degrees -lt 360;$degrees+=45){
+    $radians=$degrees*[Math]::PI/180.0;$point=New-Object EBR_POST_POINT
+    $point.X=[int][Math]::Round($geometry.WindowLeft+$geometry.CenterX+$geometry.Radius*[Math]::Cos($radians))
+    $point.Y=[int][Math]::Round($geometry.WindowTop+$geometry.CenterY+$geometry.Radius*[Math]::Sin($radians))
+    $hit=[EBR_POST_NATIVE]::WindowFromPoint($point)
+    $root=if($hit -ne [IntPtr]::Zero){[EBR_POST_NATIVE]::GetAncestor($hit,2)}else{[IntPtr]::Zero}
+    if($root -ne $Window){
+      $ownerPid=[uint32]0;if($root -ne [IntPtr]::Zero){[void][EBR_POST_NATIVE]::GetWindowThreadProcessId($root,[ref]$ownerPid)}
+      $ownerName='';if($ownerPid){try{$ownerName=(Get-Process -Id $ownerPid -ErrorAction Stop).ProcessName}catch{}}
+      $occluded.Add([pscustomobject]@{ScreenPoint=@($point.X,$point.Y);Hit=('0x{0:X}' -f $hit.ToInt64());Root=('0x{0:X}' -f $root.ToInt64());OwnerPid=$ownerPid;OwnerName=$ownerName;OwnerTitle=[EBR_POST_NATIVE]::Text($root);OwnerClass=[EBR_POST_NATIVE]::ClassName($root)})
+    }
+  }
+  if($occluded.Count -gt 0){
+    Add-Result "$Label timer-ring screenshot has no unrelated window over sampled ring points" 'NOT TESTED' ([pscustomobject]@{Reason='The actual desktop screenshot contains an unrelated window over one or more timer-ring points; pixel results from those covered points would not describe the app.';Screenshot=$image.Path;OccludedPointCount=$occluded.Count;Occluders=@($occluded.ToArray())})
+    return
+  }
   $bitmap=[Drawing.Bitmap]::new($image.Path);$count=0;$examples=[System.Collections.Generic.List[string]]::new()
   try{
     if($bitmap.Width -ne $geometry.WindowWidth -or $bitmap.Height -ne $geometry.WindowHeight){Add-Result "$Label timer-ring accent pixel" 'NOT TESTED' ([pscustomobject]@{Reason='Captured window dimensions did not match the measured HWND.';Bitmap=@($bitmap.Width,$bitmap.Height);Geometry=$geometry});return}
