@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0",
-  "verificationDate": "2026-11-11",
-  "status": "COMPLETE_WITH_LIMITATIONS",
+  "verificationDate": "2026-11-12",
+  "status": "COMPLETE_WITH_RECORDED_RELEASE_RISK",
   "application": "Eye Break Reminder",
   "release": {
     "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
@@ -4885,11 +4885,13 @@
   },
   "releaseRisk": [
     "Unsigned Windows binaries may receive reputation or SmartScreen warnings on consumer Windows; Windows 11 client reputation behavior was not tested.",
-    "Shell toast, production audio, Narrator speech, physical lock/unlock, sleep/resume, and multi-monitor behavior remain unverified."
+    "Shell toast, production audio, Narrator speech, physical lock/unlock, sleep/resume, and multi-monitor behavior remain unverified.",
+    "A confirmed USER-object resource leak accumulates during repeated break cycles; a focused unpublished v1.2.1 candidate passed its regression but requires approval.",
+    "Native Windows 11 x64 installer, consumer SmartScreen, audio output, audible Narrator, real lock/sleep, and multi-monitor behavior remain unverified or blocked."
   ],
   "completionAudit": {
     "reportDate": "2026-11-12",
-    "status": "INCOMPLETE_WITH_EXTERNAL_BLOCKERS",
+    "status": "COMPLETE_WITH_RECORDED_RELEASE_RISK",
     "release": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.2.0",
     "releaseTag": "v1.2.0",
     "approvedMainCommit": "908a21531833eb2175fb7bd882db06b79a2b917b",
@@ -4971,197 +4973,198 @@
           "status": "BLOCKED",
           "environment": "Disposable native x64 Windows 11 VM/runner",
           "procedure": "Run actual published release files with snapshot rollback; verify OS build and native architecture.",
-          "reason": "No local disposable VM, Sandbox, Hyper-V, or native x64 Windows 11 hosted runner is available. Personal host is excluded."
+          "reason": "Native x64 Windows 11 VM/runner unavailable; ARM64 x64 emulation is not native x64."
         },
         {
           "id": "published-exe-portable-on-windows-11",
-          "status": "BLOCKED",
+          "status": "PASS",
           "environment": "Interactive Windows 11 desktop",
           "procedure": "Hash actual GitHub downloads, launch standalone and portable EXE, operate UI, capture process and screenshots.",
-          "reason": "The prepared windows-11-arm workflow has not been pushed/run because the GitHub token is invalid. No local app launch was made."
+          "reason": "Exact published standalone and portable x64 apps visibly ran on Windows 11 Enterprise ARM64 under x64 emulation."
         },
         {
           "id": "published-installer-on-windows-11",
           "status": "BLOCKED",
           "environment": "Native x64 Windows 11 desktop",
           "procedure": "Run actual setup wizard, install, test Windows integration, interactive/silent uninstall, reinstall and upgrade.",
-          "reason": "The installer explicitly rejects non-native-AMD64 Windows; an ARM64 runner is not a valid installer environment."
+          "reason": "Installer rejects non-native AMD64; full x64 lifecycle passed on Windows Server 2025."
         },
         {
           "id": "settings-apps-uninstall",
-          "status": "BLOCKED",
+          "status": "NOT TESTED",
           "environment": "Interactive Windows 11 desktop with app installed in disposable profile",
           "procedure": "Initiate uninstall from Settings > Apps > Installed apps and verify file, shortcut, registry and data policy.",
-          "reason": "No isolated Windows 11 install was available."
+          "reason": "Settings listed the app on Server 2025, but Settings-initiated uninstall was not run and no Windows 11 install was available."
         },
         {
           "id": "narrator-keyboard-navigation",
-          "status": "BLOCKED",
+          "status": "PASS",
           "environment": "Interactive Windows 11 desktop with Narrator",
           "procedure": "Navigate tabs, timer controls, settings, themes, history, update controls and reminder by keyboard; inspect focus and announcements.",
-          "reason": "No isolated desktop was available; actual Narrator was not started."
+          "reason": "Narrator ran; keyboard navigation, accessible names, update check, and Space activation of break passed."
         },
         {
           "id": "narrator-audible-speech",
-          "status": "BLOCKED",
+          "status": "NOT TESTED",
           "environment": "Windows 11 with actual Narrator speech output/capture",
           "procedure": "Directly observe or capture speech for names, roles and states.",
-          "reason": "Accessibility metadata does not establish speech; no speech engine was started."
+          "reason": "No output endpoint; focus metadata does not prove synthesized speech."
         },
         {
           "id": "legacy-shell-balloon",
-          "status": "BLOCKED",
+          "status": "NOT TESTED",
           "environment": "Windows 11 desktop with notifications enabled",
           "procedure": "Trigger, observe and dismiss actual Shell_NotifyIconW NIF_INFO balloon; check quiet time and repeats.",
-          "reason": "Prior run observed the app-owned reminder window but not the legacy Shell balloon surface."
+          "reason": "Timed in-app reminder appeared; quiet time was on and a distinct visible Shell balloon was not observed."
         },
         {
           "id": "modern-toast",
           "status": "NOT APPLICABLE",
           "environment": "Not applicable",
           "procedure": "Inspect implemented notification paths.",
-          "reason": "The application uses an app-owned reminder window and legacy Shell tray balloon; no modern Windows Toast API/identity path is implemented."
+          "reason": "NOT APPLICABLE: no modern Toast API/identity path is implemented."
         },
         {
           "id": "windows-audio-output",
-          "status": "BLOCKED",
+          "status": "NOT TESTED",
           "environment": "Isolated Windows audio endpoint or virtual loopback sink",
           "procedure": "Play preview, timer and reminder audio; capture non-silent output; verify disabled/muted and repeat behavior.",
-          "reason": "No isolated endpoint/loopback environment was available; source PCM or waveOut submission is not output verification."
+          "reason": "No audio endpoint or loopback capture; waveOut device count was zero."
         },
         {
           "id": "physical-speaker-audibility",
-          "status": "BLOCKED",
+          "status": "NOT TESTED",
           "environment": "Disposable Windows device with physical speaker",
           "procedure": "Verify human-audible preview and alarm output.",
-          "reason": "No safe physical speaker test environment."
+          "reason": "No physical output device was available."
         },
         {
           "id": "real-lock-unlock",
           "status": "BLOCKED",
           "environment": "Disposable interactive Windows VM",
           "procedure": "Lock and unlock actual session while timer runs; verify recovery and reminder uniqueness.",
-          "reason": "No disposable VM/session; personal workstation was not locked."
+          "reason": "No disposable VM/session lifecycle; personal desktop was not locked."
         },
         {
           "id": "real-sleep-resume",
           "status": "BLOCKED",
           "environment": "VM/device supporting genuine Windows suspend/resume with controlled wake",
           "procedure": "Suspend OS during timer and verify designed elapsed-time, tray and reminder recovery.",
-          "reason": "No safe VM with real Windows sleep and controlled wake was available."
+          "reason": "No safe VM exposed genuine Windows sleep/resume and controlled wake."
         },
         {
           "id": "multi-monitor",
           "status": "BLOCKED",
           "environment": "Isolated Windows desktop with two actual virtual/physical displays",
           "procedure": "Move windows, vary DPI, disconnect/reconnect display and verify placement and timer continuity.",
-          "reason": "Prior runner exposed one display; no isolated multi-display environment."
+          "reason": "Hosted runner exposed one display; no multi-display environment was available."
         },
         {
           "id": "v1.2.0-nsis-ui-child-exit",
-          "status": "BLOCKED",
+          "status": "PASS",
           "environment": "Interactive disposable Windows installer run",
           "procedure": "Retain UI-child handle before Finish and capture actual exit status; independently verify cleanup.",
-          "reason": "Actual v1.2.0 uninstaller has not been rerun with the new handle capture. Previous GUI and cleanup passed, child exit remained unavailable."
+          "reason": "Retained handle captured exit code 0 for actual published v1.2.0 extracted NSIS UI process; cleanup passed."
         },
         {
           "id": "v1.1.0-nsis-ui-child-exit",
-          "status": "BLOCKED",
+          "status": "PASS",
           "environment": "Interactive disposable Windows installer run",
           "procedure": "Repeat retained-handle capture against official v1.1.0 uninstaller.",
-          "reason": "Actual v1.1.0 uninstaller has not been rerun with the new handle capture."
+          "reason": "Retained handle captured exit code 0 for official v1.1.0 extracted NSIS UI process; cleanup passed."
         },
         {
           "id": "multi-hour-soak",
-          "status": "BLOCKED",
+          "status": "FAIL",
           "environment": "Disposable Windows desktop available for multiple hours",
           "procedure": "Run repeated cycles while measuring memory, GDI/USER objects, handles, CPU, drift and duplicate events over time.",
-          "reason": "No safe isolated runner was available; prior short resource sampling is not a soak."
+          "reason": "Two-hour run of 110 cycles/240 samples increased USER objects from 155 to 373 (+218), without crash or invalid timer."
         },
         {
           "id": "restart-during-active-break",
-          "status": "BLOCKED",
+          "status": "PASS",
           "environment": "Disposable desktop running exact public binary",
           "procedure": "Restart during break and verify documented state, countdown, reminder and history semantics.",
-          "reason": "No safe published-binary desktop run was available."
+          "reason": "Exact published app restarted during break and followed documented fresh-work-state semantics."
         },
         {
           "id": "timer-ring-pixel-sampling",
-          "status": "BLOCKED",
+          "status": "PASS",
           "environment": "Actual app screenshots for work/break in all five themes",
           "procedure": "Sample rendered timer-ring arc pixels directly, separately from navigation indicator.",
-          "reason": "Prior Actions screenshots were not available locally and GitHub artifact retrieval is blocked by authentication; no new screenshot was captured."
+          "reason": "Direct pixels from actual Windows 11 screenshots verified work/break ring colors across themes."
         },
         {
           "id": "hover-focus-state-matrix",
-          "status": "BLOCKED",
+          "status": "PASS",
           "environment": "Interactive desktop and actual published app",
           "procedure": "Exercise hover, keyboard focus, pressed, disabled and selected states for controls across five themes.",
-          "reason": "Prior partial checks do not cover the complete published-binary state matrix; no desktop run was available."
+          "reason": "Foreground/hit-target harness passed hover, focus, pressed, disabled, and active checks across themes."
         },
         {
           "id": "actual-reduced-motion-setting",
-          "status": "BLOCKED",
+          "status": "PASS",
           "environment": "Disposable Windows desktop with accessibility setting control",
           "procedure": "Change actual Windows reduced-motion preference, observe app, then restore original setting.",
-          "reason": "Personal settings were not changed; no isolated desktop was available."
+          "reason": "Actual Windows preference changed/read back/restored; immediate settings scrolling was observed."
         },
         {
           "id": "smartscreen-reputation",
-          "status": "BLOCKED",
+          "status": "NOT TESTED",
           "environment": "Isolated consumer Windows 11 with standard security",
           "procedure": "Open genuine unsigned EXE and installer and observe prompts without bypassing security.",
-          "reason": "No isolated consumer Windows 11 run; Server 2025 behavior does not establish SmartScreen reputation."
+          "reason": "No consumer x64 Windows 11 environment; no protection bypass was attempted."
         },
         {
           "id": "interactive-standard-user-uac",
-          "status": "BLOCKED",
+          "status": "NOT TESTED",
           "environment": "Disposable Windows 11 standard account plus authorized admin interaction",
           "procedure": "Install/uninstall interactively and observe UAC prompts without storing credentials.",
-          "reason": "Prior standard-user silent lifecycle checks passed on hosted Windows, but interactive Windows 11 UAC was not run."
+          "reason": "Disposable non-admin silent install/uninstall passed without UAC; interactive wizard was not exercised."
         },
         {
           "id": "dpi-text-scaling-matrix",
           "status": "BLOCKED",
           "environment": "Isolated Windows displays with supported scale/DPI options",
           "procedure": "Measure status/ring alignment, controls, settings and reminder layout at multiple scales.",
-          "reason": "No isolated desktop; existing single-runner checks do not cover the requested matrix."
+          "reason": "150% text scaling passed at 96 DPI; multi-monitor/per-display DPI matrix unavailable."
         },
         {
           "id": "update-link-browser-open",
           "status": "NOT TESTED",
           "environment": "Isolated app fixture presenting a newer stable version plus browser",
           "procedure": "Click the enabled application update link and verify official v1.2.0 release page opens.",
-          "reason": "Public latest is v1.2.0 so current app correctly disables the link; prior controlled newer-version case did not launch a browser."
+          "reason": "Latest stable was v1.2.0, so no newer link target exists; no fake release was published."
         },
         {
           "id": "optional-break-accent-all-themes",
-          "status": "BLOCKED",
+          "status": "PASS",
           "environment": "Interactive published app across all five themes",
           "procedure": "Toggle optional break accent, inspect timer ring and reminder colors in every theme.",
-          "reason": "Prior published-binary checks covered default colors, not this full option/theme matrix."
+          "reason": "Both optional accent states passed across all five themes on published binaries."
         },
         {
           "id": "production-code-signing",
           "status": "BLOCKED",
           "environment": "Authorized trusted Authenticode certificate and protected signing service/key",
           "procedure": "Sign app and installer, RFC 3161 timestamp with SHA-256, then verify using SignTool.",
-          "reason": "No authorized certificate or signing credentials/service was available; v1.2.0 remains unsigned."
+          "reason": "No authorized trusted signing certificate/key/service; none was fabricated or purchased."
         }
       ],
       "totals": {
-        "PASS": 0,
-        "FAIL": 0,
-        "NOT TESTED": 1,
+        "PASS": 9,
+        "FAIL": 1,
+        "NOT TESTED": 8,
         "NOT APPLICABLE": 1,
-        "BLOCKED": 24
+        "BLOCKED": 7,
+        "note": "Counts cover the original enumerated post-release gap IDs; the more detailed final area matrix is in finalFollowUp."
       }
     },
     "environment": {
       "localHost": "Windows 11 26H2 x64, build 26300.9974",
       "localHostAppLaunch": "NOT PERFORMED: existing user application data and no isolation",
       "windows11ArmWorkflowPrepared": true,
-      "windows11ArmWorkflowRun": false,
+      "windows11ArmWorkflowRun": true,
       "nativeX64Windows11VmAvailable": false,
       "windowsSandboxAvailable": false,
       "hyperVAvailable": false,
@@ -5171,8 +5174,9 @@
     "branch": {
       "name": "post-release-verification-v1.2.0-actual-binaries-20261111",
       "baseCommit": "e495f9fe19882bada2f5c9c2a242a9ff1abf8791",
-      "pushed": false,
-      "blocker": "gh auth status reports the active account token is invalid; shell GitHub network access is restricted"
+      "pushed": true,
+      "blocker": null,
+      "latestTestHarnessCommit": "96d0b0472f8b2ed71115459736bbb0ffd1c332df"
     },
     "changes": {
       "applicationSourceChanged": false,
@@ -5180,7 +5184,7 @@
       "buildConfigurationChanged": false,
       "releaseTagOrAssetsChanged": false,
       "publishedReleaseAltered": false,
-      "hotfixRequired": false,
+      "hotfixRequired": true,
       "exerciseBreakReminderAccessedOrModified": false,
       "personalAppDataModified": false
     },
@@ -5191,9 +5195,327 @@
       "missingPrerequisite": "Authorized trusted Authenticode certificate and protected signing mechanism"
     },
     "evidence": {
-      "newScreenshots": [],
+      "newScreenshots": [
+        "Windows 11 ARM artifact: Published-standalone-EXE-*-ring.png; Published-portable-ZIP-executable-*-ring.png; windows-11-real-reminder-shell-notification.png; wsl-first-run-prompt-before-cancel.png",
+        "Windows Server artifact: v1.2.0 production installer-wizard-*.png; v1.2.0 fresh uninstall-*.png; upgrade-v11-history-statistics-active.png; installed-live-update-check.png; windows-settings-installed-apps.png"
+      ],
       "newHostedActionRun": null,
-      "processHandleProbe": "build/post-release-evidence/process-exit-handle-probe.json"
+      "processHandleProbe": "build/post-release-evidence/process-exit-handle-probe.json",
+      "newHostedActionRuns": [
+        {
+          "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43261407923",
+          "environment": "Windows 11 Enterprise build 26200 ARM64",
+          "conclusion": "failure due to USER-object resource assertions",
+          "artifact": "eye-break-reminder-v1.2.0-windows-11-arm-gap-audit-43261407923"
+        },
+        {
+          "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43261407951",
+          "environment": "Windows Server 2025 x64",
+          "conclusion": "failure due to USER-object resource assertions",
+          "artifact": "eye-break-reminder-v1.2.0-post-release-evidence-43261407951"
+        }
+      ],
+      "nsisProcessResults": {
+        "v1.2.0": "exit code 0; filesystem/shortcut/registry cleanup verified",
+        "v1.1.0": "exit code 0; filesystem/shortcut/registry cleanup verified"
+      }
+    },
+    "finalFollowUp": {
+      "status": "COMPLETE_WITH_RECORDED_RELEASE_RISK",
+      "countsAreUniqueAreas": true,
+      "historicalAcceptancePreserved": {
+        "PASS": 756,
+        "FAIL": 0,
+        "NOT TESTED": 9,
+        "coreAssertions": 6680,
+        "guiAssertions": 128,
+        "packageAssertions": 88
+      },
+      "uniqueAreaTotals": {
+        "PASS": 21,
+        "FAIL": 1,
+        "NOT TESTED": 7,
+        "NOT APPLICABLE": 1,
+        "BLOCKED": 5
+      },
+      "areas": [
+        {
+          "id": "published-release-downloads-integrity",
+          "status": "PASS",
+          "evidence": "Public stable v1.2.0 metadata, five exact asset names, downloads, hashes, source ZIP equivalence, and package-content scan; current hosted asset audit 36/0/0."
+        },
+        {
+          "id": "windows-11-arm-published-x64-execution",
+          "status": "PASS",
+          "evidence": "Actual public standalone and portable x64 executables ran visibly on Windows 11 Enterprise ARM64 build 26200 under x64 emulation; both hashes matched."
+        },
+        {
+          "id": "native-windows-11-x64-installer-lifecycle",
+          "status": "BLOCKED",
+          "evidence": "No disposable native x64 Windows 11 VM/runner available; Windows 11 ARM installer rejects non-native AMD64."
+        },
+        {
+          "id": "five-themes-break-accent-ring-pixels",
+          "status": "PASS",
+          "evidence": "Actual published binaries: all five themes, work/break states, both optional accent settings; direct pixels sampled from timer-ring arcs."
+        },
+        {
+          "id": "windows-light-dark-appearance-change",
+          "status": "PASS",
+          "evidence": "Disposable Windows 11 runner preference changed, read back, app appearance updated, original setting restored."
+        },
+        {
+          "id": "windows-reduced-motion-setting",
+          "status": "PASS",
+          "evidence": "Actual preference changed/read back/restored; settings scrolling behavior observed."
+        },
+        {
+          "id": "hover-focus-pressed-disabled-state-matrix",
+          "status": "PASS",
+          "evidence": "Actual desktop checks across themes covered hover, keyboard focus, pressed, disabled, and active navigation states."
+        },
+        {
+          "id": "timer-controls-and-real-short-cycle",
+          "status": "PASS",
+          "evidence": "Published app start, pause/resume, reset, manual break, countdown and a short real reminder cycle operated on hosted desktops."
+        },
+        {
+          "id": "timer-status-centering-and-footer",
+          "status": "PASS",
+          "evidence": "UI geometry and screenshots show centered status, retained 20-20-20 summary and dynamic schedule, and no redundant explanatory sentence."
+        },
+        {
+          "id": "live-update-checker",
+          "status": "PASS",
+          "evidence": "Running published v1.2.0 app queried GitHub, displayed installed/latest 1.2.0, and reported current."
+        },
+        {
+          "id": "narrator-metadata-keyboard-navigation",
+          "status": "PASS",
+          "evidence": "Narrator process ran; keyboard navigation covered tabs, timer controls, History, Settings, About/update, and Space activation of break."
+        },
+        {
+          "id": "narrator-audible-speech",
+          "status": "NOT TESTED",
+          "evidence": "Windows 11 runner exposed no audio endpoint; actual audible speech was not observed/captured."
+        },
+        {
+          "id": "in-app-reminder-window",
+          "status": "PASS",
+          "evidence": "Actual reminder window was directly observed after approximately one minute on Windows 11 desktop."
+        },
+        {
+          "id": "visible-legacy-shell-balloon",
+          "status": "NOT TESTED",
+          "evidence": "Shell request/quiet-time behavior was inspected, but a separate visible/dismissed legacy balloon was not established."
+        },
+        {
+          "id": "modern-windows-toast",
+          "status": "NOT APPLICABLE",
+          "evidence": "Product has no modern Toast API/app identity path; it uses an app-owned window and legacy Shell_NotifyIconW balloon request."
+        },
+        {
+          "id": "windows-audio-loopback-output",
+          "status": "NOT TESTED",
+          "evidence": "waveOutGetNumDevs returned zero; no endpoint or loopback capture was available."
+        },
+        {
+          "id": "physical-speaker-audibility",
+          "status": "NOT TESTED",
+          "evidence": "No physical output device was available; no claim of human audibility."
+        },
+        {
+          "id": "published-installer-upgrade-interactive-uninstall",
+          "status": "PASS",
+          "evidence": "Exact public installer on x64 Windows Server 2025: fresh install, v1.1.0 upgrade preserving settings/history, interactive uninstall and cleanup."
+        },
+        {
+          "id": "published-silent-uninstall-cleanup",
+          "status": "PASS",
+          "evidence": "Exact public installation removed files, shortcuts, registration and install directory through supported silent path."
+        },
+        {
+          "id": "installed-apps-registration-listing",
+          "status": "PASS",
+          "evidence": "Windows Installed Apps page listed Eye Break Reminder 1.2.0; this verifies listing only."
+        },
+        {
+          "id": "windows-settings-initiated-uninstall",
+          "status": "NOT TESTED",
+          "evidence": "The Settings page uninstall action itself was not exercised."
+        },
+        {
+          "id": "nsis-v11-v12-extracted-ui-process-exit-cleanup",
+          "status": "PASS",
+          "evidence": "Retained native handles captured exit code 0 for official v1.1.0 and v1.2.0 extracted UI uninstallers; cleanup independently verified."
+        },
+        {
+          "id": "standard-user-silent-install-uninstall",
+          "status": "PASS",
+          "evidence": "Disposable non-admin profile installed and silently uninstalled; profile-scoped files/registry and cleanup verified, 16/0/0."
+        },
+        {
+          "id": "standard-user-interactive-uac",
+          "status": "NOT TESTED",
+          "evidence": "Interactive standard-user wizard/elevation prompt was not exercised."
+        },
+        {
+          "id": "consumer-windows-smartscreen",
+          "status": "NOT TESTED",
+          "evidence": "Consumer Windows 11 reputation behavior not observed; protections were not bypassed."
+        },
+        {
+          "id": "two-hour-repeated-break-soak",
+          "status": "FAIL",
+          "evidence": "110 cycles/240 samples; USER objects grew from 155 to 373 (+218). No crash/invalid timer. This is a confirmed accumulating resource leak."
+        },
+        {
+          "id": "restart-during-active-break",
+          "status": "PASS",
+          "evidence": "Exact release binary followed documented fresh-work-state behavior after a controlled restart during break."
+        },
+        {
+          "id": "real-windows-session-lock-unlock",
+          "status": "BLOCKED",
+          "evidence": "No isolated VM/session lifecycle; personal desktop was not locked. Synthetic session events are not counted."
+        },
+        {
+          "id": "genuine-windows-sleep-resume",
+          "status": "BLOCKED",
+          "evidence": "No safe VM supports real Windows suspend/resume in this environment; VM pause is not treated as equivalent."
+        },
+        {
+          "id": "multi-monitor-and-per-display-dpi",
+          "status": "BLOCKED",
+          "evidence": "Hosted desktop exposed one display; no real multi-display topology available."
+        },
+        {
+          "id": "actual-windows-text-scaling-150",
+          "status": "PASS",
+          "evidence": "Actual settings layout captured at 150% text scale; Windows 11 ARM runner itself was 96 DPI."
+        },
+        {
+          "id": "core-gui-package-regression",
+          "status": "PASS",
+          "evidence": "Hosted suites: 6,680 core, 128 Win32 GUI and 88 package assertions passed."
+        },
+        {
+          "id": "local-nsis-package-after-toolchain-repair",
+          "status": "PASS",
+          "evidence": "Matching MINGW32 NSIS 3.11 x86 Unicode plug-in resolved local nsDialogs mismatch; local make -B package passed 99 package checks."
+        },
+        {
+          "id": "authorized-production-authenticode-signing",
+          "status": "BLOCKED",
+          "evidence": "No authorized trusted signing certificate/key/service; v1.2.0 remains unsigned."
+        },
+        {
+          "id": "release-and-scope-safety",
+          "status": "PASS",
+          "evidence": "Published v1.2.0 tag/assets/main unchanged; no force-push; no personal app data touched; Exercise Break Reminder not accessed."
+        }
+      ],
+      "runs": {
+        "windows11Arm": {
+          "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43261407923",
+          "conclusion": "failure",
+          "artifact": "eye-break-reminder-v1.2.0-windows-11-arm-gap-audit-43261407923",
+          "architecture": "ARM64; actual published x64 binaries executed under emulation, not native x64",
+          "suites": {
+            "publishedAppSmoke": {
+              "PASS": 322,
+              "FAIL": 20,
+              "NOT TESTED": 1,
+              "informational": 29
+            },
+            "narratorKeyboard": {
+              "PASS": 13,
+              "FAIL": 0,
+              "NOT TESTED": 1
+            },
+            "shellReminder": {
+              "PASS": 7,
+              "FAIL": 0,
+              "NOT TESTED": 3,
+              "NOT APPLICABLE": 1
+            },
+            "assetAudit": {
+              "PASS": 36,
+              "FAIL": 0,
+              "NOT TESTED": 0
+            }
+          },
+          "failureClassification": "20 strict per-cycle USER-object stability assertions; cumulative soak independently confirms a product leak."
+        },
+        "windowsServer2025": {
+          "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43261407951",
+          "conclusion": "failure",
+          "artifact": "eye-break-reminder-v1.2.0-post-release-evidence-43261407951",
+          "architecture": "x64",
+          "suites": {
+            "combinedAcceptance": {
+              "PASS": 1047,
+              "FAIL": 20,
+              "NOT TESTED": 8,
+              "overlapsOtherSuites": true
+            },
+            "installer": {
+              "PASS": 508,
+              "FAIL": 0,
+              "NOT TESTED": 7
+            },
+            "publishedAppSmoke": {
+              "PASS": 321,
+              "FAIL": 20,
+              "NOT TESTED": 1
+            },
+            "standardUserSilentLifecycle": {
+              "PASS": 16,
+              "FAIL": 0,
+              "NOT TESTED": 0
+            },
+            "coreAssertions": 6680,
+            "guiAssertions": 128,
+            "packageAssertions": 88
+          },
+          "failureClassification": "20 strict per-cycle USER-object stability assertions; cumulative soak independently confirms a product leak."
+        }
+      },
+      "publishedAssetSha256": {
+        "EyeBreakReminder.exe": "2895c80f942dd03186305d913516700552524ec5ba9a77da0dab457a3265fcc6",
+        "EyeBreakReminder-Setup-x64.exe": "121eaa8d14b8e3d342252edfc91bc25d6e8334b829c2824b7f90813062ded75f",
+        "EyeBreakReminder-Portable-x64.zip": "757f1cb10eb9a4c943a47c475f3aca8a2942b823ad4119fa217c66251dbd3658",
+        "EyeBreakReminder-Source.zip": "d6ed5ba6827ad9097435c4ffe9776b0e60e9a67f9b9ccfc49776964d57c9e692",
+        "EyeBreakReminder-SHA256.txt": "be97ddf2af39a52315ab7f678ce26d770bde81113181aa00ad3c7c1577b50dea"
+      },
+      "localNsis": {
+        "result": "PASS",
+        "compiler": "MINGW32 NSIS 3.11 with x86 Unicode plug-in",
+        "packageAssertions": 99,
+        "coreAssertions": 6680,
+        "systemInstallChanged": false,
+        "installerScriptChanged": false
+      },
+      "productFinding": {
+        "id": "break-window-user-object-leak",
+        "status": "FAIL",
+        "evidence": "Two-hour soak: 110 cycles, 240 samples, USER objects 155 to 373 (+218); controlled reproducer isolated growth to break-window path.",
+        "hotfixBranch": "hotfix/v1.2.1-user-object-leak",
+        "candidateCommit": "7adc7545e1b6657258d7b690bd40a80f70a5f826",
+        "candidateRegression": "12 cycles with zero USER-object growth; core/package/gui suites passed",
+        "published": false,
+        "requiresUserApproval": true
+      },
+      "releaseSafety": {
+        "publishedReleaseUnchanged": true,
+        "tag": "v1.2.0",
+        "mainCommit": "908a21531833eb2175fb7bd882db06b79a2b917b",
+        "forcePush": false,
+        "exerciseBreakReminderAccessedOrModified": false,
+        "personalApplicationDataModified": false,
+        "unsigned": true
+      },
+      "countingNote": "Unique area totals do not sum overlapping workflow assertion counts. Historical 756/0/9 remains separate."
     }
   }
 }
