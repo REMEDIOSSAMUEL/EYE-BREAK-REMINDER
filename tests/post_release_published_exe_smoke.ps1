@@ -57,6 +57,8 @@ public static class EBR_POST_NATIVE {
   public static string ClassName(IntPtr hwnd){StringBuilder b=new StringBuilder(256);GetClassNameW(hwnd,b,b.Capacity);return b.ToString();}
   public static IntPtr ControlById(IntPtr root,int id){List<IntPtr> found=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){if(GetDlgCtrlID(h)==id)found.Add(h);return true;};EnumChildWindows(root,cb,IntPtr.Zero);GC.KeepAlive(cb);return found.Count==1?found[0]:IntPtr.Zero;}
   public static IntPtr[] WindowsForProcess(int pid){List<IntPtr> r=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){uint actual;GetWindowThreadProcessId(h,out actual);if(actual==(uint)pid&&IsWindowVisible(h))r.Add(h);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return r.ToArray();}
+  public static IntPtr[] AllWindowsForProcess(int pid){List<IntPtr> r=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){uint actual;GetWindowThreadProcessId(h,out actual);if(actual==(uint)pid)r.Add(h);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return r.ToArray();}
+  public static int ChildCount(IntPtr parent){int count=0;EnumCallback cb=delegate(IntPtr h,IntPtr ignored){count++;return true;};EnumChildWindows(parent,cb,IntPtr.Zero);GC.KeepAlive(cb);return count;}
 }
 "@
 Add-Type -TypeDefinition $native
@@ -81,14 +83,15 @@ function Wait-Status([IntPtr]$Window,[string]$Expected,[int]$TimeoutSeconds=5){
 function Get-AppResourceSnapshot([string]$Label){
   if(-not $script:activeProcess){return $null}
   $script:activeProcess.Refresh()
-  return [pscustomobject]@{Label=$Label;Utc=[DateTime]::UtcNow.ToString('o');HandleCount=$script:activeProcess.HandleCount;GdiObjects=[EBR_POST_NATIVE]::GetGuiResources($script:activeProcess.Handle,0);UserObjects=[EBR_POST_NATIVE]::GetGuiResources($script:activeProcess.Handle,1);PrivateBytes=$script:activeProcess.PrivateMemorySize64}
+  $windows=@([EBR_POST_NATIVE]::AllWindowsForProcess($script:activeProcess.Id)|ForEach-Object{[pscustomobject]@{Handle=('0x{0:X}' -f $_.ToInt64());Class=[EBR_POST_NATIVE]::ClassName($_);Title=[EBR_POST_NATIVE]::Text($_);Visible=[EBR_POST_NATIVE]::IsWindowVisible($_);ChildCount=[EBR_POST_NATIVE]::ChildCount($_)}})
+  return [pscustomobject]@{Label=$Label;Utc=[DateTime]::UtcNow.ToString('o');HandleCount=$script:activeProcess.HandleCount;GdiObjects=[EBR_POST_NATIVE]::GetGuiResources($script:activeProcess.Handle,0);UserObjects=[EBR_POST_NATIVE]::GetGuiResources($script:activeProcess.Handle,1);PrivateBytes=$script:activeProcess.PrivateMemorySize64;TopLevelWindows=$windows;BreakTopLevelWindowCount=@($windows|Where-Object Class -eq 'EyeBreakReminder.Break').Count}
 }
-function Record-AppResourceLifecycle([string]$Label,$Before,$After){
+function Record-AppResourceLifecycle([string]$Label,$Before,$After,[switch]$RequireStableUserObjects){
   if(-not $Before -or -not $After){return}
   $sample=[pscustomobject]@{Name=$Label;Before=$Before;After=$After;UserObjectDelta=($After.UserObjects-$Before.UserObjects);GdiObjectDelta=($After.GdiObjects-$Before.GdiObjects);HandleDelta=($After.HandleCount-$Before.HandleCount);PrivateByteDelta=($After.PrivateBytes-$Before.PrivateBytes)}
   $script:resourceSamples.Add($sample)
   Add-Result "$Label process resource lifecycle sample (informational)" 'INFO' $sample
-  Check ($sample.UserObjectDelta -eq 0) "$Label destroys temporary USER objects after the break window closes" ([pscustomobject]@{Before=$Before.UserObjects;After=$After.UserObjects;Delta=$sample.UserObjectDelta;BreakWindowMustBeDestroyed=$true})
+  if($RequireStableUserObjects){Check ($sample.UserObjectDelta -eq 0) "$Label destroys temporary USER objects after the break window closes" ([pscustomobject]@{Before=$Before.UserObjects;After=$After.UserObjects;Delta=$sample.UserObjectDelta;BreakWindowMustBeDestroyed=$true;BeforeBreakWindows=$Before.BreakTopLevelWindowCount;AfterBreakWindows=$After.BreakTopLevelWindowCount;AfterWindows=$After.TopLevelWindows})}
 }
 function Click-Control([IntPtr]$Window,[int]$Id,[string]$Name){
   $control=[EBR_POST_NATIVE]::ControlById($Window,$Id)
@@ -279,7 +282,7 @@ function Test-ThemeAndTimerRingMatrix([string]$Label){
     $returned=Wait-Status $script:activeWindow 'Running' 5
     Check ($returned -match 'Running') "$Label $($names[$index]) returns to work mode" $returned
     Start-Sleep -Milliseconds 300
-    Record-AppResourceLifecycle "$Label $($names[$index]) enabled-accent break" $resourcesBeforeBreak (Get-AppResourceSnapshot "$Label $($names[$index]) break with distinct colour enabled after")
+    Record-AppResourceLifecycle "$Label $($names[$index]) enabled-accent break" $resourcesBeforeBreak (Get-AppResourceSnapshot "$Label $($names[$index]) break with distinct colour enabled after") -RequireStableUserObjects
 
     Set-BreakColorOption $script:activeWindow $false "$Label $($names[$index]) disabled accent"
     Click-Control $script:activeWindow 21 "$Label reset before disabled-accent break"
@@ -296,7 +299,7 @@ function Test-ThemeAndTimerRingMatrix([string]$Label){
     $disabledReturned=Wait-Status $script:activeWindow 'Running' 5
     Check ($disabledReturned -match 'Running') "$Label $($names[$index]) returns to work after disabled-accent break" $disabledReturned
     Start-Sleep -Milliseconds 300
-    Record-AppResourceLifecycle "$Label $($names[$index]) disabled-accent break" $resourcesBeforeDisabledBreak (Get-AppResourceSnapshot "$Label $($names[$index]) break with distinct colour disabled after")
+    Record-AppResourceLifecycle "$Label $($names[$index]) disabled-accent break" $resourcesBeforeDisabledBreak (Get-AppResourceSnapshot "$Label $($names[$index]) break with distinct colour disabled after") -RequireStableUserObjects
     Set-BreakColorOption $script:activeWindow $true "$Label $($names[$index]) restore accent option"
   }
   Test-WindowsThemeChanges $Label
@@ -410,7 +413,7 @@ function Test-InterruptedBreakRestart([string]$Label){
   $countdownSeconds=-1
   if($countdown -match '^(\d{1,2}):(\d{2})$'){$countdownSeconds=([int]$Matches[1]*60)+[int]$Matches[2]}
   $freshIntervalSeconds=60
-  Check ($status -match 'Running' -and $countdownSeconds -ge ($freshIntervalSeconds-5) -and $countdownSeconds -le $freshIntervalSeconds -and -not $breakAfter) "$Label interrupted break recovers with a fresh one-minute work interval" ([pscustomobject]@{Status=$status;ExpectedFreshIntervalSeconds=$freshIntervalSeconds;AcceptedStartupRangeSeconds=@($freshIntervalSeconds-5,$freshIntervalSeconds);ActualCountdown=$countdown;ActualSeconds=$countdownSeconds;BreakWindowAfterRestart=$breakAfter})
+  Check ($status -match 'Running' -and $countdownSeconds -ge ($freshIntervalSeconds - 5) -and $countdownSeconds -le $freshIntervalSeconds -and -not $breakAfter) "$Label interrupted break recovers with a fresh one-minute work interval" ([pscustomobject]@{Status=$status;ExpectedFreshIntervalSeconds=$freshIntervalSeconds;AcceptedStartupRangeSeconds='55-60 seconds';ActualCountdown=$countdown;ActualSeconds=$countdownSeconds;BreakWindowAfterRestart=$breakAfter})
 }
 function Stop-OwnedApp {
   $graceful=$false
@@ -476,6 +479,7 @@ function Test-PublishedExecutable([string]$Path,[string]$Label){
   $script:expectedWorkCountdown=$countdown
   Capture $script:activeWindow (("$Label" -replace '[^a-zA-Z0-9]+','-').Trim('-')+'-timer-before.png') | Out-Null
 
+  $resourcesBeforePauseResume=Get-AppResourceSnapshot "$Label before pause/resume/reset state changes"
   Click-Control $script:activeWindow 20 "$Label pause"
   $paused=Wait-Status $script:activeWindow 'Paused'
   Check ($paused -match 'Paused') "$Label pauses through its real timer button" $paused
@@ -485,6 +489,7 @@ function Test-PublishedExecutable([string]$Path,[string]$Label){
   Click-Control $script:activeWindow 21 "$Label reset"
   $reset=Wait-Status $script:activeWindow 'Running'
   Check ($reset -match 'Running') "$Label resets the work timer and remains in work mode" $reset
+  Record-AppResourceLifecycle "$Label pause/resume/reset state changes" $resourcesBeforePauseResume (Get-AppResourceSnapshot "$Label after pause/resume/reset state changes")
 
   Click-Control $script:activeWindow 11 "$Label History navigation"
   $historyRoot=[System.Windows.Automation.AutomationElement]::FromHandle($script:activeWindow)
