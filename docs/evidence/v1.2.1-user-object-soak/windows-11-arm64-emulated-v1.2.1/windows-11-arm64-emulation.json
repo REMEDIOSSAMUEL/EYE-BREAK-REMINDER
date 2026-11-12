@@ -1,0 +1,7 @@
+{
+  "OS": "Microsoft Windows 11 Enterprise",
+  "OSArchitecture": "Arm64",
+  "ProcessArchitecture": "Arm64",
+  "Is64BitProcess": true,
+  "Note": "The downloaded app is x64 and runs under ARM64 x64 emulation; this is not native x64 Windows 11."
+}
