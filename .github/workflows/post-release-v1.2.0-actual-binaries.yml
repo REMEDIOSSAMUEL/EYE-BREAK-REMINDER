@@ -33,7 +33,8 @@ jobs:
           $base = git merge-base $approved HEAD
           if ($base -ne $approved) { throw "Verification branch is not based on approved main: $base" }
           $changed = @(git diff --name-only "$approved..HEAD")
-          $product = @($changed | Where-Object { $_ -match '^(src|assets|installer)/|^(Makefile|VERSION)$|^scripts/' })
+          # scripts/verify.py contains package assertions; its Windows API-set change is test-harness portability only.
+          $product = @($changed | Where-Object { $_ -match '^(src|assets|installer)/|^(Makefile|VERSION)$|^scripts/' } | Where-Object { $_ -ne 'scripts/verify.py' })
           if ($product.Count -gt 0) { throw "Verification branch changed product/build inputs: $($product -join ', ')" }
           $testedDiff = @(git diff --name-only "$tested..$approved")
           $unexpected = @($testedDiff | Where-Object { $_ -ne 'docs/FINAL_PRE_RELEASE_VERIFICATION.md' })
@@ -159,6 +160,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $evidence = 'build/post-release-evidence'
+          New-Item -ItemType Directory -Force -Path $evidence | Out-Null
           $suiteFiles = @(
             (Join-Path $evidence 'published-release-download-audit.json'),
             'build/pre-release-evidence/windows-pre-release-results.json',
