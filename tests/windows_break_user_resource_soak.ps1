@@ -106,7 +106,24 @@ function Act-On-Break([IntPtr]$Window,[string]$Action,[int]$Cycle){
  switch($Action){
   'Skip' {if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($Window,24))){throw "Cycle $Cycle Skip button failed."};Wait-Closed $Window 12 $Cycle 'Skip'}
   'Complete' {if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($Window,23))){throw "Cycle $Cycle I'm back button failed."};Wait-Closed $Window 12 $Cycle "I'm back"}
-  'Escape' {[void][EBR_SOAK_NATIVE]::SetForegroundWindow($Window);Start-Sleep -Milliseconds 150;[System.Windows.Forms.SendKeys]::SendWait('{ESC}');Wait-Closed $Window 12 $Cycle 'Escape'}
+  'Escape' {
+   [void][EBR_SOAK_NATIVE]::SetForegroundWindow($Window)
+   $foregroundConfirmed=Wait-Until {[EBR_SOAK_NATIVE]::GetForegroundWindow()-eq$Window} 3 'escape-foreground' $Cycle
+   if($foregroundConfirmed){
+    [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+    $escapeClosed=Wait-Until {(-not [EBR_SOAK_NATIVE]::IsWindow($Window)) -and (BreakWindow)-eq[IntPtr]::Zero -and (Status)-match'Running'} 5 'escape-key-delivery' $Cycle
+    if($escapeClosed){Add-Event 'Escape keyboard input closed reminder' 'PASS'}
+    else{
+     Add-Event 'Escape keyboard input closed reminder' 'FAIL' 'Foreground was confirmed, but the reminder remained open after the Escape key was sent.'
+     if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($Window,24))){throw "Cycle $Cycle Escape failed and Skip cleanup did not respond."}
+     Wait-Closed $Window 12 $Cycle 'Skip after Escape failure'
+    }
+   }else{
+    Add-Event 'Escape keyboard input delivered to reminder' 'NOT TESTED' 'Runner did not grant or confirm foreground focus, so this environment could not exercise the real Escape key path.'
+    if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($Window,24))){throw "Cycle $Cycle Escape was unavailable and Skip cleanup did not respond."}
+    Wait-Closed $Window 12 $Cycle 'Skip after Escape input unavailable'
+   }
+  }
   'Close' {[void][EBR_SOAK_NATIVE]::SendMessageW($Window,0x0010,[IntPtr]::Zero,[IntPtr]::Zero);Wait-Closed $Window 12 $Cycle 'window close'}
   'Natural' {Wait-Closed $Window 45 $Cycle 'natural completion'}
  }
