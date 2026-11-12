@@ -9,11 +9,14 @@ on:
       - 'CHANGELOG.md'
       - 'README.md'
       - 'VERSION'
-      - 'installer/setup.nsi'
-      - 'scripts/verify.py'
+      - 'Makefile'
+      - 'installer/**'
+      - 'scripts/**'
       - 'src/**'
       - 'tests/gui_acceptance.ps1'
       - 'tests/windows_break_user_resource_regression.ps1'
+      - 'tests/windows_break_user_resource_soak.ps1'
+      - 'tests/windows_pre_release_acceptance.ps1'
   workflow_dispatch:
 
 permissions:
@@ -22,7 +25,7 @@ permissions:
 jobs:
   windows-hotfix-candidate:
     runs-on: windows-2025
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Check out unpublished hotfix candidate
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -83,15 +86,36 @@ jobs:
           Invoke-WebRequest -Uri 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.2.0/EyeBreakReminder.exe' -OutFile $baseline -MaximumRedirection 10 -TimeoutSec 120
           $hash = (Get-FileHash -LiteralPath $baseline -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($hash -cne '2895c80f942dd03186305d913516700552524ec5ba9a77da0dab457a3265fcc6') { throw "Published v1.2.0 baseline SHA-256 mismatch: $hash" }
-          & ./tests/windows_break_user_resource_regression.ps1 -ExecutablePath $baseline -ExpectedProductVersion '1.2.0' -ExpectedResourceBehavior Growth -Cycles 5 -EvidenceDirectory 'build/hotfix-user-object-evidence/v1.2.0-baseline'
+          & ./tests/windows_break_user_resource_regression.ps1 -ExecutablePath $baseline -ExpectedProductVersion '1.2.0' -ExpectedResourceBehavior Growth -Cycles 220 -EvidenceDirectory 'build/hotfix-user-object-evidence/v1.2.0-baseline'
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Exercise repeated breaks and verify no USER-object growth
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & ./tests/windows_break_user_resource_regression.ps1 -ExecutablePath 'release/EyeBreakReminder.exe' -ExpectedProductVersion '1.2.1' -ExpectedResourceBehavior NoGrowth -Cycles 12 -EvidenceDirectory 'build/hotfix-user-object-evidence/v1.2.1-candidate'
+          & ./tests/windows_break_user_resource_regression.ps1 -ExecutablePath 'release/EyeBreakReminder.exe' -ExpectedProductVersion '1.2.1' -ExpectedResourceBehavior NoGrowth -Cycles 220 -EvidenceDirectory 'build/hotfix-user-object-evidence/v1.2.1-candidate'
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate candidate installer and update behavior
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'build/pre-release-evidence' | Out-Null
+          & ./tests/windows_pre_release_acceptance.ps1 -InstallerPath "$PWD/release/EyeBreakReminder-Setup-x64.exe" -EvidenceDirectory "$PWD/build/pre-release-evidence" -ExpectedProductVersion '1.2.1'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload candidate release package for matched soak
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.2.1-release-candidate
+          path: |
+            release/EyeBreakReminder.exe
+            release/EyeBreakReminder-Setup-x64.exe
+            release/EyeBreakReminder-Portable-x64.zip
+            release/EyeBreakReminder-Source.zip
+            release/EyeBreakReminder-SHA256.txt
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload candidate test evidence only
         if: always()
@@ -100,6 +124,161 @@ jobs:
           name: eye-break-reminder-v1.2.1-hotfix-candidate-evidence-${{ github.run_id }}
           path: |
             build/hotfix-user-object-evidence/**
+            build/pre-release-evidence/**
             build/gui-test/evidence/**
           if-no-files-found: warn
           retention-days: 14
+
+  soak-v1-2-0-windows-server-2025:
+    needs: windows-hotfix-candidate
+    runs-on: windows-2025
+    timeout-minutes: 350
+    steps:
+      - name: Check out comparative soak harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download exact published v1.2.0 binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'release' | Out-Null
+          $exe = Join-Path $PWD 'release/EyeBreakReminder.exe'
+          Invoke-WebRequest -Uri 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.2.0/EyeBreakReminder.exe' -OutFile $exe -MaximumRedirection 10 -TimeoutSec 120
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -cne '2895c80f942dd03186305d913516700552524ec5ba9a77da0dab457a3265fcc6') { throw "Published v1.2.0 SHA-256 mismatch: $hash" }
+
+      - name: Run 110 real scheduled reminder cycles on Windows Server 2025
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/windows_break_user_resource_soak.ps1 -ExecutablePath "$PWD/release/EyeBreakReminder.exe" -ExpectedProductVersion '1.2.0' -ExpectedResourceBehavior Growth -Cycles 110 -EvidenceDirectory "$PWD/build/v1.2.0-windows-server-2025-soak"
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload v1.2.0 Windows Server soak data
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-v1.2.0-windows-server-2025-soak
+          path: build/v1.2.0-windows-server-2025-soak/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  soak-v1-2-1-windows-server-2025:
+    needs: windows-hotfix-candidate
+    runs-on: windows-2025
+    timeout-minutes: 350
+    steps:
+      - name: Check out comparative soak harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download candidate package built and verified in this workflow
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.2.1-release-candidate
+          path: release
+
+      - name: Run 110 real scheduled reminder cycles on Windows Server 2025
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/windows_break_user_resource_soak.ps1 -ExecutablePath "$PWD/release/EyeBreakReminder.exe" -ExpectedProductVersion '1.2.1' -ExpectedResourceBehavior NoGrowth -Cycles 110 -EvidenceDirectory "$PWD/build/v1.2.1-windows-server-2025-soak"
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload v1.2.1 Windows Server soak data
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-v1.2.1-windows-server-2025-soak
+          path: build/v1.2.1-windows-server-2025-soak/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  soak-v1-2-0-windows-11-arm64:
+    needs: windows-hotfix-candidate
+    runs-on: windows-11-arm
+    timeout-minutes: 350
+    steps:
+      - name: Check out comparative soak harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Record Windows 11 ARM64 x64-emulation environment
+        shell: pwsh
+        run: |
+          $record = [pscustomobject]@{OS=(Get-CimInstance Win32_OperatingSystem).Caption;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();Is64BitProcess=[Environment]::Is64BitProcess;Note='The downloaded app is x64 and runs under ARM64 x64 emulation; this is not native x64 Windows 11.'}
+          New-Item -ItemType Directory -Force -Path 'build' | Out-Null
+          $record | ConvertTo-Json | Set-Content -LiteralPath 'build/windows-11-arm64-emulation.json'
+
+      - name: Download exact published v1.2.0 binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'release' | Out-Null
+          $exe = Join-Path $PWD 'release/EyeBreakReminder.exe'
+          Invoke-WebRequest -Uri 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.2.0/EyeBreakReminder.exe' -OutFile $exe -MaximumRedirection 10 -TimeoutSec 120
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -cne '2895c80f942dd03186305d913516700552524ec5ba9a77da0dab457a3265fcc6') { throw "Published v1.2.0 SHA-256 mismatch: $hash" }
+
+      - name: Run 110 real scheduled reminder cycles under x64 emulation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/windows_break_user_resource_soak.ps1 -ExecutablePath "$PWD/release/EyeBreakReminder.exe" -ExpectedProductVersion '1.2.0' -ExpectedResourceBehavior Growth -Cycles 110 -EvidenceDirectory "$PWD/build/v1.2.0-windows-11-arm64-soak"
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows 11 ARM64 baseline evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-v1.2.0-windows-11-arm64-soak
+          path: |
+            build/windows-11-arm64-emulation.json
+            build/v1.2.0-windows-11-arm64-soak/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  soak-v1-2-1-windows-11-arm64:
+    needs: windows-hotfix-candidate
+    runs-on: windows-11-arm
+    timeout-minutes: 350
+    steps:
+      - name: Check out comparative soak harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download candidate package built and verified in this workflow
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.2.1-release-candidate
+          path: release
+
+      - name: Record Windows 11 ARM64 x64-emulation environment
+        shell: pwsh
+        run: |
+          $record = [pscustomobject]@{OS=(Get-CimInstance Win32_OperatingSystem).Caption;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();Is64BitProcess=[Environment]::Is64BitProcess;Note='The downloaded app is x64 and runs under ARM64 x64 emulation; this is not native x64 Windows 11.'}
+          New-Item -ItemType Directory -Force -Path 'build' | Out-Null
+          $record | ConvertTo-Json | Set-Content -LiteralPath 'build/windows-11-arm64-emulation.json'
+
+      - name: Run 110 real scheduled reminder cycles under x64 emulation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/windows_break_user_resource_soak.ps1 -ExecutablePath "$PWD/release/EyeBreakReminder.exe" -ExpectedProductVersion '1.2.1' -ExpectedResourceBehavior NoGrowth -Cycles 110 -EvidenceDirectory "$PWD/build/v1.2.1-windows-11-arm64-soak"
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows 11 ARM64 candidate evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-v1.2.1-windows-11-arm64-soak
+          path: |
+            build/windows-11-arm64-emulation.json
+            build/v1.2.1-windows-11-arm64-soak/**
+          if-no-files-found: warn
+          retention-days: 30

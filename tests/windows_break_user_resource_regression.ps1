@@ -1,7 +1,7 @@
 param(
   [Parameter(Mandatory=$true)][string]$ExecutablePath,
   [string]$EvidenceDirectory = 'build/hotfix-user-object-evidence',
-  [ValidateRange(3,100)][int]$Cycles = 12,
+  [ValidateRange(3,500)][int]$Cycles = 12,
   [ValidateSet('1.2.0','1.2.1')][string]$ExpectedProductVersion = '1.2.1',
   [ValidateSet('NoGrowth','Growth')][string]$ExpectedResourceBehavior = 'NoGrowth'
 )

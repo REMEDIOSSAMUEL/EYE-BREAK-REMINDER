@@ -4,7 +4,7 @@
 
 Fixed
 
-- Prevented the break reminder's initial resize from positioning child controls before they are created, which leaked a Windows USER object during each break.
+- Prevented the break reminder's initial resize from positioning child controls before they are created, stopping Windows USER-object growth across repeated reminders and improving long-running stability.
 
 ## 1.2.0 (prepared from the published v1.1.0 release)
 

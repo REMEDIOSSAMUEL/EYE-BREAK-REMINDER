@@ -19,8 +19,8 @@ def in_source(relative):
  # ship that machine-specific pointer, while keeping the public CI workflow.
  if relative==Path('.git'):return False
  if any(p in EXCLUDED_DIRS or (p.startswith('.') and p!='.github') for p in relative.parts[:-1]):return False
- # This final report contains the source ZIP's digest; excluding it avoids a self-referential archive hash.
- if relative==Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'):return False
+ # Verification reports record this archive's digest, so exclude them to avoid a self-referential source ZIP hash.
+ if relative in {Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md')}:return False
  return relative!=Path('tests/core-tests') and relative.suffix.lower() not in EXCLUDED_SUFFIXES
 with zipfile.ZipFile(release/'EyeBreakReminder-Source.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9) as archive:
  for path in sorted(root.rglob('*')):

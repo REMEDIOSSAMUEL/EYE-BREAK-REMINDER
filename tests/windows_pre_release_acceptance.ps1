@@ -1,16 +1,21 @@
 param(
   [string]$InstallerPath = (Join-Path $PSScriptRoot '..\release\EyeBreakReminder-Setup-x64.exe'),
-  [string]$EvidenceDirectory = (Join-Path $PSScriptRoot '..\build\pre-release-evidence')
+  [string]$EvidenceDirectory = (Join-Path $PSScriptRoot '..\build\pre-release-evidence'),
+  [string]$ExpectedProductVersion = '1.2.0'
 )
+$script:expectedProductVersion = $ExpectedProductVersion
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $expectedInstaller = [IO.Path]::GetFullPath((Join-Path $repoRoot 'release\EyeBreakReminder-Setup-x64.exe'))
+$packagedExecutable = [IO.Path]::GetFullPath((Join-Path $repoRoot 'release\EyeBreakReminder.exe'))
 $expectedEvidence = [IO.Path]::GetFullPath((Join-Path $repoRoot 'build\pre-release-evidence'))
 $InstallerPath = [IO.Path]::GetFullPath($InstallerPath)
 $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 if ($InstallerPath -ine $expectedInstaller) { throw "Refusing to execute an installer outside the just-built Eye Break Reminder package: $expectedInstaller" }
 if ($EvidenceDirectory -ine $expectedEvidence) { throw "Refusing to write evidence outside the isolated build folder: $expectedEvidence" }
-if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) { throw "The v1.2.0 installer is missing: $InstallerPath" }
+if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) { throw "The candidate installer is missing: $InstallerPath" }
+if (-not (Test-Path -LiteralPath $packagedExecutable -PathType Leaf)) { throw "The executable packaged by the candidate installer is missing: $packagedExecutable" }
+$script:packagedExecutableHash = (Get-FileHash -LiteralPath $packagedExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
 [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
 
 $installDir = Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder'
@@ -818,7 +823,7 @@ function Probe-UiaNames([IntPtr]$Window) {
   try {@(Get-UiaElements $Window | ForEach-Object { try { $_.Current.Name } catch { '' } } | Where-Object { $_ })} catch {@()}
 }
 function Test-InstalledUpdateCheck {
-  if(-not $script:interactiveDesktop -or $script:mainWindow -eq [IntPtr]::Zero){Not-Tested 'Installed v1.2.0 in-app live update check' 'No interactive app window was available on this runner.';return}
+  if(-not $script:interactiveDesktop -or $script:mainWindow -eq [IntPtr]::Zero){Not-Tested 'Installed candidate in-app live update check' 'No interactive app window was available on this runner.';return}
   Switch-Timer
   $secondsBefore=Get-TimerSeconds
   Switch-Settings 5
@@ -826,9 +831,9 @@ function Test-InstalledUpdateCheck {
   # These are Win32 Static labels. The app's logical ids are used by its internal
   # control table, while the native label HWNDs intentionally retain control ID -1.
   # Match their visible initial text, as the existing GUI acceptance suite does.
-  $installedControl=Get-StaticControlByText $script:mainWindow 'Installed version: 1.2.0' 'Installed version'
+  $installedControl=Get-StaticControlByText $script:mainWindow "Installed version: $script:expectedProductVersion" 'Installed version'
   $installed=[EBR_PRE_NATIVE]::Text($installedControl.Handle)
-  Require ($installed -match '1\.2\.0') 'Installed About screen identifies version 1.2.0' $installed
+  Require ($installed -match [regex]::Escape($script:expectedProductVersion)) "Installed About screen identifies version $script:expectedProductVersion" $installed
   $latestHandle=(Get-StaticControlByText $script:mainWindow 'Latest stable version: not checked' 'Initial latest version label').Handle
   $statusHandle=(Get-StaticControlByText $script:mainWindow 'Select Check for Updates to query the official public GitHub Releases API.' 'Initial update status').Handle
   $check=Get-Control $script:mainWindow 160 'Check for Updates'
@@ -866,10 +871,10 @@ function Test-InstalledUpdateCheck {
     $displayedSemVer=$null
     if($displayedVersionMatch.Success){$displayedSemVer=[version]::Parse($displayedVersionMatch.Groups[1].Value)}
     Require ($displayedVersionMatch.Success -and $displayedSemVer -eq $latestSemVer) 'Installed app displays the live latest stable semantic version from GitHub' ([pscustomobject]@{ExpectedTag=$tag;ExpectedVersion=$latestSemVer.ToString();LatestLabel=$latest;Status=$status})
-    $installedSemVer=[version]'1.2.0'
+    $installedSemVer=[version]$script:expectedProductVersion
     if($latestSemVer -lt $installedSemVer){
-      Require ($status -match 'installed version is newer') 'v1.2.0 reports that it is newer than the published stable release' $status
-      Require (-not (Get-Control $script:mainWindow 161 'Open Official Release').Enabled) 'v1.2.0 does not offer a downgrade to the older stable release' $tag
+      Require ($status -match 'installed version is newer') 'candidate reports that it is newer than the published stable release' $status
+      Require (-not (Get-Control $script:mainWindow 161 'Open Official Release').Enabled) 'candidate does not offer a downgrade to the older stable release' $tag
     } elseif($latestSemVer -eq $installedSemVer){
       Require ($status -match 'up to date') 'Installed app reports current when live stable version is equal' $status
     } else {
@@ -880,8 +885,8 @@ function Test-InstalledUpdateCheck {
     $latestMatch=[regex]::Match($latest,'(?i)^Latest stable version:\s*v?(\d+\.\d+\.\d+)\s*$')
     if($latestMatch.Success){
       $appLatest=[version]$latestMatch.Groups[1].Value
-      $installedSemVer=[version]'1.2.0'
-      Require (($appLatest -lt $installedSemVer -and $status -match 'installed version is newer') -or ($appLatest -eq $installedSemVer -and $status -match 'up to date') -or ($appLatest -gt $installedSemVer -and $status -match 'update is available')) 'Installed app compares its live version label with v1.2.0 correctly' ([pscustomobject]@{Latest=$latest;Status=$status})
+      $installedSemVer=[version]$script:expectedProductVersion
+      Require (($appLatest -lt $installedSemVer -and $status -match 'installed version is newer') -or ($appLatest -eq $installedSemVer -and $status -match 'up to date') -or ($appLatest -gt $installedSemVer -and $status -match 'update is available')) 'Installed app compares its live version label with candidate correctly' ([pscustomobject]@{Latest=$latest;Status=$status})
       if($appLatest -lt $installedSemVer){Require (-not (Get-Control $script:mainWindow 161 'Open Official Release').Enabled) 'Installed app does not offer a downgrade when live GitHub is older' $latest}
       Pass 'Installed app displayed and compared a live version despite the separate API probe failing' ([pscustomobject]@{Latest=$latest;Status=$status})
       Not-Tested 'Independent live API response and official release-link cross-check' "PowerShell API probe was unavailable: $script:liveLatestError"
@@ -995,7 +1000,11 @@ function Test-OsAppearanceAndTextScale {
 }
 function Assert-InstallationMetadata([string]$ExpectedVersion) {
   $exeVersion=(Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
+  $installedHash=(Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash.ToLowerInvariant()
   Require ($exeVersion -match "^$([regex]::Escape($ExpectedVersion))(\.0)?$") "Installed executable metadata is $ExpectedVersion" $exeVersion
+  if($ExpectedVersion -eq $script:expectedProductVersion){
+    Require ($installedHash -ceq $script:packagedExecutableHash) 'Installed executable bytes match the exact packaged release executable' ([pscustomobject]@{ExpectedSHA256=$script:packagedExecutableHash;InstalledSHA256=$installedHash;Path=$appExe})
+  }
   $registered=Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Stop
   Require ($registered.DisplayVersion -eq $ExpectedVersion) "Installed Apps registration is $ExpectedVersion" $registered.DisplayVersion
   Require ([IO.Path]::GetFullPath($registered.InstallLocation) -ieq [IO.Path]::GetFullPath($installDir)) 'Installed Apps registration points at the expected location' $registered.InstallLocation
@@ -1008,7 +1017,7 @@ function Assert-InstallationMetadata([string]$ExpectedVersion) {
   $startupValues=@()
   if(Test-Path -LiteralPath $runKey){$startupValues=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder' })}
   Require ($startupValues.Count -le 1) 'No duplicate Eye Break Reminder startup registration exists' $startupValues.Count
-  Pass 'Per-user install layout and version metadata' ([pscustomobject]@{InstallDirectory=$installDir;ExecutableVersion=$exeVersion;DisplayVersion=$registered.DisplayVersion;StartMenuLink=$startMenuLink;Uninstaller=(Join-Path $installDir 'Uninstall.exe')})
+  Pass 'Per-user install layout and version metadata' ([pscustomobject]@{InstallDirectory=$installDir;ExecutableVersion=$exeVersion;ExecutableSHA256=$installedHash;DisplayVersion=$registered.DisplayVersion;StartMenuLink=$startMenuLink;Uninstaller=(Join-Path $installDir 'Uninstall.exe')})
 }
 function Start-And-CheckApp([string]$ExpectedVersion) {
   Assert-InstallationMetadata $ExpectedVersion
@@ -1025,7 +1034,7 @@ function Test-FreshInstallApp {
   $names=Probe-UiaNames $script:mainWindow
   Require (@('Timer','History','Settings' | Where-Object { $names -contains $_ }).Count -eq 3) 'Installed app exposes Timer, History and Settings navigation' $names
   Switch-Settings 4
-  Require ((Get-Combo $script:mainWindow 106 'Theme') -eq 2) 'Fresh v1.2.0 installation keeps the dark theme default' 2
+  Require ((Get-Combo $script:mainWindow 106 'Theme') -eq 2) 'Fresh candidate installation keeps the dark theme default' 2
   Set-Combo $script:mainWindow 106 1 'Theme'
   Switch-Settings 0
   Set-Edit $script:mainWindow 100 '1' 'Work interval'
@@ -1335,12 +1344,12 @@ function Test-ShellTrayAndNaturalNotification {
   Not-Tested 'Production audio playback' 'Hosted runners do not provide physically verified speaker hardware; alarm sounds were disabled during unattended timer tests.'
 }
 function Test-UpgradeFromV11([string]$OldInstaller) {
-  if(-not $OldInstaller){Not-Tested 'Official v1.1.0 to v1.2.0 in-place upgrade, settings/history/statistics/startup migration' 'No independently digest-verified official v1.1.0 installer was available.';return}
+  if(-not $OldInstaller){Not-Tested 'Official v1.1.0 to candidate in-place upgrade, settings/history/statistics/startup migration' 'No independently digest-verified official v1.1.0 installer was available.';return}
   if(Test-Path -LiteralPath $dataDir){Remove-Item -LiteralPath $dataDir -Recurse -Force}
   Invoke-Install $OldInstaller 'official v1.1.0' $false
   Assert-InstallationMetadata '1.1.0'
-  if(-not (Start-And-CheckApp '1.1.0')){Not-Tested 'v1.1.0 application UI state preparation for upgrade' 'No interactive app window was available.';Not-Tested 'Official v1.1.0 to v1.2.0 in-place upgrade and migration' 'The old application could not be prepared through its actual UI.';Stop-InstalledApp;Invoke-Uninstall 'v1.1.0 pre-upgrade' $false;return}
-  if(-not $script:interactiveDesktop){Not-Tested 'v1.1.0 settings/history preparation through the actual UI' 'No interactive Explorer desktop was exposed.';Not-Tested 'Official v1.1.0 to v1.2.0 in-place upgrade and migration' 'No interactive session was available to configure and verify legacy settings/history.';Stop-InstalledApp;Invoke-Uninstall 'v1.1.0 pre-upgrade' $false;return}
+  if(-not (Start-And-CheckApp '1.1.0')){Not-Tested 'v1.1.0 application UI state preparation for upgrade' 'No interactive app window was available.';Not-Tested 'Official v1.1.0 to candidate in-place upgrade and migration' 'The old application could not be prepared through its actual UI.';Stop-InstalledApp;Invoke-Uninstall 'v1.1.0 pre-upgrade' $false;return}
+  if(-not $script:interactiveDesktop){Not-Tested 'v1.1.0 settings/history preparation through the actual UI' 'No interactive Explorer desktop was exposed.';Not-Tested 'Official v1.1.0 to candidate in-place upgrade and migration' 'No interactive session was available to configure and verify legacy settings/history.';Stop-InstalledApp;Invoke-Uninstall 'v1.1.0 pre-upgrade' $false;return}
   # The v1.1 UI retains the same native control IDs for intervals, alarm, General, History, and manual breaks.
   Switch-Settings 0
   Set-Edit $script:mainWindow 100 '7' 'v1.1 work interval'
@@ -1362,15 +1371,15 @@ function Test-UpgradeFromV11([string]$OldInstaller) {
   Require ($v11Settings['workMinutes'] -eq '7' -and $v11Settings['breakSeconds'] -eq '45' -and $v11Settings['startup'] -eq '1' -and $v11Settings['theme'] -eq '0') 'v1.1 representative settings and system-theme preference persisted before upgrade' ([pscustomobject]@{Path=$settingsPath;Observed=[pscustomobject]@{WorkMinutes=$v11Settings['workMinutes'];BreakSeconds=$v11Settings['breakSeconds'];Startup=$v11Settings['startup'];Theme=$v11Settings['theme']}})
   Require ($v11History.Count -ge 1) 'v1.1 generated a history/statistics record before upgrade' $v11History.Count
   $beforeHistory=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
-  Invoke-Install $InstallerPath 'v1.2.0 in-place upgrade from v1.1.0' $false
-  Assert-InstallationMetadata '1.2.0'
+  Invoke-Install $InstallerPath 'candidate in-place upgrade from v1.1.0' $false
+  Assert-InstallationMetadata $script:expectedProductVersion
   $afterSettings=Read-SettingsMap $settingsPath
-  Require ($afterSettings['workMinutes'] -eq '7' -and $afterSettings['breakSeconds'] -eq '45' -and $afterSettings['startup'] -eq '1' -and $afterSettings['theme'] -eq '0') 'v1.2.0 preserves v1.1.0 settings and system-theme preference during upgrade' ([pscustomobject]@{Path=$settingsPath;Observed=[pscustomobject]@{WorkMinutes=$afterSettings['workMinutes'];BreakSeconds=$afterSettings['breakSeconds'];Startup=$afterSettings['startup'];Theme=$afterSettings['theme']}})
+  Require ($afterSettings['workMinutes'] -eq '7' -and $afterSettings['breakSeconds'] -eq '45' -and $afterSettings['startup'] -eq '1' -and $afterSettings['theme'] -eq '0') 'candidate preserves v1.1.0 settings and system-theme preference during upgrade' ([pscustomobject]@{Path=$settingsPath;Observed=[pscustomobject]@{WorkMinutes=$afterSettings['workMinutes'];BreakSeconds=$afterSettings['breakSeconds'];Startup=$afterSettings['startup'];Theme=$afterSettings['theme']}})
   $afterHistory=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
-  Require ($afterHistory -eq $beforeHistory) 'v1.2.0 preserves v1.1.0 history bytes during in-place upgrade' ([pscustomobject]@{Before=$beforeHistory;After=$afterHistory;Rows=$v11History.Count})
+  Require ($afterHistory -eq $beforeHistory) 'candidate preserves v1.1.0 history bytes during in-place upgrade' ([pscustomobject]@{Before=$beforeHistory;After=$afterHistory;Rows=$v11History.Count})
   $runValues=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder' })
   Require ($runValues.Count -eq 1) 'In-place upgrade leaves exactly one Eye Break Reminder startup registration' $runValues.Count
-  if(Start-And-CheckApp '1.2.0'){
+  if(Start-And-CheckApp $script:expectedProductVersion){
     Switch-Settings 4
     $legacyThemeIndex=Get-Combo $script:mainWindow 106 'Theme'
     Require ($legacyThemeIndex -eq 0) 'Legacy v1.1 Use system setting preference maps to Follow Windows Theme after upgrade' ([pscustomobject]@{LegacyThemeValue=$v11Settings['theme'];UpgradedThemeIndex=$legacyThemeIndex;ExpectedTheme='Follow Windows Theme'})
@@ -1383,7 +1392,7 @@ function Test-UpgradeFromV11([string]$OldInstaller) {
     Capture-ActiveWindow $script:mainWindow 'upgrade-v11-history-statistics-active.png' | Out-Null
     Stop-InstalledApp
   }
-  Invoke-Uninstall 'v1.2.0 post-upgrade' $false
+  Invoke-Uninstall 'candidate post-upgrade' $false
   $settingsStill=Test-Path -LiteralPath $settingsPath;$historyStill=Test-Path -LiteralPath $historyPath
   Require ($settingsStill -and $historyStill) 'Final uninstall preserves the runner-created settings and history for cleanup verification' ([pscustomobject]@{SettingsPreserved=$settingsStill;HistoryPreserved=$historyStill})
 }
@@ -1422,34 +1431,34 @@ try {
 
   $oldInstaller=Download-OfficialV11Installer
   if($script:interactiveDesktop){
-    Invoke-Install $InstallerPath 'v1.2.0 production installer' $true
-    Require ((Get-Item -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe')).VersionInfo.ProductVersion -match '^1\.2\.0') 'Installed application file version is 1.2.0' (Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
-    if(Start-And-CheckApp '1.2.0'){
+    Invoke-Install $InstallerPath 'candidate production installer' $true
+    Require ((Get-Item -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe')).VersionInfo.ProductVersion -match ('^'+[regex]::Escape($script:expectedProductVersion)+'(\.0)?$')) 'Installed application file version is candidate' (Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
+    if(Start-And-CheckApp $script:expectedProductVersion){
       Test-FreshInstallApp
       if(Start-InstalledApp){Test-ShellTrayAndNaturalNotification;Stop-InstalledApp}
     }
     Stop-InstalledApp
-    Invoke-Uninstall 'v1.2.0 fresh uninstall' $true
+    Invoke-Uninstall 'candidate fresh uninstall' $true
     $prefsPersist=Test-Path -LiteralPath (Join-Path $dataDir 'settings.ini')
     $historyPersist=Test-Path -LiteralPath (Join-Path $dataDir 'history.dat')
     Require ($prefsPersist -and $historyPersist) 'Uninstall preserves settings and history data outside the app folder' ([pscustomobject]@{Settings=$prefsPersist;History=$historyPersist})
-    Invoke-Install $InstallerPath 'v1.2.0 reinstall after uninstall' $false
-    Assert-InstallationMetadata '1.2.0'
-    if(Start-And-CheckApp '1.2.0'){
+    Invoke-Install $InstallerPath 'candidate reinstall after uninstall' $false
+    Assert-InstallationMetadata $script:expectedProductVersion
+    if(Start-And-CheckApp $script:expectedProductVersion){
       if($script:interactiveDesktop){Switch-Settings 4;Require ((Get-Combo $script:mainWindow 106 'Theme') -eq 1) 'Reinstalled app retains user settings' 'Light theme';Switch-Timer;Stop-InstalledApp}
       else{Stop-InstalledApp}
     }
-    Invoke-Uninstall 'v1.2.0 reinstall cleanup' $false
+    Invoke-Uninstall 'candidate reinstall cleanup' $false
   } else {
-    Invoke-Install $InstallerPath 'v1.2.0 production installer' $false
-    Assert-InstallationMetadata '1.2.0'
+    Invoke-Install $InstallerPath 'candidate production installer' $false
+    Assert-InstallationMetadata $script:expectedProductVersion
     Not-Tested 'Visible NSIS installer wizard and rendered wizard screenshots' 'The runner exposes no interactive Explorer desktop; only the actual silent install path was exercised.'
-    if(Start-And-CheckApp '1.2.0'){Not-Tested 'Installed GUI workflow, themes, UIA, and live in-app update request' 'No interactive Windows desktop was available.';Stop-InstalledApp}
-    Invoke-Uninstall 'v1.2.0 fresh uninstall' $false
-    Invoke-Install $InstallerPath 'v1.2.0 reinstall after uninstall' $false
-    Assert-InstallationMetadata '1.2.0'
-    if(Start-And-CheckApp '1.2.0'){Stop-InstalledApp}
-    Invoke-Uninstall 'v1.2.0 reinstall cleanup' $false
+    if(Start-And-CheckApp $script:expectedProductVersion){Not-Tested 'Installed GUI workflow, themes, UIA, and live in-app update request' 'No interactive Windows desktop was available.';Stop-InstalledApp}
+    Invoke-Uninstall 'candidate fresh uninstall' $false
+    Invoke-Install $InstallerPath 'candidate reinstall after uninstall' $false
+    Assert-InstallationMetadata $script:expectedProductVersion
+    if(Start-And-CheckApp $script:expectedProductVersion){Stop-InstalledApp}
+    Invoke-Uninstall 'candidate reinstall cleanup' $false
   }
 
   Test-UpgradeFromV11 $oldInstaller
@@ -1502,7 +1511,7 @@ try {
   if($script:ownedData -and (Test-Path -LiteralPath $dataDir)){try{Remove-Item -LiteralPath $dataDir -Recurse -Force}catch{Add-Event 'Runner user-data cleanup' 'FAIL' $_.Exception.Message}}
   $summary=[pscustomobject]@{
     Application='Eye Break Reminder'
-    Version='1.2.0'
+    Version=$script:expectedProductVersion
     SourceCommit=$env:GITHUB_SHA
     ActionsRunUrl=if($env:GITHUB_RUN_ID){"$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"}else{''}
     WindowsCaption=(Get-CimInstance Win32_OperatingSystem).Caption
