@@ -199,10 +199,18 @@ function Test-TimerRingPixel([IntPtr]$Window,[string]$Label,[string]$ExpectedCol
   $bitmap=[Drawing.Bitmap]::new($image.Path);$count=0;$examples=[System.Collections.Generic.List[string]]::new()
   try{
     if($bitmap.Width -ne $geometry.WindowWidth -or $bitmap.Height -ne $geometry.WindowHeight){Add-Result "$Label timer-ring accent pixel" 'NOT TESTED' ([pscustomobject]@{Reason='Captured window dimensions did not match the measured HWND.';Bitmap=@($bitmap.Width,$bitmap.Height);Geometry=$geometry});return}
-    $target=$ExpectedColor.TrimStart('#').ToUpperInvariant();$outer=$geometry.Radius+4;$inner=[Math]::Max(0,$geometry.Radius-4)
-    $x0=[Math]::Max(0,[int][Math]::Floor($geometry.CenterX-$outer));$x1=[Math]::Min($bitmap.Width-1,[int][Math]::Ceiling($geometry.CenterX+$outer))
-    $y0=[Math]::Max(0,[int][Math]::Floor($geometry.CenterY-$outer));$y1=[Math]::Min($bitmap.Height-1,[int][Math]::Ceiling($geometry.CenterY+$outer))
-    for($y=$y0;$y -le $y1;$y++){for($x=$x0;$x -le $x1;$x++){$dx=$x-$geometry.CenterX;$dy=$y-$geometry.CenterY;$radius=[Math]::Sqrt($dx*$dx+$dy*$dy);if([Math]::Abs($radius-$geometry.Radius) -gt 4){continue};$c=$bitmap.GetPixel($x,$y);$hex='{0:X2}{1:X2}{2:X2}' -f $c.R,$c.G,$c.B;if($hex -eq $target){$count++;if($examples.Count -lt 8){$examples.Add("$x,$y")}}}}
+    $target=$ExpectedColor.TrimStart('#').ToUpperInvariant()
+    # Sample the actual ring annulus directly. Dense angular/radial samples cover anti-aliased arcs without a slow full-window PowerShell pixel scan.
+    for($degrees=0;$degrees -lt 360;$degrees+=2){
+      $radians=$degrees*[Math]::PI/180.0;$cos=[Math]::Cos($radians);$sin=[Math]::Sin($radians)
+      for($offset=-5;$offset -le 5;$offset++){
+        $sampleRadius=$geometry.Radius+$offset
+        $x=[int][Math]::Round($geometry.CenterX+$cos*$sampleRadius);$y=[int][Math]::Round($geometry.CenterY+$sin*$sampleRadius)
+        if($x -lt 0 -or $x -ge $bitmap.Width -or $y -lt 0 -or $y -ge $bitmap.Height){continue}
+        $c=$bitmap.GetPixel($x,$y);$hex='{0:X2}{1:X2}{2:X2}' -f $c.R,$c.G,$c.B
+        if($hex -eq $target){$count++;if($examples.Count -lt 8){$examples.Add("$x,$y")}}
+      }
+    }
   }finally{$bitmap.Dispose()}
   Check ($count -gt 0) "$Label timer-ring contains the expected $ExpectedColor accent pixel" ([pscustomobject]@{ExpectedColor=$ExpectedColor;ExactPixels=$count;SamplePixels=$examples.ToArray();Geometry=$geometry;Screenshot=$image.Path;CaptureMethod=$image.Method})
 }
