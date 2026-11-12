@@ -9,6 +9,7 @@ $events=[System.Collections.Generic.List[object]]::new()
 $resourceSamples=[System.Collections.Generic.List[object]]::new()
 $script:ownedData=$false
 $script:foregroundDiagnosticCaptured=$false
+$script:wslPromptHandled=$false
 $script:activeProcess=$null
 $script:activeWindow=[IntPtr]::Zero
 Add-Type -AssemblyName System.Windows.Forms
@@ -118,6 +119,7 @@ function Record-AppResourceLifecycle([string]$Label,$Before,$After,[switch]$Requ
   if($RequireStableUserObjects){Check ($sample.UserObjectDelta -eq 0) "$Label destroys temporary USER objects after the break window closes" ([pscustomobject]@{Before=$Before.UserObjects;After=$After.UserObjects;Delta=$sample.UserObjectDelta;BreakWindowMustBeDestroyed=$true;BeforeBreakWindows=$Before.BreakTopLevelWindowCount;AfterBreakWindows=$After.BreakTopLevelWindowCount;AfterWindows=$After.TopLevelWindows})}
 }
 function Click-Control([IntPtr]$Window,[int]$Id,[string]$Name){
+  if($script:activeProcess){[void](Dismiss-WslFirstRunPrompt)}
   $control=[EBR_POST_NATIVE]::ControlById($Window,$Id)
   if($control -eq [IntPtr]::Zero){throw "Published app did not expose $Name (control $Id)."}
   # BM_CLICK is synchronous across the process boundary. Bound it so an unavailable
@@ -144,7 +146,37 @@ function Get-WindowAutomationSummary([IntPtr]$Window){
     return $items
   }catch{return @()}
 }
+function Dismiss-WslFirstRunPrompt {
+  if($script:wslPromptHandled){return $true}
+  try{
+    $focused=[System.Windows.Automation.AutomationElement]::FocusedElement
+    if($null -eq $focused){return $false}
+    $current=$focused.Current
+    if($current.Name -cne 'C:\Windows\system32\wsl.exe'){return $false}
+    $foreground=[EBR_POST_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0
+    if($foreground -ne [IntPtr]::Zero){[void][EBR_POST_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid)}
+    $foregroundTitle=[EBR_POST_NATIVE]::Text($foreground)
+    if($foregroundPid -ne $current.ProcessId -or $foregroundTitle -notmatch '(?i)wsl\.exe'){return $false}
+    $screenshot=''
+    try{$screenshot=Capture-DesktopDiagnostic 'wsl-first-run-prompt-before-cancel.png'}catch{}
+    # This is the disposable hosted runner's explicit WSL first-run prompt. Its
+    # displayed instructions say Escape cancels the optional WSL install/update.
+    [EBR_POST_NATIVE]::keybd_event(0x1B,0,0,[UIntPtr]::Zero)
+    [EBR_POST_NATIVE]::keybd_event(0x1B,0,0x0002,[UIntPtr]::Zero)
+    $watch=[Diagnostics.Stopwatch]::StartNew();$dismissed=$false;$after=$null
+    while($watch.Elapsed.TotalSeconds -lt 2){
+      Start-Sleep -Milliseconds 100
+      try{$after=[System.Windows.Automation.AutomationElement]::FocusedElement.Current}catch{$after=$null}
+      $window=[EBR_POST_NATIVE]::GetForegroundWindow();$windowTitle=[EBR_POST_NATIVE]::Text($window)
+      if(($after -and ($after.ProcessId -ne $current.ProcessId -or $after.Name -cne $current.Name)) -or $window -ne $foreground -or $windowTitle -notmatch '(?i)wsl\.exe'){$dismissed=$true;break}
+    }
+    Add-Result 'Disposable runner WSL first-run update prompt was canceled with Escape' $(if($dismissed){'PASS'}else{'NOT TESTED'}) ([pscustomobject]@{FocusedElement=$current.Name;ProcessId=$current.ProcessId;ForegroundTitle=$foregroundTitle;PromptScreenshot=$screenshot;Dismissed=$dismissed;Reason=$(if($dismissed){$null}else{'The exact WSL window remained foreground; no other window received test input.'})})
+    $script:wslPromptHandled=$dismissed
+    return $dismissed
+  }catch{return $false}
+}
 function Ensure-AppForeground([IntPtr]$Window,[int]$ProcessId){
+  [void](Dismiss-WslFirstRunPrompt)
   [void][EBR_POST_NATIVE]::ShowWindow($Window,9)
   $foregroundBefore=[EBR_POST_NATIVE]::GetForegroundWindow()
   $initialForeground=$foregroundBefore
@@ -360,6 +392,7 @@ function Get-ControlScreenColors([IntPtr]$Control){
   return [pscustomobject]@{ControlRect=@($rect.Left,$rect.Top,$rect.Right,$rect.Bottom);Pixels=$samples.ToArray()}
 }
 function Test-TabVisualStates([IntPtr]$Window,[string]$Label){
+  [void](Dismiss-WslFirstRunPrompt)
   $timer=[EBR_POST_NATIVE]::ControlById($Window,10);$settings=[EBR_POST_NATIVE]::ControlById($Window,12)
   $windowRect=New-Object EBR_POST_RECT;$oldCursor=New-Object EBR_POST_POINT
   if($timer -eq [IntPtr]::Zero -or $settings -eq [IntPtr]::Zero -or -not [EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$windowRect) -or -not [EBR_POST_NATIVE]::GetCursorPos([ref]$oldCursor)){
@@ -397,6 +430,7 @@ function Test-TabVisualStates([IntPtr]$Window,[string]$Label){
   }finally{[void][EBR_POST_NATIVE]::SetCursorPos($oldCursor.X,$oldCursor.Y)}
 }
 function Test-DisabledReleaseLinkState([IntPtr]$Window,[string]$Label){
+  [void](Dismiss-WslFirstRunPrompt)
   $oldCursor=New-Object EBR_POST_POINT;$windowRect=New-Object EBR_POST_RECT
   if(-not [EBR_POST_NATIVE]::GetCursorPos([ref]$oldCursor) -or -not [EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$windowRect)){
     Add-Result "$Label disabled official-release link is exposed and stays visually inactive on hover" 'NOT TESTED' 'The runner cursor or app window bounds were unavailable.';return
@@ -424,6 +458,7 @@ function Test-DisabledReleaseLinkState([IntPtr]$Window,[string]$Label){
   }
 }
 function Test-PrimaryPressedState([IntPtr]$Window,[string]$Label){
+  [void](Dismiss-WslFirstRunPrompt)
   $button=[EBR_POST_NATIVE]::ControlById($Window,22);$rect=New-Object EBR_POST_RECT;$oldCursor=New-Object EBR_POST_POINT
   if($button -eq [IntPtr]::Zero -or -not [EBR_POST_NATIVE]::GetWindowRect($button,[ref]$rect) -or -not [EBR_POST_NATIVE]::GetCursorPos([ref]$oldCursor)){
     Add-Result "$Label primary button pressed state has a visible pixel transition" 'NOT TESTED' 'The primary button bounds or original pointer position were unavailable.';Click-Control $Window 22 "$Label begin break after unavailable press-state probe";return
