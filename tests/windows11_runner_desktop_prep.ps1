@@ -68,8 +68,8 @@ function Find-LowerRightBlueTarget([string]$Path){
   if(-not $Path -or -not (Test-Path -LiteralPath $Path)){return $null}
   $bitmap=[Drawing.Bitmap]::new($Path);$imageWidth=$bitmap.Width;$imageHeight=$bitmap.Height;$minX=$imageWidth;$minY=$imageHeight;$maxX=-1;$maxY=-1;$count=0
   try{
-    $left=[int]($imageWidth*0.70);$right=[int]($imageWidth*0.95);$top=[int]($imageHeight*0.75);$bottom=[int]($imageHeight*0.94)
-    for($y=$top;$y -lt $bottom;$y++){for($x=$left;$x -lt $right;$x++){$c=$bitmap.GetPixel($x,$y);if($c.R -lt 90 -and $c.G -gt 75 -and $c.B -gt 120){$count++;$minX=[Math]::Min($minX,$x);$maxX=[Math]::Max($maxX,$x);$minY=[Math]::Min($minY,$y);$maxY=[Math]::Max($maxY,$y)}}}
+    $left=[int]($imageWidth*0.78);$right=[int]($imageWidth*0.95);$top=[int]($imageHeight*0.80);$bottom=[int]($imageHeight*0.91)
+    for($y=$top;$y -lt $bottom;$y++){for($x=$left;$x -lt $right;$x++){$c=$bitmap.GetPixel($x,$y);if($c.R -lt 150 -and $c.G -gt 30 -and $c.B -gt 80){$count++;$minX=[Math]::Min($minX,$x);$maxX=[Math]::Max($maxX,$x);$minY=[Math]::Min($minY,$y);$maxY=[Math]::Max($maxY,$y)}}}
   }finally{$bitmap.Dispose()}
   $width=$maxX-$minX+1;$height=$maxY-$minY+1
   if($count -ge 500 -and $width -ge 70 -and $height -ge 22 -and $width -le [int]($imageWidth*0.30) -and $height -le [int]($imageHeight*0.12)){return [pscustomobject]@{Left=$minX;Top=$minY;Width=$width;Height=$height;BluePixels=$count;CenterX=[int](($minX+$maxX)/2);CenterY=[int](($minY+$maxY)/2)}}
@@ -87,8 +87,12 @@ $buttonFound=$false
 $buttonInvoked=$false
 $action='No initial privacy page detected'
 $reason=''
+$target=$null
+$visualActions=[System.Collections.Generic.List[object]]::new()
+$firstActionScreenshot=$null
+$firstActionChanged=$false
+$foregroundAfterFirstAction=$null
 if($privacyVisible){
-  $target=$null
   $all=@()
   if($oobeForeground){try{$rootWindow=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]::new([Convert]::ToInt64($foregroundBefore.Handle.Substring(2),16)));$all=$rootWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)}catch{}}
   if($all.Count -eq 0){$all=[System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)}
@@ -109,14 +113,27 @@ if($privacyVisible){
   if(-not $buttonFound -and $oobeForeground){
     $target=Find-LowerRightBlueTarget $before
     if($target){
-      [void][EBR_W11_DESKTOP]::SetCursorPos($target.CenterX,$target.CenterY)
-      [EBR_W11_DESKTOP]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);[EBR_W11_DESKTOP]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
-      $buttonFound=$true;$buttonInvoked=$true;$action='Clicked the visually detected lower-right blue OOBE action using real desktop mouse input';$reason='The WWAHost page exposed no accessible button name; the runner screenshot contained one blue lower-right button target.'
-      Start-Sleep -Seconds 5
+      $screenBounds=[Windows.Forms.Screen]::PrimaryScreen.Bounds
+      $cursorSet=[EBR_W11_DESKTOP]::SetCursorPos($screenBounds.Left+$target.CenterX,$screenBounds.Top+$target.CenterY)
+      if($cursorSet){[EBR_W11_DESKTOP]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);[EBR_W11_DESKTOP]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);$visualActions.Add([pscustomobject]@{Stage='initial privacy page';Target=$target;ScreenOrigin=@($screenBounds.Left,$screenBounds.Top);CursorPositionSet=$true;Input='mouse_event left-button down/up'});$action='Clicked the visually detected lower-right action on the initial OOBE privacy page using real desktop mouse input'}else{$reason='A lower-right blue action was detected but Windows could not position the cursor; no click was sent.'}
     }else{$reason='The WWAHost privacy page was foreground but no accessible Next button or unambiguous lower-right blue button was detected.'}
   }
-  if(-not $buttonFound -and -not $reason){$reason='The privacy page was visible but no enabled accessible Next button was exposed.'}
-  if($buttonInvoked -and -not $target){Start-Sleep -Seconds 5}
+  if(-not $buttonFound -and $visualActions.Count -eq 0 -and -not $reason){$reason='The privacy page was visible but no enabled accessible Next button was exposed.'}
+  if($buttonInvoked -or $visualActions.Count -gt 0){
+    Start-Sleep -Seconds 5
+    $firstActionScreenshot=Save-Desktop 'windows-11-runner-after-first-oobe-action.png'
+    $foregroundAfterFirstAction=Get-ForegroundSnapshot
+    if($before -and $firstActionScreenshot){$firstActionChanged=(Get-FileHash -LiteralPath $before -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $firstActionScreenshot -Algorithm SHA256).Hash}
+    $stillOnOobe=($foregroundAfterFirstAction.ProcessName -ieq 'WWAHost' -and $foregroundAfterFirstAction.Title -match 'Microsoft account')
+    if($stillOnOobe -and $firstActionChanged){
+      $acceptTarget=Find-LowerRightBlueTarget $firstActionScreenshot
+      if($acceptTarget){
+        $screenBounds=[Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $cursorSet=[EBR_W11_DESKTOP]::SetCursorPos($screenBounds.Left+$acceptTarget.CenterX,$screenBounds.Top+$acceptTarget.CenterY)
+        if($cursorSet){[EBR_W11_DESKTOP]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);[EBR_W11_DESKTOP]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);$visualActions.Add([pscustomobject]@{Stage='changed OOBE privacy confirmation page';Target=$acceptTarget;ScreenOrigin=@($screenBounds.Left,$screenBounds.Top);CursorPositionSet=$true;Input='mouse_event left-button down/up';Reason='A new screenshot confirmed the page changed after the first action; a single lower-right action target remained on the disposable privacy page.'});$action+='; clicked the next visually detected privacy confirmation action';Start-Sleep -Seconds 5}else{$reason='The privacy confirmation changed, but Windows could not position the cursor; no second click was sent.'}
+      }
+    }
+  }
 }
 $after=Save-Desktop 'windows-11-runner-after-desktop-prep.png'
 $foregroundAfter=Get-ForegroundSnapshot
@@ -124,10 +141,11 @@ $windowsAfter=@(Get-TopLevelWindows)
 $namesAfter=@(Get-DesktopAccessibleNames)
 $privacyStillVisibleByUIA=@($namesAfter|Where-Object {$_ -match 'Choose privacy settings for your device'}).Count -gt 0
 $oobeStillForeground=($foregroundAfter.ProcessName -ieq 'WWAHost' -and $foregroundAfter.Title -match 'Microsoft account')
-$privacyStillVisible=$privacyStillVisibleByUIA -or $oobeStillForeground
+$privacyStillVisible=$privacyStillVisibleByUIA
+$desktopObstructed=$privacyStillVisibleByUIA -or $oobeStillForeground
 $explorerAfter=$null -ne (Get-Process explorer -ErrorAction SilentlyContinue|Select-Object -First 1)
-$status=if($privacyStillVisible){'NOT TESTED'}elseif($explorerAfter){'PASS'}else{'NOT TESTED'}
-if($privacyStillVisible -and -not $reason){$reason='The initial privacy page remained; no other OOBE page or account choice was automated.'}
+$status=if($desktopObstructed){'NOT TESTED'}elseif($explorerAfter){'PASS'}else{'NOT TESTED'}
+if($desktopObstructed -and -not $reason){if($visualActions.Count -gt 0){$reason='WWAHost remained foreground after the bounded privacy-page actions; no account credentials were entered.'}else{$reason='The initial privacy page remained; no other OOBE page or account choice was automated.'}}
 if(-not $explorerAfter -and -not $reason){$reason='Explorer desktop process was not available after the bounded preparation step.'}
 $record=[pscustomobject]@{
   Status=$status
@@ -139,10 +157,14 @@ $record=[pscustomobject]@{
   Action=$action
   NextButtonFound=$buttonFound
   NextButtonInvoked=$buttonInvoked
-  OobeClickTarget=$target
+  OobeVisualActions=$visualActions.ToArray()
+  FirstActionScreenshot=$firstActionScreenshot
+  FirstActionChangedScreen=$firstActionChanged
+  ForegroundAfterFirstAction=$foregroundAfterFirstAction
   PrivacyPageStillVisible=$privacyStillVisible
   PrivacyPageStillVisibleByUIAutomation=$privacyStillVisibleByUIA
   OobeStillForeground=$oobeStillForeground
+  DesktopObstructed=$desktopObstructed
   ForegroundAfter=$foregroundAfter
   ExplorerBefore=$explorerBefore
   ExplorerAfter=$explorerAfter
