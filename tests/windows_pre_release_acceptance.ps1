@@ -40,6 +40,7 @@ $script:osOriginal = @{}
 $script:highContrastOriginal = $null
 $script:transcriptStarted = $false
 $script:uninstallerDiagnostics = [System.Collections.Generic.List[object]]::new()
+$script:heldUninstallerExitHandles = [System.Collections.Generic.List[IntPtr]]::new()
 $fatal = $false
 
 $native = @'
@@ -56,6 +57,10 @@ public static class EBR_PRE_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] public static extern bool EnumWindows(EnumCallback callback, IntPtr data);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool EnumChildWindows(IntPtr parent, EnumCallback callback, IntPtr data);
   [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, int processId);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool CloseHandle(IntPtr handle);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll", SetLastError=true)] public static extern bool AttachThreadInput(uint attach, uint attachTo, bool attachState);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SetFocus(IntPtr hwnd);
@@ -640,6 +645,10 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
   }
   $windowPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($window,[ref]$windowPid);$uiWindowProcessId=[int]$windowPid
   if($windowPid -ne 0 -and $windowPid -ne $process.Id){try{$process=[Diagnostics.Process]::GetProcessById([int]$windowPid)}catch{}}
+  $uiProcessHandle=[IntPtr]::Zero;$uiHandleCaptureError=''
+  if($isUninstaller -and $uiWindowProcessId -gt 0){
+    try{$uiProcessHandle=[EBR_PRE_NATIVE]::OpenProcess(0x00101000,$false,$uiWindowProcessId);if($uiProcessHandle -ne [IntPtr]::Zero){$script:heldUninstallerExitHandles.Add($uiProcessHandle)}else{$uiHandleCaptureError="OpenProcess failed with Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"}}catch{$uiHandleCaptureError=$_.Exception.Message}
+  }
   $buttonsSeen=[System.Collections.Generic.List[string]]::new()
   $watch=[Diagnostics.Stopwatch]::StartNew();$stage=0;$lastCapturedStage=-1
   while($watch.Elapsed.TotalMinutes -lt 3){
@@ -664,7 +673,14 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
       try{$launchProcess.Refresh()}catch{}
       if($isUninstaller){
         if(-not $launchProcess.HasExited){[void]$launchProcess.WaitForExit(30000)}
-        $uiExitCode=Get-AvailableProcessExitCode $process
+        $uiExitCode=$null;$uiExitCodeSource='';$nativeWaitResult=$null
+        if($uiProcessHandle -ne [IntPtr]::Zero){
+          try{
+            $nativeWaitResult=[EBR_PRE_NATIVE]::WaitForSingleObject($uiProcessHandle,5000)
+            if($nativeWaitResult -eq 0){[uint32]$nativeExitCode=0;if([EBR_PRE_NATIVE]::GetExitCodeProcess($uiProcessHandle,[ref]$nativeExitCode)){$uiExitCode=[int]$nativeExitCode;$uiExitCodeSource='retained native process handle'}}
+          }catch{$uiHandleCaptureError=$_.Exception.Message}
+        }
+        if($null -eq $uiExitCode){$uiExitCode=Get-AvailableProcessExitCode $process;if($null -ne $uiExitCode){$uiExitCodeSource='.NET Process handle'}}
         $parentExitCode=Get-AvailableProcessExitCode $launchProcess
         $processTreeAfter=[System.Collections.Generic.List[object]]::new();$completionSamples=[System.Collections.Generic.List[object]]::new();$completionWatch=[Diagnostics.Stopwatch]::StartNew();$afterState=Get-UninstallStateSnapshot
         while($completionWatch.Elapsed.TotalSeconds -lt 20){
@@ -677,12 +693,13 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
         $endTime=[DateTime]::Now;$afterState=Get-UninstallStateSnapshot;$finalIds=@($processTreeAfter | ForEach-Object {$_.ProcessId});if($finalIds -notcontains $launchProcess.Id){$finalIds=@($launchProcess.Id)+$finalIds};$finalWindows=Get-DesktopWindowSnapshot $finalIds;$eventEvidence=Get-UninstallerEventLogEvidence $launchTime $endTime
         try{$shot=Capture-DesktopScreenshot ("{0}-desktop-after-wizard.png" -f $Kind);if($shot){$desktopScreenshots.Add($shot)}}catch{$desktopScreenshots.Add("after-wizard capture error: $($_.Exception.Message)")}
         $uiProcessName=$null;$uiProcessPath=$null;try{$uiProcessName=$process.ProcessName;$uiProcessPath=$process.Path}catch{}
-        $diagnostic=[pscustomobject]@{Kind=$Kind;Path=$Path;Arguments='';Started=$launchTime.ToString('o');Ended=$endTime.ToString('o');DurationSeconds=[Math]::Round(($endTime-$launchTime).TotalSeconds,2);LaunchPid=$launchProcess.Id;LaunchProcessExited=$launchProcess.HasExited;LaunchProcessExitCode=$parentExitCode;UiWindowProcessId=$uiWindowProcessId;UiProcessName=$uiProcessName;UiProcessPath=$uiProcessPath;UiProcessExited=$process.HasExited;UiProcessExitCode=$uiExitCode;WizardVisible=$true;WizardButtons=$buttonsSeen.ToArray();Before=$beforeState;After=$afterState;InitialProcesses=$initialProcesses;InitialWindows=$initialWindows;CompletionSamples=$completionSamples.ToArray();Processes=$processTreeAfter;FinalWindows=$finalWindows;DesktopScreenshots=$desktopScreenshots.ToArray();EventLogs=$eventEvidence}
+        $diagnostic=[pscustomobject]@{Kind=$Kind;Path=$Path;Arguments='';Started=$launchTime.ToString('o');Ended=$endTime.ToString('o');DurationSeconds=[Math]::Round(($endTime-$launchTime).TotalSeconds,2);LaunchPid=$launchProcess.Id;LaunchProcessExited=$launchProcess.HasExited;LaunchProcessExitCode=$parentExitCode;UiWindowProcessId=$uiWindowProcessId;UiProcessName=$uiProcessName;UiProcessPath=$uiProcessPath;UiProcessExited=$process.HasExited;UiProcessExitCode=$uiExitCode;UiProcessExitCodeSource=$uiExitCodeSource;UiProcessWaitResult=$nativeWaitResult;UiProcessHandleCaptured=($uiProcessHandle -ne [IntPtr]::Zero);UiProcessHandleCaptureError=$uiHandleCaptureError;WizardVisible=$true;WizardButtons=$buttonsSeen.ToArray();Before=$beforeState;After=$afterState;InitialProcesses=$initialProcesses;InitialWindows=$initialWindows;CompletionSamples=$completionSamples.ToArray();Processes=$processTreeAfter;FinalWindows=$finalWindows;DesktopScreenshots=$desktopScreenshots.ToArray();EventLogs=$eventEvidence}
         Save-UninstallerDiagnostic $diagnostic
         if($process.HasExited){Pass "$Kind wizard UI process exits after Finish" ([pscustomobject]@{Pid=$uiWindowProcessId;ProcessName=$uiProcessName})}else{Add-Event "$Kind wizard UI process exits after Finish" 'FAIL' ([pscustomobject]@{Pid=$uiWindowProcessId;ProcessName=$uiProcessName})}
         if($null -eq $uiExitCode){Not-Tested "$Kind wizard UI process exit code" 'The exited UI-process handle did not expose an exit code; the parent and post-uninstall state are recorded separately.'}elseif($uiExitCode -eq 0){Pass "$Kind wizard UI process exits with code 0" ([pscustomobject]@{Pid=$uiWindowProcessId;ExitCode=$uiExitCode})}else{Add-Event "$Kind wizard UI process exits with code 0" 'FAIL' ([pscustomobject]@{Pid=$uiWindowProcessId;ExitCode=$uiExitCode})}
         if($launchProcess.HasExited){Pass "$Kind launch parent process exits after the wizard completes" ([pscustomobject]@{Pid=$launchProcess.Id})}else{Add-Event "$Kind launch parent process exits after the wizard completes" 'FAIL' ([pscustomobject]@{Pid=$launchProcess.Id})}
         if($null -eq $parentExitCode){Not-Tested "$Kind launch parent process exit code" 'The exited launcher handle did not expose an exit code; interactive completion is verified separately.'}elseif($parentExitCode -eq 0){Pass "$Kind launch parent process exits with code 0" ([pscustomobject]@{Pid=$launchProcess.Id;ExitCode=$parentExitCode})}else{Add-Event "$Kind launch parent process exits with code 0" 'FAIL' ([pscustomobject]@{Pid=$launchProcess.Id;ExitCode=$parentExitCode})}
+        if($uiProcessHandle -ne [IntPtr]::Zero){[void][EBR_PRE_NATIVE]::CloseHandle($uiProcessHandle);[void]$script:heldUninstallerExitHandles.Remove($uiProcessHandle);$uiProcessHandle=[IntPtr]::Zero}
       }else{
         Require ($process.HasExited) "$Kind wizard finishes and exits" ([pscustomobject]@{ExitCode=$process.ExitCode})
         Require ($process.ExitCode -eq 0) "$Kind wizard exits with code 0" ([pscustomobject]@{ExitCode=$process.ExitCode})
@@ -1677,6 +1694,8 @@ try {
   Write-Error $_
 } finally {
   try { Stop-InstalledApp } catch { Add-Event 'Installed test process cleanup' 'FAIL' $_.Exception.Message }
+  foreach($processHandle in $script:heldUninstallerExitHandles){try{[void][EBR_PRE_NATIVE]::CloseHandle($processHandle)}catch{}}
+  $script:heldUninstallerExitHandles.Clear()
   if($script:highContrastOriginal -ne $null){[void][EBR_PRE_NATIVE]::SetHighContrast($script:highContrastOriginal)}
   foreach($key in $script:osOriginal.Keys){$parts=$key.Split('|',2);try{Restore-RegistryValue $parts[0] $parts[1] $script:osOriginal[$key]}catch{Add-Event 'Windows appearance preference restoration' 'FAIL' $_.Exception.Message}}
   if($script:ownedInstall){

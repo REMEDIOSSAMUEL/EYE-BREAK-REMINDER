@@ -1,0 +1,106 @@
+name: Windows 11 v1.2.0 post-release gap audit
+
+on:
+  push:
+    branches:
+      - 'post-release-verification-v1.2.0-actual-binaries-*'
+    paths:
+      - '.github/workflows/windows-11-post-release-gap-audit.yml'
+      - 'tests/windows_pre_release_acceptance.ps1'
+      - 'tests/windows_runner_probe.ps1'
+      - 'tests/post_release_download_audit.ps1'
+      - 'tests/post_release_published_exe_smoke.ps1'
+      - 'tests/process_exit_handle_probe.ps1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-11-arm-desktop:
+    # Public repositories have the standard Windows 11 ARM desktop runner.
+    # The release is x64, so this run validates Windows 11's x64 emulation,
+    # not native x64 hardware behavior.
+    runs-on: windows-11-arm
+    timeout-minutes: 90
+    steps:
+      - name: Check out the isolated verification branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the runner is a Windows 11 ARM desktop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'build/pre-release-evidence','build/post-release-evidence','release' | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $nativeArch = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          $build = [int]$os.BuildNumber
+          $record = [pscustomobject]@{
+            Caption = $os.Caption
+            Version = $os.Version
+            Build = $build
+            NativeArchitecture = $nativeArch
+            RunnerArchitecture = $env:RUNNER_ARCH
+            PowerShellArchitecture = $env:PROCESSOR_ARCHITECTURE
+          }
+          $record | ConvertTo-Json -Depth 4 | Set-Content 'build/pre-release-evidence/windows-11-environment.json' -Encoding UTF8
+          if ($build -lt 22000) { throw "Expected Windows 11; runner build is $build." }
+          if ($nativeArch -ne 'Arm64') { throw "Expected native ARM64 Windows 11 runner; found $nativeArch." }
+          & ./tests/windows_runner_probe.ps1 -EvidenceDirectory 'build/pre-release-evidence'
+          $desktop = Get-Content -Raw 'build/pre-release-evidence/runner-capabilities.json' | ConvertFrom-Json
+          if (-not $desktop.interactiveDesktopAvailable) { throw "Windows 11 ARM runner did not expose Explorer/taskbar desktop: $($desktop.reason)" }
+
+      - name: Download and verify all genuine public v1.2.0 assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = Join-Path $env:RUNNER_TEMP 'eye-break-reminder-v1.2.0-published-assets'
+          & ./tests/post_release_download_audit.ps1 -ArtifactsDirectory $assets -EvidenceDirectory 'build/post-release-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify process-exit handle capture used by the NSIS harness
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/process_exit_handle_probe.ps1 -EvidenceDirectory 'build/post-release-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run the exact published standalone and portable x64 apps under Windows 11 x64 emulation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = Join-Path $env:RUNNER_TEMP 'eye-break-reminder-v1.2.0-published-assets'
+          & ./tests/post_release_published_exe_smoke.ps1 `
+            -StandalonePath (Join-Path $assets 'EyeBreakReminder.exe') `
+            -PortableExecutablePath (Join-Path $assets 'portable-extracted\EyeBreakReminder.exe') `
+            -EvidenceDirectory 'build/post-release-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Record installer platform boundary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Get-Content -Raw 'installer/setup.nsi'
+          if ($setup -notmatch '\$\{IsNativeAMD64\}') { throw 'Expected native AMD64 installer guard was not found.' }
+          $record = [pscustomobject]@{
+            Status = 'NOT TESTED'
+            Reason = 'The published x64 NSIS installer explicitly refuses non-native-AMD64 Windows. This runner is native ARM64; full installer lifecycle needs a Windows 11 x64 VM or runner.'
+            InstallerSHA256 = '121eaa8d14b8e3d342252edfc91bc25d6e8334b829c2824b7f90813062ded75f'
+            NativeArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+            Utc = [DateTime]::UtcNow.ToString('o')
+          }
+          $record | ConvertTo-Json -Depth 4 | Set-Content 'build/post-release-evidence/windows-11-arm-installer-boundary.json' -Encoding UTF8
+
+      - name: Upload Windows 11 release verification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.2.0-windows-11-arm-gap-audit-${{ github.run_id }}
+          path: |
+            build/pre-release-evidence/**
+            build/post-release-evidence/**
+          if-no-files-found: warn
+          retention-days: 14
