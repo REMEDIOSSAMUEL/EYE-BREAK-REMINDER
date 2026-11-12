@@ -152,7 +152,7 @@ try {
   $presentFocusNames = @($expectedFocusNames | Where-Object { $_ -in $knownNames })
   $missingFocusNames = @($expectedFocusNames | Where-Object { $_ -notin $knownNames })
   $navigationOk = @('Timer','History','Settings' | Where-Object { $_ -in $knownNames }).Count -eq 3
-  Add-Result 'Narrator-active keyboard navigation exposes main tabs and timer control names' $(if($navigationOk){'PASS'}else{'FAIL'}) ([pscustomobject]@{TabKeyEvents=32;FocusedElementCount=$focusedInApp.Count;ExpectedNames=$expectedFocusNames;NamesReached=$presentFocusNames;MissingNames=$missingFocusNames;FocusSequence=$focusedInApp.ToArray()})
+  Add-Result 'Narrator-active keyboard navigation exposes main tabs and timer control names' $(if($navigationOk){'PASS'}else{'FAIL'}) ([pscustomobject]@{TabKeyEvents=32;FocusedElementCount=$focusedInApp.Count;ExpectedNames=$expectedFocusNames;NamesReached=$presentFocusNames;MissingNames=$missingFocusNames;FocusSequence=@($focusedInApp)})
   Add-Result 'Narrator-active keyboard navigation exposes break and timer action names' $(if(@('Take a break now','Pause','Reset' | Where-Object { $_ -in $knownNames }).Count -eq 3){'PASS'}else{'FAIL'}) ([pscustomobject]@{NamesReached=$presentFocusNames;MissingNames=$missingFocusNames})
 
   $history = Send-TabUntil 'History'

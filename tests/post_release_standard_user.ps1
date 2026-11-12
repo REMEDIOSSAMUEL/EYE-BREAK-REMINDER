@@ -23,20 +23,67 @@ function Invoke-StandardProcess([string]$FilePath,[string[]]$Arguments,[int]$Tim
   return [pscustomobject]@{Pid=$process.Id;ExitCode=$process.ExitCode}
 }
 function Mount-StandardUserHive{
-  $usersRoot=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users,[Microsoft.Win32.RegistryView]::Default)
-  try{$existing=$usersRoot.OpenSubKey($sid);if($existing){$existing.Dispose();return $false}}finally{$usersRoot.Dispose()}
   $ntUser=Join-Path $profilePath 'NTUSER.DAT'
   if(-not (Test-Path -LiteralPath $ntUser -PathType Leaf)){throw "Standard-user registry hive file was not found: $ntUser"}
   $regExe=Join-Path $env:SystemRoot 'System32\reg.exe'
-  $output=& $regExe load "HKU\$sid" $ntUser 2>&1
-  if($LASTEXITCODE -ne 0){throw "Could not mount the disposable standard-user registry hive (reg load exit $LASTEXITCODE): $output"}
-  return $true
+  $usersRoot=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users,[Microsoft.Win32.RegistryView]::Registry64)
+  try{$existing=$usersRoot.OpenSubKey($sid);if($existing){$existing.Dispose();return $false}}finally{$usersRoot.Dispose()}
+  $lastOutput=''
+  for($attempt=1;$attempt -le 20;$attempt++){
+    $output=& $regExe load "HKU\$sid" $ntUser 2>&1
+    if($LASTEXITCODE -eq 0){return $true}
+    $lastOutput=[string]$output
+    $usersRoot=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users,[Microsoft.Win32.RegistryView]::Registry64)
+    try{$existing=$usersRoot.OpenSubKey($sid);if($existing){$existing.Dispose();return $false}}finally{$usersRoot.Dispose()}
+    if($attempt -lt 20){Start-Sleep -Milliseconds 500}
+  }
+  throw "Could not mount the disposable standard-user registry hive after 20 attempts (last reg load exit $LASTEXITCODE): $lastOutput"
 }
 function Dismount-StandardUserHive([bool]$MountedByHarness){
   if(-not $MountedByHarness){return}
   $regExe=Join-Path $env:SystemRoot 'System32\reg.exe'
   $output=& $regExe unload "HKU\$sid" 2>&1
   if($LASTEXITCODE -ne 0){throw "Could not unload the disposable standard-user registry hive (reg unload exit $LASTEXITCODE): $output"}
+}
+function Wait-InstallerProcessTree([int]$RootPid,[int]$TimeoutSeconds=60){
+  $deadline=[DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+  $observedChildren=[System.Collections.Generic.List[object]]::new()
+  $quietSamples=0
+  do{
+    $processes=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath)
+    $liveIds=[System.Collections.Generic.HashSet[uint32]]::new()
+    [void]$liveIds.Add([uint32]$RootPid)
+    $descendants=[System.Collections.Generic.List[object]]::new()
+    $changed=$true
+    while($changed){
+      $changed=$false
+      foreach($process in $processes){
+        $processId=[uint32]$process.ProcessId
+        if(-not $liveIds.Contains([uint32]$process.ParentProcessId)){continue}
+        if($liveIds.Add($processId)){$descendants.Add($process);$changed=$true}
+      }
+    }
+    foreach($process in $descendants){
+      if(-not @($observedChildren | Where-Object ProcessId -eq $process.ProcessId).Count){$observedChildren.Add([pscustomobject]@{ProcessId=[uint32]$process.ProcessId;ParentProcessId=[uint32]$process.ParentProcessId;Name=[string]$process.Name;ExecutablePath=[string]$process.ExecutablePath})}
+    }
+    $nsisExtracted=@($processes | Where-Object {$_.ExecutablePath -match '\\~ns[^\\]+\\Setup\.exe$'})
+    if($descendants.Count -eq 0 -and $nsisExtracted.Count -eq 0){$quietSamples++}else{$quietSamples=0}
+    if($quietSamples -ge 3){return [pscustomobject]@{Completed=$true;RootPid=$RootPid;ObservedChildren=@($observedChildren);RemainingChildren=@();RemainingExtractedInstallers=@();QuietSamples=$quietSamples}}
+    Start-Sleep -Milliseconds 400
+  }while([DateTime]::UtcNow -lt $deadline)
+  $remainingProcesses=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {$_.ParentProcessId -eq $RootPid -or $_.ExecutablePath -match '\\~ns[^\\]+\\Setup\.exe$'} | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath)
+  return [pscustomobject]@{Completed=$false;RootPid=$RootPid;ObservedChildren=@($observedChildren);RemainingChildren=$remainingProcesses;TimeoutSeconds=$TimeoutSeconds;QuietSamples=$quietSamples}
+}
+function Wait-UserProfileHiveReleased([int]$TimeoutSeconds=20){
+  $deadline=[DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+  do{
+    $profile=Get-CimInstance Win32_UserProfile -Filter "SID='$sid'" -ErrorAction SilentlyContinue
+    $usersRoot=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::Users,[Microsoft.Win32.RegistryView]::Registry64)
+    try{$loaded=$usersRoot.OpenSubKey($sid);$hiveLoaded=[bool]$loaded;if($loaded){$loaded.Dispose()}}finally{$usersRoot.Dispose()}
+    if(-not $profile -or -not $profile.Loaded -or $hiveLoaded){return [pscustomobject]@{Ready=$true;ProfileLoaded=[bool]($profile -and $profile.Loaded);HiveMounted=$hiveLoaded}}
+    Start-Sleep -Milliseconds 500
+  }while([DateTime]::UtcNow -lt $deadline)
+  return [pscustomobject]@{Ready=$false;ProfileLoaded=[bool]($profile -and $profile.Loaded);HiveMounted=$hiveLoaded;TimeoutSeconds=$TimeoutSeconds}
 }
 try{
   [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
@@ -74,6 +121,8 @@ try{
     $run=Invoke-StandardProcess -FilePath $InstallerPath -Arguments @('/S') -TimeoutSeconds 120
     $installStarted=$true
     Check ($run.ExitCode -eq 0) 'Published installer silently installs as a standard user without elevation' ([pscustomobject]@{ExitCode=$run.ExitCode})
+    $installerTree=Wait-InstallerProcessTree -RootPid $run.Pid
+    Check $installerTree.Completed 'Standard-user NSIS installer child process tree completed before profile inspection' $installerTree
     $profileObject=Get-CimInstance Win32_UserProfile -Filter "SID='$sid'" -ErrorAction SilentlyContinue
     if($profileObject){$profilePath=[string]$profileObject.LocalPath}
   }
@@ -85,6 +134,8 @@ try{
   $dataDir=Join-Path $localAppData 'EyeBreakReminder'
   $appKeyPath="$sid\Software\EyeBreakReminder"
   $uninstallKeyPath="$sid\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder"
+  $profileRelease=Wait-UserProfileHiveReleased
+  Check $profileRelease.Ready 'Disposable standard-user profile is released or its hive is mounted before registry inspection' $profileRelease
   $hiveMountedByHarness=Mount-StandardUserHive
   $registrySnapshots=[System.Collections.Generic.List[object]]::new()
   foreach($view in @([Microsoft.Win32.RegistryView]::Registry64,[Microsoft.Win32.RegistryView]::Registry32)){

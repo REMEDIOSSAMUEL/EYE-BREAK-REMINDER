@@ -1194,26 +1194,31 @@ function Test-FreshInstallApp {
   Switch-Timer
   $countdownHandle=(Get-Control $script:mainWindow 40 '60-minute countdown boundary').Handle
   $sixtyObserved=$false;$sixtyObservedText='';$sixtyAttempts=0
-  for($attempt=1;$attempt -le 3 -and -not $sixtyObserved;$attempt++){
+  $fiftyNineObserved=$false;$fiftyNineText='';$fiftyNineAttempt=0;$fiftyNineWaitSeconds=$null
+  $boundarySamples=[System.Collections.Generic.List[object]]::new()
+  for($attempt=1;$attempt -le 5 -and -not $fiftyNineObserved;$attempt++){
     $sixtyAttempts=$attempt
-    Click-Control $script:mainWindow 21 "Reset for 60:00 boundary attempt $attempt"
+    Click-Control $script:mainWindow 21 "Reset for 60:00 to 59:59 boundary attempt $attempt"
     $observeWatch=[Diagnostics.Stopwatch]::StartNew()
-    while($observeWatch.Elapsed.TotalSeconds -lt 0.75){
+    while($observeWatch.Elapsed.TotalSeconds -lt 1.25){
       $sixtyObservedText=[EBR_PRE_NATIVE]::Text($countdownHandle)
       if($sixtyObservedText -eq '60:00'){$sixtyObserved=$true;break}
-      Start-Sleep -Milliseconds 10
+      Start-Sleep -Milliseconds 2
     }
+    if(-not $sixtyObserved){$boundarySamples.Add([pscustomobject]@{Attempt=$attempt;Phase='waiting-for-reset';LastText=$sixtyObservedText;ElapsedSeconds=[Math]::Round($observeWatch.Elapsed.TotalSeconds,3)});continue}
+    # Poll the already-located native countdown control directly. A fresh reset is
+    # attempted if a heavily scheduled CI desktop skips the one-second transition.
+    $fiftyNineWatch=[Diagnostics.Stopwatch]::StartNew();$firstChangedText='';$lastText=$sixtyObservedText
+    while($fiftyNineWatch.Elapsed.TotalSeconds -lt 2.5){
+      $fiftyNineText=[EBR_PRE_NATIVE]::Text($countdownHandle)
+      if($fiftyNineText -ne $lastText){$firstChangedText=$fiftyNineText;break}
+      Start-Sleep -Milliseconds 1
+    }
+    $boundarySamples.Add([pscustomobject]@{Attempt=$attempt;Phase='first-countdown-transition';InitialText=$sixtyObservedText;FirstChangedText=$firstChangedText;LastText=$fiftyNineText;ElapsedSeconds=[Math]::Round($fiftyNineWatch.Elapsed.TotalSeconds,3)})
+    if($firstChangedText -eq '59:59'){$fiftyNineObserved=$true;$fiftyNineText=$firstChangedText;$fiftyNineAttempt=$attempt;$fiftyNineWaitSeconds=[Math]::Round($fiftyNineWatch.Elapsed.TotalSeconds,3)}
   }
   Require $sixtyObserved 'Installed published executable displays exactly 60:00 at the 60-minute reset boundary' ([pscustomobject]@{Observed=$sixtyObservedText;Attempts=$sixtyAttempts;ConfiguredWorkMinutes=60})
-  # Read the already-located native countdown control directly. Re-enumerating all
-  # child controls in PowerShell can take long enough to miss the one-second state.
-  $fiftyNineWatch=[Diagnostics.Stopwatch]::StartNew();$fiftyNineObserved=$false;$fiftyNineText=''
-  while($fiftyNineWatch.Elapsed.TotalSeconds -lt 5){
-    $fiftyNineText=[EBR_PRE_NATIVE]::Text($countdownHandle)
-    if($fiftyNineText -eq '59:59'){$fiftyNineObserved=$true;break}
-    Start-Sleep -Milliseconds 2
-  }
-  Require $fiftyNineObserved 'Installed published executable advances from 60:00 to exactly 59:59' ([pscustomobject]@{Observed=$fiftyNineText;WaitSeconds=[Math]::Round($fiftyNineWatch.Elapsed.TotalSeconds,2)})
+  Require $fiftyNineObserved 'Installed published executable advances from 60:00 to exactly 59:59' ([pscustomobject]@{Observed=$fiftyNineText;Attempt=$fiftyNineAttempt;WaitSeconds=$fiftyNineWaitSeconds;Attempts=$sixtyAttempts;Samples=$boundarySamples.ToArray()})
   Capture-ActiveWindow $script:mainWindow 'published-timer-boundary-59-59.png' | Out-Null
   Switch-Settings 0
   Set-Edit $script:mainWindow 100 '1' 'Restore one-minute work interval after boundary check'
