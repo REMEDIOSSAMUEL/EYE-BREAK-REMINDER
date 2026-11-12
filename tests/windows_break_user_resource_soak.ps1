@@ -36,7 +36,7 @@ public static class EBR_SOAK_NATIVE {
  public static string ClassName(IntPtr hwnd){StringBuilder b=new StringBuilder(256);GetClassNameW(hwnd,b,b.Capacity);return b.ToString();}
  public static string Text(IntPtr hwnd){StringBuilder b=new StringBuilder(512);GetWindowTextW(hwnd,b,b.Capacity);return b.ToString();}
  public static IntPtr FindWindow(int pid,string cls){IntPtr found=IntPtr.Zero;EnumProc cb=delegate(IntPtr h,IntPtr ignored){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&String.Equals(ClassName(h),cls,StringComparison.Ordinal)){found=h;return false;}return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return found;}
- public static int CountWindows(int pid,string cls){int n=0;EnumProc cb=delegate(IntPtr h,IntPtr ignored){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&(cls==null||String.Equals(ClassName(h),cls,StringComparison.Ordinal)))n++;return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return n;}
+ public static int CountWindows(int pid,string cls){int n=0;EnumProc cb=delegate(IntPtr h,IntPtr ignored){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&(String.IsNullOrEmpty(cls)||String.Equals(ClassName(h),cls,StringComparison.Ordinal)))n++;return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return n;}
  public static IntPtr ChildById(IntPtr root,int id){IntPtr found=IntPtr.Zero;EnumProc cb=delegate(IntPtr h,IntPtr ignored){if(GetDlgCtrlID(h)==id){found=h;return false;}return true;};EnumChildWindows(root,cb,IntPtr.Zero);GC.KeepAlive(cb);return found;}
  public static int User(IntPtr p){return GetGuiResources(p,1);}
  public static int Gdi(IntPtr p){return GetGuiResources(p,0);}
@@ -75,7 +75,11 @@ function Wait-Until([scriptblock]$Condition,[int]$Timeout,[string]$Stage,[int]$C
  }
  return $false
 }
-function Wait-Break([int]$Timeout,[int]$Cycle){if(-not (Wait-Until {BreakWindow -ne [IntPtr]::Zero} $Timeout 'waiting-for-break' $Cycle)){throw "Cycle $Cycle did not open a break window within $Timeout seconds."};return BreakWindow}
+function Wait-Break([int]$Timeout,[int]$Cycle){
+ $script:observedBreak=[IntPtr]::Zero
+ if(-not (Wait-Until {$script:observedBreak=BreakWindow;($script:observedBreak) -ne [IntPtr]::Zero} $Timeout 'waiting-for-break' $Cycle)){throw "Cycle $Cycle did not open a break window within $Timeout seconds."}
+ return $script:observedBreak
+}
 function Wait-Closed([IntPtr]$Window,[int]$Timeout,[int]$Cycle,[string]$Action){
  if(-not (Wait-Until {(-not [EBR_SOAK_NATIVE]::IsWindow($Window)) -and (BreakWindow -eq [IntPtr]::Zero) -and (Status) -match 'Running'} $Timeout "closing-$Action" $Cycle)){throw "Cycle $Cycle did not return to work after $Action; status=$(Status)."}
 }
@@ -130,7 +134,7 @@ try{
  $script:process=Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
  if(-not (Wait-Until {$script:main=[EBR_SOAK_NATIVE]::FindWindow($script:process.Id,'EyeBreakReminder.Native');$script:main-ne[IntPtr]::Zero} 30 'initial-main-window' 0)){throw 'Application main window did not appear.'}
  if(-not (Wait-Until {(Status)-match'Running'} 10 'initial-running' 0)){throw "Timer did not start; status=$(Status)."}
- for($n=0;$n-lt 12;$n++){Start-Sleep -Seconds 5;[void](Sample 0 'idle-baseline')}
+ for($n=0;$n-lt 12;$n++){Start-Sleep -Seconds 1;[void](Sample 0 'idle-baseline')}
  $warm=@($script:metrics|Where-Object{$_.Stage -eq 'idle-baseline'}|ForEach-Object{[double]$_.UserObjects});$idleRange=[double](($warm|Measure-Object -Maximum).Maximum)-[double](($warm|Measure-Object -Minimum).Minimum)
  Add-Event 'Idle resource baseline captured' 'INFO' ([pscustomobject]@{Samples=$warm.Count;UserMinimum=($warm|Measure-Object -Minimum).Minimum;UserMaximum=($warm|Measure-Object -Maximum).Maximum;UserRange=$idleRange})
  for($i=1;$i-le$Cycles;$i++){
