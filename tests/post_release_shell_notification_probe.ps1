@@ -8,8 +8,12 @@ $expectedHash = '2895c80f942dd03186305d913516700552524ec5ba9a77da0dab457a3265fcc
 $events = [System.Collections.Generic.List[object]]::new()
 $appProcess = $null
 $ownedData = $false
-$consoleWindow = [IntPtr]::Zero
-$consoleWasMinimized = $true
+$runnerWindow = [IntPtr]::Zero
+$runnerWasMinimized = $true
+$dndTogglePattern = $null
+$dndOriginalState = $null
+$dndSettingsWindow = [IntPtr]::Zero
+$dndSettingsProcessId = 0
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
@@ -29,7 +33,6 @@ public static class EBR_SHELL_NOTICE_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] private static extern int GetWindowTextLengthW(IntPtr hwnd);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern int GetClassNameW(IntPtr hwnd, StringBuilder name, int maxCount);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool ShowWindow(IntPtr hwnd, int command);
-  [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr GetConsoleWindow();
   [DllImport("winmm.dll", ExactSpelling=true)] public static extern uint waveOutGetNumDevs();
   public static IntPtr[] WindowsForProcess(int processId) {
     List<IntPtr> result = new List<IntPtr>();
@@ -85,18 +88,76 @@ function Save-DesktopScreenshot([string]$Path) {
   try { $graphics.CopyFromScreen($screen.Location,[System.Drawing.Point]::Empty,$screen.Size);$bitmap.Save($Path,[System.Drawing.Imaging.ImageFormat]::Png) }
   finally { $graphics.Dispose();$bitmap.Dispose() }
 }
+function Minimize-HostedRunnerConsole {
+  $root=[System.Windows.Automation.AutomationElement]::RootElement
+  $top=$root.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)
+  for($i=0;$i -lt $top.Count;$i++){
+    try{
+      $element=$top.Item($i);$current=$element.Current
+      if($current.ControlType -ne [System.Windows.Automation.ControlType]::Window -or $current.Name -notmatch '(?i)HostedComputeAgent[\\/]hosted-compute-agent'){continue}
+      $process=Get-Process -Id $current.ProcessId -ErrorAction Stop
+      if($process.Path -notmatch '(?i)HostedComputeAgent[\\/]hosted-compute-agent(?:\.exe)?$'){continue}
+      $handle=[IntPtr]$current.NativeWindowHandle
+      if($handle -eq [IntPtr]::Zero){continue}
+      $wasMinimized=[EBR_SHELL_NOTICE_NATIVE]::IsIconic($handle)
+      if(-not $wasMinimized){[void][EBR_SHELL_NOTICE_NATIVE]::ShowWindow($handle,6);Start-Sleep -Milliseconds 250}
+      if([EBR_SHELL_NOTICE_NATIVE]::IsIconic($handle)){return [pscustomobject]@{Handle=$handle;WasMinimized=$wasMinimized;Minimized=$true;ProcessId=$current.ProcessId;ProcessPath=$process.Path;WindowName=$current.Name;Method='ShowWindow(SW_MINIMIZE) on the explicitly identified hosted runner console'}}
+    }catch{}
+  }
+  return $null
+}
+function Set-DisposableWindowsDndOff {
+  try{Start-Process -FilePath 'ms-settings:notifications' -ErrorAction Stop|Out-Null}catch{Add-Result 'Actual Windows 11 Do not disturb setting can be opened through Settings UI' 'NOT TESTED' ([pscustomobject]@{Reason=$_.Exception.Message});return $false}
+  $watch=[Diagnostics.Stopwatch]::StartNew();$toggleElement=$null;$togglePattern=$null;$settingsWindow=[IntPtr]::Zero;$settingsPid=0;$candidateNames=[System.Collections.Generic.List[string]]::new()
+  while($watch.Elapsed.TotalSeconds -lt 18 -and -not $toggleElement){
+    $settingsProcess=Get-Process -Name SystemSettings -ErrorAction SilentlyContinue|Select-Object -First 1
+    if($settingsProcess){$settingsPid=$settingsProcess.Id;$script:dndSettingsProcessId=$settingsPid}
+    try{
+      $root=[System.Windows.Automation.AutomationElement]::RootElement
+      $windows=$root.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)
+      for($i=0;$i -lt $windows.Count;$i++){
+        $window=$windows.Item($i);$windowCurrent=$window.Current
+        if($windowCurrent.ControlType -ne [System.Windows.Automation.ControlType]::Window -or $windowCurrent.Name -notmatch '(?i)Settings|Notifications'){continue}
+        $settingsWindow=[IntPtr]$windowCurrent.NativeWindowHandle
+        $children=$window.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+        for($j=0;$j -lt $children.Count;$j++){
+          try{
+            $candidate=$children.Item($j);$current=$candidate.Current
+            if($current.ProcessId -ne $windowCurrent.ProcessId){continue}
+            if($current.Name -match '(?i)do not disturb'){$candidateNames.Add($current.Name)}
+            if($current.Name -ine 'Do not disturb'){continue}
+            $pattern=$null
+            if($candidate.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern,[ref]$pattern)){$toggleElement=$candidate;$togglePattern=$pattern;break}
+          }catch{}
+        }
+        if($toggleElement){break}
+      }
+    }catch{}
+    if(-not $toggleElement){Start-Sleep -Milliseconds 350}
+  }
+  if(-not $toggleElement){
+    Add-Result 'Actual Windows 11 Do not disturb setting is exposed as a Settings UI toggle' 'NOT TESTED' ([pscustomobject]@{Reason='The real Settings > System > Notifications page opened, but no matching TogglePattern appeared within 18 seconds.';SettingsProcessId=$settingsPid;Names=@($candidateNames|Select-Object -Unique)})
+    return $false
+  }
+  $original=$togglePattern.Current.ToggleState
+  Add-Result 'Original Do not disturb state was read from the real Windows 11 Settings UI' 'PASS' ([pscustomobject]@{State=$original.ToString();ControlName=$toggleElement.Current.Name;ProcessId=$settingsPid})
+  if($original -eq [System.Windows.Automation.ToggleState]::On){$togglePattern.Toggle();Start-Sleep -Milliseconds 500}
+  $off=($togglePattern.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::Off)
+  $script:dndTogglePattern=$togglePattern;$script:dndOriginalState=$original;$script:dndSettingsWindow=$settingsWindow;$script:dndSettingsProcessId=$settingsPid
+  if($settingsWindow -ne [IntPtr]::Zero){[void][EBR_SHELL_NOTICE_NATIVE]::ShowWindow($settingsWindow,6)}
+  Add-Result 'Windows 11 Do not disturb was turned off through the disposable runner Settings UI' $(if($off){'PASS'}else{'NOT TESTED'}) ([pscustomobject]@{Before=$original.ToString();After=$togglePattern.Current.ToggleState.ToString();ChangedByTogglePattern=$true;SettingsProcessId=$settingsPid;SettingsWindow=('0x{0:X}' -f $settingsWindow.ToInt64())})
+  return $off
+}
 try {
   New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
   $actualHash=(Get-FileHash -LiteralPath $PublishedExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()
   if($actualHash -cne $expectedHash){throw "Notification probe executable is not the exact published v1.2.0 EXE: $actualHash"}
   Add-Result 'Notification probe uses the exact published v1.2.0 EXE' 'PASS' $actualHash
 
-  $consoleWindow=[EBR_SHELL_NOTICE_NATIVE]::GetConsoleWindow()
-  if($consoleWindow -ne [IntPtr]::Zero){
-    $consoleWasMinimized=[EBR_SHELL_NOTICE_NATIVE]::IsIconic($consoleWindow)
-    if(-not $consoleWasMinimized){[void][EBR_SHELL_NOTICE_NATIVE]::ShowWindow($consoleWindow,6);Start-Sleep -Milliseconds 300}
-    Add-Result 'Hosted runner console was minimized to expose the real Windows notification surface' 'PASS' ([pscustomobject]@{Window=('0x{0:X}' -f $consoleWindow.ToInt64());WasMinimized=$consoleWasMinimized;NowMinimized=[EBR_SHELL_NOTICE_NATIVE]::IsIconic($consoleWindow)})
-  }else{Add-Result 'Hosted runner console was minimized to expose the real Windows notification surface' 'NOT TESTED' 'GetConsoleWindow returned null; no other process window was hidden.'}
+  $runnerWindowRecord=Minimize-HostedRunnerConsole
+  if($runnerWindowRecord){$runnerWindow=$runnerWindowRecord.Handle;$runnerWasMinimized=$runnerWindowRecord.WasMinimized;Add-Result 'Only the identified hosted runner console was minimized to expose the real Windows notification surface' 'PASS' $runnerWindowRecord}
+  else{Add-Result 'Only the identified hosted runner console was minimized to expose the real Windows notification surface' 'NOT TESTED' 'The exact HostedComputeAgent console window could not be matched by process path and UIA window name; no other process window was hidden.'}
+  $dndDisabled=Set-DisposableWindowsDndOff
 
   $dataPath=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'
   if(Test-Path -LiteralPath $dataPath){Add-Result 'Disposable notification profile is clean' 'NOT TESTED' ([pscustomobject]@{Path=$dataPath;Reason='Existing profile data was preserved; no app process was launched.'});return}
@@ -153,14 +214,19 @@ try {
   if($notificationMatches.Count -gt 0){
     Add-Result 'A visible Windows Shell notification exposes the app title or reminder text' 'PASS' ([pscustomobject]@{Matches=$notificationMatches;OtherDesktopNames=@($automationNames|Where-Object {$_.ProcessId -ne $appProcess.Id}|Select-Object -First 60);ShellProcesses=$shellProcesses;Screenshot=$screenshot})
   }else{
-    Add-Result 'A separate visible Windows Shell notification was observed' 'NOT TESTED' ([pscustomobject]@{Reason='The real app timer and in-app reminder ran with notifications enabled while minimized, but UI Automation did not expose the Shell balloon text. The taskbar Do not disturb state and full desktop are recorded in the screenshot; a successful Shell request or in-app window is not counted as a visible balloon.';DoNotDisturb=$quietTime;OtherDesktopNames=@($automationNames|Where-Object {$_.ProcessId -ne $appProcess.Id}|Select-Object -First 80);ShellProcesses=$shellProcesses;Screenshot=$screenshot})
+    $reason=if($dndDisabled){'Do not disturb was turned Off through the actual Settings UI, but UI Automation did not expose a separate Shell balloon surface; screenshot is retained.'}else{'Do not disturb could not be changed through the actual Settings UI; a visible Shell balloon was not established while the runner reported quiet time.'}
+    Add-Result 'A separate visible Windows Shell notification was observed' 'NOT TESTED' ([pscustomobject]@{Reason=$reason;DoNotDisturbOff=$dndDisabled;DoNotDisturbTaskbarState=$quietTime;OtherDesktopNames=@($automationNames|Where-Object {$_.ProcessId -ne $appProcess.Id}|Select-Object -First 80);ShellProcesses=$shellProcesses;Screenshot=$screenshot})
   }
   Add-Result 'Modern Windows Toast notification feature' 'NOT APPLICABLE' 'The implementation uses Shell_NotifyIconW with NIF_INFO; it has no modern Toast API or app identity path.'
 }catch{
   Add-Result 'Windows Shell notification probe completed without an automation exception' 'FAIL' $_.Exception.Message
 }finally{
   if($appProcess){try{$appProcess.Refresh();if(-not $appProcess.HasExited){[void]$appProcess.CloseMainWindow();if(-not $appProcess.WaitForExit(3000)){Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue;$appProcess.WaitForExit(3000)}}}catch{}}
-  if($consoleWindow -ne [IntPtr]::Zero -and -not $consoleWasMinimized){[void][EBR_SHELL_NOTICE_NATIVE]::ShowWindow($consoleWindow,9)}
+  if($dndTogglePattern -and $null -ne $dndOriginalState){
+    try{$state=$dndTogglePattern.Current.ToggleState;if($state -ne $dndOriginalState){$dndTogglePattern.Toggle();Start-Sleep -Milliseconds 400};$restored=$dndTogglePattern.Current.ToggleState -eq $dndOriginalState;Add-Result 'Original Windows 11 Do not disturb setting was restored through Settings UI' $(if($restored){'PASS'}else{'FAIL'}) ([pscustomobject]@{Original=$dndOriginalState.ToString();Observed=$dndTogglePattern.Current.ToggleState.ToString()})}catch{Add-Result 'Original Windows 11 Do not disturb setting was restored through Settings UI' 'FAIL' $_.Exception.Message}
+  }
+  if($dndSettingsProcessId -gt 0){Stop-Process -Id $dndSettingsProcessId -ErrorAction SilentlyContinue}
+  if($runnerWindow -ne [IntPtr]::Zero -and -not $runnerWasMinimized){[void][EBR_SHELL_NOTICE_NATIVE]::ShowWindow($runnerWindow,9)}
   if($ownedData){$dataPath=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder';if(Test-Path -LiteralPath $dataPath){Remove-Item -LiteralPath $dataPath -Recurse -Force}}
   $result=[pscustomobject]@{
     Application='Eye Break Reminder'
