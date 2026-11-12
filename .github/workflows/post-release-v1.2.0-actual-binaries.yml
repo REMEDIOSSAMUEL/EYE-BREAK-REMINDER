@@ -114,6 +114,8 @@ jobs:
 
       - name: Download and independently audit the public v1.2.0 assets
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $assets = Join-Path $env:RUNNER_TEMP 'eye-break-reminder-v1.2.0-published-assets'

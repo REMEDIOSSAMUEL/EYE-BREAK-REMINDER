@@ -6,6 +6,11 @@ $ErrorActionPreference = 'Stop'
 $repoName = 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER'
 $approvedMain = '908a21531833eb2175fb7bd882db06b79a2b917b'
 $testedSource = 'cbd2e467c3767765250ff11a701839a8a850134b'
+$apiHeaders = @{
+  'User-Agent' = 'EyeBreakReminder-PostReleaseVerification/1.0'
+  Accept = 'application/vnd.github+json'
+}
+if ($env:GITHUB_TOKEN) { $apiHeaders.Authorization = "Bearer $env:GITHUB_TOKEN" }
 $expected = [ordered]@{
   'EyeBreakReminder.exe' = '2895c80f942dd03186305d913516700552524ec5ba9a77da0dab457a3265fcc6'
   'EyeBreakReminder-Setup-x64.exe' = '121eaa8d14b8e3d342252edfc91bc25d6e8334b829c2824b7f90813062ded75f'
@@ -40,18 +45,18 @@ try {
   [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
   Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-  $repo=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName" -Headers @{ 'User-Agent'='EyeBreakReminder-PostReleaseVerification/1.0'; Accept='application/vnd.github+json' } -TimeoutSec 30
+  $repo=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName" -Headers $apiHeaders -TimeoutSec 30
   Check (-not $repo.private) 'Repository is publicly visible' ([pscustomobject]@{FullName=$repo.full_name;Private=$repo.private})
 
-  $release=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/releases/tags/v1.2.0" -Headers @{ 'User-Agent'='EyeBreakReminder-PostReleaseVerification/1.0'; Accept='application/vnd.github+json' } -TimeoutSec 30
+  $release=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/releases/tags/v1.2.0" -Headers $apiHeaders -TimeoutSec 30
   Check ($release.tag_name -ceq 'v1.2.0' -and $release.name -ceq 'Eye Break Reminder v1.2.0' -and -not $release.draft -and -not $release.prerelease) 'Published stable release metadata is correct' ([pscustomobject]@{Tag=$release.tag_name;Title=$release.name;Draft=$release.draft;Prerelease=$release.prerelease;Target=$release.target_commitish;Url=$release.html_url})
   Check ($release.target_commitish -ceq 'main') 'Release target metadata names main' $release.target_commitish
-  $latest=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/releases/latest" -Headers @{ 'User-Agent'='EyeBreakReminder-PostReleaseVerification/1.0'; Accept='application/vnd.github+json' } -TimeoutSec 30
+  $latest=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/releases/latest" -Headers $apiHeaders -TimeoutSec 30
   Check ($latest.tag_name -ceq 'v1.2.0' -and -not $latest.draft -and -not $latest.prerelease) 'Unauthenticated latest endpoint returns stable v1.2.0' ([pscustomobject]@{Tag=$latest.tag_name;Url=$latest.html_url})
-  $main=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/ref/heads/main" -Headers @{ 'User-Agent'='EyeBreakReminder-PostReleaseVerification/1.0'; Accept='application/vnd.github+json' } -TimeoutSec 30
-  $tagRef=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/ref/tags/v1.2.0" -Headers @{ 'User-Agent'='EyeBreakReminder-PostReleaseVerification/1.0'; Accept='application/vnd.github+json' } -TimeoutSec 30
+  $main=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/ref/heads/main" -Headers $apiHeaders -TimeoutSec 30
+  $tagRef=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/ref/tags/v1.2.0" -Headers $apiHeaders -TimeoutSec 30
   $tagObject=$tagRef.object
-  if($tagObject.type -eq 'tag'){$tagObject=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/tags/$($tagObject.sha)" -Headers @{ 'User-Agent'='EyeBreakReminder-PostReleaseVerification/1.0'; Accept='application/vnd.github+json' } -TimeoutSec 30;$targetCommit=$tagObject.object.sha}else{$targetCommit=$tagObject.sha}
+  if($tagObject.type -eq 'tag'){$tagObject=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/tags/$($tagObject.sha)" -Headers $apiHeaders -TimeoutSec 30;$targetCommit=$tagObject.object.sha}else{$targetCommit=$tagObject.sha}
   Check ($main.object.sha -ceq $approvedMain) 'Public main branch is the approved v1.2.0 commit' $main.object.sha
   Check ($targetCommit -ceq $main.object.sha) 'Published v1.2.0 tag peels to current main commit' ([pscustomobject]@{Tag=$targetCommit;Main=$main.object.sha})
 
