@@ -46,7 +46,6 @@ public static class EBR_POST_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] public static extern bool ClientToScreen(IntPtr hwnd,ref EBR_POST_POINT point);
   [DllImport("user32.dll",SetLastError=true)] public static extern uint GetDpiForWindow(IntPtr hwnd);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetParent(IntPtr hwnd);
-  [DllImport("user32.dll",SetLastError=true)] public static extern bool PrintWindow(IntPtr hwnd,IntPtr hdc,uint flags);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern IntPtr FindWindowW(string className,string windowName);
   public static string Text(IntPtr hwnd){int n=GetWindowTextLengthW(hwnd);StringBuilder b=new StringBuilder(Math.Max(2,n+2));GetWindowTextW(hwnd,b,b.Capacity);return b.ToString();}
   public static string ClassName(IntPtr hwnd){StringBuilder b=new StringBuilder(256);GetClassNameW(hwnd,b,b.Capacity);return b.ToString();}
@@ -55,7 +54,7 @@ public static class EBR_POST_NATIVE {
 }
 "@
 Add-Type -TypeDefinition $native
-function Add-Result([string]$Name,[string]$Status,$Details=$null){$events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')})}
+function Add-Result([string]$Name,[string]$Status,$Details=$null){$events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')});Write-Host "[$Status] $Name"}
 function Check([bool]$Condition,[string]$Name,$Details=$null){if($Condition){Add-Result $Name 'PASS' $Details}else{Add-Result $Name 'FAIL' $Details}}
 function Get-MainWindow([int]$ProcessId){
   $watch=[Diagnostics.Stopwatch]::StartNew()
@@ -140,35 +139,14 @@ function Capture-DesktopDiagnostic([string]$Name){
   $bitmap=[Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[Drawing.Graphics]::FromImage($bitmap)
   try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$path=Join-Path $EvidenceDirectory $Name;$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png);return $path}finally{$graphics.Dispose();$bitmap.Dispose()}
 }
-function Capture-WindowSurface([IntPtr]$Window,[string]$Name){
-  $rect=New-Object EBR_POST_RECT
-  if(-not [EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$rect)){return $null}
-  $width=$rect.Right-$rect.Left;$height=$rect.Bottom-$rect.Top
-  if($width -lt 100 -or $height -lt 100){return $null}
-  $bitmap=[Drawing.Bitmap]::new($width,$height);$graphics=[Drawing.Graphics]::FromImage($bitmap);$captured=$false
-  try{
-    $hdc=$graphics.GetHdc()
-    try{$captured=[EBR_POST_NATIVE]::PrintWindow($Window,$hdc,2);if(-not $captured){$captured=[EBR_POST_NATIVE]::PrintWindow($Window,$hdc,0)}}finally{$graphics.ReleaseHdc($hdc)}
-    if(-not $captured){return $null}
-    $unique=[System.Collections.Generic.HashSet[string]]::new()
-    for($y=0;$y -lt $height;$y+=12){for($x=0;$x -lt $width;$x+=12){$c=$bitmap.GetPixel($x,$y);[void]$unique.Add(('{0:X2}{1:X2}{2:X2}' -f $c.R,$c.G,$c.B))}}
-    if($unique.Count -lt 8){return $null}
-    $path=Join-Path $EvidenceDirectory ($Name -replace '\.png$','-window-surface.png')
-    $bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png)
-    return [pscustomobject]@{Path=$path;Width=$width;Height=$height;UniqueSampledColors=$unique.Count;Method='Win32 PrintWindow on the application HWND; not a desktop-foreground screenshot'}
-  }finally{$graphics.Dispose();$bitmap.Dispose()}
-}
 function Capture([IntPtr]$Window,[string]$Name){
   $windowPid=[uint32]0;[void][EBR_POST_NATIVE]::GetWindowThreadProcessId($Window,[ref]$windowPid)
   $foreground=Ensure-AppForeground $Window ([int]$windowPid)
   if(-not $foreground.ApplicationForeground){
-    $surface=Capture-WindowSurface $Window $Name
-    if($surface){Add-Result "Application window surface capture for $Name" 'PASS' ([pscustomobject]@{Path=$surface.Path;Width=$surface.Width;Height=$surface.Height;UniqueSampledColors=$surface.UniqueSampledColors;Method=$surface.Method;Foreground=$foreground})}
-    else{Add-Result "Application window surface capture for $Name" 'NOT TESTED' ([pscustomobject]@{Reason='PrintWindow did not return a verifiable non-uniform application surface.';Foreground=$foreground})}
     $diagnosticPath=$null
     if(-not $script:foregroundDiagnosticCaptured){try{$diagnosticPath=Capture-DesktopDiagnostic 'desktop-foreground-obstruction.png';$script:foregroundDiagnosticCaptured=$true}catch{}}
-    Add-Result "Visible screenshot of $Name" 'NOT TESTED' ([pscustomobject]@{Reason='The published application window could not be brought to the desktop foreground.';Foreground=$foreground;DesktopDiagnostic=$diagnosticPath})
-    return $surface
+    Add-Result "Visible screenshot of $Name" 'NOT TESTED' ([pscustomobject]@{Reason='The published application window could not be brought to the desktop foreground; hidden-window capture is deliberately skipped.';Foreground=$foreground;DesktopDiagnostic=$diagnosticPath})
+    return $null
   }
   $rect=New-Object EBR_POST_RECT
   if(-not [EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$rect)){throw "Could not measure published app window for $Name"}
