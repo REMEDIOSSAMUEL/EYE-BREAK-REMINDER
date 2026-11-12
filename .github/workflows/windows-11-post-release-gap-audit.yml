@@ -11,6 +11,7 @@ on:
       - 'tests/post_release_download_audit.ps1'
       - 'tests/post_release_published_exe_smoke.ps1'
       - 'tests/process_exit_handle_probe.ps1'
+      - 'tests/windows11_runner_desktop_prep.ps1'
   workflow_dispatch:
 
 permissions:
@@ -30,6 +31,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Advance the disposable Windows 11 runner past its initial privacy page
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/windows11_runner_desktop_prep.ps1 -EvidenceDirectory 'build/pre-release-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify the runner is a Windows 11 ARM desktop
         shell: pwsh
         run: |

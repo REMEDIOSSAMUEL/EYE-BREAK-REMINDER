@@ -39,6 +39,7 @@ public static class EBR_POST_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetDlgItem(IntPtr hwnd,int id);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp,uint flags,uint timeout,out IntPtr result);
+  [DllImport("winmm.dll",ExactSpelling=true)] public static extern uint waveOutGetNumDevs();
   [DllImport("user32.dll",SetLastError=true)] public static extern bool SystemParametersInfoW(uint action,uint uiParam,ref int value,uint flags);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
@@ -76,7 +77,11 @@ function Wait-Status([IntPtr]$Window,[string]$Expected,[int]$TimeoutSeconds=5){
 function Click-Control([IntPtr]$Window,[int]$Id,[string]$Name){
   $control=[EBR_POST_NATIVE]::ControlById($Window,$Id)
   if($control -eq [IntPtr]::Zero){throw "Published app did not expose $Name (control $Id)."}
-  [void][EBR_POST_NATIVE]::SendMessageW($control,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+  # BM_CLICK is synchronous across the process boundary. Bound it so an unavailable
+  # runner service or app hang produces evidence instead of hanging the job forever.
+  $result=[IntPtr]::Zero
+  $sent=[EBR_POST_NATIVE]::SendMessageTimeoutW($control,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero,2,3000,[ref]$result)
+  if($sent -eq [IntPtr]::Zero){$errorCode=[Runtime.InteropServices.Marshal]::GetLastWin32Error();throw "$Name (control $Id) did not complete its bounded BM_CLICK within 3000 ms (Win32 error $errorCode)."}
   Start-Sleep -Milliseconds 150
 }
 function Get-WindowAutomationSummary([IntPtr]$Window){
@@ -390,9 +395,9 @@ function Test-PublishedExecutable([string]$Path,[string]$Label){
   $script:activeExecutablePath=[IO.Path]::GetFullPath($Path)
   $testData=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'
   [void][IO.Directory]::CreateDirectory($testData)
-  $testSettings="workMinutes=1`nbreakSeconds=20`ntheme=2`nbreakModeColors=1`n"
+  $testSettings="workMinutes=1`nbreakSeconds=20`ntheme=2`nbreakModeColors=1`nalarm=0`nnotifications=0`nrepeat=0`n"
   [IO.File]::WriteAllText((Join-Path $testData 'settings.ini'),$testSettings,[Text.UTF8Encoding]::new($false))
-  Add-Result "$Label disposable isolated profile prepared with short timer intervals" 'INFO' ([pscustomobject]@{DataDirectory=$testData;WorkMinutes=1;BreakSeconds=20;SettingsFile=Join-Path $testData 'settings.ini'})
+  Add-Result "$Label disposable isolated profile prepared with short timer intervals and muted alarm" 'INFO' ([pscustomobject]@{DataDirectory=$testData;WorkMinutes=1;BreakSeconds=20;AlarmEnabled=$false;NotificationsEnabled=$false;Reason='Exercise timer and break UI without invoking unverified runner audio or Shell notification devices.';SettingsFile=Join-Path $testData 'settings.ini'})
 
   $script:activeProcess=Start-Process -FilePath $Path -WorkingDirectory (Split-Path -Parent $Path) -PassThru
   $script:activeWindow=Get-MainWindow $script:activeProcess.Id
@@ -472,6 +477,8 @@ function Test-PublishedExecutable([string]$Path,[string]$Label){
 }
 try{
   [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
+  $waveOutDevices=[EBR_POST_NATIVE]::waveOutGetNumDevs()
+  Add-Result 'Production audio output and loopback capture' 'NOT TESTED' ([pscustomobject]@{WaveOutDeviceCount=$waveOutDevices;Reason='The isolated smoke profile disables alarms; no WASAPI loopback capture or physical speaker audibility test was performed.'})
   if(-not [Environment]::UserInteractive -or [EBR_POST_NATIVE]::FindWindowW('Shell_TrayWnd',$null) -eq [IntPtr]::Zero){
     Add-Result 'Standalone and portable published binary interactive smoke' 'NOT TESTED' 'The hosted runner did not expose an interactive Explorer desktop/taskbar.'
   }else{
