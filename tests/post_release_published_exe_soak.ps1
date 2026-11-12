@@ -41,10 +41,10 @@ function Add-Result([string]$Name,[string]$Status,$Details=$null){$events.Add([p
 function Check([bool]$Condition,[string]$Name,$Details=$null){if($Condition){Add-Result $Name 'PASS' $Details}else{Add-Result $Name 'FAIL' $Details}}
 function Get-Status([IntPtr]$Window){$control=[EBR_SOAK_NATIVE]::GetDlgItem($Window,41);return [EBR_SOAK_NATIVE]::Text($control)}
 function Get-Countdown([IntPtr]$Window){$control=[EBR_SOAK_NATIVE]::GetDlgItem($Window,40);return [EBR_SOAK_NATIVE]::Text($control)}
-function Get-BreakWindows([int]$Pid){@([EBR_SOAK_NATIVE]::WindowsForProcess($Pid,'EyeBreakReminder.Break'))}
-function Wait-MainWindow([int]$Pid,[int]$TimeoutSeconds=20){
+function Get-BreakWindows([int]$ProcessId){@([EBR_SOAK_NATIVE]::WindowsForProcess($ProcessId,'EyeBreakReminder.Break'))}
+function Wait-MainWindow([int]$ProcessId,[int]$TimeoutSeconds=20){
   $watch=[Diagnostics.Stopwatch]::StartNew()
-  while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){$handles=[EBR_SOAK_NATIVE]::WindowsForProcess($Pid,'EyeBreakReminder.Native');if($handles.Count -eq 1){return $handles[0]};if($handles.Count -gt 1){throw 'The soak process created multiple main application windows.'};Start-Sleep -Milliseconds 100}
+  while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){$handles=[EBR_SOAK_NATIVE]::WindowsForProcess($ProcessId,'EyeBreakReminder.Native');if($handles.Count -eq 1){return $handles[0]};if($handles.Count -gt 1){throw 'The soak process created multiple main application windows.'};Start-Sleep -Milliseconds 100}
   return [IntPtr]::Zero
 }
 function Get-ResourceSample([Diagnostics.Process]$App,[int]$ElapsedSeconds,[string]$Status,[string]$Countdown,[int]$BreakWindows){
@@ -64,9 +64,12 @@ try{
   $os=Get-CimInstance Win32_OperatingSystem;$nativeArch=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
   Check ([int]$os.BuildNumber -ge 22000 -and $nativeArch -eq 'Arm64') 'Soak environment is an actual Windows 11 ARM64 runner' ([pscustomobject]@{Caption=$os.Caption;Build=$os.BuildNumber;NativeArchitecture=$nativeArch;RunnerArchitecture=$env:RUNNER_ARCH})
   if([int]$os.BuildNumber -lt 22000 -or $nativeArch -ne 'Arm64'){throw 'The soak must run on the isolated Windows 11 ARM64 runner.'}
-  $shell=[EBR_SOAK_NATIVE]::WindowsForProcess([Diagnostics.Process]::GetCurrentProcess().Id,'Shell_TrayWnd')
   $explorer=Get-Process explorer -ErrorAction SilentlyContinue | Select-Object -First 1
-  Check ([Environment]::UserInteractive -and $shell.Count -gt 0 -and $explorer) 'The runner exposes its interactive Explorer desktop' ([pscustomobject]@{UserInteractive=[Environment]::UserInteractive;TaskbarWindows=$shell.Count;Explorer=$null -ne $explorer})
+  $shell=@()
+  if($explorer){$shell=@([EBR_SOAK_NATIVE]::WindowsForProcess($explorer.Id,'Shell_TrayWnd'))}
+  $interactiveDesktop=[Environment]::UserInteractive -and $null -ne $explorer -and $shell.Count -gt 0
+  Check $interactiveDesktop 'The runner exposes its interactive Explorer desktop' ([pscustomobject]@{UserInteractive=[Environment]::UserInteractive;TaskbarWindows=$shell.Count;ExplorerPid=if($explorer){$explorer.Id}else{$null}})
+  if(-not $interactiveDesktop){throw 'The soak requires an interactive Explorer desktop with a taskbar owned by Explorer.'}
 
   $path=[IO.Path]::GetFullPath($ExecutablePath)
   if(-not (Test-Path -LiteralPath $path -PathType Leaf)){throw "Published standalone executable is missing: $path"}
