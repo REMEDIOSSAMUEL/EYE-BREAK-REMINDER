@@ -1,0 +1,68 @@
+name: Windows 11 v1.2.0 published binary soak
+
+on:
+  push:
+    branches:
+      - 'post-release-verification-v1.2.0-actual-binaries-*'
+    paths:
+      - '.github/workflows/windows-11-post-release-soak.yml'
+      - 'tests/post_release_download_audit.ps1'
+      - 'tests/post_release_published_exe_soak.ps1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-11-arm-published-exe-soak:
+    # The app and release are x64. This runs their actual bytes under Windows 11 ARM64 x64 emulation.
+    runs-on: windows-11-arm
+    timeout-minutes: 180
+    steps:
+      - name: Check out isolated verification branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify Windows 11 ARM64 interactive desktop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'build/post-release-evidence' | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          $explorer = Get-Process explorer -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not ('Win32.NativeMethods' -as [type])) {
+            Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; namespace Win32 { public static class NativeMethods { [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string className, string windowName); } }'
+          }
+          $taskbar = [Win32.NativeMethods]::FindWindow('Shell_TrayWnd', $null)
+          $environment = [pscustomobject]@{ Caption=$os.Caption; Build=$os.BuildNumber; NativeArchitecture=$architecture; RunnerArchitecture=$env:RUNNER_ARCH; Interactive=[Environment]::UserInteractive; Explorer=($null -ne $explorer); Taskbar=($taskbar -ne [IntPtr]::Zero) }
+          $environment | ConvertTo-Json -Depth 4 | Set-Content 'build/post-release-evidence/windows-11-soak-environment.json' -Encoding UTF8
+          if ([int]$os.BuildNumber -lt 22000 -or $architecture -ne 'Arm64' -or -not [Environment]::UserInteractive -or $null -eq $explorer -or $taskbar -eq [IntPtr]::Zero) { throw "Expected interactive Windows 11 ARM64 desktop; observed $($environment | ConvertTo-Json -Compress)." }
+
+      - name: Independently download and verify the public release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = Join-Path $env:RUNNER_TEMP 'eye-break-reminder-v1.2.0-published-assets'
+          & ./tests/post_release_download_audit.ps1 -ArtifactsDirectory $assets -EvidenceDirectory 'build/post-release-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run two-hour real-time soak on exact published standalone executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = Join-Path $env:RUNNER_TEMP 'eye-break-reminder-v1.2.0-published-assets'
+          & ./tests/post_release_published_exe_soak.ps1 -ExecutablePath (Join-Path $assets 'EyeBreakReminder.exe') -DurationMinutes 120 -EvidenceDirectory 'build/post-release-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload soak logs and machine-readable results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.2.0-windows-11-soak-${{ github.run_id }}
+          path: |
+            build/post-release-evidence/**
+          if-no-files-found: warn
+          retention-days: 14
