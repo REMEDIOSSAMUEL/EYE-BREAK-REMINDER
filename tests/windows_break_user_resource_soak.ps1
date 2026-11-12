@@ -131,7 +131,8 @@ try{
  if(Test-Path -LiteralPath $script:dataPath){throw "Refusing to overwrite existing test profile data: $script:dataPath"}
  if([EBR_SOAK_NATIVE]::FindWindowW('EyeBreakReminder.Native',$null)-ne[IntPtr]::Zero){throw 'Refusing to run alongside an existing application.'}
  [void][IO.Directory]::CreateDirectory($script:dataPath);$script:ownedData=$true
- $settings=@('workMinutes=1','breakSeconds=30','theme=2','breakModeColors=1','alarm=0','notifications=0','repeat=0','snooze=1','autoStart=1','startup=0','tray=1','restore=1','history=1','trayExplained=1')-join[Environment]::NewLine
+ $settings=@('workMinutes=1','breakSeconds=30','theme=2','breakModeColors=1','alarm=0','notifications=0','repeat=0','snooze=1','autoStart=1','startup=0','tray=1','restore=1','history=1','trayExplained=1')-join"`n"
+ if($settings.Contains("`r")){throw 'Test settings fixture must use LF-only newlines because the production settings reader parses raw bytes.'}
  [IO.File]::WriteAllText((Join-Path $script:dataPath 'settings.ini'),$settings,[Text.UTF8Encoding]::new($false))
  $script:process=Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
  if(-not (Wait-Until {$script:main=[EBR_SOAK_NATIVE]::FindWindow($script:process.Id,'EyeBreakReminder.Native');$script:main-ne[IntPtr]::Zero} 30 'initial-main-window' 0)){throw 'Application main window did not appear.'}
