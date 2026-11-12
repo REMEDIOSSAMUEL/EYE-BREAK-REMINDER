@@ -8,6 +8,8 @@ $expectedHash = '2895c80f942dd03186305d913516700552524ec5ba9a77da0dab457a3265fcc
 $events = [System.Collections.Generic.List[object]]::new()
 $appProcess = $null
 $ownedData = $false
+$consoleWindow = [IntPtr]::Zero
+$consoleWasMinimized = $true
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
@@ -27,6 +29,7 @@ public static class EBR_SHELL_NOTICE_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] private static extern int GetWindowTextLengthW(IntPtr hwnd);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern int GetClassNameW(IntPtr hwnd, StringBuilder name, int maxCount);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool ShowWindow(IntPtr hwnd, int command);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr GetConsoleWindow();
   [DllImport("winmm.dll", ExactSpelling=true)] public static extern uint waveOutGetNumDevs();
   public static IntPtr[] WindowsForProcess(int processId) {
     List<IntPtr> result = new List<IntPtr>();
@@ -88,6 +91,13 @@ try {
   if($actualHash -cne $expectedHash){throw "Notification probe executable is not the exact published v1.2.0 EXE: $actualHash"}
   Add-Result 'Notification probe uses the exact published v1.2.0 EXE' 'PASS' $actualHash
 
+  $consoleWindow=[EBR_SHELL_NOTICE_NATIVE]::GetConsoleWindow()
+  if($consoleWindow -ne [IntPtr]::Zero){
+    $consoleWasMinimized=[EBR_SHELL_NOTICE_NATIVE]::IsIconic($consoleWindow)
+    if(-not $consoleWasMinimized){[void][EBR_SHELL_NOTICE_NATIVE]::ShowWindow($consoleWindow,6);Start-Sleep -Milliseconds 300}
+    Add-Result 'Hosted runner console was minimized to expose the real Windows notification surface' 'PASS' ([pscustomobject]@{Window=('0x{0:X}' -f $consoleWindow.ToInt64());WasMinimized=$consoleWasMinimized;NowMinimized=[EBR_SHELL_NOTICE_NATIVE]::IsIconic($consoleWindow)})
+  }else{Add-Result 'Hosted runner console was minimized to expose the real Windows notification surface' 'NOT TESTED' 'GetConsoleWindow returned null; no other process window was hidden.'}
+
   $dataPath=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'
   if(Test-Path -LiteralPath $dataPath){Add-Result 'Disposable notification profile is clean' 'NOT TESTED' ([pscustomobject]@{Path=$dataPath;Reason='Existing profile data was preserved; no app process was launched.'});return}
   $ownedData=$true
@@ -136,18 +146,21 @@ try {
   Add-Result 'Desktop screenshot captured during the real reminder cycle' 'PASS' ([pscustomobject]@{Path=$screenshot;Method='CopyFromScreen';Screen=(Get-CimInstance Win32_VideoController|Select-Object -First 1 -ExpandProperty CurrentHorizontalResolution), (Get-CimInstance Win32_VideoController|Select-Object -First 1 -ExpandProperty CurrentVerticalResolution)})
 
   $automationNames=Get-DesktopAutomationNames
+  $quietTime=@($automationNames|Where-Object {$_.Name -match '(?i)^Notifications .*Do not disturb (on|off)'})
+  if($quietTime.Count -gt 0){Add-Result 'Windows 11 Do not disturb state was read from the live taskbar UI' 'PASS' $quietTime}else{Add-Result 'Windows 11 Do not disturb state was read from the live taskbar UI' 'NOT TESTED' 'The taskbar did not expose a Do not disturb state through UI Automation.'}
   $notificationMatches=@($automationNames|Where-Object {$_.Name -match 'Time to rest your eyes|Look 20 feet / 6 metres away'})
   $shellProcesses=@(Get-Process -Name explorer,ShellExperienceHost,StartMenuExperienceHost -ErrorAction SilentlyContinue|Select-Object -Unique ProcessName,Id)
   if($notificationMatches.Count -gt 0){
     Add-Result 'A visible Windows Shell notification exposes the app title or reminder text' 'PASS' ([pscustomobject]@{Matches=$notificationMatches;OtherDesktopNames=@($automationNames|Where-Object {$_.ProcessId -ne $appProcess.Id}|Select-Object -First 60);ShellProcesses=$shellProcesses;Screenshot=$screenshot})
   }else{
-    Add-Result 'A separate visible Windows Shell notification was observed' 'NOT TESTED' ([pscustomobject]@{Reason='The real app timer and in-app reminder ran with notifications enabled while minimized, but UI Automation did not expose the Shell balloon text. Screenshot is retained for visual review; a successful Shell request or in-app window is not counted as a visible balloon.';OtherDesktopNames=@($automationNames|Where-Object {$_.ProcessId -ne $appProcess.Id}|Select-Object -First 80);ShellProcesses=$shellProcesses;Screenshot=$screenshot})
+    Add-Result 'A separate visible Windows Shell notification was observed' 'NOT TESTED' ([pscustomobject]@{Reason='The real app timer and in-app reminder ran with notifications enabled while minimized, but UI Automation did not expose the Shell balloon text. The taskbar Do not disturb state and full desktop are recorded in the screenshot; a successful Shell request or in-app window is not counted as a visible balloon.';DoNotDisturb=$quietTime;OtherDesktopNames=@($automationNames|Where-Object {$_.ProcessId -ne $appProcess.Id}|Select-Object -First 80);ShellProcesses=$shellProcesses;Screenshot=$screenshot})
   }
   Add-Result 'Modern Windows Toast notification feature' 'NOT APPLICABLE' 'The implementation uses Shell_NotifyIconW with NIF_INFO; it has no modern Toast API or app identity path.'
 }catch{
   Add-Result 'Windows Shell notification probe completed without an automation exception' 'FAIL' $_.Exception.Message
 }finally{
   if($appProcess){try{$appProcess.Refresh();if(-not $appProcess.HasExited){[void]$appProcess.CloseMainWindow();if(-not $appProcess.WaitForExit(3000)){Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue;$appProcess.WaitForExit(3000)}}}catch{}}
+  if($consoleWindow -ne [IntPtr]::Zero -and -not $consoleWasMinimized){[void][EBR_SHELL_NOTICE_NATIVE]::ShowWindow($consoleWindow,9)}
   if($ownedData){$dataPath=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder';if(Test-Path -LiteralPath $dataPath){Remove-Item -LiteralPath $dataPath -Recurse -Force}}
   $result=[pscustomobject]@{
     Application='Eye Break Reminder'

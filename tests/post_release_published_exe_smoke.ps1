@@ -320,7 +320,10 @@ function Get-ControlScreenColors([IntPtr]$Control){
     @{X=$rect.Left+[int]($width*0.12);Y=$rect.Top+[int]($height*0.50)},
     @{X=$rect.Left+[int]($width*0.88);Y=$rect.Top+[int]($height*0.50)},
     @{X=$rect.Left+[int]($width*0.18);Y=$rect.Top+[int]($height*0.25)},
-    @{X=$rect.Left+[int]($width*0.82);Y=$rect.Top+[int]($height*0.75)}
+    @{X=$rect.Left+[int]($width*0.82);Y=$rect.Top+[int]($height*0.75)},
+    @{X=$rect.Left+[int]($width*0.25);Y=$rect.Bottom-2},
+    @{X=$rect.Left+[int]($width*0.50);Y=$rect.Bottom-2},
+    @{X=$rect.Left+[int]($width*0.75);Y=$rect.Bottom-2}
   )
   $dc=[EBR_POST_NATIVE]::GetDC([IntPtr]::Zero)
   if($dc -eq [IntPtr]::Zero){throw 'Could not acquire the real desktop surface for state-pixel sampling.'}
@@ -362,19 +365,45 @@ function Test-TabVisualStates([IntPtr]$Window,[string]$Label){
     for($i=0;$i -lt $hoverBaseline.Pixels.Count;$i++){if($hoverBaseline.Pixels[$i].Hex -ne $hoverPixels.Pixels[$i].Hex){$hoverDifferential=$true}}
     Check ($moved -and $hoverDifferential) "$Label real mouse hover changes visible Settings-tab pixels" ([pscustomobject]@{MousePositionSet=$moved;HoverPoint=@($hoverX,$hoverY);Before=$hoverBaseline.Pixels;After=$hoverPixels.Pixels;Method='SetCursorPos delivered mouse movement; desktop pixels sampled with GetPixel'})
 
-    $root=[System.Windows.Automation.AutomationElement]::FromHandle($Window)
-    $nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
-    $settingsElement=$null
-    for($i=0;$i -lt $nodes.Count;$i++){try{$node=$nodes.Item($i);$current=$node.Current;if($current.ProcessId -eq $script:activeProcess.Id -and $current.Name -ceq 'Settings' -and $current.ControlType.ProgrammaticName -eq 'ControlType.RadioButton'){$settingsElement=$node;break}}catch{}}
+    $settingsElement=[System.Windows.Automation.AutomationElement]::FromHandle($settings)
+    $settingsBefore=$null
+    if($settingsElement){try{$settingsBefore=$settingsElement.Current}catch{$settingsElement=$null}}
     if($settingsElement){$settingsElement.SetFocus();Start-Sleep -Milliseconds 150}
     $focus=[System.Windows.Automation.AutomationElement]::FocusedElement;$focusSummary=$null
     if($focus){$current=$focus.Current;$focusSummary=[pscustomobject]@{Name=$current.Name;ControlType=$current.ControlType.ProgrammaticName;ProcessId=$current.ProcessId;HasKeyboardFocus=$current.HasKeyboardFocus}}
     $focusOk=$focusSummary -and $focusSummary.ProcessId -eq $script:activeProcess.Id -and $focusSummary.Name -ceq 'Settings' -and $focusSummary.HasKeyboardFocus
-    Check $focusOk "$Label keyboard focus reaches the Settings navigation tab" ([pscustomobject]@{Focus=$focusSummary;Expected='Settings radio button in the app process';UiAutomationSetFocus=($null -ne $settingsElement)})
-    $timerElement=$null
-    for($i=0;$i -lt $nodes.Count;$i++){try{$node=$nodes.Item($i);$current=$node.Current;if($current.ProcessId -eq $script:activeProcess.Id -and $current.Name -ceq 'Timer' -and $current.ControlType.ProgrammaticName -eq 'ControlType.RadioButton'){$timerElement=$node;break}}catch{}}
+    Check $focusOk "$Label keyboard focus reaches the Settings navigation tab" ([pscustomobject]@{Focus=$focusSummary;Expected='Settings tab from its native HWND UIA element';UiAutomationSetFocus=($null -ne $settingsBefore);AccessibleName=if($settingsBefore){$settingsBefore.Name}else{$null};AccessibleRole=if($settingsBefore){$settingsBefore.ControlType.ProgrammaticName}else{$null}})
+    $timer=[EBR_POST_NATIVE]::ControlById($Window,10)
+    $timerElement=if($timer -ne [IntPtr]::Zero){[System.Windows.Automation.AutomationElement]::FromHandle($timer)}else{$null}
     if($timerElement){$timerElement.SetFocus()}
   }finally{[void][EBR_POST_NATIVE]::SetCursorPos($oldCursor.X,$oldCursor.Y)}
+}
+function Test-DisabledReleaseLinkState([IntPtr]$Window,[string]$Label){
+  $oldCursor=New-Object EBR_POST_POINT;$windowRect=New-Object EBR_POST_RECT
+  if(-not [EBR_POST_NATIVE]::GetCursorPos([ref]$oldCursor) -or -not [EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$windowRect)){
+    Add-Result "$Label disabled official-release link is exposed and stays visually inactive on hover" 'NOT TESTED' 'The runner cursor or app window bounds were unavailable.';return
+  }
+  try{
+    Click-Control $Window 12 "$Label open settings to inspect disabled update link"
+    Click-Control $Window 135 "$Label select About settings section"
+    $button=[EBR_POST_NATIVE]::ControlById($Window,161);$element=$null
+    if($button -ne [IntPtr]::Zero){$element=[System.Windows.Automation.AutomationElement]::FromHandle($button)}
+    if(-not $element){Add-Result "$Label disabled official-release link is exposed and stays visually inactive on hover" 'NOT TESTED' 'The Open Official Release UI Automation element was unavailable.';return}
+    $current=$element.Current;$rect=New-Object EBR_POST_RECT
+    if(-not [EBR_POST_NATIVE]::GetWindowRect($button,[ref]$rect)){throw 'Could not measure the disabled release-link button.'}
+    [void][EBR_POST_NATIVE]::SetCursorPos($windowRect.Left+[int](($windowRect.Right-$windowRect.Left)/3),$windowRect.Top+6);Start-Sleep -Milliseconds 200
+    $before=Get-ControlScreenColors $button
+    $hoverX=$rect.Left+[int](($rect.Right-$rect.Left)/2);$hoverY=$rect.Top+[int](($rect.Bottom-$rect.Top)/2)
+    [void][EBR_POST_NATIVE]::SetCursorPos($hoverX,$hoverY);Start-Sleep -Milliseconds 300
+    $after=Get-ControlScreenColors $button
+    $changed=$false
+    for($i=0;$i -lt $before.Pixels.Count;$i++){if($before.Pixels[$i].Hex -ne $after.Pixels[$i].Hex){$changed=$true}}
+    Check (-not $current.IsEnabled) "$Label Open Official Release control is correctly disabled until an update is available" ([pscustomobject]@{Name=$current.Name;ControlType=$current.ControlType.ProgrammaticName;Enabled=$current.IsEnabled;LatestPublicVersion='1.2.0';InstalledPublicVersion='1.2.0'})
+    Check (-not $changed) "$Label disabled Open Official Release control does not show an active hover style" ([pscustomobject]@{Before=$before.Pixels;After=$after.Pixels;HoverPoint=@($hoverX,$hoverY);Enabled=$current.IsEnabled;Method='Actual pointer movement and direct GetPixel desktop sampling'})
+  }finally{
+    [void][EBR_POST_NATIVE]::SetCursorPos($oldCursor.X,$oldCursor.Y)
+    Click-Control $Window 10 "$Label return to Timer after disabled-link probe"
+  }
 }
 function Test-PrimaryPressedState([IntPtr]$Window,[string]$Label){
   $button=[EBR_POST_NATIVE]::ControlById($Window,22);$rect=New-Object EBR_POST_RECT;$oldCursor=New-Object EBR_POST_POINT
@@ -417,6 +446,7 @@ function Test-ThemeAndTimerRingMatrix([string]$Label){
     Check ($workStatus -match 'Running') "$Label $($names[$index]) remains in work mode before ring capture" $workStatus
     Test-TimerRingPixel $script:activeWindow "$Label $($names[$index]) work" $colors[$index].Work (("$Label-$($names[$index])-work-ring.png") -replace '[^a-zA-Z0-9.-]','-') $colors[$index].Break
     Test-TabVisualStates $script:activeWindow "$Label $($names[$index])"
+    Test-DisabledReleaseLinkState $script:activeWindow "$Label $($names[$index])"
 
     $resourcesBeforeBreak=Get-AppResourceSnapshot "$Label $($names[$index]) break with distinct colour enabled before"
     Test-PrimaryPressedState $script:activeWindow "$Label $($names[$index])"
