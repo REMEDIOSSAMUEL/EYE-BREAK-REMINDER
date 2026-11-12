@@ -19,9 +19,12 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 public struct EBR_POST_RECT { public int Left,Top,Right,Bottom; }
+public struct EBR_POST_POINT { public int X,Y; }
 public static class EBR_POST_NATIVE {
   public delegate bool EnumCallback(IntPtr hwnd,IntPtr data);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumCallback cb,IntPtr data);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent,EnumCallback cb,IntPtr data);
+  [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr hwnd);
   [DllImport("user32.dll",SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern int GetWindowTextW(IntPtr hwnd,StringBuilder text,int maxCount);
@@ -39,9 +42,15 @@ public static class EBR_POST_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd,out EBR_POST_RECT rect);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool GetClientRect(IntPtr hwnd,out EBR_POST_RECT rect);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool ClientToScreen(IntPtr hwnd,ref EBR_POST_POINT point);
+  [DllImport("user32.dll",SetLastError=true)] public static extern uint GetDpiForWindow(IntPtr hwnd);
+  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetParent(IntPtr hwnd);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool PrintWindow(IntPtr hwnd,IntPtr hdc,uint flags);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern IntPtr FindWindowW(string className,string windowName);
   public static string Text(IntPtr hwnd){int n=GetWindowTextLengthW(hwnd);StringBuilder b=new StringBuilder(Math.Max(2,n+2));GetWindowTextW(hwnd,b,b.Capacity);return b.ToString();}
   public static string ClassName(IntPtr hwnd){StringBuilder b=new StringBuilder(256);GetClassNameW(hwnd,b,b.Capacity);return b.ToString();}
+  public static IntPtr ControlById(IntPtr root,int id){List<IntPtr> found=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){if(GetDlgCtrlID(h)==id)found.Add(h);return true;};EnumChildWindows(root,cb,IntPtr.Zero);GC.KeepAlive(cb);return found.Count==1?found[0]:IntPtr.Zero;}
   public static IntPtr[] WindowsForProcess(int pid){List<IntPtr> r=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){uint actual;GetWindowThreadProcessId(h,out actual);if(actual==(uint)pid&&IsWindowVisible(h))r.Add(h);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return r.ToArray();}
 }
 "@
@@ -65,7 +74,7 @@ function Wait-Status([IntPtr]$Window,[string]$Expected,[int]$TimeoutSeconds=5){
   return $last
 }
 function Click-Control([IntPtr]$Window,[int]$Id,[string]$Name){
-  $control=[EBR_POST_NATIVE]::GetDlgItem($Window,$Id)
+  $control=[EBR_POST_NATIVE]::ControlById($Window,$Id)
   if($control -eq [IntPtr]::Zero){throw "Published app did not expose $Name (control $Id)."}
   [void][EBR_POST_NATIVE]::SendMessageW($control,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
   Start-Sleep -Milliseconds 150
@@ -131,21 +140,138 @@ function Capture-DesktopDiagnostic([string]$Name){
   $bitmap=[Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[Drawing.Graphics]::FromImage($bitmap)
   try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$path=Join-Path $EvidenceDirectory $Name;$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png);return $path}finally{$graphics.Dispose();$bitmap.Dispose()}
 }
+function Capture-WindowSurface([IntPtr]$Window,[string]$Name){
+  $rect=New-Object EBR_POST_RECT
+  if(-not [EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$rect)){return $null}
+  $width=$rect.Right-$rect.Left;$height=$rect.Bottom-$rect.Top
+  if($width -lt 100 -or $height -lt 100){return $null}
+  $bitmap=[Drawing.Bitmap]::new($width,$height);$graphics=[Drawing.Graphics]::FromImage($bitmap);$captured=$false
+  try{
+    $hdc=$graphics.GetHdc()
+    try{$captured=[EBR_POST_NATIVE]::PrintWindow($Window,$hdc,2);if(-not $captured){$captured=[EBR_POST_NATIVE]::PrintWindow($Window,$hdc,0)}}finally{$graphics.ReleaseHdc($hdc)}
+    if(-not $captured){return $null}
+    $unique=[System.Collections.Generic.HashSet[string]]::new()
+    for($y=0;$y -lt $height;$y+=12){for($x=0;$x -lt $width;$x+=12){$c=$bitmap.GetPixel($x,$y);[void]$unique.Add(('{0:X2}{1:X2}{2:X2}' -f $c.R,$c.G,$c.B))}}
+    if($unique.Count -lt 8){return $null}
+    $path=Join-Path $EvidenceDirectory ($Name -replace '\.png$','-window-surface.png')
+    $bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png)
+    return [pscustomobject]@{Path=$path;Width=$width;Height=$height;UniqueSampledColors=$unique.Count;Method='Win32 PrintWindow on the application HWND; not a desktop-foreground screenshot'}
+  }finally{$graphics.Dispose();$bitmap.Dispose()}
+}
 function Capture([IntPtr]$Window,[string]$Name){
   $windowPid=[uint32]0;[void][EBR_POST_NATIVE]::GetWindowThreadProcessId($Window,[ref]$windowPid)
   $foreground=Ensure-AppForeground $Window ([int]$windowPid)
   if(-not $foreground.ApplicationForeground){
+    $surface=Capture-WindowSurface $Window $Name
+    if($surface){Add-Result "Application window surface capture for $Name" 'PASS' ([pscustomobject]@{Path=$surface.Path;Width=$surface.Width;Height=$surface.Height;UniqueSampledColors=$surface.UniqueSampledColors;Method=$surface.Method;Foreground=$foreground})}
+    else{Add-Result "Application window surface capture for $Name" 'NOT TESTED' ([pscustomobject]@{Reason='PrintWindow did not return a verifiable non-uniform application surface.';Foreground=$foreground})}
     $diagnosticPath=$null
     if(-not $script:foregroundDiagnosticCaptured){try{$diagnosticPath=Capture-DesktopDiagnostic 'desktop-foreground-obstruction.png';$script:foregroundDiagnosticCaptured=$true}catch{}}
     Add-Result "Visible screenshot of $Name" 'NOT TESTED' ([pscustomobject]@{Reason='The published application window could not be brought to the desktop foreground.';Foreground=$foreground;DesktopDiagnostic=$diagnosticPath})
-    return $null
+    return $surface
   }
   $rect=New-Object EBR_POST_RECT
   if(-not [EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$rect)){throw "Could not measure published app window for $Name"}
   $width=$rect.Right-$rect.Left;$height=$rect.Bottom-$rect.Top
   if($width -lt 100 -or $height -lt 100){throw "Published app window bounds are invalid for $Name"}
   $bitmap=[Drawing.Bitmap]::new($width,$height);$graphics=[Drawing.Graphics]::FromImage($bitmap)
-  try{$graphics.CopyFromScreen($rect.Left,$rect.Top,0,0,$bitmap.Size);$path=Join-Path $EvidenceDirectory $Name;$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png);Add-Result "Visible screenshot of $Name" 'PASS' ([pscustomobject]@{Path=$path;Foreground=$foreground;Method='CopyFromScreen'});return $path}finally{$graphics.Dispose();$bitmap.Dispose()}
+  try{$graphics.CopyFromScreen($rect.Left,$rect.Top,0,0,$bitmap.Size);$path=Join-Path $EvidenceDirectory $Name;$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png);Add-Result "Visible screenshot of $Name" 'PASS' ([pscustomobject]@{Path=$path;Foreground=$foreground;Method='CopyFromScreen'});return [pscustomobject]@{Path=$path;Width=$width;Height=$height;UniqueSampledColors=$null;Method='CopyFromScreen desktop foreground'}}finally{$graphics.Dispose();$bitmap.Dispose()}
+}
+function Get-BreakWindow([int]$ProcessId){
+  foreach($handle in [EBR_POST_NATIVE]::WindowsForProcess($ProcessId)){if([EBR_POST_NATIVE]::ClassName($handle) -eq 'EyeBreakReminder.Break'){return $handle}}
+  return [IntPtr]::Zero
+}
+function Wait-BreakWindow([int]$ProcessId,[int]$TimeoutSeconds=5){
+  $watch=[Diagnostics.Stopwatch]::StartNew();$handle=[IntPtr]::Zero
+  while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){$handle=Get-BreakWindow $ProcessId;if($handle -ne [IntPtr]::Zero){return $handle};Start-Sleep -Milliseconds 100}
+  return [IntPtr]::Zero
+}
+function Select-Theme([IntPtr]$Window,[int]$ThemeIndex){
+  Click-Control $Window 12 'Settings navigation for theme test'
+  Click-Control $Window 134 'General settings section for theme test'
+  $combo=[EBR_POST_NATIVE]::ControlById($Window,106)
+  if($combo -eq [IntPtr]::Zero){throw 'Theme selection ComboBox was unavailable.'}
+  [void][EBR_POST_NATIVE]::SendMessageW($combo,0x014E,[IntPtr]::new($ThemeIndex),[IntPtr]::Zero)
+  $parent=[EBR_POST_NATIVE]::GetParent($combo)
+  $wParam=[IntPtr]::new([long]((106 -band 0xffff) -bor (1 -shl 16)))
+  [void][EBR_POST_NATIVE]::SendMessageW($parent,0x0111,$wParam,$combo)
+  $selected=([EBR_POST_NATIVE]::SendMessageW($combo,0x0147,[IntPtr]::Zero,[IntPtr]::Zero)).ToInt32()
+  Check ($selected -eq $ThemeIndex) "Theme combo selected index $ThemeIndex" ([pscustomobject]@{Expected=$ThemeIndex;Actual=$selected})
+  Click-Control $Window 10 'Timer navigation after theme selection'
+}
+function Get-TimerRingGeometry([IntPtr]$Window){
+  $client=New-Object EBR_POST_RECT;$windowRect=New-Object EBR_POST_RECT;$origin=New-Object EBR_POST_POINT
+  if(-not [EBR_POST_NATIVE]::GetClientRect($Window,[ref]$client) -or -not [EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$windowRect) -or -not [EBR_POST_NATIVE]::ClientToScreen($Window,[ref]$origin)){throw 'Could not measure the application client/window geometry.'}
+  $button=[EBR_POST_NATIVE]::ControlById($Window,22);$buttonRect=New-Object EBR_POST_RECT
+  if($button -eq [IntPtr]::Zero -or -not [EBR_POST_NATIVE]::GetWindowRect($button,[ref]$buttonRect)){throw 'Could not measure the timer primary-action button.'}
+  $dpi=[int][EBR_POST_NATIVE]::GetDpiForWindow($Window);if($dpi -lt 48){$dpi=96}
+  $textScale=1.0;try{$scale=[int](Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Accessibility' -Name TextScaleFactor -ErrorAction Stop);$textScale=[Math]::Min(2.25,[Math]::Max(1.0,$scale/100.0))}catch{}
+  $px={param([double]$Value)[int][Math]::Floor($Value*$dpi/96.0+0.5)}
+  $navBottom=(& $px 16)+(& $px ([Math]::Max(40.0,31.0*$textScale)))
+  $timerTop=$navBottom+(& $px 22);$statusBottom=$timerTop+(& $px 88)
+  $diameter=[Math]::Min((& $px 272),[Math]::Min($client.Right-(& $px 100),($buttonRect.Top-$origin.Y)-$statusBottom-(& $px 18)))
+  $diameter=[Math]::Max(1,$diameter);$ringLeft=[int][Math]::Floor(($client.Right-$diameter)/2.0)
+  $ringTop=$statusBottom+(& $px 8);$ringX=$ringLeft+(& $px 4);$ringY=$ringTop+(& $px 4);$ringDiameter=$diameter-(& $px 8)
+  return [pscustomobject]@{Dpi=$dpi;TextScale=$textScale;ClientWidth=$client.Right;ClientOriginX=$origin.X;ClientOriginY=$origin.Y;WindowLeft=$windowRect.Left;WindowTop=$windowRect.Top;CenterX=($origin.X-$windowRect.Left)+$ringX+$ringDiameter/2.0;CenterY=($origin.Y-$windowRect.Top)+$ringY+$ringDiameter/2.0;Radius=$ringDiameter/2.0;WindowWidth=$windowRect.Right-$windowRect.Left;WindowHeight=$windowRect.Bottom-$windowRect.Top}
+}
+function Test-TimerRingPixel([IntPtr]$Window,[string]$Label,[string]$ExpectedColor,[string]$ScreenshotName){
+  $image=Capture $Window $ScreenshotName
+  if(-not $image -or -not $image.Path){Add-Result "$Label timer-ring accent pixel" 'NOT TESTED' 'No verified app window surface could be captured.';return}
+  $geometry=Get-TimerRingGeometry $Window
+  $bitmap=[Drawing.Bitmap]::new($image.Path);$count=0;$examples=[System.Collections.Generic.List[string]]::new()
+  try{
+    if($bitmap.Width -ne $geometry.WindowWidth -or $bitmap.Height -ne $geometry.WindowHeight){Add-Result "$Label timer-ring accent pixel" 'NOT TESTED' ([pscustomobject]@{Reason='Captured window dimensions did not match the measured HWND.';Bitmap=@($bitmap.Width,$bitmap.Height);Geometry=$geometry});return}
+    $target=$ExpectedColor.TrimStart('#').ToUpperInvariant();$outer=$geometry.Radius+4;$inner=[Math]::Max(0,$geometry.Radius-4)
+    $x0=[Math]::Max(0,[int][Math]::Floor($geometry.CenterX-$outer));$x1=[Math]::Min($bitmap.Width-1,[int][Math]::Ceiling($geometry.CenterX+$outer))
+    $y0=[Math]::Max(0,[int][Math]::Floor($geometry.CenterY-$outer));$y1=[Math]::Min($bitmap.Height-1,[int][Math]::Ceiling($geometry.CenterY+$outer))
+    for($y=$y0;$y -le $y1;$y++){for($x=$x0;$x -le $x1;$x++){$dx=$x-$geometry.CenterX;$dy=$y-$geometry.CenterY;$radius=[Math]::Sqrt($dx*$dx+$dy*$dy);if([Math]::Abs($radius-$geometry.Radius) -gt 4){continue};$c=$bitmap.GetPixel($x,$y);$hex='{0:X2}{1:X2}{2:X2}' -f $c.R,$c.G,$c.B;if($hex -eq $target){$count++;if($examples.Count -lt 8){$examples.Add("$x,$y")}}}}
+  }finally{$bitmap.Dispose()}
+  Check ($count -gt 0) "$Label timer-ring contains the expected $ExpectedColor accent pixel" ([pscustomobject]@{ExpectedColor=$ExpectedColor;ExactPixels=$count;SamplePixels=$examples.ToArray();Geometry=$geometry;Screenshot=$image.Path;CaptureMethod=$image.Method})
+}
+function Test-ThemeAndTimerRingMatrix([string]$Label){
+  $followLight=1;try{$followLight=[int](Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction Stop)}catch{}
+  $colors=@(
+    if($followLight -eq 0){@{Work='#60A5FA';Break='#2DD4BF'}}else{@{Work='#1D4ED8';Break='#0F766E'}},
+    @{Work='#1D4ED8';Break='#0F766E'},
+    @{Work='#60A5FA';Break='#2DD4BF'},
+    @{Work='#FFFF00';Break='#00FFFF'},
+    @{Work='#0000B3';Break='#005A00'}
+  )
+  $names=@('Follow Windows Theme','Light','Dark','High Contrast Dark','High Contrast Light')
+  foreach($index in 0..4){
+    Select-Theme $script:activeWindow $index
+    Click-Control $script:activeWindow 21 "$Label reset work timer for $($names[$index])"
+    Start-Sleep -Seconds 5
+    $workStatus=Get-Status $script:activeWindow
+    Check ($workStatus -match 'Running') "$Label $($names[$index]) remains in work mode before ring capture" $workStatus
+    Test-TimerRingPixel $script:activeWindow "$Label $($names[$index]) work" $colors[$index].Work (("$Label-$($names[$index])-work-ring.png") -replace '[^a-zA-Z0-9.-]','-')
+
+    Click-Control $script:activeWindow 22 "$Label begin $($names[$index]) break"
+    $breakStatus=Wait-Status $script:activeWindow 'Taking an eye break' 5
+    Check ($breakStatus -match 'Taking an eye break') "$Label $($names[$index]) enters break mode" $breakStatus
+    $breakWindow=Wait-BreakWindow $script:activeProcess.Id
+    Check ($breakWindow -ne [IntPtr]::Zero) "$Label $($names[$index]) reminder window opens" ([pscustomobject]@{Window=('0x{0:X}' -f $breakWindow.ToInt64())})
+    Start-Sleep -Seconds 2
+    Test-TimerRingPixel $script:activeWindow "$Label $($names[$index]) break" $colors[$index].Break (("$Label-$($names[$index])-break-ring.png") -replace '[^a-zA-Z0-9.-]','-')
+    if($breakWindow -ne [IntPtr]::Zero){Click-Control $breakWindow 24 "$Label dismiss $($names[$index]) break"}
+    $returned=Wait-Status $script:activeWindow 'Running' 5
+    Check ($returned -match 'Running') "$Label $($names[$index]) returns to work mode" $returned
+  }
+}
+function Test-InterruptedBreakRestart([string]$Label){
+  Click-Control $script:activeWindow 22 "$Label start a break before restart"
+  $breakStatus=Wait-Status $script:activeWindow 'Taking an eye break' 5
+  Check ($breakStatus -match 'Taking an eye break') "$Label enters break state before restart" $breakStatus
+  $oldProcess=$script:activeProcess;$closed=Stop-OwnedApp;$oldProcess.Refresh()
+  Check ($closed -and $oldProcess.HasExited) "$Label cleanly exits while break is active" ([pscustomobject]@{Pid=$oldProcess.Id;ExitCode=$oldProcess.ExitCode;Exited=$oldProcess.HasExited})
+  $script:activeProcess=Start-Process -FilePath $script:activeExecutablePath -WorkingDirectory (Split-Path -Parent $script:activeExecutablePath) -PassThru
+  $script:activeWindow=Get-MainWindow $script:activeProcess.Id
+  Check ($script:activeWindow -ne [IntPtr]::Zero) "$Label restarts the exact published executable after interrupted break" ([pscustomobject]@{Pid=$script:activeProcess.Id;Path=$script:activeExecutablePath})
+  if($script:activeWindow -eq [IntPtr]::Zero){Stop-OwnedApp;return}
+  $status=Wait-Status $script:activeWindow 'Running' 5
+  $countdownControl=[EBR_POST_NATIVE]::ControlById($script:activeWindow,40);$countdown=if($countdownControl -ne [IntPtr]::Zero){[EBR_POST_NATIVE]::Text($countdownControl)}else{''}
+  $breakAfter=(Get-BreakWindow $script:activeProcess.Id) -ne [IntPtr]::Zero
+  Check ($status -match 'Running' -and $countdown -eq $script:expectedWorkCountdown -and -not $breakAfter) "$Label interrupted break recovers as a fresh work interval" ([pscustomobject]@{Status=$status;ExpectedCountdown=$script:expectedWorkCountdown;ActualCountdown=$countdown;BreakWindowAfterRestart=$breakAfter})
 }
 function Stop-OwnedApp {
   $graceful=$false
@@ -167,6 +293,13 @@ function Test-PublishedExecutable([string]$Path,[string]$Label){
   if($hash -cne $expected){throw "$Label candidate is not the exact published executable."}
   $version=(Get-Item -LiteralPath $Path).VersionInfo
   Check ($version.ProductVersion -match '^1\.2\.0' -and $version.ProductName -eq 'Eye Break Reminder') "$Label metadata reports Eye Break Reminder v1.2.0" ([pscustomobject]@{ProductName=$version.ProductName;ProductVersion=$version.ProductVersion;FileVersion=$version.FileVersion})
+
+  $script:activeExecutablePath=[IO.Path]::GetFullPath($Path)
+  $testData=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'
+  [void][IO.Directory]::CreateDirectory($testData)
+  $testSettings="workMinutes=1`nbreakSeconds=20`ntheme=2`nbreakModeColors=1`n"
+  [IO.File]::WriteAllText((Join-Path $testData 'settings.ini'),$testSettings,[Text.UTF8Encoding]::new($false))
+  Add-Result "$Label disposable isolated profile prepared with short timer intervals" 'INFO' ([pscustomobject]@{DataDirectory=$testData;WorkMinutes=1;BreakSeconds=20;SettingsFile=Join-Path $testData 'settings.ini'})
 
   $script:activeProcess=Start-Process -FilePath $Path -WorkingDirectory (Split-Path -Parent $Path) -PassThru
   $script:activeWindow=Get-MainWindow $script:activeProcess.Id
@@ -201,6 +334,7 @@ function Test-PublishedExecutable([string]$Path,[string]$Label){
   $timer=[EBR_POST_NATIVE]::GetDlgItem($script:activeWindow,40)
   $countdown=if($timer -ne [IntPtr]::Zero){[EBR_POST_NATIVE]::Text($timer)}else{''}
   Check ($countdown -match '^\d{1,2}:\d{2}$') "$Label exposes a formatted countdown" $countdown
+  $script:expectedWorkCountdown=$countdown
   Capture $script:activeWindow (("$Label" -replace '[^a-zA-Z0-9]+','-').Trim('-')+'-timer-before.png') | Out-Null
 
   Click-Control $script:activeWindow 20 "$Label pause"
@@ -226,6 +360,9 @@ function Test-PublishedExecutable([string]$Path,[string]$Label){
   Click-Control $script:activeWindow 10 "$Label Timer navigation"
   $timerStatus=Get-Status $script:activeWindow
   Check ($timerStatus -match 'Running') "$Label returns to the Timer page" $timerStatus
+
+  Test-ThemeAndTimerRingMatrix $Label
+  Test-InterruptedBreakRestart $Label
 
   $second=Start-Process -FilePath $Path -WorkingDirectory (Split-Path -Parent $Path) -PassThru
   [void]$second.WaitForExit(8000)
@@ -269,6 +406,7 @@ finally{
     Pass=(@($events|Where-Object Status -eq 'PASS')).Count
     Fail=(@($events|Where-Object Status -eq 'FAIL')).Count
     NotTested=(@($events|Where-Object Status -eq 'NOT TESTED')).Count
+    Informational=(@($events|Where-Object Status -eq 'INFO')).Count
     CompletedUtc=[DateTime]::UtcNow.ToString('o')
   }
   $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'published-exe-smoke.json') -Encoding UTF8
