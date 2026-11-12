@@ -45,6 +45,7 @@ public static class EBR_POST_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] public static extern int GetGuiResources(IntPtr process,uint flags);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr BeginDeferWindowPos(int count);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr DeferWindowPos(IntPtr batch,IntPtr hwnd,IntPtr insertAfter,int x,int y,int width,int height,uint flags);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool EndDeferWindowPos(IntPtr batch);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool GetScrollInfo(IntPtr hwnd,int bar,ref EBR_POST_SCROLLINFO info);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool SystemParametersInfoW(uint action,uint uiParam,ref int value,uint flags);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
@@ -70,11 +71,11 @@ function Probe-FailedDeferWindowPos([string]$Label){
   $process=[Diagnostics.Process]::GetCurrentProcess()
   $before=[EBR_POST_NATIVE]::GetGuiResources($process.Handle,1)
   $batch=[EBR_POST_NATIVE]::BeginDeferWindowPos(1)
-  $returned=[IntPtr]::Zero;$errorCode=0
-  if($batch -ne [IntPtr]::Zero){$returned=[EBR_POST_NATIVE]::DeferWindowPos($batch,[IntPtr]::Zero,[IntPtr]::Zero,0,0,1,1,0x0004);$errorCode=[Runtime.InteropServices.Marshal]::GetLastWin32Error()}
+  $returned=[IntPtr]::Zero;$errorCode=0;$endResult=$null
+  if($batch -ne [IntPtr]::Zero){$returned=[EBR_POST_NATIVE]::DeferWindowPos($batch,[IntPtr]::Zero,[IntPtr]::Zero,0,0,1,1,0x0004);$errorCode=[Runtime.InteropServices.Marshal]::GetLastWin32Error();if($returned -ne [IntPtr]::Zero){$endResult=[EBR_POST_NATIVE]::EndDeferWindowPos($returned)}}
   Start-Sleep -Milliseconds 250
   $after=[EBR_POST_NATIVE]::GetGuiResources($process.Handle,1)
-  Add-Result "$Label failed null-HWND DeferWindowPos resource probe (test process only)" 'INFO' ([pscustomobject]@{Process='PowerShell harness, not EyeBreakReminder.exe';InitialBatchCreated=($batch -ne [IntPtr]::Zero);DeferReturnedNull=($returned -eq [IntPtr]::Zero);LastError=$errorCode;UserObjectsBefore=$before;UserObjectsAfter=$after;Delta=($after-$before);Reason='Compares USER-object cleanup after the documented abandoned-batch path; it does not alter application state.'})
+  Add-Result "$Label failed null-HWND DeferWindowPos resource probe (test process only)" 'INFO' ([pscustomobject]@{Process='PowerShell harness, not EyeBreakReminder.exe';InitialBatchCreated=($batch -ne [IntPtr]::Zero);DeferReturnedNull=($returned -eq [IntPtr]::Zero);EndResult=$endResult;LastError=$errorCode;UserObjectsBefore=$before;UserObjectsAfter=$after;Delta=($after-$before);Reason='Compares USER-object cleanup after the documented abandoned-batch path; it does not alter application state.'})
 }
 function Get-MainWindow([int]$ProcessId){
   $watch=[Diagnostics.Stopwatch]::StartNew()
