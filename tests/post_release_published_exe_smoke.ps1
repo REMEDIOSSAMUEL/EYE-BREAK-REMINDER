@@ -58,6 +58,9 @@ public static class EBR_POST_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd,out EBR_POST_RECT rect);
+  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetDC(IntPtr hwnd);
+  [DllImport("user32.dll",SetLastError=true)] public static extern int ReleaseDC(IntPtr hwnd,IntPtr dc);
+  [DllImport("gdi32.dll",SetLastError=true)] public static extern uint GetPixel(IntPtr dc,int x,int y);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool SetWindowPos(IntPtr hwnd,IntPtr insertAfter,int x,int y,int width,int height,uint flags);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool GetClientRect(IntPtr hwnd,out EBR_POST_RECT rect);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool ClientToScreen(IntPtr hwnd,ref EBR_POST_POINT point);
@@ -308,6 +311,94 @@ function Test-TimerRingPixel([IntPtr]$Window,[string]$Label,[string]$ExpectedCol
   Check ($count -gt 0) "$Label timer-ring contains the expected $ExpectedColor accent pixel" ([pscustomobject]@{ExpectedColor=$ExpectedColor;ExactPixels=$count;SamplePixels=$examples.ToArray();Geometry=$geometry;Screenshot=$image.Path;CaptureMethod=$image.Method})
   if($forbidden){Check ($forbiddenCount -eq 0) "$Label timer-ring excludes the $ForbiddenColor accent pixel" ([pscustomobject]@{ForbiddenColor=$ForbiddenColor;ExactPixels=$forbiddenCount;Screenshot=$image.Path})}
 }
+function Get-ControlScreenColors([IntPtr]$Control){
+  $rect=New-Object EBR_POST_RECT
+  if($Control -eq [IntPtr]::Zero -or -not [EBR_POST_NATIVE]::GetWindowRect($Control,[ref]$rect)){throw 'Could not measure a visible control for direct state-pixel sampling.'}
+  $width=$rect.Right-$rect.Left;$height=$rect.Bottom-$rect.Top
+  if($width -lt 20 -or $height -lt 16){throw 'The sampled control is too small for stable state-pixel probes.'}
+  $points=@(
+    @{X=$rect.Left+[int]($width*0.12);Y=$rect.Top+[int]($height*0.50)},
+    @{X=$rect.Left+[int]($width*0.88);Y=$rect.Top+[int]($height*0.50)},
+    @{X=$rect.Left+[int]($width*0.18);Y=$rect.Top+[int]($height*0.25)},
+    @{X=$rect.Left+[int]($width*0.82);Y=$rect.Top+[int]($height*0.75)}
+  )
+  $dc=[EBR_POST_NATIVE]::GetDC([IntPtr]::Zero)
+  if($dc -eq [IntPtr]::Zero){throw 'Could not acquire the real desktop surface for state-pixel sampling.'}
+  $samples=[System.Collections.Generic.List[object]]::new()
+  try{
+    foreach($point in $points){
+      $pixel=[EBR_POST_NATIVE]::GetPixel($dc,$point.X,$point.Y)
+      if($pixel -eq [uint32]::MaxValue){throw "GetPixel failed at $($point.X),$($point.Y)."}
+      $red=[int]($pixel -band 0xff);$green=[int](($pixel -shr 8) -band 0xff);$blue=[int](($pixel -shr 16) -band 0xff)
+      $samples.Add([pscustomobject]@{X=$point.X;Y=$point.Y;Hex=('#{0:X2}{1:X2}{2:X2}' -f $red,$green,$blue)})
+    }
+  }finally{[void][EBR_POST_NATIVE]::ReleaseDC([IntPtr]::Zero,$dc)}
+  return [pscustomobject]@{ControlRect=@($rect.Left,$rect.Top,$rect.Right,$rect.Bottom);Pixels=$samples.ToArray()}
+}
+function Test-TabVisualStates([IntPtr]$Window,[string]$Label){
+  $timer=[EBR_POST_NATIVE]::ControlById($Window,10);$settings=[EBR_POST_NATIVE]::ControlById($Window,12)
+  $windowRect=New-Object EBR_POST_RECT;$oldCursor=New-Object EBR_POST_POINT
+  if($timer -eq [IntPtr]::Zero -or $settings -eq [IntPtr]::Zero -or -not [EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$windowRect) -or -not [EBR_POST_NATIVE]::GetCursorPos([ref]$oldCursor)){
+    Add-Result "$Label active, hover and keyboard-focus navigation states can be measured" 'NOT TESTED' 'The app tab controls, window bounds or original pointer position were unavailable.';return
+  }
+  $settingsRect=New-Object EBR_POST_RECT
+  if(-not [EBR_POST_NATIVE]::GetWindowRect($settings,[ref]$settingsRect)){Add-Result "$Label settings tab hover state is directly visible on screen" 'NOT TESTED' 'The Settings tab bounds could not be measured.';return}
+  try{
+    [void][EBR_POST_NATIVE]::SetCursorPos($windowRect.Left+[int](($windowRect.Right-$windowRect.Left)/3),$windowRect.Top+6)
+    Start-Sleep -Milliseconds 250
+    $activePixels=Get-ControlScreenColors $timer;$inactivePixels=Get-ControlScreenColors $settings
+    $activeDifferential=$false
+    for($i=0;$i -lt $activePixels.Pixels.Count;$i++){if($activePixels.Pixels[$i].Hex -ne $inactivePixels.Pixels[$i].Hex){$activeDifferential=$true}}
+    Check $activeDifferential "$Label selected Timer tab has a distinct visible state from the inactive Settings tab" ([pscustomobject]@{SelectedTab='Timer';InactiveTab='Settings';SelectedPixels=$activePixels.Pixels;InactivePixels=$inactivePixels.Pixels;Method='Direct GetPixel samples from the visible desktop'})
+
+    [void][EBR_POST_NATIVE]::SetCursorPos($windowRect.Left+[int](($windowRect.Right-$windowRect.Left)/3),$windowRect.Top+6)
+    Start-Sleep -Milliseconds 200
+    $hoverBaseline=Get-ControlScreenColors $settings
+    $hoverX=$settingsRect.Left+[int](($settingsRect.Right-$settingsRect.Left)/2);$hoverY=$settingsRect.Top+[int](($settingsRect.Bottom-$settingsRect.Top)/2)
+    $moved=[EBR_POST_NATIVE]::SetCursorPos($hoverX,$hoverY)
+    Start-Sleep -Milliseconds 350
+    $hoverPixels=Get-ControlScreenColors $settings
+    $hoverDifferential=$false
+    for($i=0;$i -lt $hoverBaseline.Pixels.Count;$i++){if($hoverBaseline.Pixels[$i].Hex -ne $hoverPixels.Pixels[$i].Hex){$hoverDifferential=$true}}
+    Check ($moved -and $hoverDifferential) "$Label real mouse hover changes visible Settings-tab pixels" ([pscustomobject]@{MousePositionSet=$moved;HoverPoint=@($hoverX,$hoverY);Before=$hoverBaseline.Pixels;After=$hoverPixels.Pixels;Method='SetCursorPos delivered mouse movement; desktop pixels sampled with GetPixel'})
+
+    $root=[System.Windows.Automation.AutomationElement]::FromHandle($Window)
+    $nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+    $settingsElement=$null
+    for($i=0;$i -lt $nodes.Count;$i++){try{$node=$nodes.Item($i);$current=$node.Current;if($current.ProcessId -eq $script:activeProcess.Id -and $current.Name -ceq 'Settings' -and $current.ControlType.ProgrammaticName -eq 'ControlType.RadioButton'){$settingsElement=$node;break}}catch{}}
+    if($settingsElement){$settingsElement.SetFocus();Start-Sleep -Milliseconds 150}
+    $focus=[System.Windows.Automation.AutomationElement]::FocusedElement;$focusSummary=$null
+    if($focus){$current=$focus.Current;$focusSummary=[pscustomobject]@{Name=$current.Name;ControlType=$current.ControlType.ProgrammaticName;ProcessId=$current.ProcessId;HasKeyboardFocus=$current.HasKeyboardFocus}}
+    $focusOk=$focusSummary -and $focusSummary.ProcessId -eq $script:activeProcess.Id -and $focusSummary.Name -ceq 'Settings' -and $focusSummary.HasKeyboardFocus
+    Check $focusOk "$Label keyboard focus reaches the Settings navigation tab" ([pscustomobject]@{Focus=$focusSummary;Expected='Settings radio button in the app process';UiAutomationSetFocus=($null -ne $settingsElement)})
+    $timerElement=$null
+    for($i=0;$i -lt $nodes.Count;$i++){try{$node=$nodes.Item($i);$current=$node.Current;if($current.ProcessId -eq $script:activeProcess.Id -and $current.Name -ceq 'Timer' -and $current.ControlType.ProgrammaticName -eq 'ControlType.RadioButton'){$timerElement=$node;break}}catch{}}
+    if($timerElement){$timerElement.SetFocus()}
+  }finally{[void][EBR_POST_NATIVE]::SetCursorPos($oldCursor.X,$oldCursor.Y)}
+}
+function Test-PrimaryPressedState([IntPtr]$Window,[string]$Label){
+  $button=[EBR_POST_NATIVE]::ControlById($Window,22);$rect=New-Object EBR_POST_RECT;$oldCursor=New-Object EBR_POST_POINT
+  if($button -eq [IntPtr]::Zero -or -not [EBR_POST_NATIVE]::GetWindowRect($button,[ref]$rect) -or -not [EBR_POST_NATIVE]::GetCursorPos([ref]$oldCursor)){
+    Add-Result "$Label primary button pressed state has a visible pixel transition" 'NOT TESTED' 'The primary button bounds or original pointer position were unavailable.';Click-Control $Window 22 "$Label begin break after unavailable press-state probe";return
+  }
+  $mouseDown=$false
+  try{
+    $neutralX=$rect.Left-20;$neutralY=$rect.Top-20
+    [void][EBR_POST_NATIVE]::SetCursorPos($neutralX,$neutralY);Start-Sleep -Milliseconds 250
+    $before=Get-ControlScreenColors $button
+    $centerX=$rect.Left+[int](($rect.Right-$rect.Left)/2);$centerY=$rect.Top+[int](($rect.Bottom-$rect.Top)/2)
+    [void][EBR_POST_NATIVE]::SetCursorPos($centerX,$centerY);Start-Sleep -Milliseconds 200
+    $hover=Get-ControlScreenColors $button
+    [EBR_POST_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);$mouseDown=$true;Start-Sleep -Milliseconds 200
+    $pressed=Get-ControlScreenColors $button
+    $pressedDifferential=$false
+    for($i=0;$i -lt $hover.Pixels.Count;$i++){if($hover.Pixels[$i].Hex -ne $pressed.Pixels[$i].Hex){$pressedDifferential=$true}}
+    Check $pressedDifferential "$Label real mouse-down state changes visible primary-button pixels" ([pscustomobject]@{Button='Take a break now';Before=$before.Pixels;Hover=$hover.Pixels;Pressed=$pressed.Pixels;Method='Actual desktop mouse down; GetPixel samples taken before mouse up'})
+  }finally{
+    if($mouseDown){[EBR_POST_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 180}
+    [void][EBR_POST_NATIVE]::SetCursorPos($oldCursor.X,$oldCursor.Y)
+  }
+}
 function Test-ThemeAndTimerRingMatrix([string]$Label){
   $followLight=1;try{$followLight=[int](Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction Stop)}catch{}
   $colors=@(
@@ -325,9 +416,10 @@ function Test-ThemeAndTimerRingMatrix([string]$Label){
     $workStatus=Get-Status $script:activeWindow
     Check ($workStatus -match 'Running') "$Label $($names[$index]) remains in work mode before ring capture" $workStatus
     Test-TimerRingPixel $script:activeWindow "$Label $($names[$index]) work" $colors[$index].Work (("$Label-$($names[$index])-work-ring.png") -replace '[^a-zA-Z0-9.-]','-') $colors[$index].Break
+    Test-TabVisualStates $script:activeWindow "$Label $($names[$index])"
 
     $resourcesBeforeBreak=Get-AppResourceSnapshot "$Label $($names[$index]) break with distinct colour enabled before"
-    Click-Control $script:activeWindow 22 "$Label begin $($names[$index]) break"
+    Test-PrimaryPressedState $script:activeWindow "$Label $($names[$index])"
     $breakStatus=Wait-Status $script:activeWindow 'Taking an eye break' 5
     Check ($breakStatus -match 'Taking an eye break') "$Label $($names[$index]) enters break mode" $breakStatus
     $breakWindow=Wait-BreakWindow $script:activeProcess.Id

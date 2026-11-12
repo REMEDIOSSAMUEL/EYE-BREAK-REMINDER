@@ -44,6 +44,20 @@ public static class EBR_NARRATOR_NATIVE {
       if(attachedForeground) AttachThreadInput(current,foregroundThread,false);
     }
   }
+  public static bool BringToFront(IntPtr hwnd) {
+    uint current=GetCurrentThreadId(), targetPid=0; uint target=GetWindowThreadProcessId(hwnd,out targetPid);
+    IntPtr foreground=GetForegroundWindow(); uint foregroundPid=0; uint foregroundThread=foreground==IntPtr.Zero?0:GetWindowThreadProcessId(foreground,out foregroundPid);
+    bool attachedForeground=false, attachedTarget=false;
+    try {
+      if(foregroundThread!=0 && foregroundThread!=current) attachedForeground=AttachThreadInput(current,foregroundThread,true);
+      if(target!=0 && target!=current && target!=foregroundThread) attachedTarget=AttachThreadInput(current,target,true);
+      ShowWindow(hwnd,9); SetForegroundWindow(hwnd);
+      return GetForegroundWindow()==hwnd;
+    } finally {
+      if(attachedTarget) AttachThreadInput(current,target,false);
+      if(attachedForeground) AttachThreadInput(current,foregroundThread,false);
+    }
+  }
   public static IntPtr[] WindowsForProcess(int processId) {
     List<IntPtr> result = new List<IntPtr>();
     EnumCallback callback = delegate(IntPtr hwnd, IntPtr ignored) {
@@ -63,6 +77,14 @@ function Add-Result([string]$name, [string]$status, $details = $null) {
   Write-Host "[$status] $name"
 }
 function Send-Key([byte]$key) {
+  if($mainWindow -eq [IntPtr]::Zero -or -not [EBR_NARRATOR_NATIVE]::BringToFront($mainWindow)){
+    throw "Keyboard input $key was not sent because the Eye Break Reminder window could not be brought to the foreground."
+  }
+  $foreground=[EBR_NARRATOR_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0
+  if($foreground -ne [IntPtr]::Zero){[void][EBR_NARRATOR_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid)}
+  if($foregroundPid -ne $appProcess.Id){throw "Keyboard input $key was withheld because foreground process $foregroundPid is not Eye Break Reminder ($($appProcess.Id))."}
+  $focus=Get-FocusedSummary
+  if($focus -and $focus.ProcessId -ne $appProcess.Id){throw "Keyboard input $key was withheld because UI Automation reports focus outside Eye Break Reminder: $($focus.Name)."}
   [EBR_NARRATOR_NATIVE]::keybd_event($key, 0, 0, [UIntPtr]::Zero)
   [EBR_NARRATOR_NATIVE]::keybd_event($key, 0, 2, [UIntPtr]::Zero)
 }
@@ -197,8 +219,9 @@ try {
   Add-Result 'Narrator-active arrow-key navigation moves from Timer to History tab' $(if($historyFound){'PASS'}else{'FAIL'}) ([pscustomobject]@{TimerFocus=$timer;HistoryFocus=$historyFocus;ExpectedNavigation='Right arrow within the native radio-button tab group'})
   if($historyFound){Send-Key 13;Start-Sleep -Milliseconds 250}
   $historyNames=Get-AppAutomationNames
-  $historyPage=$historyFound -and ('Eye break history' -in $historyNames)
-  Add-Result 'Keyboard activation opens the History page while Narrator runs' $(if($historyPage){'PASS'}else{'FAIL'}) ([pscustomobject]@{Focus=$historyFocus;HistoryContentPresent=('Eye break history' -in $historyNames);Names=$historyNames})
+  $historyContent=@('Date','Break','Seconds','Save history on this device'|Where-Object{$_ -in $historyNames})
+  $historyPage=$historyFound -and $historyContent.Count -ge 4
+  Add-Result 'Keyboard activation opens the History page while Narrator runs' $(if($historyPage){'PASS'}else{'FAIL'}) ([pscustomobject]@{Focus=$historyFocus;ContentNamesReached=$historyContent;ExpectedContent=@('Date','Break','Seconds','Save history on this device');Names=$historyNames})
 
   if($historyFound){Send-Key 39;Start-Sleep -Milliseconds 200}
   $settingsFocus=Get-FocusedSummary
@@ -206,8 +229,9 @@ try {
   Add-Result 'Narrator-active arrow-key navigation moves from History to Settings tab' $(if($settingsFound){'PASS'}else{'FAIL'}) ([pscustomobject]@{HistoryFocus=$historyFocus;SettingsFocus=$settingsFocus})
   if($settingsFound){Send-Key 13;Start-Sleep -Milliseconds 250}
   $settingsNames=Get-AppAutomationNames
-  $settingsPage=$settingsFound -and ('Work and break intervals' -in $settingsNames)
-  Add-Result 'Keyboard activation opens Settings while Narrator runs' $(if($settingsPage){'PASS'}else{'FAIL'}) ([pscustomobject]@{Focus=$settingsFocus;SettingsContentPresent=('Work and break intervals' -in $settingsNames)})
+  $settingsContent=@('Work and break intervals','Work interval (minutes)','Break duration (seconds)'|Where-Object{$_ -in $settingsNames})
+  $settingsPage=$settingsFound -and $settingsContent.Count -ge 3
+  Add-Result 'Keyboard activation opens Settings while Narrator runs' $(if($settingsPage){'PASS'}else{'FAIL'}) ([pscustomobject]@{Focus=$settingsFocus;ContentNamesReached=$settingsContent;ExpectedContent=@('Work and break intervals','Work interval (minutes)','Break duration (seconds)');Names=$settingsNames})
 
   $aboutFocus=Focus-AppElement 'About' 'ControlType.RadioButton'
   if($aboutFocus.Found){Send-Key 13;Start-Sleep -Milliseconds 250}
