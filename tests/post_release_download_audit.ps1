@@ -52,7 +52,7 @@ try {
   Check ($release.tag_name -ceq 'v1.2.0' -and $release.name -ceq 'Eye Break Reminder v1.2.0' -and -not $release.draft -and -not $release.prerelease) 'Published stable release metadata is correct' ([pscustomobject]@{Tag=$release.tag_name;Title=$release.name;Draft=$release.draft;Prerelease=$release.prerelease;Target=$release.target_commitish;Url=$release.html_url})
   Check ($release.target_commitish -ceq 'main') 'Release target metadata names main' $release.target_commitish
   $latest=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/releases/latest" -Headers $apiHeaders -TimeoutSec 30
-  Check ($latest.tag_name -ceq 'v1.2.0' -and -not $latest.draft -and -not $latest.prerelease) 'Unauthenticated latest endpoint returns stable v1.2.0' ([pscustomobject]@{Tag=$latest.tag_name;Url=$latest.html_url})
+  Check ($latest.tag_name -ceq 'v1.2.0' -and -not $latest.draft -and -not $latest.prerelease) 'Latest endpoint returns stable v1.2.0' ([pscustomobject]@{Tag=$latest.tag_name;Url=$latest.html_url;AuthenticatedMetadataRequest=[bool]$env:GITHUB_TOKEN;PublicAssetDownloadsAuthenticated=$false})
   $main=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/ref/heads/main" -Headers $apiHeaders -TimeoutSec 30
   $tagRef=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/ref/tags/v1.2.0" -Headers $apiHeaders -TimeoutSec 30
   $tagObject=$tagRef.object

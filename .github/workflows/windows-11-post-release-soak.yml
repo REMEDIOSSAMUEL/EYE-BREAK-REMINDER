@@ -1,13 +1,7 @@
 name: Windows 11 v1.2.0 published binary soak
 
 on:
-  push:
-    branches:
-      - 'post-release-verification-v1.2.0-actual-binaries-*'
-    paths:
-      - '.github/workflows/windows-11-post-release-soak.yml'
-      - 'tests/post_release_download_audit.ps1'
-      - 'tests/post_release_published_exe_soak.ps1'
+  # Run explicitly: shared download-audit maintenance must not repeat a two-hour soak.
   workflow_dispatch:
 
 permissions:
@@ -43,6 +37,8 @@ jobs:
 
       - name: Independently download and verify the public release
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $assets = Join-Path $env:RUNNER_TEMP 'eye-break-reminder-v1.2.0-published-assets'

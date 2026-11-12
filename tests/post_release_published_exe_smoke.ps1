@@ -33,6 +33,12 @@ public static class EBR_POST_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] private static extern int GetWindowTextLengthW(IntPtr hwnd);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern int GetClassNameW(IntPtr hwnd,StringBuilder name,int maxCount);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll",SetLastError=true)] public static extern void keybd_event(byte virtualKey,byte scanCode,uint flags,UIntPtr extraInfo);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool SetCursorPos(int x,int y);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool GetCursorPos(out EBR_POST_POINT point);
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(EBR_POST_POINT point);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd,uint flags);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags,uint dx,uint dy,uint data,UIntPtr extraInfo);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool BringWindowToTop(IntPtr hwnd);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool ShowWindow(IntPtr hwnd,int command);
@@ -48,9 +54,11 @@ public static class EBR_POST_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] public static extern bool EndDeferWindowPos(IntPtr batch);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool GetScrollInfo(IntPtr hwnd,int bar,ref EBR_POST_SCROLLINFO info);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool SystemParametersInfoW(uint action,uint uiParam,ref int value,uint flags);
+  [DllImport("user32.dll",EntryPoint="SystemParametersInfoW",SetLastError=true)] public static extern bool SystemParametersInfoSetScalar(uint action,uint uiParam,IntPtr value,uint flags);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd,out EBR_POST_RECT rect);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool SetWindowPos(IntPtr hwnd,IntPtr insertAfter,int x,int y,int width,int height,uint flags);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool GetClientRect(IntPtr hwnd,out EBR_POST_RECT rect);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool ClientToScreen(IntPtr hwnd,ref EBR_POST_POINT point);
   [DllImport("user32.dll",SetLastError=true)] public static extern uint GetDpiForWindow(IntPtr hwnd);
@@ -136,17 +144,44 @@ function Get-WindowAutomationSummary([IntPtr]$Window){
 function Ensure-AppForeground([IntPtr]$Window,[int]$ProcessId){
   [void][EBR_POST_NATIVE]::ShowWindow($Window,9)
   $foregroundBefore=[EBR_POST_NATIVE]::GetForegroundWindow()
-  $foregroundThread=[uint32]0
-  if($foregroundBefore -ne [IntPtr]::Zero){[void][EBR_POST_NATIVE]::GetWindowThreadProcessId($foregroundBefore,[ref]$foregroundThread)}
+  $initialForeground=$foregroundBefore
+  $foregroundProcessName=''
+  if($foregroundBefore -ne [IntPtr]::Zero){$initialForegroundPid=[uint32]0;[void][EBR_POST_NATIVE]::GetWindowThreadProcessId($foregroundBefore,[ref]$initialForegroundPid);if($initialForegroundPid){try{$foregroundProcessName=(Get-Process -Id $initialForegroundPid -ErrorAction Stop).ProcessName}catch{}}}
+  $dismissedSearchOverlay=$false
+  if($foregroundProcessName -in @('SearchHost','StartMenuExperienceHost')){
+    # Windows 11 hosted runners can leave Start/Search over the desktop after OOBE. Escape is real input to that transient shell UI.
+    [EBR_POST_NATIVE]::keybd_event(0x1B,0,0,[UIntPtr]::Zero);[EBR_POST_NATIVE]::keybd_event(0x1B,0,0x0002,[UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 300
+    $dismissedSearchOverlay=([EBR_POST_NATIVE]::GetForegroundWindow() -ne $initialForeground)
+    $foregroundBefore=[EBR_POST_NATIVE]::GetForegroundWindow()
+  }
+  $foregroundThread=[uint32]0;$foregroundOwnerPid=[uint32]0
+  # The return value is the thread ID; the out parameter is the process ID.
+  if($foregroundBefore -ne [IntPtr]::Zero){$foregroundThread=[EBR_POST_NATIVE]::GetWindowThreadProcessId($foregroundBefore,[ref]$foregroundOwnerPid)}
+  $targetOwnerPid=[uint32]0;$targetThread=[EBR_POST_NATIVE]::GetWindowThreadProcessId($Window,[ref]$targetOwnerPid)
   $currentThread=[EBR_POST_NATIVE]::GetCurrentThreadId()
-  $attached=$false
+  $attached=$false;$targetAttached=$false
   if($foregroundThread -ne 0 -and $foregroundThread -ne $currentThread){$attached=[EBR_POST_NATIVE]::AttachThreadInput($currentThread,$foregroundThread,$true)}
+  if($targetThread -ne 0 -and $targetThread -ne $currentThread -and $targetThread -ne $foregroundThread){$targetAttached=[EBR_POST_NATIVE]::AttachThreadInput($currentThread,$targetThread,$true)}
   try{
     [void][EBR_POST_NATIVE]::BringWindowToTop($Window)
     [void][EBR_POST_NATIVE]::SetForegroundWindow($Window)
     try{[System.Windows.Automation.AutomationElement]::FromHandle($Window).SetFocus()}catch{}
     [void][EBR_POST_NATIVE]::SetForegroundWindow($Window)
-  }finally{if($attached){[void][EBR_POST_NATIVE]::AttachThreadInput($currentThread,$foregroundThread,$false)}}
+  }finally{if($targetAttached){[void][EBR_POST_NATIVE]::AttachThreadInput($currentThread,$targetThread,$false)};if($attached){[void][EBR_POST_NATIVE]::AttachThreadInput($currentThread,$foregroundThread,$false)}}
+  $titleBarClicked=$false
+  if([EBR_POST_NATIVE]::GetForegroundWindow() -ne $Window){
+    $rect=New-Object EBR_POST_RECT;$oldCursor=New-Object EBR_POST_POINT
+    if([EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$rect) -and [EBR_POST_NATIVE]::GetCursorPos([ref]$oldCursor)){
+      $point=New-Object EBR_POST_POINT;$dpi=[Math]::Max(96,[int][EBR_POST_NATIVE]::GetDpiForWindow($Window))
+      $point.X=$rect.Left+[int][Math]::Min(($rect.Right-$rect.Left)/3,120*$dpi/96);$point.Y=$rect.Top+[int](15*$dpi/96)
+      # Activate only an unobstructed title-bar point belonging to this app, never an overlapping runner window.
+      $hit=[EBR_POST_NATIVE]::WindowFromPoint($point)
+      if($hit -ne [IntPtr]::Zero -and [EBR_POST_NATIVE]::GetAncestor($hit,2) -eq $Window){
+        try{if([EBR_POST_NATIVE]::SetCursorPos($point.X,$point.Y)){[EBR_POST_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);[EBR_POST_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);$titleBarClicked=$true}}finally{[void][EBR_POST_NATIVE]::SetCursorPos($oldCursor.X,$oldCursor.Y)}
+      }
+    }
+  }
   $watch=[Diagnostics.Stopwatch]::StartNew();$foreground=[IntPtr]::Zero;$foregroundPid=[uint32]0
   while($watch.Elapsed.TotalSeconds -lt 2){
     $foreground=[EBR_POST_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0
@@ -168,7 +203,15 @@ function Ensure-AppForeground([IntPtr]$Window,[int]$ProcessId){
     WindowHandle=('0x{0:X}' -f $Window.ToInt64())
     WindowProcessId=$ProcessId
     ForegroundBefore=('0x{0:X}' -f $foregroundBefore.ToInt64())
+    InitialForegroundBeforeDismiss=('0x{0:X}' -f $initialForeground.ToInt64())
+    ForegroundProcessBeforeDismiss=$foregroundProcessName
+    DismissedTransientSearchOverlay=$dismissedSearchOverlay
     InputThreadsAttached=$attached
+    TargetInputThreadAttached=$targetAttached
+    CurrentThreadId=$currentThread
+    ForegroundThreadId=$foregroundThread
+    TargetThreadId=$targetThread
+    UnobstructedTitleBarClicked=$titleBarClicked
   }
 }
 function Capture-DesktopDiagnostic([string]$Name){
@@ -365,49 +408,67 @@ function Test-WindowsThemeChanges([string]$Label){
 function Test-ReducedMotionPreference([string]$Label){
   [int]$original=1
   if(-not [EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$original,0)){Add-Result "$Label reduced-motion preference can be queried" 'NOT TESTED' ([Runtime.InteropServices.Marshal]::GetLastWin32Error());return}
-  $restoreNeeded=$false
+  $restoreNeeded=$false;$restoreWindow=$false;$originalBounds=New-Object EBR_POST_RECT
+  if(-not [EBR_POST_NATIVE]::GetWindowRect($script:activeWindow,[ref]$originalBounds)){throw 'Could not preserve the app bounds before the reduced-motion test.'}
   try{
-    if($original -eq 0){
-      Add-Result "$Label actual Windows reduced-motion preference is disabled" 'PASS' ([pscustomobject]@{AlreadyDisabled=$true;ClientAreaAnimations=$original})
-    }else{
-      [int]$disabled=0
-      $set=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1043,0,[ref]$disabled,2)
-      [int]$observed=1
-      $read=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$observed,0)
-      if($read -and $observed -ne $original){$restoreNeeded=$true}
-      if(-not $set -or -not $read -or $observed -ne 0){
-        Add-Result "$Label actual Windows reduced-motion preference is disabled" 'NOT TESTED' ([pscustomobject]@{Set=$set;Read=$read;Original=$original;ClientAreaAnimations=$observed;Reason='The disposable runner did not apply the requested client-area animation preference; no reduced-motion behavior conclusion is drawn.'})
-        return
-      }
-      $restoreNeeded=$true
-      Add-Result "$Label actual Windows reduced-motion preference is disabled" 'PASS' ([pscustomobject]@{AlreadyDisabled=$false;Set=$set;Read=$read;Original=$original;ClientAreaAnimations=$observed})
+    # SPI_SETCLIENTAREAANIMATION takes a scalar BOOL cast to pvParam, whereas GET takes a BOOL pointer.
+    # Exercise an actual enabled-to-disabled transition even if this disposable runner started with animations off.
+    $restoreNeeded=$true
+    $enabled=[EBR_POST_NATIVE]::SystemParametersInfoSetScalar(0x1043,0,[IntPtr]::new(1),2)
+    [int]$enabledObserved=0;$enabledRead=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$enabledObserved,0)
+    if(-not $enabled -or -not $enabledRead -or $enabledObserved -ne 1){
+      Add-Result "$Label actual Windows animation preference transition" 'NOT TESTED' ([pscustomobject]@{Set=$enabled;Read=$enabledRead;Original=$original;ClientAreaAnimations=$enabledObserved;Reason='The disposable runner did not enable client-area animations before the controlled reduced-motion transition.'});return
     }
+    $set=[EBR_POST_NATIVE]::SystemParametersInfoSetScalar(0x1043,0,[IntPtr]::Zero,2)
+    [int]$observed=1;$read=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$observed,0)
+    if(-not $set -or -not $read -or $observed -ne 0){
+      Add-Result "$Label actual Windows reduced-motion preference is disabled" 'NOT TESTED' ([pscustomobject]@{Set=$set;Read=$read;Original=$original;ClientAreaAnimations=$observed;Reason='The disposable runner did not apply the disabled client-area animation preference; no reduced-motion behavior conclusion is drawn.'});return
+    }
+    Add-Result "$Label actual Windows reduced-motion preference is disabled" 'PASS' ([pscustomobject]@{Original=$original;EnabledBeforeTransition=$enabledObserved;Set=$set;Read=$read;ClientAreaAnimations=$observed;Method='SystemParametersInfo SPI_SETCLIENTAREAANIMATION with scalar BOOL; both states read back from Windows'})
     $result=[IntPtr]::Zero
     [void][EBR_POST_NATIVE]::SendMessageTimeoutW($script:activeWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
     Click-Control $script:activeWindow 12 "$Label Settings navigation for reduced-motion test"
     Click-Control $script:activeWindow 134 "$Label General section for reduced-motion test"
+    $dpi=[Math]::Max(96,[int][EBR_POST_NATIVE]::GetDpiForWindow($script:activeWindow))
+    $targetWidth=[int][Math]::Min($originalBounds.Right-$originalBounds.Left,600*$dpi/96)
+    $targetHeight=[int][Math]::Min($originalBounds.Bottom-$originalBounds.Top,620*$dpi/96)
+    $restoreWindow=$true
+    $resized=[EBR_POST_NATIVE]::SetWindowPos($script:activeWindow,[IntPtr]::Zero,$originalBounds.Left,$originalBounds.Top,$targetWidth,$targetHeight,0x0014)
+    $actualBounds=New-Object EBR_POST_RECT;[void][EBR_POST_NATIVE]::GetWindowRect($script:activeWindow,[ref]$actualBounds)
+    Add-Result "$Label reduced-motion app viewport preparation" 'INFO' ([pscustomobject]@{SetWindowPos=$resized;Original=$originalBounds;RequestedWidth=$targetWidth;RequestedHeight=$targetHeight;Actual=$actualBounds;Reason='A supported smaller app viewport creates General settings overflow; original app bounds are restored in finally.'})
     $combo=[EBR_POST_NATIVE]::ControlById($script:activeWindow,106);$pane=[EBR_POST_NATIVE]::GetParent($combo);$before=New-Object EBR_POST_RECT
     if($combo -eq [IntPtr]::Zero -or $pane -eq [IntPtr]::Zero -or -not [EBR_POST_NATIVE]::GetWindowRect($combo,[ref]$before)){throw 'Could not measure the General settings scroll position.'}
     $scrollInfo=New-Object EBR_POST_SCROLLINFO;$scrollInfo.cbSize=[uint32][Runtime.InteropServices.Marshal]::SizeOf($scrollInfo);$scrollInfo.fMask=0x17
     if(-not [EBR_POST_NATIVE]::GetScrollInfo($pane,1,[ref]$scrollInfo)){Add-Result "$Label settings scrolling applies immediately with reduced motion" 'NOT TESTED' ([pscustomobject]@{Reason='Could not read the settings pane scroll range.'});return}
-    if([long]$scrollInfo.nMax+1 -le [long]$scrollInfo.nPage){Add-Result "$Label settings scrolling applies immediately with reduced motion" 'NOT TESTED' ([pscustomobject]@{Reason='The General settings page had no scrollable overflow at the runner display size.';Maximum=$scrollInfo.nMax;Page=$scrollInfo.nPage});return}
-    $wheel=[IntPtr]::new([long](-120*65536));$pointX=$before.Left+10;$pointY=$before.Top+10
-    $point=[IntPtr]::new([long]((($pointY -band 0xffff) -shl 16) -bor ($pointX -band 0xffff)));$result=[IntPtr]::Zero
-    $sent=([EBR_POST_NATIVE]::SendMessageTimeoutW($pane,0x020A,$wheel,$point,2,2000,[ref]$result)-ne [IntPtr]::Zero)
-    $watch=[Diagnostics.Stopwatch]::StartNew();$after=New-Object EBR_POST_RECT;$moved=0
-    while($watch.Elapsed.TotalSeconds -lt 2){[void][EBR_POST_NATIVE]::GetWindowRect($combo,[ref]$after);$moved=$before.Top-$after.Top;if($moved -ge 40){break};Start-Sleep -Milliseconds 50}
-    Check ($sent -and $moved -ge 40) "$Label settings scrolling applies immediately with reduced motion" ([pscustomobject]@{Input='Controlled Win32 WM_MOUSEWHEEL message to the actual settings pane';BeforeTop=$before.Top;AfterTop=$after.Top;MovedPixels=$moved;ExpectedAtLeast=40;ScrollMaximum=$scrollInfo.nMax;ScrollPage=$scrollInfo.nPage})
+    if([long]$scrollInfo.nMax+1 -le [long]$scrollInfo.nPage){Add-Result "$Label settings scrolling applies immediately with reduced motion" 'NOT TESTED' ([pscustomobject]@{Reason='The actual smaller app viewport still had no General settings overflow.';Maximum=$scrollInfo.nMax;Page=$scrollInfo.nPage;Bounds=$actualBounds});return}
+    $result=[IntPtr]::Zero
+    $toTop=([EBR_POST_NATIVE]::SendMessageTimeoutW($pane,0x0115,[IntPtr]::new(6),[IntPtr]::Zero,2,2000,[ref]$result)-ne [IntPtr]::Zero)
+    [void][EBR_POST_NATIVE]::GetScrollInfo($pane,1,[ref]$scrollInfo);[void][EBR_POST_NATIVE]::GetWindowRect($combo,[ref]$before)
+    $initialPosition=$scrollInfo.nPos;$maximumPosition=[Math]::Max(0,[long]$scrollInfo.nMax-[long]$scrollInfo.nPage+1)
+    $expectedPosition=[Math]::Min($maximumPosition,[long]$initialPosition+[long]$scrollInfo.nPage)
+    $sent=([EBR_POST_NATIVE]::SendMessageTimeoutW($pane,0x0115,[IntPtr]::new(3),[IntPtr]::Zero,2,2000,[ref]$result)-ne [IntPtr]::Zero)
+    $after=New-Object EBR_POST_RECT;$readPosition=[EBR_POST_NATIVE]::GetScrollInfo($pane,1,[ref]$scrollInfo);$readBounds=[EBR_POST_NATIVE]::GetWindowRect($combo,[ref]$after)
+    $immediatePosition=$scrollInfo.nPos;$moved=$before.Top-$after.Top
+    Check ($toTop -and $sent -and $readPosition -and $readBounds -and $expectedPosition -gt $initialPosition -and $immediatePosition -eq $expectedPosition -and $moved -eq ($expectedPosition-$initialPosition)) "$Label settings scrolling applies immediately with reduced motion" ([pscustomobject]@{Input='Controlled Win32 WM_VSCROLL SB_PAGEDOWN to the actual settings pane';Observation='First scroll position and child bounds read immediately after the synchronous input returns, without a settling wait';BeforeTop=$before.Top;AfterTop=$after.Top;MovedPixels=$moved;InitialPosition=$initialPosition;ExpectedPosition=$expectedPosition;ImmediatePosition=$immediatePosition;ScrollMaximum=$scrollInfo.nMax;ScrollPage=$scrollInfo.nPage})
+    Start-Sleep -Milliseconds 250
+    $settled=New-Object EBR_POST_RECT;$readSettledPosition=[EBR_POST_NATIVE]::GetScrollInfo($pane,1,[ref]$scrollInfo);$readSettledBounds=[EBR_POST_NATIVE]::GetWindowRect($combo,[ref]$settled)
+    Check ($readSettledPosition -and $readSettledBounds -and $scrollInfo.nPos -eq $immediatePosition -and $settled.Top -eq $after.Top) "$Label reduced-motion scrolling has no later animation movement" ([pscustomobject]@{ImmediatePosition=$immediatePosition;PositionAfter250ms=$scrollInfo.nPos;ImmediateTop=$after.Top;TopAfter250ms=$settled.Top})
   }finally{
+    if($restoreWindow){
+      $windowRestored=[EBR_POST_NATIVE]::SetWindowPos($script:activeWindow,[IntPtr]::Zero,$originalBounds.Left,$originalBounds.Top,$originalBounds.Right-$originalBounds.Left,$originalBounds.Bottom-$originalBounds.Top,0x0014)
+      $finalBounds=New-Object EBR_POST_RECT;$boundsRead=[EBR_POST_NATIVE]::GetWindowRect($script:activeWindow,[ref]$finalBounds)
+      Check ($windowRestored -and $boundsRead -and $finalBounds.Left -eq $originalBounds.Left -and $finalBounds.Top -eq $originalBounds.Top -and $finalBounds.Right -eq $originalBounds.Right -and $finalBounds.Bottom -eq $originalBounds.Bottom) "$Label restores app bounds after reduced-motion test" ([pscustomobject]@{Original=$originalBounds;Final=$finalBounds;SetWindowPos=$windowRestored})
+    }
     if($restoreNeeded){
-      [int]$restore=$original
-      $restored=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1043,0,[ref]$restore,2)
+      $restored=[EBR_POST_NATIVE]::SystemParametersInfoSetScalar(0x1043,0,[IntPtr]::new($original),2)
       [int]$final=1
       $read=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$final,0)
       if($restored -and $read -and $final -eq $original){Check ($true) "$Label restores the original reduced-motion preference" ([pscustomobject]@{Set=$restored;Read=$read;Original=$original;Final=$final})}
-      else{Add-Result "$Label restores the original reduced-motion preference" 'NOT TESTED' ([pscustomobject]@{Set=$restored;Read=$read;Original=$original;Final=$final;Reason='The runner did not restore the preference through SystemParametersInfo; the hosted runner is disposable and was discarded after the job.'})}
+      else{Add-Result "$Label restores the original reduced-motion preference" 'FAIL' ([pscustomobject]@{Set=$restored;Read=$read;Original=$original;Final=$final;Reason='The attempted Windows preference restoration did not match the saved original value.'})}
     }else{Add-Result "$Label original reduced-motion preference did not need changing" 'INFO' ([pscustomobject]@{Original=$original})}
     $result=[IntPtr]::Zero
     [void][EBR_POST_NATIVE]::SendMessageTimeoutW($script:activeWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
+    try{Click-Control $script:activeWindow 10 "$Label Timer navigation after reduced-motion test"}catch{Add-Result "$Label Timer navigation after reduced-motion test" 'FAIL' $_.Exception.Message}
   }
 }
 function Test-InterruptedBreakRestart([string]$Label){
