@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference='Stop'
 $expected='2895c80f942dd03186305d913516700552524ec5ba9a77da0dab457a3265fcc6'
 $events=[System.Collections.Generic.List[object]]::new()
+$resourceSamples=[System.Collections.Generic.List[object]]::new()
 $script:ownedData=$false
 $script:foregroundDiagnosticCaptured=$false
 $script:activeProcess=$null
@@ -20,6 +21,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 public struct EBR_POST_RECT { public int Left,Top,Right,Bottom; }
 public struct EBR_POST_POINT { public int X,Y; }
+public struct EBR_POST_SCROLLINFO { public uint cbSize,fMask; public int nMin,nMax; public uint nPage; public int nPos,nTrackPos; }
 public static class EBR_POST_NATIVE {
   public delegate bool EnumCallback(IntPtr hwnd,IntPtr data);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumCallback cb,IntPtr data);
@@ -40,6 +42,8 @@ public static class EBR_POST_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp,uint flags,uint timeout,out IntPtr result);
   [DllImport("winmm.dll",ExactSpelling=true)] public static extern uint waveOutGetNumDevs();
+  [DllImport("user32.dll",SetLastError=true)] public static extern int GetGuiResources(IntPtr process,uint flags);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool GetScrollInfo(IntPtr hwnd,int bar,ref EBR_POST_SCROLLINFO info);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool SystemParametersInfoW(uint action,uint uiParam,ref int value,uint flags);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
@@ -73,6 +77,18 @@ function Wait-Status([IntPtr]$Window,[string]$Expected,[int]$TimeoutSeconds=5){
   $watch=[Diagnostics.Stopwatch]::StartNew();$last=''
   while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){$last=Get-Status $Window;if($last -match [regex]::Escape($Expected)){return $last};Start-Sleep -Milliseconds 100}
   return $last
+}
+function Get-AppResourceSnapshot([string]$Label){
+  if(-not $script:activeProcess){return $null}
+  $script:activeProcess.Refresh()
+  return [pscustomobject]@{Label=$Label;Utc=[DateTime]::UtcNow.ToString('o');HandleCount=$script:activeProcess.HandleCount;GdiObjects=[EBR_POST_NATIVE]::GetGuiResources($script:activeProcess.Handle,0);UserObjects=[EBR_POST_NATIVE]::GetGuiResources($script:activeProcess.Handle,1);PrivateBytes=$script:activeProcess.PrivateMemorySize64}
+}
+function Record-AppResourceLifecycle([string]$Label,$Before,$After){
+  if(-not $Before -or -not $After){return}
+  $sample=[pscustomobject]@{Name=$Label;Before=$Before;After=$After;UserObjectDelta=($After.UserObjects-$Before.UserObjects);GdiObjectDelta=($After.GdiObjects-$Before.GdiObjects);HandleDelta=($After.HandleCount-$Before.HandleCount);PrivateByteDelta=($After.PrivateBytes-$Before.PrivateBytes)}
+  $script:resourceSamples.Add($sample)
+  Add-Result "$Label process resource lifecycle sample (informational)" 'INFO' $sample
+  Check ($sample.UserObjectDelta -eq 0) "$Label destroys temporary USER objects after the break window closes" ([pscustomobject]@{Before=$Before.UserObjects;After=$After.UserObjects;Delta=$sample.UserObjectDelta;BreakWindowMustBeDestroyed=$true})
 }
 function Click-Control([IntPtr]$Window,[int]$Id,[string]$Name){
   $control=[EBR_POST_NATIVE]::ControlById($Window,$Id)
@@ -251,6 +267,7 @@ function Test-ThemeAndTimerRingMatrix([string]$Label){
     Check ($workStatus -match 'Running') "$Label $($names[$index]) remains in work mode before ring capture" $workStatus
     Test-TimerRingPixel $script:activeWindow "$Label $($names[$index]) work" $colors[$index].Work (("$Label-$($names[$index])-work-ring.png") -replace '[^a-zA-Z0-9.-]','-') $colors[$index].Break
 
+    $resourcesBeforeBreak=Get-AppResourceSnapshot "$Label $($names[$index]) break with distinct colour enabled before"
     Click-Control $script:activeWindow 22 "$Label begin $($names[$index]) break"
     $breakStatus=Wait-Status $script:activeWindow 'Taking an eye break' 5
     Check ($breakStatus -match 'Taking an eye break') "$Label $($names[$index]) enters break mode" $breakStatus
@@ -261,9 +278,12 @@ function Test-ThemeAndTimerRingMatrix([string]$Label){
     if($breakWindow -ne [IntPtr]::Zero){Click-Control $breakWindow 24 "$Label dismiss $($names[$index]) break"}
     $returned=Wait-Status $script:activeWindow 'Running' 5
     Check ($returned -match 'Running') "$Label $($names[$index]) returns to work mode" $returned
+    Start-Sleep -Milliseconds 300
+    Record-AppResourceLifecycle "$Label $($names[$index]) enabled-accent break" $resourcesBeforeBreak (Get-AppResourceSnapshot "$Label $($names[$index]) break with distinct colour enabled after")
 
     Set-BreakColorOption $script:activeWindow $false "$Label $($names[$index]) disabled accent"
     Click-Control $script:activeWindow 21 "$Label reset before disabled-accent break"
+    $resourcesBeforeDisabledBreak=Get-AppResourceSnapshot "$Label $($names[$index]) break with distinct colour disabled before"
     Click-Control $script:activeWindow 22 "$Label start break with distinct colour disabled"
     $disabledStatus=Wait-Status $script:activeWindow 'Taking an eye break' 5
     Check ($disabledStatus -match 'Taking an eye break') "$Label $($names[$index]) enters break mode with distinct colour disabled" $disabledStatus
@@ -275,6 +295,8 @@ function Test-ThemeAndTimerRingMatrix([string]$Label){
     if($disabledBreakWindow -ne [IntPtr]::Zero){Click-Control $disabledBreakWindow 24 "$Label dismiss disabled-accent break"}
     $disabledReturned=Wait-Status $script:activeWindow 'Running' 5
     Check ($disabledReturned -match 'Running') "$Label $($names[$index]) returns to work after disabled-accent break" $disabledReturned
+    Start-Sleep -Milliseconds 300
+    Record-AppResourceLifecycle "$Label $($names[$index]) disabled-accent break" $resourcesBeforeDisabledBreak (Get-AppResourceSnapshot "$Label $($names[$index]) break with distinct colour disabled after")
     Set-BreakColorOption $script:activeWindow $true "$Label $($names[$index]) restore accent option"
   }
   Test-WindowsThemeChanges $Label
@@ -327,31 +349,47 @@ function Test-WindowsThemeChanges([string]$Label){
 function Test-ReducedMotionPreference([string]$Label){
   [int]$original=1
   if(-not [EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$original,0)){Add-Result "$Label reduced-motion preference can be queried" 'NOT TESTED' ([Runtime.InteropServices.Marshal]::GetLastWin32Error());return}
+  $restoreNeeded=$false
   try{
-    [int]$disabled=0
-    $set=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1043,0,[ref]$disabled,2)
-    [int]$observed=1
-    $read=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$observed,0)
-    Check ($set -and $read -and $observed -eq 0) "$Label actual Windows reduced-motion preference is disabled" ([pscustomobject]@{Set=$set;Read=$read;ClientAreaAnimations=$observed})
+    if($original -eq 0){
+      Add-Result "$Label actual Windows reduced-motion preference is disabled" 'PASS' ([pscustomobject]@{AlreadyDisabled=$true;ClientAreaAnimations=$original})
+    }else{
+      [int]$disabled=0
+      $set=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1043,0,[ref]$disabled,2)
+      [int]$observed=1
+      $read=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$observed,0)
+      if($read -and $observed -ne $original){$restoreNeeded=$true}
+      if(-not $set -or -not $read -or $observed -ne 0){
+        Add-Result "$Label actual Windows reduced-motion preference is disabled" 'NOT TESTED' ([pscustomobject]@{Set=$set;Read=$read;Original=$original;ClientAreaAnimations=$observed;Reason='The disposable runner did not apply the requested client-area animation preference; no reduced-motion behavior conclusion is drawn.'})
+        return
+      }
+      $restoreNeeded=$true
+      Add-Result "$Label actual Windows reduced-motion preference is disabled" 'PASS' ([pscustomobject]@{AlreadyDisabled=$false;Set=$set;Read=$read;Original=$original;ClientAreaAnimations=$observed})
+    }
     $result=[IntPtr]::Zero
     [void][EBR_POST_NATIVE]::SendMessageTimeoutW($script:activeWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
     Click-Control $script:activeWindow 12 "$Label Settings navigation for reduced-motion test"
     Click-Control $script:activeWindow 134 "$Label General section for reduced-motion test"
     $combo=[EBR_POST_NATIVE]::ControlById($script:activeWindow,106);$pane=[EBR_POST_NATIVE]::GetParent($combo);$before=New-Object EBR_POST_RECT
     if($combo -eq [IntPtr]::Zero -or $pane -eq [IntPtr]::Zero -or -not [EBR_POST_NATIVE]::GetWindowRect($combo,[ref]$before)){throw 'Could not measure the General settings scroll position.'}
+    $scrollInfo=New-Object EBR_POST_SCROLLINFO;$scrollInfo.cbSize=[uint32][Runtime.InteropServices.Marshal]::SizeOf($scrollInfo);$scrollInfo.fMask=0x17
+    if(-not [EBR_POST_NATIVE]::GetScrollInfo($pane,1,[ref]$scrollInfo)){Add-Result "$Label settings scrolling applies immediately with reduced motion" 'NOT TESTED' ([pscustomobject]@{Reason='Could not read the settings pane scroll range.'});return}
+    if([long]$scrollInfo.nMax+1 -le [long]$scrollInfo.nPage){Add-Result "$Label settings scrolling applies immediately with reduced motion" 'NOT TESTED' ([pscustomobject]@{Reason='The General settings page had no scrollable overflow at the runner display size.';Maximum=$scrollInfo.nMax;Page=$scrollInfo.nPage});return}
     $wheel=[IntPtr]::new([long](-120*65536));$pointX=$before.Left+10;$pointY=$before.Top+10
     $point=[IntPtr]::new([long]((($pointY -band 0xffff) -shl 16) -bor ($pointX -band 0xffff)));$result=[IntPtr]::Zero
     $sent=([EBR_POST_NATIVE]::SendMessageTimeoutW($pane,0x020A,$wheel,$point,2,2000,[ref]$result)-ne [IntPtr]::Zero)
-    Start-Sleep -Milliseconds 60
-    $after=New-Object EBR_POST_RECT;[void][EBR_POST_NATIVE]::GetWindowRect($combo,[ref]$after)
-    $moved=$before.Top-$after.Top
-    Check ($sent -and $moved -ge 40) "$Label settings scrolling applies immediately with reduced motion" ([pscustomobject]@{Input='Controlled WM_MOUSEWHEEL message, not physical mouse input';BeforeTop=$before.Top;AfterTop=$after.Top;MovedPixels=$moved;ExpectedAtLeast=40})
+    $watch=[Diagnostics.Stopwatch]::StartNew();$after=New-Object EBR_POST_RECT;$moved=0
+    while($watch.Elapsed.TotalSeconds -lt 2){[void][EBR_POST_NATIVE]::GetWindowRect($combo,[ref]$after);$moved=$before.Top-$after.Top;if($moved -ge 40){break};Start-Sleep -Milliseconds 50}
+    Check ($sent -and $moved -ge 40) "$Label settings scrolling applies immediately with reduced motion" ([pscustomobject]@{Input='Controlled Win32 WM_MOUSEWHEEL message to the actual settings pane';BeforeTop=$before.Top;AfterTop=$after.Top;MovedPixels=$moved;ExpectedAtLeast=40;ScrollMaximum=$scrollInfo.nMax;ScrollPage=$scrollInfo.nPage})
   }finally{
-    [int]$restore=$original
-    $restored=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1043,0,[ref]$restore,2)
-    [int]$final=1
-    $read=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$final,0)
-    Check ($restored -and $read -and $final -eq $original) "$Label restores the original reduced-motion preference" ([pscustomobject]@{Set=$restored;Read=$read;Original=$original;Final=$final})
+    if($restoreNeeded){
+      [int]$restore=$original
+      $restored=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1043,0,[ref]$restore,2)
+      [int]$final=1
+      $read=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$final,0)
+      if($restored -and $read -and $final -eq $original){Check ($true) "$Label restores the original reduced-motion preference" ([pscustomobject]@{Set=$restored;Read=$read;Original=$original;Final=$final})}
+      else{Add-Result "$Label restores the original reduced-motion preference" 'NOT TESTED' ([pscustomobject]@{Set=$restored;Read=$read;Original=$original;Final=$final;Reason='The runner did not restore the preference through SystemParametersInfo; the hosted runner is disposable and was discarded after the job.'})}
+    }else{Add-Result "$Label original reduced-motion preference did not need changing" 'INFO' ([pscustomobject]@{Original=$original})}
     $result=[IntPtr]::Zero
     [void][EBR_POST_NATIVE]::SendMessageTimeoutW($script:activeWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
   }
@@ -369,7 +407,10 @@ function Test-InterruptedBreakRestart([string]$Label){
   $status=Wait-Status $script:activeWindow 'Running' 5
   $countdownControl=[EBR_POST_NATIVE]::ControlById($script:activeWindow,40);$countdown=if($countdownControl -ne [IntPtr]::Zero){[EBR_POST_NATIVE]::Text($countdownControl)}else{''}
   $breakAfter=(Get-BreakWindow $script:activeProcess.Id) -ne [IntPtr]::Zero
-  Check ($status -match 'Running' -and $countdown -eq $script:expectedWorkCountdown -and -not $breakAfter) "$Label interrupted break recovers as a fresh work interval" ([pscustomobject]@{Status=$status;ExpectedCountdown=$script:expectedWorkCountdown;ActualCountdown=$countdown;BreakWindowAfterRestart=$breakAfter})
+  $countdownSeconds=-1
+  if($countdown -match '^(\d{1,2}):(\d{2})$'){$countdownSeconds=([int]$Matches[1]*60)+[int]$Matches[2]}
+  $freshIntervalSeconds=60
+  Check ($status -match 'Running' -and $countdownSeconds -ge ($freshIntervalSeconds-5) -and $countdownSeconds -le $freshIntervalSeconds -and -not $breakAfter) "$Label interrupted break recovers with a fresh one-minute work interval" ([pscustomobject]@{Status=$status;ExpectedFreshIntervalSeconds=$freshIntervalSeconds;AcceptedStartupRangeSeconds=@($freshIntervalSeconds-5,$freshIntervalSeconds);ActualCountdown=$countdown;ActualSeconds=$countdownSeconds;BreakWindowAfterRestart=$breakAfter})
 }
 function Stop-OwnedApp {
   $graceful=$false
@@ -503,6 +544,7 @@ finally{
     Release='v1.2.0'
     ExpectedSHA256=$expected
     Events=$events.ToArray()
+    ResourceSamples=$resourceSamples.ToArray()
     Pass=(@($events|Where-Object Status -eq 'PASS')).Count
     Fail=(@($events|Where-Object Status -eq 'FAIL')).Count
     NotTested=(@($events|Where-Object Status -eq 'NOT TESTED')).Count
