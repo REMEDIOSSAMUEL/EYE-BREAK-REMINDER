@@ -96,8 +96,11 @@ try {
     'workMinutes=1','breakSeconds=5','sound=0','volume=0','mode=0','monitor=0','theme=2','breakModeColors=1',
     'alarm=0','repeat=0','notifications=1','snooze=0','autoStart=1','startup=0','tray=1','restore=0',
     'pauseLocked=0','history=1','trayExplained=1','schedule=0'
-  ) -join "`r`n"
-  Set-Content -LiteralPath (Join-Path $dataPath 'settings.ini') -Value ($settings+"`r`n") -Encoding ASCII
+  ) -join "`n"
+  $settingsPath=Join-Path $dataPath 'settings.ini'
+  Set-Content -LiteralPath $settingsPath -Value ($settings+"`n") -Encoding ASCII -NoNewline
+  $fixtureText=[IO.File]::ReadAllText($settingsPath)
+  if($fixtureText.Contains("`r") -or $fixtureText -notmatch '(?m)^notifications=1$'){throw 'The isolated settings fixture is not LF-delimited with notifications enabled.'}
   Add-Result 'Isolated profile requests a one-minute work cycle with Shell notifications enabled' 'PASS' ([pscustomobject]@{SettingsPath=(Join-Path $dataPath 'settings.ini');WorkMinutes=1;BreakSeconds=5;Notifications=1;Alarm=0;Schedule=0;DataDirectory=$dataPath})
 
   $appProcess=Start-Process -FilePath $PublishedExecutablePath -PassThru

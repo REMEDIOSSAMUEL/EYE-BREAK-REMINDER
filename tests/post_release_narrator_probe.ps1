@@ -26,7 +26,24 @@ public static class EBR_NARRATOR_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool ShowWindow(IntPtr hwnd, int command);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SetFocus(IntPtr hwnd);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool AttachThreadInput(uint attach, uint attachTo, bool attachState);
   [DllImport("user32.dll", SetLastError=true)] public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
+  public static bool ActivateWindow(IntPtr hwnd) {
+    uint current=GetCurrentThreadId(), targetPid=0; uint target=GetWindowThreadProcessId(hwnd,out targetPid);
+    IntPtr foreground=GetForegroundWindow(); uint foregroundPid=0; uint foregroundThread=foreground==IntPtr.Zero?0:GetWindowThreadProcessId(foreground,out foregroundPid);
+    bool attachedForeground=false, attachedTarget=false;
+    try {
+      if(foregroundThread!=0 && foregroundThread!=current) attachedForeground=AttachThreadInput(current,foregroundThread,true);
+      if(target!=0 && target!=current && target!=foregroundThread) attachedTarget=AttachThreadInput(current,target,true);
+      ShowWindow(hwnd,9); SetForegroundWindow(hwnd); SetFocus(hwnd);
+      return GetForegroundWindow()==hwnd;
+    } finally {
+      if(attachedTarget) AttachThreadInput(current,target,false);
+      if(attachedForeground) AttachThreadInput(current,foregroundThread,false);
+    }
+  }
   public static IntPtr[] WindowsForProcess(int processId) {
     List<IntPtr> result = new List<IntPtr>();
     EnumCallback callback = delegate(IntPtr hwnd, IntPtr ignored) {
@@ -75,6 +92,7 @@ function Send-TabUntil([string]$target, [int]$maximumTabs = 40) {
     if ($focus -and $focus.ProcessId -eq $appProcess.Id -and $focus.Name -ceq $target) {
       return [pscustomobject]@{Found=$true;Target=$target;Focus=$focus;Sequence=$seen.ToArray()}
     }
+    if ($focus -and $focus.ProcessId -ne $appProcess.Id) { break }
   }
   return [pscustomobject]@{Found=$false;Target=$target;Focus=(Get-FocusedSummary);Sequence=$seen.ToArray()}
 }
@@ -90,6 +108,22 @@ function Get-AppWindows {
   }
   return $result
 }
+function Get-AppAutomationElements {
+  $root=[System.Windows.Automation.AutomationElement]::FromHandle($mainWindow)
+  if($null -eq $root){return @()}
+  $found=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+  $items=[System.Collections.Generic.List[object]]::new()
+  for($i=0;$i -lt $found.Count;$i++){
+    try{$element=$found.Item($i);$current=$element.Current;if($current.ProcessId -eq $appProcess.Id){$items.Add([pscustomobject]@{Element=$element;Name=$current.Name;ControlType=$current.ControlType.ProgrammaticName;AutomationId=$current.AutomationId;Enabled=$current.IsEnabled;Offscreen=$current.IsOffscreen})}}catch{}
+  }
+  return $items.ToArray()
+}
+function Focus-AppElement([string]$name,[string]$controlType=''){
+  $candidate=@(Get-AppAutomationElements|Where-Object {$_.Name -ceq $name -and (-not $controlType -or $_.ControlType -ceq $controlType) -and $_.Enabled -and -not $_.Offscreen}|Select-Object -First 1)
+  if($candidate.Count -eq 0){return [pscustomobject]@{Found=$false;Target=$name;Focus=(Get-FocusedSummary);Names=@((Get-AppAutomationElements|ForEach-Object Name|Where-Object{$_}|Select-Object -Unique))}}
+  try{$candidate[0].Element.SetFocus();Start-Sleep -Milliseconds 150;$focus=Get-FocusedSummary;return [pscustomobject]@{Found=($focus -and $focus.ProcessId -eq $appProcess.Id -and $focus.Name -ceq $name);Target=$name;Focus=$focus;ControlType=$candidate[0].ControlType;AutomationId=$candidate[0].AutomationId}}catch{return [pscustomobject]@{Found=$false;Target=$name;Focus=(Get-FocusedSummary);Error=$_.Exception.Message}}
+}
+function Get-AppAutomationNames { @((Get-AppAutomationElements|ForEach-Object Name|Where-Object {-not [string]::IsNullOrWhiteSpace($_)}|Select-Object -Unique)) }
 try {
   New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
   $actualHash = (Get-FileHash -LiteralPath $PublishedExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -134,10 +168,11 @@ try {
     Start-Sleep -Milliseconds 150
   }
   if ($appProcess.HasExited -or $mainWindow -eq [IntPtr]::Zero) { throw 'The exact published executable did not create its visible main window while Narrator was running.' }
-  [void][EBR_NARRATOR_NATIVE]::ShowWindow($mainWindow, 9)
-  [void][EBR_NARRATOR_NATIVE]::SetForegroundWindow($mainWindow)
+  $foregroundActivated=[EBR_NARRATOR_NATIVE]::ActivateWindow($mainWindow)
   Start-Sleep -Milliseconds 350
-  Add-Result 'Exact published app is visible while Narrator is running' 'PASS' ([pscustomobject]@{ProcessId=$appProcess.Id;Window=('0x{0:X}' -f $mainWindow.ToInt64());Title=[EBR_NARRATOR_NATIVE]::Text($mainWindow);Hash=$actualHash})
+  $foregroundHandle=[EBR_NARRATOR_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0;if($foregroundHandle -ne [IntPtr]::Zero){[void][EBR_NARRATOR_NATIVE]::GetWindowThreadProcessId($foregroundHandle,[ref]$foregroundPid)}
+  Add-Result 'Exact published app is visible and foreground while Narrator is running' $(if($foregroundActivated -and $foregroundPid -eq $appProcess.Id){'PASS'}else{'FAIL'}) ([pscustomobject]@{ProcessId=$appProcess.Id;Window=('0x{0:X}' -f $mainWindow.ToInt64());Title=[EBR_NARRATOR_NATIVE]::Text($mainWindow);Hash=$actualHash;ForegroundActivated=$foregroundActivated;ForegroundHandle=('0x{0:X}' -f $foregroundHandle.ToInt64());ForegroundProcessId=$foregroundPid})
+  if(-not $foregroundActivated -or $foregroundPid -ne $appProcess.Id){throw 'Could not safely activate the published app on the interactive desktop; keyboard input was not sent to an unrelated foreground window.'}
 
   $tabSequence = [System.Collections.Generic.List[object]]::new()
   for ($i = 0; $i -lt 32; $i++) {
@@ -148,46 +183,54 @@ try {
   }
   $focusedInApp = @($tabSequence | Where-Object ProcessId -eq $appProcess.Id)
   $knownNames = @($focusedInApp | ForEach-Object Name | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
-  $expectedFocusNames = @('Timer','History','Settings','Take a break now','Pause','Reset')
+  $expectedFocusNames = @('Timer','Take a break now','Pause','Reset')
   $presentFocusNames = @($expectedFocusNames | Where-Object { $_ -in $knownNames })
   $missingFocusNames = @($expectedFocusNames | Where-Object { $_ -notin $knownNames })
-  $navigationOk = @('Timer','History','Settings' | Where-Object { $_ -in $knownNames }).Count -eq 3
-  Add-Result 'Narrator-active keyboard navigation exposes main tabs and timer control names' $(if($navigationOk){'PASS'}else{'FAIL'}) ([pscustomobject]@{TabKeyEvents=32;FocusedElementCount=$focusedInApp.Count;ExpectedNames=$expectedFocusNames;NamesReached=$presentFocusNames;MissingNames=$missingFocusNames;FocusSequence=@($focusedInApp)})
+  $navigationOk = @('Timer','Take a break now','Pause','Reset' | Where-Object { $_ -in $knownNames }).Count -eq 4
+  Add-Result 'Narrator-active Tab navigation reaches the selected main tab and timer control names' $(if($navigationOk){'PASS'}else{'FAIL'}) ([pscustomobject]@{TabKeyEvents=32;FocusedElementCount=$focusedInApp.Count;ExpectedNames=$expectedFocusNames;NamesReached=$presentFocusNames;MissingNames=$missingFocusNames;FocusSequence=@($focusedInApp)})
   Add-Result 'Narrator-active keyboard navigation exposes break and timer action names' $(if(@('Take a break now','Pause','Reset' | Where-Object { $_ -in $knownNames }).Count -eq 3){'PASS'}else{'FAIL'}) ([pscustomobject]@{NamesReached=$presentFocusNames;MissingNames=$missingFocusNames})
 
-  $history = Send-TabUntil 'History'
-  if ($history.Found) {
-    Send-Key 13
-    Start-Sleep -Milliseconds 300
-    Add-Result 'Keyboard activation moves focus to History navigation' 'PASS' ([pscustomobject]@{Target=$history.Target;Focus=$history.Focus;AppWindows=(Get-AppWindows)})
-  } else {
-    Add-Result 'Keyboard activation moves focus to History navigation' 'FAIL' $history
-  }
-  $settings = Send-TabUntil 'Settings'
-  if ($settings.Found) {
-    Send-Key 13
-    Start-Sleep -Milliseconds 300
-    $focusAfterSettings = Get-FocusedSummary
-    Add-Result 'Keyboard activation moves focus to Settings navigation' 'PASS' ([pscustomobject]@{Target=$settings.Target;Focus=$settings.Focus;FocusAfterActivation=$focusAfterSettings;AppWindows=(Get-AppWindows)})
-  } else {
-    Add-Result 'Keyboard activation moves focus to Settings navigation' 'FAIL' $settings
-  }
+  $timer=Focus-AppElement 'Timer' 'ControlType.RadioButton'
+  if($timer.Found){Send-Key 39;Start-Sleep -Milliseconds 200}
+  $historyFocus=Get-FocusedSummary
+  $historyFound=$timer.Found -and $historyFocus -and $historyFocus.ProcessId -eq $appProcess.Id -and $historyFocus.Name -ceq 'History'
+  Add-Result 'Narrator-active arrow-key navigation moves from Timer to History tab' $(if($historyFound){'PASS'}else{'FAIL'}) ([pscustomobject]@{TimerFocus=$timer;HistoryFocus=$historyFocus;ExpectedNavigation='Right arrow within the native radio-button tab group'})
+  if($historyFound){Send-Key 13;Start-Sleep -Milliseconds 250}
+  $historyNames=Get-AppAutomationNames
+  $historyPage=$historyFound -and ('Eye break history' -in $historyNames)
+  Add-Result 'Keyboard activation opens the History page while Narrator runs' $(if($historyPage){'PASS'}else{'FAIL'}) ([pscustomobject]@{Focus=$historyFocus;HistoryContentPresent=('Eye break history' -in $historyNames);Names=$historyNames})
 
-  $timer = Send-TabUntil 'Timer'
-  if ($timer.Found) { Send-Key 13; Start-Sleep -Milliseconds 300 }
-  $breakAction = Send-TabUntil 'Take a break now'
-  if ($timer.Found -and $breakAction.Found) {
-    Send-Key 13
-    Start-Sleep -Milliseconds 500
-    $windows = Get-AppWindows
-    $breakWindows = @($windows | Where-Object { -not $_.IsMain })
-    $status = 'FAIL'
-    if ($breakWindows.Count -gt 0) { $status = 'PASS' }
-    Add-Result 'Keyboard activation of the break control opens the in-app reminder while Narrator runs' $status ([pscustomobject]@{TimerFocus=$timer.Focus;BreakActionFocus=$breakAction.Focus;AppWindows=$windows;BreakWindowCount=$breakWindows.Count})
-    if ($breakWindows.Count -gt 0) { Send-Key 27; Start-Sleep -Milliseconds 250 }
-  } else {
-    Add-Result 'Keyboard activation of the break control opens the in-app reminder while Narrator runs' 'FAIL' ([pscustomobject]@{TimerNavigation=$timer;BreakAction=$breakAction})
+  if($historyFound){Send-Key 39;Start-Sleep -Milliseconds 200}
+  $settingsFocus=Get-FocusedSummary
+  $settingsFound=$historyFound -and $settingsFocus -and $settingsFocus.ProcessId -eq $appProcess.Id -and $settingsFocus.Name -ceq 'Settings'
+  Add-Result 'Narrator-active arrow-key navigation moves from History to Settings tab' $(if($settingsFound){'PASS'}else{'FAIL'}) ([pscustomobject]@{HistoryFocus=$historyFocus;SettingsFocus=$settingsFocus})
+  if($settingsFound){Send-Key 13;Start-Sleep -Milliseconds 250}
+  $settingsNames=Get-AppAutomationNames
+  $settingsPage=$settingsFound -and ('Work and break intervals' -in $settingsNames)
+  Add-Result 'Keyboard activation opens Settings while Narrator runs' $(if($settingsPage){'PASS'}else{'FAIL'}) ([pscustomobject]@{Focus=$settingsFocus;SettingsContentPresent=('Work and break intervals' -in $settingsNames)})
+
+  $aboutFocus=Focus-AppElement 'About' 'ControlType.RadioButton'
+  if($aboutFocus.Found){Send-Key 13;Start-Sleep -Milliseconds 250}
+  $aboutNames=Get-AppAutomationNames
+  $updateControl=$aboutFocus.Found -and ('Check for Updates' -in $aboutNames)
+  Add-Result 'Keyboard-accessible About section exposes the Check for Updates control' $(if($updateControl){'PASS'}else{'FAIL'}) ([pscustomobject]@{AboutFocus=$aboutFocus;UpdateControlPresent=('Check for Updates' -in $aboutNames)})
+  $checkUpdatesFocus=if($updateControl){Focus-AppElement 'Check for Updates' 'ControlType.Button'}else{[pscustomobject]@{Found=$false;Target='Check for Updates';Names=$aboutNames}}
+  if($checkUpdatesFocus.Found){Send-Key 13}
+  $updateWatch=[Diagnostics.Stopwatch]::StartNew();$updateState='';$updateNames=@()
+  while($checkUpdatesFocus.Found -and $updateWatch.Elapsed.TotalSeconds -lt 30){
+    Start-Sleep -Milliseconds 250;$updateNames=Get-AppAutomationNames
+    if('Eye Break Reminder is up to date.' -in $updateNames){$updateState='up-to-date';break}
+    if('Latest stable version: unavailable' -in $updateNames){$updateState='unavailable';break}
   }
+  Add-Result 'Keyboard-triggered live update check reports the current published version as up to date' $(if($updateState -eq 'up-to-date'){'PASS'}elseif($updateState -eq 'unavailable'){'FAIL'}else{'NOT TESTED'}) ([pscustomobject]@{CheckFocus=$checkUpdatesFocus;State=$updateState;ElapsedSeconds=[Math]::Round($updateWatch.Elapsed.TotalSeconds,2);Names=$updateNames;Reason=$(if($updateState -eq ''){'No terminal update-check result appeared within 30 seconds.'}else{$null})})
+
+  $timer=Focus-AppElement 'Timer' 'ControlType.RadioButton'
+  if($timer.Found){Send-Key 13;Start-Sleep -Milliseconds 250}
+  $breakAction=Focus-AppElement 'Take a break now' 'ControlType.Button'
+  if($timer.Found -and $breakAction.Found){Send-Key 13;Start-Sleep -Milliseconds 500}
+  $windows=Get-AppWindows;$breakWindows=@($windows|Where-Object{-not $_.IsMain})
+  Add-Result 'Keyboard activation of the break control opens the in-app reminder while Narrator runs' $(if($timer.Found -and $breakAction.Found -and $breakWindows.Count -gt 0){'PASS'}else{'FAIL'}) ([pscustomobject]@{TimerFocus=$timer;BreakActionFocus=$breakAction;AppWindows=$windows;BreakWindowCount=$breakWindows.Count})
+  if($breakWindows.Count -gt 0){Send-Key 27;Start-Sleep -Milliseconds 250}
   Add-Result 'Audible Narrator speech was directly verified' 'NOT TESTED' ([pscustomobject]@{Reason='The Windows 11 runner exposed zero waveOut devices in the published-binary smoke; the Narrator process and keyboard focus do not prove synthesized speech reached an output endpoint.'})
 } catch {
   Add-Result 'Narrator keyboard probe completed without an automation exception' 'FAIL' $_.Exception.Message
