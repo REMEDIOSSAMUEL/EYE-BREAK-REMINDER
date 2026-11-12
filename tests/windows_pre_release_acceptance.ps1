@@ -1204,7 +1204,7 @@ function Test-FreshInstallApp {
     }
   }
   Require $sixtyObserved 'Installed published executable displays exactly 60:00 at the 60-minute reset boundary' ([pscustomobject]@{Observed=$sixtyObservedText;Attempts=$sixtyAttempts;ConfiguredWorkMinutes=60})
-  Capture-ActiveWindow $script:mainWindow 'published-timer-boundary-60-00.png' | Out-Null
+  # Poll for the one-second boundary before any screenshot or other work can consume it.
   $fiftyNineWatch=[Diagnostics.Stopwatch]::StartNew();$fiftyNineObserved=$false;$fiftyNineText=''
   while($fiftyNineWatch.Elapsed.TotalSeconds -lt 4){
     $fiftyNineText=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 40 '59:59 countdown boundary').Handle)

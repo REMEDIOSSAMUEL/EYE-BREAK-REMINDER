@@ -39,6 +39,7 @@ public static class EBR_POST_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetDlgItem(IntPtr hwnd,int id);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp,uint flags,uint timeout,out IntPtr result);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool SystemParametersInfoW(uint action,uint uiParam,ref int value,uint flags);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd,out EBR_POST_RECT rect);
@@ -177,6 +178,17 @@ function Select-Theme([IntPtr]$Window,[int]$ThemeIndex){
   Check ($selected -eq $ThemeIndex) "Theme combo selected index $ThemeIndex" ([pscustomobject]@{Expected=$ThemeIndex;Actual=$selected})
   Click-Control $Window 10 'Timer navigation after theme selection'
 }
+function Set-BreakColorOption([IntPtr]$Window,[bool]$Enabled,[string]$Label){
+  Click-Control $Window 12 "$Label Settings navigation for break-colour option"
+  Click-Control $Window 134 "$Label General settings section for break-colour option"
+  $control=[EBR_POST_NATIVE]::ControlById($Window,124)
+  if($control -eq [IntPtr]::Zero){throw 'Distinct break-colour checkbox was unavailable.'}
+  $desired=if($Enabled){1}else{0};$current=([EBR_POST_NATIVE]::SendMessageW($control,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero)).ToInt32()
+  if($current -ne $desired){Click-Control $Window 124 "$Label set distinct break-colour option to $Enabled"}
+  $actual=([EBR_POST_NATIVE]::SendMessageW($control,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero)).ToInt32()
+  Check ($actual -eq $desired) "$Label distinct break-colour option is $Enabled" ([pscustomobject]@{Expected=$desired;Actual=$actual})
+  Click-Control $Window 10 "$Label Timer navigation after break-colour option"
+}
 function Get-TimerRingGeometry([IntPtr]$Window){
   $client=New-Object EBR_POST_RECT;$windowRect=New-Object EBR_POST_RECT;$origin=New-Object EBR_POST_POINT
   if(-not [EBR_POST_NATIVE]::GetClientRect($Window,[ref]$client) -or -not [EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$windowRect) -or -not [EBR_POST_NATIVE]::ClientToScreen($Window,[ref]$origin)){throw 'Could not measure the application client/window geometry.'}
@@ -192,14 +204,14 @@ function Get-TimerRingGeometry([IntPtr]$Window){
   $ringTop=$statusBottom+(& $px 8);$ringX=$ringLeft+(& $px 4);$ringY=$ringTop+(& $px 4);$ringDiameter=$diameter-(& $px 8)
   return [pscustomobject]@{Dpi=$dpi;TextScale=$textScale;ClientWidth=$client.Right;ClientOriginX=$origin.X;ClientOriginY=$origin.Y;WindowLeft=$windowRect.Left;WindowTop=$windowRect.Top;CenterX=($origin.X-$windowRect.Left)+$ringX+$ringDiameter/2.0;CenterY=($origin.Y-$windowRect.Top)+$ringY+$ringDiameter/2.0;Radius=$ringDiameter/2.0;WindowWidth=$windowRect.Right-$windowRect.Left;WindowHeight=$windowRect.Bottom-$windowRect.Top}
 }
-function Test-TimerRingPixel([IntPtr]$Window,[string]$Label,[string]$ExpectedColor,[string]$ScreenshotName){
+function Test-TimerRingPixel([IntPtr]$Window,[string]$Label,[string]$ExpectedColor,[string]$ScreenshotName,[string]$ForbiddenColor=''){
   $image=Capture $Window $ScreenshotName
   if(-not $image -or -not $image.Path){Add-Result "$Label timer-ring accent pixel" 'NOT TESTED' 'No verified app window surface could be captured.';return}
   $geometry=Get-TimerRingGeometry $Window
   $bitmap=[Drawing.Bitmap]::new($image.Path);$count=0;$examples=[System.Collections.Generic.List[string]]::new()
   try{
     if($bitmap.Width -ne $geometry.WindowWidth -or $bitmap.Height -ne $geometry.WindowHeight){Add-Result "$Label timer-ring accent pixel" 'NOT TESTED' ([pscustomobject]@{Reason='Captured window dimensions did not match the measured HWND.';Bitmap=@($bitmap.Width,$bitmap.Height);Geometry=$geometry});return}
-    $target=$ExpectedColor.TrimStart('#').ToUpperInvariant()
+    $target=$ExpectedColor.TrimStart('#').ToUpperInvariant();$forbidden=$ForbiddenColor.TrimStart('#').ToUpperInvariant();$forbiddenCount=0
     # Sample the actual ring annulus directly. Dense angular/radial samples cover anti-aliased arcs without a slow full-window PowerShell pixel scan.
     for($degrees=0;$degrees -lt 360;$degrees+=2){
       $radians=$degrees*[Math]::PI/180.0;$cos=[Math]::Cos($radians);$sin=[Math]::Sin($radians)
@@ -209,10 +221,12 @@ function Test-TimerRingPixel([IntPtr]$Window,[string]$Label,[string]$ExpectedCol
         if($x -lt 0 -or $x -ge $bitmap.Width -or $y -lt 0 -or $y -ge $bitmap.Height){continue}
         $c=$bitmap.GetPixel($x,$y);$hex='{0:X2}{1:X2}{2:X2}' -f $c.R,$c.G,$c.B
         if($hex -eq $target){$count++;if($examples.Count -lt 8){$examples.Add("$x,$y")}}
+        if($forbidden -and $hex -eq $forbidden){$forbiddenCount++}
       }
     }
   }finally{$bitmap.Dispose()}
   Check ($count -gt 0) "$Label timer-ring contains the expected $ExpectedColor accent pixel" ([pscustomobject]@{ExpectedColor=$ExpectedColor;ExactPixels=$count;SamplePixels=$examples.ToArray();Geometry=$geometry;Screenshot=$image.Path;CaptureMethod=$image.Method})
+  if($forbidden){Check ($forbiddenCount -eq 0) "$Label timer-ring excludes the $ForbiddenColor accent pixel" ([pscustomobject]@{ForbiddenColor=$ForbiddenColor;ExactPixels=$forbiddenCount;Screenshot=$image.Path})}
 }
 function Test-ThemeAndTimerRingMatrix([string]$Label){
   $followLight=1;try{$followLight=[int](Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction Stop)}catch{}
@@ -230,7 +244,7 @@ function Test-ThemeAndTimerRingMatrix([string]$Label){
     Start-Sleep -Seconds 5
     $workStatus=Get-Status $script:activeWindow
     Check ($workStatus -match 'Running') "$Label $($names[$index]) remains in work mode before ring capture" $workStatus
-    Test-TimerRingPixel $script:activeWindow "$Label $($names[$index]) work" $colors[$index].Work (("$Label-$($names[$index])-work-ring.png") -replace '[^a-zA-Z0-9.-]','-')
+    Test-TimerRingPixel $script:activeWindow "$Label $($names[$index]) work" $colors[$index].Work (("$Label-$($names[$index])-work-ring.png") -replace '[^a-zA-Z0-9.-]','-') $colors[$index].Break
 
     Click-Control $script:activeWindow 22 "$Label begin $($names[$index]) break"
     $breakStatus=Wait-Status $script:activeWindow 'Taking an eye break' 5
@@ -238,10 +252,103 @@ function Test-ThemeAndTimerRingMatrix([string]$Label){
     $breakWindow=Wait-BreakWindow $script:activeProcess.Id
     Check ($breakWindow -ne [IntPtr]::Zero) "$Label $($names[$index]) reminder window opens" ([pscustomobject]@{Window=('0x{0:X}' -f $breakWindow.ToInt64())})
     Start-Sleep -Seconds 2
-    Test-TimerRingPixel $script:activeWindow "$Label $($names[$index]) break" $colors[$index].Break (("$Label-$($names[$index])-break-ring.png") -replace '[^a-zA-Z0-9.-]','-')
+    Test-TimerRingPixel $script:activeWindow "$Label $($names[$index]) break with distinct colour enabled" $colors[$index].Break (("$Label-$($names[$index])-break-enabled-ring.png") -replace '[^a-zA-Z0-9.-]','-') $colors[$index].Work
     if($breakWindow -ne [IntPtr]::Zero){Click-Control $breakWindow 24 "$Label dismiss $($names[$index]) break"}
     $returned=Wait-Status $script:activeWindow 'Running' 5
     Check ($returned -match 'Running') "$Label $($names[$index]) returns to work mode" $returned
+
+    Set-BreakColorOption $script:activeWindow $false "$Label $($names[$index]) disabled accent"
+    Click-Control $script:activeWindow 21 "$Label reset before disabled-accent break"
+    Click-Control $script:activeWindow 22 "$Label start break with distinct colour disabled"
+    $disabledStatus=Wait-Status $script:activeWindow 'Taking an eye break' 5
+    Check ($disabledStatus -match 'Taking an eye break') "$Label $($names[$index]) enters break mode with distinct colour disabled" $disabledStatus
+    $disabledBreakWindow=Wait-BreakWindow $script:activeProcess.Id
+    Start-Sleep -Seconds 2
+    $disabledExpected=if($index -ge 3){$colors[$index].Break}else{$colors[$index].Work}
+    $disabledForbidden=if($index -ge 3){$colors[$index].Work}else{$colors[$index].Break}
+    Test-TimerRingPixel $script:activeWindow "$Label $($names[$index]) break with distinct colour disabled" $disabledExpected (("$Label-$($names[$index])-break-disabled-ring.png") -replace '[^a-zA-Z0-9.-]','-') $disabledForbidden
+    if($disabledBreakWindow -ne [IntPtr]::Zero){Click-Control $disabledBreakWindow 24 "$Label dismiss disabled-accent break"}
+    $disabledReturned=Wait-Status $script:activeWindow 'Running' 5
+    Check ($disabledReturned -match 'Running') "$Label $($names[$index]) returns to work after disabled-accent break" $disabledReturned
+    Set-BreakColorOption $script:activeWindow $true "$Label $($names[$index]) restore accent option"
+  }
+  Test-WindowsThemeChanges $Label
+  Test-ReducedMotionPreference $Label
+}
+function Set-WindowsAppAppearance([int]$LightValue,[string]$Label){
+  $path='HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+  if(-not (Test-Path -LiteralPath $path)){New-Item -Path $path -Force|Out-Null}
+  New-ItemProperty -LiteralPath $path -Name AppsUseLightTheme -PropertyType DWord -Value $LightValue -Force|Out-Null
+  New-ItemProperty -LiteralPath $path -Name SystemUsesLightTheme -PropertyType DWord -Value $LightValue -Force|Out-Null
+  $observed=[int](Get-ItemPropertyValue -LiteralPath $path -Name AppsUseLightTheme)
+  Check ($observed -eq $LightValue) "$Label Windows appearance preference is applied" ([pscustomobject]@{AppsUseLightTheme=$observed;SystemUsesLightTheme=(Get-ItemPropertyValue -LiteralPath $path -Name SystemUsesLightTheme)})
+  $result=[IntPtr]::Zero
+  $setting=([EBR_POST_NATIVE]::SendMessageTimeoutW($script:activeWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)-ne [IntPtr]::Zero)
+  $result=[IntPtr]::Zero
+  $theme=([EBR_POST_NATIVE]::SendMessageTimeoutW($script:activeWindow,0x031A,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)-ne [IntPtr]::Zero)
+  Check ($setting -and $theme) "$Label app responds to actual Windows appearance-change notifications" ([pscustomobject]@{WM_SETTINGCHANGE=$setting;WM_THEMECHANGED=$theme})
+}
+function Test-WindowsThemeChanges([string]$Label){
+  $path='HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+  $properties=Get-ItemProperty -LiteralPath $path -ErrorAction SilentlyContinue
+  $oldApps=$null;$oldSystem=$null
+  if($properties){$oldApps=$properties.PSObject.Properties['AppsUseLightTheme'];$oldSystem=$properties.PSObject.Properties['SystemUsesLightTheme']}
+  $hadApps=$null -ne $oldApps;$hadSystem=$null -ne $oldSystem
+  $appsValue=if($hadApps){[int]$oldApps.Value}else{1};$systemValue=if($hadSystem){[int]$oldSystem.Value}else{$appsValue}
+  Add-Result "$Label original runner Windows appearance preference" 'INFO' ([pscustomobject]@{AppsUseLightTheme=$appsValue;SystemUsesLightTheme=$systemValue;RunnerHive='HKCU'})
+  try{
+    Select-Theme $script:activeWindow 0
+    Set-WindowsAppAppearance 0 "$Label follow-Windows dark"
+    Click-Control $script:activeWindow 21 "$Label reset timer after Windows dark preference"
+    Start-Sleep -Seconds 5
+    Test-TimerRingPixel $script:activeWindow "$Label Follow Windows Theme after dark preference" '#60A5FA' "$Label-follow-windows-dark-ring.png" '#2DD4BF'
+    Set-WindowsAppAppearance 1 "$Label follow-Windows light"
+    Click-Control $script:activeWindow 21 "$Label reset timer after Windows light preference"
+    Start-Sleep -Seconds 5
+    Test-TimerRingPixel $script:activeWindow "$Label Follow Windows Theme after light preference" '#1D4ED8' "$Label-follow-windows-light-ring.png" '#0F766E'
+  }finally{
+    if(-not (Test-Path -LiteralPath $path)){New-Item -Path $path -Force|Out-Null}
+    if($hadApps){New-ItemProperty -LiteralPath $path -Name AppsUseLightTheme -PropertyType DWord -Value $appsValue -Force|Out-Null}else{Remove-ItemProperty -LiteralPath $path -Name AppsUseLightTheme -ErrorAction SilentlyContinue}
+    if($hadSystem){New-ItemProperty -LiteralPath $path -Name SystemUsesLightTheme -PropertyType DWord -Value $systemValue -Force|Out-Null}else{Remove-ItemProperty -LiteralPath $path -Name SystemUsesLightTheme -ErrorAction SilentlyContinue}
+    $restoredApps=if($hadApps){[int](Get-ItemPropertyValue -LiteralPath $path -Name AppsUseLightTheme) -eq $appsValue}else{$null -eq (Get-ItemProperty -LiteralPath $path -Name AppsUseLightTheme -ErrorAction SilentlyContinue)}
+    $restoredSystem=if($hadSystem){[int](Get-ItemPropertyValue -LiteralPath $path -Name SystemUsesLightTheme) -eq $systemValue}else{$null -eq (Get-ItemProperty -LiteralPath $path -Name SystemUsesLightTheme -ErrorAction SilentlyContinue)}
+    Check ($restoredApps -and $restoredSystem) "$Label restores the runner Windows appearance preferences" ([pscustomobject]@{AppsRestored=$restoredApps;SystemRestored=$restoredSystem;OriginalApps=$appsValue;OriginalSystem=$systemValue})
+    $result=[IntPtr]::Zero
+    [void][EBR_POST_NATIVE]::SendMessageTimeoutW($script:activeWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
+    $result=[IntPtr]::Zero
+    [void][EBR_POST_NATIVE]::SendMessageTimeoutW($script:activeWindow,0x031A,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
+  }
+}
+function Test-ReducedMotionPreference([string]$Label){
+  [int]$original=1
+  if(-not [EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$original,0)){Add-Result "$Label reduced-motion preference can be queried" 'NOT TESTED' ([Runtime.InteropServices.Marshal]::GetLastWin32Error());return}
+  try{
+    [int]$disabled=0
+    $set=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1043,0,[ref]$disabled,2)
+    [int]$observed=1
+    $read=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$observed,0)
+    Check ($set -and $read -and $observed -eq 0) "$Label actual Windows reduced-motion preference is disabled" ([pscustomobject]@{Set=$set;Read=$read;ClientAreaAnimations=$observed})
+    $result=[IntPtr]::Zero
+    [void][EBR_POST_NATIVE]::SendMessageTimeoutW($script:activeWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
+    Click-Control $script:activeWindow 12 "$Label Settings navigation for reduced-motion test"
+    Click-Control $script:activeWindow 134 "$Label General section for reduced-motion test"
+    $combo=[EBR_POST_NATIVE]::ControlById($script:activeWindow,106);$pane=[EBR_POST_NATIVE]::GetParent($combo);$before=New-Object EBR_POST_RECT
+    if($combo -eq [IntPtr]::Zero -or $pane -eq [IntPtr]::Zero -or -not [EBR_POST_NATIVE]::GetWindowRect($combo,[ref]$before)){throw 'Could not measure the General settings scroll position.'}
+    $wheel=[IntPtr]::new([long](-120*65536));$pointX=$before.Left+10;$pointY=$before.Top+10
+    $point=[IntPtr]::new([long]((($pointY -band 0xffff) -shl 16) -bor ($pointX -band 0xffff)));$result=[IntPtr]::Zero
+    $sent=([EBR_POST_NATIVE]::SendMessageTimeoutW($pane,0x020A,$wheel,$point,2,2000,[ref]$result)-ne [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 60
+    $after=New-Object EBR_POST_RECT;[void][EBR_POST_NATIVE]::GetWindowRect($combo,[ref]$after)
+    $moved=$before.Top-$after.Top
+    Check ($sent -and $moved -ge 40) "$Label settings scrolling applies immediately with reduced motion" ([pscustomobject]@{Input='Controlled WM_MOUSEWHEEL message, not physical mouse input';BeforeTop=$before.Top;AfterTop=$after.Top;MovedPixels=$moved;ExpectedAtLeast=40})
+  }finally{
+    [int]$restore=$original
+    $restored=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1043,0,[ref]$restore,2)
+    [int]$final=1
+    $read=[EBR_POST_NATIVE]::SystemParametersInfoW(0x1042,0,[ref]$final,0)
+    Check ($restored -and $read -and $final -eq $original) "$Label restores the original reduced-motion preference" ([pscustomobject]@{Set=$restored;Read=$read;Original=$original;Final=$final})
+    $result=[IntPtr]::Zero
+    [void][EBR_POST_NATIVE]::SendMessageTimeoutW($script:activeWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero,2,2000,[ref]$result)
   }
 }
 function Test-InterruptedBreakRestart([string]$Label){
