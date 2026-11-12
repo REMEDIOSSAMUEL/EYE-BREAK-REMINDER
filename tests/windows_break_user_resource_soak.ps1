@@ -53,6 +53,8 @@ $script:started=[Diagnostics.Stopwatch]::StartNew();$script:startUtc=[DateTime]:
 function Add-Event([string]$Name,[string]$Status,$Details=$null){$script:events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')})}
 function Check([bool]$ok,[string]$Name,$Details=$null){if($ok){Add-Event $Name 'PASS' $Details}else{Add-Event $Name 'FAIL' $Details}}
 function Status(){ $h=[EBR_SOAK_NATIVE]::ChildById($script:main,41);if($h -eq [IntPtr]::Zero){return ''};return [EBR_SOAK_NATIVE]::Text($h) }
+function CountdownText(){ $h=[EBR_SOAK_NATIVE]::ChildById($script:main,40);if($h -eq [IntPtr]::Zero){return ''};return [EBR_SOAK_NATIVE]::Text($h).Trim() }
+function CountdownSeconds(){ $m=[regex]::Match((CountdownText),'^(\d+):(\d{2})$');if(-not $m.Success){return -1};return ([int]$m.Groups[1].Value*60)+[int]$m.Groups[2].Value }
 function BreakWindow(){[EBR_SOAK_NATIVE]::FindWindow($script:process.Id,'EyeBreakReminder.Break')}
 function Sample([int]$Cycle,[string]$Stage){
  $script:process.Refresh();if($script:process.HasExited){throw 'Application exited during soak.'}
@@ -62,7 +64,7 @@ function Sample([int]$Cycle,[string]$Stage){
   UserObjects=[EBR_SOAK_NATIVE]::User($proc.Handle);GdiObjects=[EBR_SOAK_NATIVE]::Gdi($proc.Handle);HandleCount=$proc.HandleCount
   WorkingSetBytes=$proc.WorkingSet64;PrivateBytes=$proc.PrivateMemorySize64;CpuTotalMilliseconds=$proc.TotalProcessorTime.TotalMilliseconds
   TopLevelWindows=[EBR_SOAK_NATIVE]::CountWindows($proc.Id,$null);BreakWindowCount=[EBR_SOAK_NATIVE]::CountWindows($proc.Id,'EyeBreakReminder.Break')
-  TimerStatus=(Status);NotificationSetting='disabled in isolated soak fixture'
+  TimerStatus=(Status);TimerCountdown=(CountdownText);NotificationSetting='disabled in isolated soak fixture'
  }
  $script:metrics.Add($row);return $row
 }
@@ -137,6 +139,16 @@ try{
  for($n=0;$n-lt 12;$n++){Start-Sleep -Seconds 1;[void](Sample 0 'idle-baseline')}
  $warm=@($script:metrics|Where-Object{$_.Stage -eq 'idle-baseline'}|ForEach-Object{[double]$_.UserObjects});$idleRange=[double](($warm|Measure-Object -Maximum).Maximum)-[double](($warm|Measure-Object -Minimum).Minimum)
  Add-Event 'Idle resource baseline captured' 'INFO' ([pscustomobject]@{Samples=$warm.Count;UserMinimum=($warm|Measure-Object -Minimum).Minimum;UserMaximum=($warm|Measure-Object -Maximum).Maximum;UserRange=$idleRange})
+ $workControl=[EBR_SOAK_NATIVE]::ChildById($script:main,100);$breakControl=[EBR_SOAK_NATIVE]::ChildById($script:main,101);$workSetting=[EBR_SOAK_NATIVE]::Text($workControl).Trim();$breakSetting=[EBR_SOAK_NATIVE]::Text($breakControl).Trim()
+ Check ($workSetting -eq '1' -and $breakSetting -eq '30') 'Isolated UI loaded the requested one-minute work and 30-second break settings' ([pscustomobject]@{WorkMinutes=$workSetting;BreakSeconds=$breakSetting;SettingsSHA256=(Get-FileHash -LiteralPath (Join-Path $script:dataPath 'settings.ini') -Algorithm SHA256).Hash})
+ if($workSetting -ne '1' -or $breakSetting -ne '30'){throw "Test profile settings were not loaded through the application UI; work=$workSetting break=$breakSetting."}
+ if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($script:main,21))){throw 'Timer reset button did not respond before the scheduled soak.'}
+ $timerFile=Join-Path $script:dataPath 'timer.dat';$savedTimer=(Get-Content -LiteralPath $timerFile -Raw).Trim()-split'\s+'
+ if($savedTimer.Count-ne 6 -or [math]::Abs([double]::Parse($savedTimer[3],[System.Globalization.CultureInfo]::InvariantCulture)-60.0)-gt 0.01){throw "Reset did not persist a 60-second work interval to timer.dat: $($savedTimer -join ' ')."}
+ $countdownStart=CountdownSeconds
+ if($countdownStart -lt 55 -or $countdownStart -gt 60){throw "Reset timer countdown should be near one minute; UI shows '$(CountdownText)' and saved duration $($savedTimer[3]) seconds."}
+ if(-not (Wait-Until {(CountdownSeconds) -lt $countdownStart} 8 'real-countdown-decreasing' 0)){throw "The real application countdown did not decrease from $countdownStart seconds; UI shows '$(CountdownText)'."}
+ Add-Event 'Real application countdown decreased after reset' 'PASS' ([pscustomobject]@{StartSeconds=$countdownStart;ObservedSeconds=(CountdownSeconds);SavedDurationSeconds=$savedTimer[3];Mode='Unaccelerated production executable'})
  for($i=1;$i-le$Cycles;$i++){
   $before=Sample $i 'before-break-window'
   $window=Wait-Break 105 $i
