@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1 (unpublished hotfix candidate)
+
+Fixed
+
+- Prevented the break reminder's initial resize from positioning child controls before they are created, which leaked a Windows USER object during each break.
+
 ## 1.2.0 (prepared from the published v1.1.0 release)
 
 Added

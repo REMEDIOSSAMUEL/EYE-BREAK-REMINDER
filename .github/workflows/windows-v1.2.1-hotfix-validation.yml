@@ -1,0 +1,105 @@
+name: Windows v1.2.1 USER-object leak hotfix validation
+
+on:
+  push:
+    branches:
+      - 'hotfix/v1.2.1-user-object-leak'
+    paths:
+      - '.github/workflows/windows-v1.2.1-hotfix-validation.yml'
+      - 'CHANGELOG.md'
+      - 'README.md'
+      - 'VERSION'
+      - 'installer/setup.nsi'
+      - 'scripts/verify.py'
+      - 'src/**'
+      - 'tests/gui_acceptance.ps1'
+      - 'tests/windows_break_user_resource_regression.ps1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-hotfix-candidate:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - name: Check out unpublished hotfix candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the native Windows build toolchain
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-python
+
+      - name: Set up upstream NSIS 3.11 x86 installer builder
+        uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1
+        with:
+          version: '3.11'
+
+      - name: Run core, binary, package, and GUI regression suites
+        shell: msys2 {0}
+        run: |
+          set -eo pipefail
+          mkdir -p "$RUNNER_TEMP/eye-break-reminder-tmp" build/hotfix-user-object-evidence
+          export TMP="$(cygpath -u "$RUNNER_TEMP/eye-break-reminder-tmp")"
+          export TEMP="$TMP"
+          if ! command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
+            strip_tool="$(command -v strip)"
+            cp "$strip_tool" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          fi
+          nsis_root="$(cygpath -u "$NSISDIR")"
+          makensis_path="$nsis_root/makensis.exe"
+          test -x "$makensis_path"
+          "$makensis_path" -VERSION | tee build/hotfix-user-object-evidence/nsis-version.txt
+          build_args=(CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' WINDRES=windres MAKENSIS="$makensis_path" PYTHON=python)
+          make test "${build_args[@]}" 2>&1 | tee build/hotfix-user-object-evidence/make-test.log
+          make -B all "${build_args[@]}" 2>&1 | tee build/hotfix-user-object-evidence/make-all.log
+          make package "${build_args[@]}" 2>&1 | tee build/hotfix-user-object-evidence/make-package.log
+          make gui-test "${build_args[@]}" 2>&1 | tee build/hotfix-user-object-evidence/make-gui-test.log
+
+      - name: Run the native Win32 GUI regression suite
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/gui_acceptance.ps1
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Reproduce the resource leak on the exact published v1.2.0 executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baseline = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-v1.2.0-published.exe'
+          Invoke-WebRequest -Uri 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.2.0/EyeBreakReminder.exe' -OutFile $baseline -MaximumRedirection 10 -TimeoutSec 120
+          $hash = (Get-FileHash -LiteralPath $baseline -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -cne '2895c80f942dd03186305d913516700552524ec5ba9a77da0dab457a3265fcc6') { throw "Published v1.2.0 baseline SHA-256 mismatch: $hash" }
+          & ./tests/windows_break_user_resource_regression.ps1 -ExecutablePath $baseline -ExpectedProductVersion '1.2.0' -ExpectedResourceBehavior Growth -Cycles 5 -EvidenceDirectory 'build/hotfix-user-object-evidence/v1.2.0-baseline'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Exercise repeated breaks and verify no USER-object growth
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/windows_break_user_resource_regression.ps1 -ExecutablePath 'release/EyeBreakReminder.exe' -ExpectedProductVersion '1.2.1' -ExpectedResourceBehavior NoGrowth -Cycles 12 -EvidenceDirectory 'build/hotfix-user-object-evidence/v1.2.1-candidate'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload candidate test evidence only
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.2.1-hotfix-candidate-evidence-${{ github.run_id }}
+          path: |
+            build/hotfix-user-object-evidence/**
+            build/gui-test/evidence/**
+          if-no-files-found: warn
+          retention-days: 14

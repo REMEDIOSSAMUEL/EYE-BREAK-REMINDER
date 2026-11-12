@@ -1,4 +1,4 @@
-# Eye Break Reminder 1.2.0 — Windows 11 x64
+# Eye Break Reminder 1.2.1 — Windows 11 x64
 
 A native Windows desktop eye-break utility, compiled from Linux with C++17 and MinGW-w64. It uses Win32 system controls, Windows common dialogs, native title bars, native tray integration, and a custom timer dial. It has no browser, console, .NET dependency or external assets at runtime.
 

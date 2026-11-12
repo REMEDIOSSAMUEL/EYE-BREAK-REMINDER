@@ -833,7 +833,9 @@ public:
   layoutBreak();applyTheme();ShowWindow(breakWindow,SW_SHOW);SetForegroundWindow(breakWindow);FLASHWINFO flash{sizeof(flash),breakWindow,FLASHW_TRAY,3,0};FlashWindowEx(&flash);SetFocus(GetDlgItem(breakWindow,COMPLETE));updateRenderTimer();
  }
  void layoutBreak(){
-  if(!breakWindow)return;
+  // The initial SetWindowPos in showBreak sends WM_SIZE before the reminder's child controls exist.
+  // Do not build a deferred-position batch from null HWNDs; Windows leaks a USER object when that batch fails.
+  if(!breakWindow||!GetDlgItem(breakWindow,BREAK_TITLE)||!GetDlgItem(breakWindow,COMPLETE))return;
   RECT r{};GetClientRect(breakWindow,&r);int scale=int(GetDpiForWindow(breakWindow));auto bpx=[&](double n){return int(n*scale/96.0);};
   int pad=bpx(28),gap=bpx(12),bh=bpx(40*textScale),width=std::min(bpx(380),int(r.right)-2*pad),x=(r.right-width)/2,y=pad;
   breakItems.clear();

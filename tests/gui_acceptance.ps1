@@ -4,6 +4,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$expectedVersion = (Get-Content -LiteralPath (Join-Path $repoRoot 'VERSION') -Raw).Trim()
+if($expectedVersion -notmatch '^\d+\.\d+\.\d+$'){throw 'VERSION must contain a three-component release version.'}
 $expectedExe = [IO.Path]::GetFullPath((Join-Path $repoRoot 'build\gui-test\EyeBreakReminder.exe'))
 $exePath = [IO.Path]::GetFullPath($Executable)
 if ($exePath -ine $expectedExe) { throw "Refusing to launch anything other than the isolated GUI test executable: $expectedExe" }
@@ -324,7 +326,7 @@ try {
   if([IO.Path]::GetFullPath($dataDirectory) -ine [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $exePath) 'test-data'))){throw 'The isolated test data path did not match the GUI test profile.'}
   foreach($profileFile in @('settings.ini','timer.dat','history.dat')){$profilePath=Join-Path $dataDirectory $profileFile;if(Test-Path -LiteralPath $profilePath -PathType Leaf){Remove-Item -LiteralPath $profilePath -Force}}
   $version=(Get-Item -LiteralPath $exePath).VersionInfo.ProductVersion
-  Assert-That ($version -eq '1.2.0') 'Test executable version metadata' $version
+  Assert-That ($version -eq $expectedVersion) 'Test executable version metadata' $version
   $process=Start-Process -FilePath $exePath -PassThru
   $script:testPid=$process.Id
   if ([IO.Path]::GetFullPath((Get-Process -Id $script:testPid).Path) -ine $exePath) { throw 'Launched process path did not match the isolated GUI test executable.' }
@@ -441,13 +443,20 @@ try {
   Assert-That ((Find-BreakWindow) -eq [IntPtr]::Zero) 'Natural break closes its reminder window'
   Save-Screenshot $script:mainWindow 'timer-dark-work-after-break.png' | Out-Null
 
-  $stable='{"tag_name":"v1.2.0","html_url":"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.2.0","draft":false,"prerelease":false}'
-  $newer='{"tag_name":"v1.3.0","html_url":"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.3.0","draft":false,"prerelease":false}'
-  $older='{"tag_name":"v1.1.0","html_url":"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.1.0","draft":false,"prerelease":false}'
-  $prerelease='{"tag_name":"v1.3.0-rc.1","html_url":"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.3.0-rc.1","draft":false,"prerelease":true}'
+  $installedVersion=[Version]$expectedVersion
+  $newerVersion='{0}.{1}.0' -f $installedVersion.Major,($installedVersion.Minor+1)
+  if($installedVersion.Build -gt 0){$olderVersion='{0}.{1}.{2}' -f $installedVersion.Major,$installedVersion.Minor,($installedVersion.Build-1)}
+  elseif($installedVersion.Minor -gt 0){$olderVersion='{0}.{1}.0' -f $installedVersion.Major,($installedVersion.Minor-1)}
+  elseif($installedVersion.Major -gt 0){$olderVersion='{0}.0.0' -f ($installedVersion.Major-1)}
+  else{throw 'Cannot construct a stable version older than 0.0.0 for the comparison fixture.'}
+  function Release-Fixture([string]$Tag,[bool]$Prerelease=$false){return ([ordered]@{tag_name="v$Tag";html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v$Tag";draft=$false;prerelease=$Prerelease}|ConvertTo-Json -Compress)}
+  $stable=Release-Fixture $expectedVersion
+  $newer=Release-Fixture $newerVersion
+  $older=Release-Fixture $olderVersion
+  $prerelease=Release-Fixture "$newerVersion-rc.1" $true
   Run-UpdateFixture 'same-version' 200 $stable 'none' 'up to date' 3000
   Switch-Settings 5
-  Assert-That (([EBR_GUI_NATIVE]::Text($script:updateLatestHandle)) -eq 'Latest stable version: 1.2.0') 'Same-version latest label'
+  Assert-That (([EBR_GUI_NATIVE]::Text($script:updateLatestHandle)) -eq "Latest stable version: $expectedVersion") 'Same-version latest label'
   Run-UpdateFixture 'newer-version' 200 $newer 'none' 'update is available'
   Assert-That ((Get-Control $script:mainWindow 161 'Open official release').Enabled) 'Official release button enables for a newer version'
   Run-UpdateFixture 'older-version' 200 $older 'none' 'newer than the latest'
@@ -518,7 +527,7 @@ catch {
 finally {
   Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
   try { Close-TestProcess } catch { Add-Result 'test-app cleanup' 'FAIL' $_.Exception.Message }
-  $report=[pscustomobject]@{Version='1.2.0';Assertions=$script:assertionCount;Events=$script:events.ToArray();EvidenceDirectory=$EvidenceDirectory;TestDataDirectory=$dataDirectory}
+  $report=[pscustomobject]@{Version=$expectedVersion;Assertions=$script:assertionCount;Events=$script:events.ToArray();EvidenceDirectory=$EvidenceDirectory;TestDataDirectory=$dataDirectory}
   $report | ConvertTo-Json -Depth 9 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'gui-acceptance-results.json') -Encoding UTF8
   Write-Output "GUI acceptance: $($script:assertionCount) assertions; evidence: $EvidenceDirectory"
 }
