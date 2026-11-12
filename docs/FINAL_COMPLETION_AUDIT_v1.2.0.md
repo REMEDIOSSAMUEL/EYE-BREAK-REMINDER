@@ -132,7 +132,7 @@ The isolated clone branch is `post-release-verification-v1.2.0-actual-binaries-2
 - A Windows 11 ARM actual-public-binary verification workflow in `.github/workflows/windows-11-post-release-gap-audit.yml`.
 - This report and its machine-readable acceptance update.
 
-No product code, NSIS script, application settings, release tag, or release asset changed. No force-push was performed. The branch is not pushed because `gh auth status` reports an invalid token and GitHub network access is restricted in this session. The machine-readable report records the unpushed state and current local commit. Do not treat the Windows 11 workflow as having run; no Actions URL or new screenshots exist for it.
+No product code, NSIS script, application settings, release tag, or release asset changed. No force-push was performed. The branch is not pushed because `gh auth status` reports an invalid token and GitHub network access is restricted in this session. The machine-readable report records the unpushed state and the branch base; this completion response gives the current local commit SHA. Do not treat the Windows 11 workflow as having run; no Actions URL or new screenshots exist for it.
 
 ## Code-signing assessment
 
