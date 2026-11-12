@@ -27,6 +27,17 @@ function Check([bool]$Condition,[string]$Name,$Details=$null) {
   if($Condition){Add-Check $Name 'PASS' $Details}
   else{Add-Check $Name 'FAIL' $Details}
 }
+function Invoke-WithRetry([scriptblock]$Request,[string]$Label,[int]$Attempts=4) {
+  for($attempt=1;$attempt -le $Attempts;$attempt++){
+    try{return & $Request}
+    catch{
+      if($attempt -ge $Attempts){throw}
+      $delay=[Math]::Min(8,[Math]::Pow(2,$attempt))
+      Add-Check "Transient network retry: $Label" 'INFO' ([pscustomobject]@{Attempt=$attempt;DelaySeconds=$delay;Error=$_.Exception.Message})
+      Start-Sleep -Seconds $delay
+    }
+  }
+}
 function Get-Bytes([System.IO.Compression.ZipArchiveEntry]$Entry) {
   $stream=$Entry.Open();$memory=[IO.MemoryStream]::new()
   try{$stream.CopyTo($memory);return ,$memory.ToArray()}finally{$stream.Dispose();$memory.Dispose()}
@@ -45,18 +56,18 @@ try {
   [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
   Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-  $repo=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName" -Headers $apiHeaders -TimeoutSec 30
+  $repo=Invoke-WithRetry { Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName" -Headers $apiHeaders -TimeoutSec 30 } 'repository metadata'
   Check (-not $repo.private) 'Repository is publicly visible' ([pscustomobject]@{FullName=$repo.full_name;Private=$repo.private})
 
-  $release=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/releases/tags/v1.2.0" -Headers $apiHeaders -TimeoutSec 30
+  $release=Invoke-WithRetry { Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/releases/tags/v1.2.0" -Headers $apiHeaders -TimeoutSec 30 } 'release metadata'
   Check ($release.tag_name -ceq 'v1.2.0' -and $release.name -ceq 'Eye Break Reminder v1.2.0' -and -not $release.draft -and -not $release.prerelease) 'Published stable release metadata is correct' ([pscustomobject]@{Tag=$release.tag_name;Title=$release.name;Draft=$release.draft;Prerelease=$release.prerelease;Target=$release.target_commitish;Url=$release.html_url})
   Check ($release.target_commitish -ceq 'main') 'Release target metadata names main' $release.target_commitish
-  $latest=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/releases/latest" -Headers $apiHeaders -TimeoutSec 30
+  $latest=Invoke-WithRetry { Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/releases/latest" -Headers $apiHeaders -TimeoutSec 30 } 'latest release metadata'
   Check ($latest.tag_name -ceq 'v1.2.0' -and -not $latest.draft -and -not $latest.prerelease) 'Latest endpoint returns stable v1.2.0' ([pscustomobject]@{Tag=$latest.tag_name;Url=$latest.html_url;AuthenticatedMetadataRequest=[bool]$env:GITHUB_TOKEN;PublicAssetDownloadsAuthenticated=$false})
-  $main=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/ref/heads/main" -Headers $apiHeaders -TimeoutSec 30
-  $tagRef=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/ref/tags/v1.2.0" -Headers $apiHeaders -TimeoutSec 30
+  $main=Invoke-WithRetry { Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/ref/heads/main" -Headers $apiHeaders -TimeoutSec 30 } 'main ref'
+  $tagRef=Invoke-WithRetry { Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/ref/tags/v1.2.0" -Headers $apiHeaders -TimeoutSec 30 } 'release tag ref'
   $tagObject=$tagRef.object
-  if($tagObject.type -eq 'tag'){$tagObject=Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/tags/$($tagObject.sha)" -Headers $apiHeaders -TimeoutSec 30;$targetCommit=$tagObject.object.sha}else{$targetCommit=$tagObject.sha}
+  if($tagObject.type -eq 'tag'){$tagObject=Invoke-WithRetry { Invoke-RestMethod -Method Get -Uri "https://api.github.com/repos/$repoName/git/tags/$($tagObject.sha)" -Headers $apiHeaders -TimeoutSec 30 } 'annotated release tag target';$targetCommit=$tagObject.object.sha}else{$targetCommit=$tagObject.sha}
   Check ($main.object.sha -ceq $approvedMain) 'Public main branch is the approved v1.2.0 commit' $main.object.sha
   Check ($targetCommit -ceq $main.object.sha) 'Published v1.2.0 tag peels to current main commit' ([pscustomobject]@{Tag=$targetCommit;Main=$main.object.sha})
 
@@ -72,7 +83,7 @@ try {
   )
   $missingNotes=@($noteClaims | Where-Object {$note -notmatch [regex]::Escape($_)})
   Check ($missingNotes.Count -eq 0) 'Release notes describe the v1.2.0 features and disclose validation limits' ([pscustomobject]@{Missing=$missingNotes})
-  $page=Invoke-WebRequest -Method Get -Uri $release.html_url -Headers @{ 'User-Agent'='EyeBreakReminder-PostReleaseVerification/1.0' } -MaximumRedirection 10 -TimeoutSec 45
+  $page=Invoke-WithRetry { Invoke-WebRequest -Method Get -Uri $release.html_url -Headers @{ 'User-Agent'='EyeBreakReminder-PostReleaseVerification/1.0' } -MaximumRedirection 10 -TimeoutSec 45 } 'public release page'
   Check ([int]$page.StatusCode -eq 200 -and $page.Content -match 'Eye Break Reminder v1\.2\.0') 'Public release page loads and shows the correct title' ([pscustomobject]@{Status=[int]$page.StatusCode;FinalUrl=[string]$page.BaseResponse.ResponseUri})
 
   $assetNames=@($release.assets | ForEach-Object name | Sort-Object)
@@ -81,7 +92,7 @@ try {
   foreach($asset in $release.assets){
     if($asset.name -notin $expectedNames){continue}
     $path=Join-Path $ArtifactsDirectory $asset.name
-    Invoke-WebRequest -Method Get -Uri $asset.browser_download_url -OutFile $path -Headers @{ 'User-Agent'='EyeBreakReminder-PostReleaseVerification/1.0' } -MaximumRedirection 10 -TimeoutSec 120
+    Invoke-WithRetry { Invoke-WebRequest -Method Get -Uri $asset.browser_download_url -OutFile $path -Headers @{ 'User-Agent'='EyeBreakReminder-PostReleaseVerification/1.0' } -MaximumRedirection 10 -TimeoutSec 120 } "public release asset $($asset.name)"
     $file=Get-Item -LiteralPath $path
     $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     $matches=($hash -ceq $expected[$asset.name])

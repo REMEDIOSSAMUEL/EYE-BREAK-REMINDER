@@ -276,9 +276,9 @@ try {
   $timer=Focus-AppElement 'Timer' 'ControlType.RadioButton'
   if($timer.Found){Send-Key 13;Start-Sleep -Milliseconds 250}
   $breakAction=Focus-AppElement 'Take a break now' 'ControlType.Button'
-  if($timer.Found -and $breakAction.Found){Send-Key 13;Start-Sleep -Milliseconds 500}
+  if($timer.Found -and $breakAction.Found){Send-Key 32;Start-Sleep -Milliseconds 500}
   $windows=Get-AppWindows;$breakWindows=@($windows|Where-Object{-not $_.IsMain})
-  Add-Result 'Keyboard activation of the break control opens the in-app reminder while Narrator runs' $(if($timer.Found -and $breakAction.Found -and $breakWindows.Count -gt 0){'PASS'}else{'FAIL'}) ([pscustomobject]@{TimerFocus=$timer;BreakActionFocus=$breakAction;AppWindows=$windows;BreakWindowCount=$breakWindows.Count})
+  Add-Result 'Space-bar activation of the focused break control opens the in-app reminder while Narrator runs' $(if($timer.Found -and $breakAction.Found -and $breakWindows.Count -gt 0){'PASS'}else{'FAIL'}) ([pscustomobject]@{TimerFocus=$timer;BreakActionFocus=$breakAction;ActivationKey='Space';AppWindows=$windows;BreakWindowCount=$breakWindows.Count})
   if($breakWindows.Count -gt 0){Send-Key 27;Start-Sleep -Milliseconds 250}
   Add-Result 'Audible Narrator speech was directly verified' 'NOT TESTED' ([pscustomobject]@{Reason='The Windows 11 runner exposed zero waveOut devices in the published-binary smoke; the Narrator process and keyboard focus do not prove synthesized speech reached an output endpoint.'})
 } catch {
