@@ -146,6 +146,23 @@ function Focus-AppElement([string]$name,[string]$controlType=''){
   try{$candidate[0].Element.SetFocus();Start-Sleep -Milliseconds 150;$focus=Get-FocusedSummary;return [pscustomobject]@{Found=($focus -and $focus.ProcessId -eq $appProcess.Id -and $focus.Name -ceq $name);Target=$name;Focus=$focus;ControlType=$candidate[0].ControlType;AutomationId=$candidate[0].AutomationId}}catch{return [pscustomobject]@{Found=$false;Target=$name;Focus=(Get-FocusedSummary);Error=$_.Exception.Message}}
 }
 function Get-AppAutomationNames { @((Get-AppAutomationElements|ForEach-Object Name|Where-Object {-not [string]::IsNullOrWhiteSpace($_)}|Select-Object -Unique)) }
+function Close-NarratorUpdatesWindow {
+  $root=[System.Windows.Automation.AutomationElement]::RootElement
+  $top=$root.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)
+  for($i=0;$i -lt $top.Count;$i++){
+    try{
+      $window=$top.Item($i);$current=$window.Current
+      if($current.ControlType -ne [System.Windows.Automation.ControlType]::Window -or $current.Name -ne 'Narrator updates'){continue}
+      $closeCondition=New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,'Close')
+      $close=$window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$closeCondition)
+      if($close){$invoke=$null;if($close.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$invoke)){$invoke.Invoke();Start-Sleep -Milliseconds 250;return [pscustomobject]@{Present=$true;Closed=$true;WindowName=$current.Name;ProcessId=$current.ProcessId;Method='InvokePattern on Narrator updates Close button'}}}
+      $windowPattern=$null
+      if($window.TryGetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern,[ref]$windowPattern)){$windowPattern.Close();Start-Sleep -Milliseconds 250;return [pscustomobject]@{Present=$true;Closed=$true;WindowName=$current.Name;ProcessId=$current.ProcessId;Method='WindowPattern.Close'}}
+      return [pscustomobject]@{Present=$true;Closed=$false;WindowName=$current.Name;ProcessId=$current.ProcessId;Reason='The Narrator updates window exposed no usable Close action.'}
+    }catch{return [pscustomobject]@{Present=$true;Closed=$false;Error=$_.Exception.Message}}
+  }
+  return [pscustomobject]@{Present=$false;Closed=$true;Reason='No Narrator updates onboarding window was present.'}
+}
 try {
   New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
   $actualHash = (Get-FileHash -LiteralPath $PublishedExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -176,6 +193,9 @@ try {
     return
   }
   Add-Result 'Windows Narrator is running during application keyboard navigation' 'PASS' ([pscustomobject]@{ProcessId=$narratorProcess.Id;Path=$narratorPath;OS=(Get-CimInstance Win32_OperatingSystem).Caption;NativeArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()})
+  Start-Sleep -Milliseconds 350
+  $narratorUpdates=Close-NarratorUpdatesWindow
+  Add-Result 'Transient Narrator updates onboarding window was dismissed without stopping Narrator' $(if($narratorUpdates.Closed){'PASS'}else{'NOT TESTED'}) $narratorUpdates
 
   $appProcess = Start-Process -FilePath $PublishedExecutablePath -PassThru
   $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -223,10 +243,11 @@ try {
   $historyPage=$historyFound -and $historyContent.Count -ge 4
   Add-Result 'Keyboard activation opens the History page while Narrator runs' $(if($historyPage){'PASS'}else{'FAIL'}) ([pscustomobject]@{Focus=$historyFocus;ContentNamesReached=$historyContent;ExpectedContent=@('Date','Break','Seconds','Save history on this device');Names=$historyNames})
 
-  if($historyFound){Send-Key 39;Start-Sleep -Milliseconds 200}
+  $historyTabRestored=if($historyPage){Focus-AppElement 'History' 'ControlType.RadioButton'}else{[pscustomobject]@{Found=$false;Target='History';Reason='The History page did not open.'}}
+  if($historyTabRestored.Found){Send-Key 39;Start-Sleep -Milliseconds 200}
   $settingsFocus=Get-FocusedSummary
-  $settingsFound=$historyFound -and $settingsFocus -and $settingsFocus.ProcessId -eq $appProcess.Id -and $settingsFocus.Name -ceq 'Settings'
-  Add-Result 'Narrator-active arrow-key navigation moves from History to Settings tab' $(if($settingsFound){'PASS'}else{'FAIL'}) ([pscustomobject]@{HistoryFocus=$historyFocus;SettingsFocus=$settingsFocus})
+  $settingsFound=$historyTabRestored.Found -and $settingsFocus -and $settingsFocus.ProcessId -eq $appProcess.Id -and $settingsFocus.Name -ceq 'Settings'
+  Add-Result 'Narrator-active arrow-key navigation moves from History to Settings tab' $(if($settingsFound){'PASS'}else{'FAIL'}) ([pscustomobject]@{HistoryFocusAfterOpeningPage=$historyTabRestored;SettingsFocus=$settingsFocus;KeyboardArrowSent=$historyTabRestored.Found})
   if($settingsFound){Send-Key 13;Start-Sleep -Milliseconds 250}
   $settingsNames=Get-AppAutomationNames
   $settingsContent=@('Work and break intervals','Work interval (minutes)','Break duration (seconds)'|Where-Object{$_ -in $settingsNames})

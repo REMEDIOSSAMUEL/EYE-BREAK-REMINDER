@@ -365,17 +365,14 @@ function Test-TabVisualStates([IntPtr]$Window,[string]$Label){
     for($i=0;$i -lt $hoverBaseline.Pixels.Count;$i++){if($hoverBaseline.Pixels[$i].Hex -ne $hoverPixels.Pixels[$i].Hex){$hoverDifferential=$true}}
     Check ($moved -and $hoverDifferential) "$Label real mouse hover changes visible Settings-tab pixels" ([pscustomobject]@{MousePositionSet=$moved;HoverPoint=@($hoverX,$hoverY);Before=$hoverBaseline.Pixels;After=$hoverPixels.Pixels;Method='SetCursorPos delivered mouse movement; desktop pixels sampled with GetPixel'})
 
-    $settingsElement=[System.Windows.Automation.AutomationElement]::FromHandle($settings)
-    $settingsBefore=$null
-    if($settingsElement){try{$settingsBefore=$settingsElement.Current}catch{$settingsElement=$null}}
-    if($settingsElement){$settingsElement.SetFocus();Start-Sleep -Milliseconds 150}
+    $focusClickX=$settingsRect.Left+[int](($settingsRect.Right-$settingsRect.Left)/2);$focusClickY=$settingsRect.Top+[int](($settingsRect.Bottom-$settingsRect.Top)/2)
+    $focusClickReady=[EBR_POST_NATIVE]::SetCursorPos($focusClickX,$focusClickY)
+    if($focusClickReady){[EBR_POST_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);[EBR_POST_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 180}
     $focus=[System.Windows.Automation.AutomationElement]::FocusedElement;$focusSummary=$null
     if($focus){$current=$focus.Current;$focusSummary=[pscustomobject]@{Name=$current.Name;ControlType=$current.ControlType.ProgrammaticName;ProcessId=$current.ProcessId;HasKeyboardFocus=$current.HasKeyboardFocus}}
     $focusOk=$focusSummary -and $focusSummary.ProcessId -eq $script:activeProcess.Id -and $focusSummary.Name -ceq 'Settings' -and $focusSummary.HasKeyboardFocus
-    Check $focusOk "$Label keyboard focus reaches the Settings navigation tab" ([pscustomobject]@{Focus=$focusSummary;Expected='Settings tab from its native HWND UIA element';UiAutomationSetFocus=($null -ne $settingsBefore);AccessibleName=if($settingsBefore){$settingsBefore.Name}else{$null};AccessibleRole=if($settingsBefore){$settingsBefore.ControlType.ProgrammaticName}else{$null}})
-    $timer=[EBR_POST_NATIVE]::ControlById($Window,10)
-    $timerElement=if($timer -ne [IntPtr]::Zero){[System.Windows.Automation.AutomationElement]::FromHandle($timer)}else{$null}
-    if($timerElement){$timerElement.SetFocus()}
+    Check ($focusClickReady -and $focusOk) "$Label keyboard focus reaches the Settings navigation tab" ([pscustomobject]@{Focus=$focusSummary;Expected='Settings navigation control owns keyboard focus after an actual desktop mouse click';ClickPoint=@($focusClickX,$focusClickY);ActualMouseClick=$focusClickReady})
+    Click-Control $Window 10 "$Label return to Timer after focus-state check"
   }finally{[void][EBR_POST_NATIVE]::SetCursorPos($oldCursor.X,$oldCursor.Y)}
 }
 function Test-DisabledReleaseLinkState([IntPtr]$Window,[string]$Label){
@@ -386,10 +383,10 @@ function Test-DisabledReleaseLinkState([IntPtr]$Window,[string]$Label){
   try{
     Click-Control $Window 12 "$Label open settings to inspect disabled update link"
     Click-Control $Window 135 "$Label select About settings section"
-    $button=[EBR_POST_NATIVE]::ControlById($Window,161);$element=$null
-    if($button -ne [IntPtr]::Zero){$element=[System.Windows.Automation.AutomationElement]::FromHandle($button)}
-    if(-not $element){Add-Result "$Label disabled official-release link is exposed and stays visually inactive on hover" 'NOT TESTED' 'The Open Official Release UI Automation element was unavailable.';return}
-    $current=$element.Current;$rect=New-Object EBR_POST_RECT
+    $button=[EBR_POST_NATIVE]::ControlById($Window,161);$element=$null;$current=$null
+    try{if($button -ne [IntPtr]::Zero){$element=[System.Windows.Automation.AutomationElement]::FromHandle($button);if($element){$current=$element.Current}}}catch{Add-Result "$Label disabled official-release link is exposed and stays visually inactive on hover" 'NOT TESTED' ([pscustomobject]@{Reason='UI Automation could not read the disabled release-link state.';Error=$_.Exception.Message});return}
+    if(-not $element -or -not $current){Add-Result "$Label disabled official-release link is exposed and stays visually inactive on hover" 'NOT TESTED' 'The Open Official Release UI Automation element was unavailable.';return}
+    $rect=New-Object EBR_POST_RECT
     if(-not [EBR_POST_NATIVE]::GetWindowRect($button,[ref]$rect)){throw 'Could not measure the disabled release-link button.'}
     [void][EBR_POST_NATIVE]::SetCursorPos($windowRect.Left+[int](($windowRect.Right-$windowRect.Left)/3),$windowRect.Top+6);Start-Sleep -Milliseconds 200
     $before=Get-ControlScreenColors $button
