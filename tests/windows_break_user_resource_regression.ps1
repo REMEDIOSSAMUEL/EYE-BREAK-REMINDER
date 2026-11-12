@@ -48,6 +48,8 @@ function Add-Event([string]$Name,[string]$Status,$Details=$null){$events.Add([ps
 function Check([bool]$Condition,[string]$Name,$Details=$null){if($Condition){Add-Event $Name 'PASS' $Details}else{Add-Event $Name 'FAIL' $Details}}
 function Get-Status([IntPtr]$Window){$h=[EBR_HOTFIX_NATIVE]::GetDlgItem($Window,41);if($h -eq [IntPtr]::Zero){return ''};return [EBR_HOTFIX_NATIVE]::Text($h)}
 function Wait-Condition([scriptblock]$Condition,[int]$Seconds=8){$timer=[Diagnostics.Stopwatch]::StartNew();while($timer.Elapsed.TotalSeconds -lt $Seconds){if(& $Condition){return $true};Start-Sleep -Milliseconds 100};return $false}
+function Get-Median([double[]]$Values){$sorted=@($Values|Sort-Object);if($sorted.Count%2){return [double]$sorted[[int][math]::Floor($sorted.Count/2)]};return ([double]$sorted[$sorted.Count/2-1]+[double]$sorted[$sorted.Count/2])/2}
+function Get-Slope([double[]]$Values){$n=$Values.Count;if($n-lt 2){return 0.0};$sx=$n*($n+1)/2.0;$sy=($Values|Measure-Object -Sum).Sum;$sxx=$n*($n+1)*(2*$n+1)/6.0;$sxy=0.0;for($i=0;$i-lt$n;$i++){$sxy+=($i+1)*$Values[$i]};return ($n*$sxy-$sx*$sy)/($n*$sxx-$sx*$sx)}
 function Get-AppUserObjects {
   $script:process.Refresh()
   if($script:process.HasExited){throw 'The tested application exited during resource sampling.'}
@@ -81,7 +83,7 @@ function Invoke-BreakCycle([int]$Index,[bool]$Capture=$false){
   if($Index -eq 0){Add-Event 'Warm-up resource sample (excluded from measured-cycle assertions)' 'INFO' $sample}
   elseif($ExpectedResourceBehavior -eq 'Growth'){
     if($sample.Delta -gt 0){Add-Event "v1.2.0 baseline USER-object leak reproduced in cycle $Index" 'INFO' $sample}else{Check $false "v1.2.0 baseline USER-object leak reproduced in cycle $Index" $sample}
-  }else{Check ($sample.Delta -eq 0) "Break cycle $Index released temporary USER objects" $sample}
+  }else{Check ([math]::Abs($sample.Delta) -le $script:userNoiseLimit) "Break cycle $Index USER-object change stayed within measured noise" ([pscustomobject]@{Cycle=$Index;Delta=$sample.Delta;AllowedSingleCycleChange=$script:userNoiseLimit;UserObjectsBefore=$before;UserObjectsAfter=$after})}
 }
 try{
   if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows'){
@@ -113,10 +115,17 @@ try{
   Check $sameExecutable 'The running process matches the executable passed to the regression test' $actualPath
   if(-not $sameExecutable){throw 'Started process does not match the specified executable.'}
   if(-not (Wait-Condition {(Get-Status $script:mainWindow) -match 'Running'})){throw "Test executable timer did not start; status='$(Get-Status $mainWindow)'."}
+  $idleUserSamples=[Collections.Generic.List[double]]::new()
+  for($sampleIndex=0;$sampleIndex-lt 12;$sampleIndex++){[void]$idleUserSamples.Add([double](Get-AppUserObjects));Start-Sleep -Milliseconds 250}
+  $idleMinimum=($idleUserSamples|Measure-Object -Minimum).Minimum;$idleMaximum=($idleUserSamples|Measure-Object -Maximum).Maximum;$idleRange=[int]($idleMaximum-$idleMinimum);$script:userNoiseLimit=$idleRange+1
+  Add-Event 'Idle USER-object noise measured before break cycles' 'INFO' ([pscustomobject]@{Samples=$idleUserSamples.Count;Minimum=$idleMinimum;Maximum=$idleMaximum;Range=$idleRange;SingleCycleTolerance=$script:userNoiseLimit;Basis='Observed idle count range plus one object of counter granularity.'})
   Invoke-BreakCycle 0 $true
   Add-Event 'Warm-up break cycle completed' 'INFO' ([pscustomobject]@{ExpectedResourceBehavior=$ExpectedResourceBehavior;Reason='One initial cycle primes common controls before the measured repeated-cycle check.'})
   for($index=1;$index -le $Cycles;$index++){Invoke-BreakCycle $index $false}
   Check (@($cycleSamples | Where-Object Measured).Count -eq $Cycles) 'All requested measured break cycles executed' ([pscustomobject]@{Requested=$Cycles;Actual=@($cycleSamples | Where-Object Measured).Count})
+  $measuredCycles=@($cycleSamples|Where-Object Measured);$userSeries=[double[]]@($measuredCycles|ForEach-Object{[double]$_.UserObjectsAfter});$windowSize=[math]::Min(10,[math]::Floor($userSeries.Count/2));$startMedian=Get-Median ([double[]]@($userSeries|Select-Object -First $windowSize));$endMedian=Get-Median ([double[]]@($userSeries|Select-Object -Last $windowSize));$medianDrift=$endMedian-$startMedian;$trend=Get-Slope $userSeries
+  if($ExpectedResourceBehavior -eq 'Growth'){$minimumTrend=1.5;$minimumDrift=[math]::Floor($Cycles*1.5);Check ($trend -ge $minimumTrend -and $medianDrift -ge $minimumDrift) 'Published v1.2.0 shows sustained USER-object growth across the full regression' ([pscustomobject]@{Cycles=$Cycles;StartMedian=$startMedian;EndMedian=$endMedian;MedianDrift=$medianDrift;SlopePerCycle=[math]::Round($trend,5);MinimumSlope=$minimumTrend;MinimumMedianDrift=$minimumDrift;Basis='Published failure reproduced at +2 USER objects per cycle; threshold retains 25% margin.'})}
+  else{$allowedDrift=$script:userNoiseLimit;Check ([math]::Abs($medianDrift) -le $allowedDrift -and $trend -le ($allowedDrift/[math]::Max(1,$Cycles))) 'Candidate has no sustained USER-object growth across the full regression' ([pscustomobject]@{Cycles=$Cycles;StartMedian=$startMedian;EndMedian=$endMedian;MedianDrift=$medianDrift;SlopePerCycle=[math]::Round($trend,5);AllowedMedianDrift=$allowedDrift;AllowedSlope=[math]::Round($allowedDrift/[math]::Max(1,$Cycles),5);IdleRange=$idleRange;Basis='Measured idle counter range plus one object; sustained accumulation exceeds the net-drift and slope limits.'})}
   Check ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $executableHash) 'Tested executable bytes remained unchanged' $executableHash
   if($screenshot -and (Test-Path -LiteralPath $screenshot)){Add-Event 'Real break-window screenshot captured' 'INFO' $screenshot}else{Add-Event 'Real break-window screenshot captured' 'NOT TESTED' 'The runner desktop foreground did not expose the break window for pixel capture.'}
 }catch{Add-Event 'USER-object regression runner' 'FAIL' $_.Exception.Message}
