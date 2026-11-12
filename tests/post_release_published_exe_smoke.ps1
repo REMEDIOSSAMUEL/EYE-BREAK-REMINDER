@@ -7,6 +7,7 @@ $ErrorActionPreference='Stop'
 $expected='2895c80f942dd03186305d913516700552524ec5ba9a77da0dab457a3265fcc6'
 $events=[System.Collections.Generic.List[object]]::new()
 $script:ownedData=$false
+$script:foregroundDiagnosticCaptured=$false
 $script:activeProcess=$null
 $script:activeWindow=[IntPtr]::Zero
 Add-Type -AssemblyName System.Windows.Forms
@@ -26,6 +27,12 @@ public static class EBR_POST_NATIVE {
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern int GetWindowTextW(IntPtr hwnd,StringBuilder text,int maxCount);
   [DllImport("user32.dll",SetLastError=true)] private static extern int GetWindowTextLengthW(IntPtr hwnd);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] private static extern int GetClassNameW(IntPtr hwnd,StringBuilder name,int maxCount);
+  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool BringWindowToTop(IntPtr hwnd);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool ShowWindow(IntPtr hwnd,int command);
+  [DllImport("user32.dll",SetLastError=true)] public static extern bool AttachThreadInput(uint attach,uint attachTo,bool attachState);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetDlgItem(IntPtr hwnd,int id);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp,uint flags,uint timeout,out IntPtr result);
@@ -63,13 +70,82 @@ function Click-Control([IntPtr]$Window,[int]$Id,[string]$Name){
   [void][EBR_POST_NATIVE]::SendMessageW($control,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
   Start-Sleep -Milliseconds 150
 }
+function Get-WindowAutomationSummary([IntPtr]$Window){
+  try{
+    $root=[System.Windows.Automation.AutomationElement]::FromHandle($Window)
+    $nodes=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+    $items=@();$limit=[Math]::Min($nodes.Count,120)
+    for($i=0;$i -lt $limit;$i++){
+      $node=$nodes.Item($i)
+      try{
+        $name=$node.Current.Name
+        if(-not $name){continue}
+        $bounds=$node.Current.BoundingRectangle
+        $items+=,[pscustomobject]@{Name=$name;ControlType=$node.Current.ControlType.ProgrammaticName;Offscreen=$node.Current.IsOffscreen;Bounds=@([Math]::Round($bounds.X),[Math]::Round($bounds.Y),[Math]::Round($bounds.Width),[Math]::Round($bounds.Height))}
+      }catch{}
+    }
+    return $items
+  }catch{return @()}
+}
+function Ensure-AppForeground([IntPtr]$Window,[int]$ProcessId){
+  [void][EBR_POST_NATIVE]::ShowWindow($Window,9)
+  $foregroundBefore=[EBR_POST_NATIVE]::GetForegroundWindow()
+  $foregroundThread=[uint32]0
+  if($foregroundBefore -ne [IntPtr]::Zero){[void][EBR_POST_NATIVE]::GetWindowThreadProcessId($foregroundBefore,[ref]$foregroundThread)}
+  $currentThread=[EBR_POST_NATIVE]::GetCurrentThreadId()
+  $attached=$false
+  if($foregroundThread -ne 0 -and $foregroundThread -ne $currentThread){$attached=[EBR_POST_NATIVE]::AttachThreadInput($currentThread,$foregroundThread,$true)}
+  try{
+    [void][EBR_POST_NATIVE]::BringWindowToTop($Window)
+    [void][EBR_POST_NATIVE]::SetForegroundWindow($Window)
+    try{[System.Windows.Automation.AutomationElement]::FromHandle($Window).SetFocus()}catch{}
+    [void][EBR_POST_NATIVE]::SetForegroundWindow($Window)
+  }finally{if($attached){[void][EBR_POST_NATIVE]::AttachThreadInput($currentThread,$foregroundThread,$false)}}
+  $watch=[Diagnostics.Stopwatch]::StartNew();$foreground=[IntPtr]::Zero;$foregroundPid=[uint32]0
+  while($watch.Elapsed.TotalSeconds -lt 2){
+    $foreground=[EBR_POST_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0
+    if($foreground -ne [IntPtr]::Zero){[void][EBR_POST_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid)}
+    if($foreground -eq $Window -and $foregroundPid -eq $ProcessId){break}
+    Start-Sleep -Milliseconds 100
+  }
+  $foregroundName='';$foregroundPath=''
+  if($foregroundPid){try{$foregroundProcess=Get-Process -Id $foregroundPid -ErrorAction Stop;$foregroundName=$foregroundProcess.ProcessName;$foregroundPath=$foregroundProcess.Path}catch{}}
+  return [pscustomobject]@{
+    ApplicationForeground=($foreground -eq $Window -and $foregroundPid -eq $ProcessId)
+    ForegroundHandle=('0x{0:X}' -f $foreground.ToInt64())
+    ForegroundProcessId=$foregroundPid
+    ForegroundProcessName=$foregroundName
+    ForegroundProcessPath=$foregroundPath
+    ForegroundTitle=[EBR_POST_NATIVE]::Text($foreground)
+    ForegroundClass=[EBR_POST_NATIVE]::ClassName($foreground)
+    ForegroundAutomation=if($foreground -ne [IntPtr]::Zero){Get-WindowAutomationSummary $foreground}else{@()}
+    WindowHandle=('0x{0:X}' -f $Window.ToInt64())
+    WindowProcessId=$ProcessId
+    ForegroundBefore=('0x{0:X}' -f $foregroundBefore.ToInt64())
+    InputThreadsAttached=$attached
+  }
+}
+function Capture-DesktopDiagnostic([string]$Name){
+  $bounds=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  if($bounds.Width -lt 100 -or $bounds.Height -lt 100){return $null}
+  $bitmap=[Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[Drawing.Graphics]::FromImage($bitmap)
+  try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$path=Join-Path $EvidenceDirectory $Name;$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png);return $path}finally{$graphics.Dispose();$bitmap.Dispose()}
+}
 function Capture([IntPtr]$Window,[string]$Name){
+  $windowPid=[uint32]0;[void][EBR_POST_NATIVE]::GetWindowThreadProcessId($Window,[ref]$windowPid)
+  $foreground=Ensure-AppForeground $Window ([int]$windowPid)
+  if(-not $foreground.ApplicationForeground){
+    $diagnosticPath=$null
+    if(-not $script:foregroundDiagnosticCaptured){try{$diagnosticPath=Capture-DesktopDiagnostic 'desktop-foreground-obstruction.png';$script:foregroundDiagnosticCaptured=$true}catch{}}
+    Add-Result "Visible screenshot of $Name" 'NOT TESTED' ([pscustomobject]@{Reason='The published application window could not be brought to the desktop foreground.';Foreground=$foreground;DesktopDiagnostic=$diagnosticPath})
+    return $null
+  }
   $rect=New-Object EBR_POST_RECT
   if(-not [EBR_POST_NATIVE]::GetWindowRect($Window,[ref]$rect)){throw "Could not measure published app window for $Name"}
   $width=$rect.Right-$rect.Left;$height=$rect.Bottom-$rect.Top
   if($width -lt 100 -or $height -lt 100){throw "Published app window bounds are invalid for $Name"}
   $bitmap=[Drawing.Bitmap]::new($width,$height);$graphics=[Drawing.Graphics]::FromImage($bitmap)
-  try{$graphics.CopyFromScreen($rect.Left,$rect.Top,0,0,$bitmap.Size);$path=Join-Path $EvidenceDirectory $Name;$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png);return $path}finally{$graphics.Dispose();$bitmap.Dispose()}
+  try{$graphics.CopyFromScreen($rect.Left,$rect.Top,0,0,$bitmap.Size);$path=Join-Path $EvidenceDirectory $Name;$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png);Add-Result "Visible screenshot of $Name" 'PASS' ([pscustomobject]@{Path=$path;Foreground=$foreground;Method='CopyFromScreen'});return $path}finally{$graphics.Dispose();$bitmap.Dispose()}
 }
 function Stop-OwnedApp {
   $graceful=$false
@@ -96,6 +172,14 @@ function Test-PublishedExecutable([string]$Path,[string]$Label){
   $script:activeWindow=Get-MainWindow $script:activeProcess.Id
   Check ($script:activeWindow -ne [IntPtr]::Zero) "$Label process exposes its real Win32 main window" ([pscustomobject]@{Pid=$script:activeProcess.Id;Window=('0x{0:X}' -f $script:activeWindow.ToInt64())})
   if($script:activeWindow -eq [IntPtr]::Zero){Stop-OwnedApp;return}
+  $foreground=Ensure-AppForeground $script:activeWindow $script:activeProcess.Id
+  if($foreground.ApplicationForeground){Add-Result "$Label main window is the visible desktop foreground" 'PASS' $foreground}
+  else{
+    $diagnosticPath=$null
+    if(-not $script:foregroundDiagnosticCaptured){try{$diagnosticPath=Capture-DesktopDiagnostic 'desktop-foreground-obstruction.png';$script:foregroundDiagnosticCaptured=$true}catch{}}
+    $foreground|Add-Member -NotePropertyName DesktopDiagnostic -NotePropertyValue $diagnosticPath
+    Add-Result "$Label main window is the visible desktop foreground" 'NOT TESTED' $foreground
+  }
   $actualPath=''
   try{$actualPath=[IO.Path]::GetFullPath((Get-Process -Id $script:activeProcess.Id -ErrorAction Stop).Path)}catch{}
   Check ($actualPath -ieq [IO.Path]::GetFullPath($Path)) "$Label launch runs from the downloaded release path" ([pscustomobject]@{Expected=$Path;Actual=$actualPath})
