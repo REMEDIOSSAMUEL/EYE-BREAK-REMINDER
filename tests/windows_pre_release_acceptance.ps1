@@ -1192,24 +1192,26 @@ function Test-FreshInstallApp {
   Switch-Settings 0
   Set-Edit $script:mainWindow 100 '60' '60-minute countdown boundary interval'
   Switch-Timer
+  $countdownHandle=(Get-Control $script:mainWindow 40 '60-minute countdown boundary').Handle
   $sixtyObserved=$false;$sixtyObservedText='';$sixtyAttempts=0
   for($attempt=1;$attempt -le 3 -and -not $sixtyObserved;$attempt++){
     $sixtyAttempts=$attempt
     Click-Control $script:mainWindow 21 "Reset for 60:00 boundary attempt $attempt"
     $observeWatch=[Diagnostics.Stopwatch]::StartNew()
     while($observeWatch.Elapsed.TotalSeconds -lt 0.75){
-      $sixtyObservedText=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 40 '60-minute countdown boundary').Handle)
+      $sixtyObservedText=[EBR_PRE_NATIVE]::Text($countdownHandle)
       if($sixtyObservedText -eq '60:00'){$sixtyObserved=$true;break}
       Start-Sleep -Milliseconds 10
     }
   }
   Require $sixtyObserved 'Installed published executable displays exactly 60:00 at the 60-minute reset boundary' ([pscustomobject]@{Observed=$sixtyObservedText;Attempts=$sixtyAttempts;ConfiguredWorkMinutes=60})
-  # Poll for the one-second boundary before any screenshot or other work can consume it.
+  # Read the already-located native countdown control directly. Re-enumerating all
+  # child controls in PowerShell can take long enough to miss the one-second state.
   $fiftyNineWatch=[Diagnostics.Stopwatch]::StartNew();$fiftyNineObserved=$false;$fiftyNineText=''
-  while($fiftyNineWatch.Elapsed.TotalSeconds -lt 4){
-    $fiftyNineText=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 40 '59:59 countdown boundary').Handle)
+  while($fiftyNineWatch.Elapsed.TotalSeconds -lt 5){
+    $fiftyNineText=[EBR_PRE_NATIVE]::Text($countdownHandle)
     if($fiftyNineText -eq '59:59'){$fiftyNineObserved=$true;break}
-    Start-Sleep -Milliseconds 10
+    Start-Sleep -Milliseconds 2
   }
   Require $fiftyNineObserved 'Installed published executable advances from 60:00 to exactly 59:59' ([pscustomobject]@{Observed=$fiftyNineText;WaitSeconds=[Math]::Round($fiftyNineWatch.Elapsed.TotalSeconds,2)})
   Capture-ActiveWindow $script:mainWindow 'published-timer-boundary-59-59.png' | Out-Null
