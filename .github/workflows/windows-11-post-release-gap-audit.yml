@@ -10,6 +10,7 @@ on:
       - 'tests/windows_runner_probe.ps1'
       - 'tests/post_release_download_audit.ps1'
       - 'tests/post_release_published_exe_smoke.ps1'
+      - 'tests/post_release_narrator_probe.ps1'
       - 'tests/process_exit_handle_probe.ps1'
       - 'tests/windows11_runner_desktop_prep.ps1'
   workflow_dispatch:
@@ -61,6 +62,7 @@ jobs:
           if (-not $desktop.interactiveDesktopAvailable) { throw "Windows 11 ARM runner did not expose Explorer/taskbar desktop: $($desktop.reason)" }
 
       - name: Download and verify all genuine public v1.2.0 assets
+        id: release_assets
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -88,7 +90,19 @@ jobs:
             -EvidenceDirectory 'build/post-release-evidence'
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Run Windows Narrator during keyboard-only published-app navigation
+        if: ${{ always() && steps.release_assets.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = Join-Path $env:RUNNER_TEMP 'eye-break-reminder-v1.2.0-published-assets'
+          & ./tests/post_release_narrator_probe.ps1 `
+            -PublishedExecutablePath (Join-Path $assets 'EyeBreakReminder.exe') `
+            -EvidenceDirectory 'build/post-release-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Record installer platform boundary
+        if: always()
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'

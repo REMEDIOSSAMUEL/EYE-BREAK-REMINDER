@@ -113,6 +113,7 @@ jobs:
             ConvertTo-Json -Depth 6 | Set-Content 'build/gui-test/evidence/gui-acceptance-results.json' -Encoding UTF8
 
       - name: Download and independently audit the public v1.2.0 assets
+        id: release_assets
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -149,6 +150,7 @@ jobs:
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Attempt a separate standard-user install and uninstall
+        if: ${{ always() && steps.release_assets.outcome == 'success' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
