@@ -476,7 +476,8 @@ function Test-PrimaryPressedState([IntPtr]$Window,[string]$Label){
     $before=Get-ControlScreenColors $button
     $centerX=$rect.Left+[int](($rect.Right-$rect.Left)/2);$centerY=$rect.Top+[int](($rect.Bottom-$rect.Top)/2)
     [void][EBR_POST_NATIVE]::SetCursorPos($centerX,$centerY);Start-Sleep -Milliseconds 200
-    $hit=[EBR_POST_NATIVE]::WindowFromPoint((New-Object EBR_POST_POINT -Property @{X=$centerX;Y=$centerY}))
+    $hitPoint=New-Object EBR_POST_POINT;$hitPoint.X=$centerX;$hitPoint.Y=$centerY
+    $hit=[EBR_POST_NATIVE]::WindowFromPoint($hitPoint)
     $hitRoot=if($hit -ne [IntPtr]::Zero){[EBR_POST_NATIVE]::GetAncestor($hit,2)}else{[IntPtr]::Zero}
     if($hitRoot -ne $Window){
       Add-Result "$Label primary-button is the actual desktop hit target" 'NOT TESTED' ([pscustomobject]@{Point=@($centerX,$centerY);HitHandle=('0x{0:X}' -f $hit.ToInt64());HitRoot=('0x{0:X}' -f $hitRoot.ToInt64());ExpectedWindow=('0x{0:X}' -f $Window.ToInt64());Reason='A different window owned the pointer location; no click was sent to it.'})
