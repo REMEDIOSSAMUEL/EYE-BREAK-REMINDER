@@ -43,6 +43,8 @@ public static class EBR_POST_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp,uint flags,uint timeout,out IntPtr result);
   [DllImport("winmm.dll",ExactSpelling=true)] public static extern uint waveOutGetNumDevs();
   [DllImport("user32.dll",SetLastError=true)] public static extern int GetGuiResources(IntPtr process,uint flags);
+  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr BeginDeferWindowPos(int count);
+  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr DeferWindowPos(IntPtr batch,IntPtr hwnd,IntPtr insertAfter,int x,int y,int width,int height,uint flags);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool GetScrollInfo(IntPtr hwnd,int bar,ref EBR_POST_SCROLLINFO info);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool SystemParametersInfoW(uint action,uint uiParam,ref int value,uint flags);
   [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
@@ -64,6 +66,16 @@ public static class EBR_POST_NATIVE {
 Add-Type -TypeDefinition $native
 function Add-Result([string]$Name,[string]$Status,$Details=$null){$events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')});Write-Host "[$Status] $Name"}
 function Check([bool]$Condition,[string]$Name,$Details=$null){if($Condition){Add-Result $Name 'PASS' $Details}else{Add-Result $Name 'FAIL' $Details}}
+function Probe-FailedDeferWindowPos([string]$Label){
+  $process=[Diagnostics.Process]::GetCurrentProcess()
+  $before=[EBR_POST_NATIVE]::GetGuiResources($process.Handle,1)
+  $batch=[EBR_POST_NATIVE]::BeginDeferWindowPos(1)
+  $returned=[IntPtr]::Zero;$errorCode=0
+  if($batch -ne [IntPtr]::Zero){$returned=[EBR_POST_NATIVE]::DeferWindowPos($batch,[IntPtr]::Zero,[IntPtr]::Zero,0,0,1,1,0x0004);$errorCode=[Runtime.InteropServices.Marshal]::GetLastWin32Error()}
+  Start-Sleep -Milliseconds 250
+  $after=[EBR_POST_NATIVE]::GetGuiResources($process.Handle,1)
+  Add-Result "$Label failed null-HWND DeferWindowPos resource probe (test process only)" 'INFO' ([pscustomobject]@{Process='PowerShell harness, not EyeBreakReminder.exe';InitialBatchCreated=($batch -ne [IntPtr]::Zero);DeferReturnedNull=($returned -eq [IntPtr]::Zero);LastError=$errorCode;UserObjectsBefore=$before;UserObjectsAfter=$after;Delta=($after-$before);Reason='Compares USER-object cleanup after the documented abandoned-batch path; it does not alter application state.'})
+}
 function Get-MainWindow([int]$ProcessId){
   $watch=[Diagnostics.Stopwatch]::StartNew()
   while($watch.Elapsed.TotalSeconds -lt 25){
@@ -523,6 +535,7 @@ function Test-PublishedExecutable([string]$Path,[string]$Label){
 }
 try{
   [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
+  Probe-FailedDeferWindowPos 'Windows runner'
   $waveOutDevices=[EBR_POST_NATIVE]::waveOutGetNumDevs()
   Add-Result 'Production audio output and loopback capture' 'NOT TESTED' ([pscustomobject]@{WaveOutDeviceCount=$waveOutDevices;Reason='The isolated smoke profile disables alarms; no WASAPI loopback capture or physical speaker audibility test was performed.'})
   if(-not [Environment]::UserInteractive -or [EBR_POST_NATIVE]::FindWindowW('Shell_TrayWnd',$null) -eq [IntPtr]::Zero){
