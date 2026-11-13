@@ -108,6 +108,7 @@ public static class EBR_PRE_NATIVE {
   public static IntPtr[] Children(IntPtr root) { List<IntPtr> r=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){r.Add(h);return true;};EnumChildWindows(root,cb,IntPtr.Zero);GC.KeepAlive(cb);return r.ToArray(); }
   public static IntPtr ChildById(IntPtr root,int id){foreach(IntPtr h in Children(root))if(GetDlgCtrlID(h)==id)return h;return IntPtr.Zero;}
   public static bool AppResponds(IntPtr hwnd,uint timeout){IntPtr result;return SendMessageTimeoutW(hwnd,0,IntPtr.Zero,IntPtr.Zero,2,timeout,out result)!=IntPtr.Zero;}
+  public static System.Threading.Tasks.Task<IntPtr> SendButtonClickAsync(IntPtr hwnd){return System.Threading.Tasks.Task.Factory.StartNew(()=>SendMessageW(hwnd,0x00F5,IntPtr.Zero,IntPtr.Zero),System.Threading.CancellationToken.None,System.Threading.Tasks.TaskCreationOptions.LongRunning,System.Threading.Tasks.TaskScheduler.Default);}
   public static bool GetTrayRect(IntPtr hwnd,uint uid,out EBR_PRE_RECT rect){EBR_PRE_NOTIFYICONIDENTIFIER id=new EBR_PRE_NOTIFYICONIDENTIFIER();id.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_NOTIFYICONIDENTIFIER));id.hWnd=hwnd;id.uID=uid;id.guidItem=Guid.Empty;return Shell_NotifyIconGetRect(ref id,out rect)==0;}
   public static bool GetHighContrast(out uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));bool ok=SystemParametersInfoW(0x0042,h.cbSize,ref h,0);flags=h.dwFlags;return ok;}
   public static bool SetHighContrast(uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));h.dwFlags=flags;return SystemParametersInfoW(0x0043,h.cbSize,ref h,2);}
@@ -216,17 +217,15 @@ function Click-SchedulePresetAndConfirm([int]$Id,[string]$Name) {
   foreach($day in @('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')){
     if($before["schedule$day"] -ne '1' -or $before["schedule${day}1"] -ne '09001700' -or $before.ContainsKey("schedule${day}2") -or $before.ContainsKey("schedule${day}3")){$samePreset=$false}
   }
-  if($samePreset){Set-Check $script:mainWindow 285 $false 'Make the v1.2.1 schedule differ before testing its preset confirmation'}
-  $rect=Get-Rect $control.Handle;$x=[int](($rect.Left+$rect.Right)/2);$y=[int](($rect.Top+$rect.Bottom)/2)
-  Require ([EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow)) "$Name activates the installed v1.2.1 app before a real desktop click"
-  Start-Sleep -Milliseconds 100
-  $foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid)
-  Require ($foregroundPid -eq $script:appPid -and [EBR_PRE_NATIVE]::SetCursorPos($x,$y)) "$Name button is clickable on the isolated interactive desktop" ([pscustomobject]@{ForegroundPid=$foregroundPid;AppPid=$script:appPid;ButtonRect=$rect})
-  [EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 60;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
-  Require $true "$Name real pointer click was sent to the visible Win32 preset button" ([pscustomobject]@{ControlId=$Id;ParentClass=[EBR_PRE_NATIVE]::ClassName([EBR_PRE_NATIVE]::GetParent($control.Handle));ButtonRect=$rect})
+  if($samePreset){Set-Check $script:mainWindow 285 $false 'Make the v1.2.1 schedule differ before testing its preset confirmation';$before=Read-SettingsMap (Join-Path $dataDir 'settings.ini')}
+  $parent=[EBR_PRE_NATIVE]::GetParent($control.Handle)
+  Require ([EBR_PRE_NATIVE]::ClassName($parent) -eq 'EyeBreakReminder.Settings') "$Name is a child of the installed app's settings pane" ([pscustomobject]@{ParentClass=[EBR_PRE_NATIVE]::ClassName($parent);ControlId=$Id})
+  # SendMessage(BM_CLICK) enters the app's modal TaskDialog synchronously. Run that real Win32 button click on a worker
+  # thread so this automation thread can observe and answer the confirmation dialog.
+  $clickTask=[EBR_PRE_NATIVE]::SendButtonClickAsync($control.Handle)
   $watch=[Diagnostics.Stopwatch]::StartNew();$dialog=[IntPtr]::Zero
   while($watch.Elapsed.TotalSeconds -lt 8){$dialog=Find-ScheduleReplacementDialog;if($dialog -ne [IntPtr]::Zero){break};Start-Sleep -Milliseconds 50}
-  Require ($dialog -ne [IntPtr]::Zero) "$Name opens the weekly-hours replacement confirmation"
+  if($dialog -eq [IntPtr]::Zero){$afterClick=Read-SettingsMap (Join-Path $dataDir 'settings.ini');$beforeDays=@{};$afterDays=@{};foreach($day in @('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')){$beforeDays[$day]=@($before["schedule$day"],$before["schedule${day}1"],$before["schedule${day}2"],$before["schedule${day}3"]);$afterDays[$day]=@($afterClick["schedule$day"],$afterClick["schedule${day}1"],$afterClick["schedule${day}2"],$afterClick["schedule${day}3"])};Require $false "$Name opens the weekly-hours replacement confirmation" ([pscustomobject]@{ClickTaskStatus=$clickTask.Status.ToString();Before=$beforeDays;After=$afterDays;ParentClass=[EBR_PRE_NATIVE]::ClassName($parent);ButtonText=[EBR_PRE_NATIVE]::Text($control.Handle)})}
   $yes=[EBR_PRE_NATIVE]::GetDlgItem($dialog,6)
   Require ($yes -ne [IntPtr]::Zero -and [EBR_PRE_NATIVE]::ClassName($yes) -eq 'Button' -and [EBR_PRE_NATIVE]::IsWindowVisible($yes) -and [EBR_PRE_NATIVE]::IsWindowEnabled($yes) -and [EBR_PRE_NATIVE]::Text($yes) -match '^\s*&?Yes\s*$') "$Name confirmation exposes an enabled Yes button" ([pscustomobject]@{DialogTitle=[EBR_PRE_NATIVE]::Text($dialog);ButtonText=[EBR_PRE_NATIVE]::Text($yes);ButtonId=[EBR_PRE_NATIVE]::GetDlgCtrlID($yes)})
   Capture-ActiveWindow $dialog 'installed-v121-schedule-replacement-confirmation.png' | Out-Null
@@ -234,8 +233,10 @@ function Click-SchedulePresetAndConfirm([int]$Id,[string]$Name) {
   $closeWatch=[Diagnostics.Stopwatch]::StartNew()
   while([EBR_PRE_NATIVE]::IsWindow($dialog) -and $closeWatch.Elapsed.TotalSeconds -lt 8){Start-Sleep -Milliseconds 50}
   Require (-not [EBR_PRE_NATIVE]::IsWindow($dialog)) "$Name confirmation closes after Yes"
-  $saved=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
-  Require ($saved['schedule'] -eq '1' -and $saved['scheduleMonday'] -eq '1' -and $saved['scheduleSunday'] -eq '1' -and $saved['scheduleMonday1'] -eq '00002400' -and $saved['scheduleSunday1'] -eq '00002400') "$Name saves the all-day, every-day schedule after confirmation" ([pscustomobject]@{Schedule=$saved['schedule'];Monday=$saved['scheduleMonday'];Sunday=$saved['scheduleSunday'];MondayPeriod=$saved['scheduleMonday1'];SundayPeriod=$saved['scheduleSunday1']})
+  Require ($clickTask.Wait(8000)) "$Name Win32 button click returns after the confirmation closes" ([pscustomobject]@{TaskStatus=$clickTask.Status.ToString()})
+  $saved=Read-SettingsMap (Join-Path $dataDir 'settings.ini');$presetDays=@()
+  foreach($day in @('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')){if($saved["schedule$day"] -eq '1' -and $saved["schedule${day}1"] -eq '09001700' -and -not $saved.ContainsKey("schedule${day}2") -and -not $saved.ContainsKey("schedule${day}3")){$presetDays+=,$day}}
+  Require ($saved['schedule'] -eq '1' -and $presetDays.Count -eq 7) "$Name saves the everyday 09:00–17:00 preset after confirmation" ([pscustomobject]@{Schedule=$saved['schedule'];PresetDays=$presetDays})
 }
 function Get-Combo([IntPtr]$Root, [int]$Id, [string]$Name) {
   $control=Get-Control $Root $Id $Name

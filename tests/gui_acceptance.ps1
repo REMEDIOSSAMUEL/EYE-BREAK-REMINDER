@@ -645,7 +645,8 @@ try {
   $breakResourceTrends=@((Get-PickerResourceTrend 'USER objects' 'UserObjects' $script:breakResourceSamples),(Get-PickerResourceTrend 'GDI objects' 'GdiObjects' $script:breakResourceSamples),(Get-PickerResourceTrend 'process handles' 'HandleCount' $script:breakResourceSamples),(Get-PickerResourceTrend 'private bytes' 'PrivateBytes' $script:breakResourceSamples),(Get-PickerResourceTrend 'working set bytes' 'WorkingSetBytes' $script:breakResourceSamples))
   foreach($trend in $breakResourceTrends){$tolerance=switch($trend.Resource){'private bytes'{1048576}'working set bytes'{8388608}default{2}};$flat=($trend.Resource -notin @('private bytes','working set bytes'));Assert-That ($trend.EndMedian -le ($trend.StartMedian+$tolerance) -and (-not $flat -or $trend.SlopePerInteraction -le 0.15)) "Repeated reminder windows have no sustained $($trend.Resource) growth" ([pscustomobject]@{Trend=$trend;AllowedMedianDrift=$tolerance})}
   Add-Result 'Repeated reminder-window resource soak' 'INFO' ([pscustomobject]@{MeasuredCycles=$breakResourceCycles;ClosedWindows=$breakResourceCycles;Trends=$breakResourceTrends})
-  Set-Intervals 2 30;Switch-Timer;Click-Control $script:mainWindow 21 'Reset after picker verification'
+  # This executable accelerates its monotonic clock tenfold. Keep both phases long enough for the five-theme render checks.
+  Set-Intervals 180 300;Switch-Timer;Click-Control $script:mainWindow 21 'Reset after picker verification'
 
   $themeNames=@('follow-windows','light','dark','high-contrast-dark','high-contrast-light')
   foreach ($theme in 0..4) {
