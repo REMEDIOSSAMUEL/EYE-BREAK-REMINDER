@@ -129,6 +129,7 @@ function Add-Event([string]$Name, [string]$Status, $Details=$null) {
     'FAIL' { $script:failCount++ }
     'NOT TESTED' { $script:notTestedCount++ }
   }
+  Write-Host ("[{0}] [{1}] {2}" -f [DateTime]::UtcNow.ToString('HH:mm:ss'),$Status,$Name)
 }
 function Pass([string]$Name, $Details=$null) { Add-Event $Name 'PASS' $Details }
 function Not-Tested([string]$Name, [string]$Reason) { Add-Event $Name 'NOT TESTED' $Reason }
@@ -196,6 +197,32 @@ function Click-Control([IntPtr]$Root, [int]$Id, [string]$Name) {
   $control=Get-Control $Root $Id $Name
   if(-not $control.Enabled){throw "$Name control is disabled."}
   [void][EBR_PRE_NATIVE]::SendMessageW($control.Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+}
+function Find-ScheduleReplacementDialog {
+  foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){
+    if(-not [EBR_PRE_NATIVE]::IsWindowVisible($window) -or [EBR_PRE_NATIVE]::ClassName($window) -ne '#32770' -or [EBR_PRE_NATIVE]::Text($window) -ne 'Eye Break Reminder'){continue}
+    $texts=@(foreach($child in [EBR_PRE_NATIVE]::Children($window)){[EBR_PRE_NATIVE]::Text($child)}) -join ' '
+    if($texts -match 'Replace the weekly hours\?'){return $window}
+  }
+  return [IntPtr]::Zero
+}
+function Click-SchedulePresetAndConfirm([int]$Id,[string]$Name) {
+  $control=Get-Control $script:mainWindow $Id $Name
+  if(-not $control.Enabled){throw "$Name control is disabled."}
+  # Queue BM_CLICK so the application's modal TaskDialog cannot block this automation thread.
+  Require ([EBR_PRE_NATIVE]::PostMessageW($control.Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)) "$Name click was queued to the application thread"
+  $watch=[Diagnostics.Stopwatch]::StartNew();$dialog=[IntPtr]::Zero
+  while($watch.Elapsed.TotalSeconds -lt 8){$dialog=Find-ScheduleReplacementDialog;if($dialog -ne [IntPtr]::Zero){break};Start-Sleep -Milliseconds 50}
+  Require ($dialog -ne [IntPtr]::Zero) "$Name opens the weekly-hours replacement confirmation"
+  $yes=[EBR_PRE_NATIVE]::GetDlgItem($dialog,6)
+  Require ($yes -ne [IntPtr]::Zero -and [EBR_PRE_NATIVE]::ClassName($yes) -eq 'Button' -and [EBR_PRE_NATIVE]::IsWindowVisible($yes) -and [EBR_PRE_NATIVE]::IsWindowEnabled($yes) -and [EBR_PRE_NATIVE]::Text($yes) -match '^\s*&?Yes\s*$') "$Name confirmation exposes an enabled Yes button" ([pscustomobject]@{DialogTitle=[EBR_PRE_NATIVE]::Text($dialog);ButtonText=[EBR_PRE_NATIVE]::Text($yes);ButtonId=[EBR_PRE_NATIVE]::GetDlgCtrlID($yes)})
+  Capture-ActiveWindow $dialog 'installed-v121-schedule-replacement-confirmation.png' | Out-Null
+  Require ([EBR_PRE_NATIVE]::PostMessageW($yes,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)) "$Name confirmation Yes click was queued"
+  $closeWatch=[Diagnostics.Stopwatch]::StartNew()
+  while([EBR_PRE_NATIVE]::IsWindow($dialog) -and $closeWatch.Elapsed.TotalSeconds -lt 8){Start-Sleep -Milliseconds 50}
+  Require (-not [EBR_PRE_NATIVE]::IsWindow($dialog)) "$Name confirmation closes after Yes"
+  $saved=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
+  Require ($saved['schedule'] -eq '1' -and $saved['scheduleMonday'] -eq '1' -and $saved['scheduleSunday'] -eq '1' -and $saved['scheduleMonday1'] -eq '00002400' -and $saved['scheduleSunday1'] -eq '00002400') "$Name saves the all-day, every-day schedule after confirmation" ([pscustomobject]@{Schedule=$saved['schedule'];Monday=$saved['scheduleMonday'];Sunday=$saved['scheduleSunday'];MondayPeriod=$saved['scheduleMonday1'];SundayPeriod=$saved['scheduleSunday1']})
 }
 function Get-Combo([IntPtr]$Root, [int]$Id, [string]$Name) {
   $control=Get-Control $Root $Id $Name
@@ -435,9 +462,17 @@ function Open-InstalledColorPicker([int]$ButtonId,[string]$Name) {
   $watch=[Diagnostics.Stopwatch]::StartNew();while($watch.Elapsed.TotalSeconds-lt8){$dialog=Find-InstalledColorPicker;if($dialog-ne[IntPtr]::Zero){return $dialog};Start-Sleep -Milliseconds 50};throw 'The installed application did not open its native ChooseColorW dialog.'
 }
 function Get-InstalledChildText([IntPtr]$Window) {
-  $length=[EBR_PRE_NATIVE]::SendMessageW($Window,0x000E,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+  $messageResult=[IntPtr]::Zero
+  $sent=[EBR_PRE_NATIVE]::SendMessageTimeoutW($Window,0x000E,[IntPtr]::Zero,[IntPtr]::Zero,[uint32]2,[uint32]3000,[ref]$messageResult)
+  if($sent -eq [IntPtr]::Zero){throw "Timed out reading native control text length for HWND 0x$('{0:X}' -f $Window.ToInt64())."}
+  $length=$messageResult.ToInt32()
   $capacity=[Math]::Max(2,$length+2);$buffer=[Runtime.InteropServices.Marshal]::AllocHGlobal($capacity*2)
-  try {[void][EBR_PRE_NATIVE]::SendMessageW($Window,0x000D,[IntPtr]$capacity,$buffer);return [Runtime.InteropServices.Marshal]::PtrToStringUni($buffer)}
+  try {
+    $messageResult=[IntPtr]::Zero
+    $sent=[EBR_PRE_NATIVE]::SendMessageTimeoutW($Window,0x000D,[IntPtr]::new($capacity),$buffer,[uint32]2,[uint32]3000,[ref]$messageResult)
+    if($sent -eq [IntPtr]::Zero){throw "Timed out reading native control text for HWND 0x$('{0:X}' -f $Window.ToInt64())."}
+    return [Runtime.InteropServices.Marshal]::PtrToStringUni($buffer)
+  }
   finally {[Runtime.InteropServices.Marshal]::FreeHGlobal($buffer)}
 }
 function Set-InstalledPickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue) {
@@ -1527,7 +1562,7 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
   Set-Edit $script:mainWindow 101 '45' 'v1.2.1 break duration'
   Switch-Settings 1
   Set-Check $script:mainWindow 120 $true 'v1.2.1 operating schedule'
-  Click-Control $script:mainWindow 122 'Set the v1.2.1 schedule to every day'
+  Click-SchedulePresetAndConfirm 122 'Set the v1.2.1 schedule to every day'
   Switch-Settings 2
   Set-Check $script:mainWindow 32 $false 'v1.2.1 alarm enabled'
   Switch-Settings 4
