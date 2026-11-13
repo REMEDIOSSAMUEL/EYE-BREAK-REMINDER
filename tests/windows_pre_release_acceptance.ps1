@@ -239,6 +239,15 @@ function Focus-InstalledPickerField([IntPtr]$Dialog,[IntPtr]$Handle) {
   finally{[void][EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$false)}
   if($actual-ne$Handle){throw 'The expected installed color-picker RGB field did not receive keyboard focus.'}
 }
+function Click-InstalledPickerField([IntPtr]$Dialog,[IntPtr]$Handle) {
+  $rect=Get-Rect $Handle;$x=[int](($rect.Left+$rect.Right)/2);$y=[int](($rect.Top+$rect.Bottom)/2)
+  [void][EBR_PRE_NATIVE]::SetForegroundWindow($Dialog)
+  if(-not[EBR_PRE_NATIVE]::SetCursorPos($x,$y)){throw 'Could not position the pointer over the installed picker RGB field.'}
+  [EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 50
+  [EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 100
+  if([EBR_PRE_NATIVE]::GetForegroundWindow()-ne$Dialog){throw 'The native installed colour picker did not own the foreground after clicking its RGB field.'}
+  Focus-InstalledPickerField $Dialog $Handle
+}
 function Get-AppFocusedControl {
   $targetPid=[uint32]0;$targetThread=[EBR_PRE_NATIVE]::GetWindowThreadProcessId($script:mainWindow,[ref]$targetPid)
   $currentThread=[EBR_PRE_NATIVE]::GetCurrentThreadId()
@@ -348,6 +357,12 @@ function Wait-ForStatus([string]$Expected,[int]$TimeoutSeconds=8) {
   while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){$last=Get-Status;if($last -like "*$Expected*"){return $last};Start-Sleep -Milliseconds 100}
   throw "Expected status '$Expected'; last observed '$last'."
 }
+function Wait-ForRingProgress([string]$Name) {
+  $start=Get-TimerSeconds;$watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds-lt5-and(Get-TimerSeconds)-ge$start){Start-Sleep -Milliseconds 100}
+  Require ((Get-TimerSeconds)-lt$start) "$Name countdown advances before rendered ring sampling"
+  Start-Sleep -Milliseconds 4500
+}
 function Get-UiaElements([IntPtr]$Window) {
   $root=[System.Windows.Automation.AutomationElement]::FromHandle($Window)
   if(-not $root){return @()}
@@ -438,7 +453,21 @@ function Open-InstalledColorPicker([int]$ButtonId,[string]$Name) {
   $watch=[Diagnostics.Stopwatch]::StartNew();while($watch.Elapsed.TotalSeconds-lt8){$dialog=Find-InstalledColorPicker;if($dialog-ne[IntPtr]::Zero){return $dialog};Start-Sleep -Milliseconds 50};throw 'The installed application did not open its native ChooseColorW dialog.'
 }
 function Set-InstalledPickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue) {
-  foreach($item in @(@{Id=706;Value=$Red;Name='Red'},@{Id=707;Value=$Green;Name='Green'},@{Id=708;Value=$Blue;Name='Blue'})){$field=[EBR_PRE_NATIVE]::GetDlgItem($Dialog,$item.Id);if($field-eq[IntPtr]::Zero-or[EBR_PRE_NATIVE]::ClassName($field)-ne'Edit'){throw "Installed ChooseColorW dialog has no $($item.Name) RGB edit field."};Focus-InstalledPickerField $Dialog $field;[EBR_PRE_NATIVE]::Key(0x11,$false);[EBR_PRE_NATIVE]::Key(0x41,$false);Start-Sleep -Milliseconds 25;[EBR_PRE_NATIVE]::Key(0x41,$true);[EBR_PRE_NATIVE]::Key(0x11,$true);foreach($digit in ([string]$item.Value).ToCharArray()){Send-VirtualKey ([byte][int][char]$digit)};Start-Sleep -Milliseconds 100;$actual=([EBR_PRE_NATIVE]::Text($field)).Trim();Require ($actual-eq[string]$item.Value) "Installed native picker accepts $($item.Name) RGB input" ([pscustomobject]@{Expected=$item.Value;Actual=$actual;FieldId=$item.Id;KeyboardFocused=$true})}
+  foreach($item in @(@{Id=706;Value=$Red;Name='Red'},@{Id=707;Value=$Green;Name='Green'},@{Id=708;Value=$Blue;Name='Blue'})){
+    $field=[EBR_PRE_NATIVE]::GetDlgItem($Dialog,$item.Id)
+    if($field-eq[IntPtr]::Zero-or[EBR_PRE_NATIVE]::ClassName($field)-ne'Edit'){throw "Installed ChooseColorW dialog has no $($item.Name) RGB edit field."}
+    Click-InstalledPickerField $Dialog $field
+    $targetPid=[uint32]0;$targetThread=[EBR_PRE_NATIVE]::GetWindowThreadProcessId($field,[ref]$targetPid);$currentThread=[EBR_PRE_NATIVE]::GetCurrentThreadId()
+    if($targetPid-ne$script:appPid-or-not[EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$true)){throw 'Could not attach keyboard input to the installed picker RGB field.'}
+    try{
+      [void][EBR_PRE_NATIVE]::SetFocus($field);$focused=[EBR_PRE_NATIVE]::GetFocus()
+      if($focused-ne$field){throw 'The installed picker RGB field lost focus before keyboard input.'}
+      [EBR_PRE_NATIVE]::Key(0x11,$false);[EBR_PRE_NATIVE]::Key(0x41,$false);Start-Sleep -Milliseconds 25;[EBR_PRE_NATIVE]::Key(0x41,$true);[EBR_PRE_NATIVE]::Key(0x11,$true)
+      foreach($digit in ([string]$item.Value).ToCharArray()){Send-VirtualKey ([byte][int][char]$digit)}
+      Start-Sleep -Milliseconds 100;$actual=([EBR_PRE_NATIVE]::Text($field)).Trim()
+    }finally{[void][EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$false)}
+    Require ($actual-eq[string]$item.Value) "Installed native picker accepts $($item.Name) RGB input" ([pscustomobject]@{Expected=$item.Value;Actual=$actual;FieldId=$item.Id;KeyboardFocused=($focused-eq$field);Foreground=('0x{0:X}' -f [EBR_PRE_NATIVE]::GetForegroundWindow().ToInt64())})
+  }
 }
 function Close-InstalledColorPicker([IntPtr]$Dialog,[bool]$Accept) {
   $buttonId=if($Accept){1}else{2};$button=[EBR_PRE_NATIVE]::GetDlgItem($Dialog,$buttonId);if($button-eq[IntPtr]::Zero){throw 'Installed native picker is missing OK or Cancel.'};[void][EBR_PRE_NATIVE]::SendMessageW($button,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
@@ -1042,14 +1071,16 @@ function Test-OsAppearanceAndTextScale {
         Switch-Settings 4;Set-Combo $script:mainWindow 106 $theme "System Forced Colors $($themeNames[$theme])";Switch-Timer
         $saved=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
         Require ($saved['customWorkAccent'] -eq '1' -and $saved['workAccentColor'] -eq [string][int]0x8B5CF6 -and $saved['customBreakAccent'] -eq '1' -and $saved['breakAccentColor'] -eq [string][int]0xF97316) "Installed Windows Forced Colors preserves saved custom colours under $($themeNames[$theme])" ([pscustomobject]@{Work=$saved['workAccentColor'];Break=$saved['breakAccentColor']})
-        $highlight=Get-InstalledSystemColorHex 13;Click-Control $script:mainWindow 21 "Reset installed Work timer for $($themeNames[$theme]) system contrast";Start-Sleep -Milliseconds 1100
+        $highlight=Get-InstalledSystemColorHex 13;Click-Control $script:mainWindow 21 "Reset installed Work timer for $($themeNames[$theme]) system contrast";Wait-ForRingProgress "Installed $($themeNames[$theme]) system Forced Colors Work"
         $workShot=Capture-PrintWindow $script:mainWindow "installed-system-forced-colors-$($themeNames[$theme])-work.png";if($workShot){Assert-InstalledTimerRingPixel $workShot $highlight "Installed Forced Colors $($themeNames[$theme]) Work ring"}
         Click-Control $script:mainWindow 22 "Start installed Break under $($themeNames[$theme]) system contrast"
         $wait=[Diagnostics.Stopwatch]::StartNew();$forcedBreak=[IntPtr]::Zero;while($wait.Elapsed.TotalSeconds-lt8){$visibleBreaks=Get-BreakWindow $script:appPid;if($visibleBreaks.Count-eq1){$forcedBreak=$visibleBreaks[0];break};Start-Sleep -Milliseconds 100}
         Require ($forcedBreak-ne[IntPtr]::Zero-and(Wait-ForStatus 'Taking an eye break')-like'*Taking an eye break*') "Installed $($themeNames[$theme]) system Forced Colors keeps the named Break state"
         Require ([EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 42 'System Forced Colors break countdown caption').Handle) -eq 'Break time remaining') "Installed $($themeNames[$theme]) system Forced Colors keeps a distinct Break countdown label"
+        Wait-ForRingProgress "Installed $($themeNames[$theme]) system Forced Colors Break"
         $hotlight=Get-InstalledSystemColorHex 26;$breakShot=Capture-PrintWindow $script:mainWindow "installed-system-forced-colors-$($themeNames[$theme])-break.png";if($breakShot){Assert-InstalledTimerRingPixel $breakShot $hotlight "Installed Forced Colors $($themeNames[$theme]) Break ring"}
         Click-Control $forcedBreak 24 "End installed $($themeNames[$theme]) system Forced Colors break";Require ((Wait-ForStatus 'Running')-like'*Running*') "Installed $($themeNames[$theme]) system Forced Colors returns to Work"
+        Wait-ForRingProgress "Installed $($themeNames[$theme]) system Forced Colors Work after Break"
         $returnShot=Capture-PrintWindow $script:mainWindow "installed-system-forced-colors-$($themeNames[$theme])-work-after-break.png";if($returnShot){Assert-InstalledTimerRingPixel $returnShot $highlight "Installed Forced Colors $($themeNames[$theme]) restores Work ring"}
       }
       [void][EBR_PRE_NATIVE]::SetHighContrast($script:highContrastOriginal)
@@ -1083,9 +1114,10 @@ function Test-OsAppearanceAndTextScale {
     Switch-Settings 4
     Set-Combo $script:mainWindow 106 1 'Restore Light theme after Windows appearance testing'
     Require ((Get-Combo $script:mainWindow 106 'Restored test theme') -eq 1) 'Appearance integration restores the Light theme test fixture'
-    Switch-Timer;Click-Control $script:mainWindow 21 'Restore Work state after installed Windows appearance tests';Start-Sleep -Milliseconds 1100
+    Switch-Timer;Click-Control $script:mainWindow 21 'Restore Work state after installed Windows appearance tests';Wait-ForRingProgress 'Installed Work after system Forced Colors'
     $workRestored=Capture-PrintWindow $script:mainWindow 'installed-custom-work-after-forced-colors.png';if($workRestored){Assert-InstalledTimerRingPixel $workRestored '#8B5CF6' 'Installed Work accent restored after system Forced Colors'}
     Click-Control $script:mainWindow 22 'Verify installed Break accent restored after system Forced Colors';$restoredBreak=[IntPtr]::Zero;$restoredWait=[Diagnostics.Stopwatch]::StartNew();while($restoredWait.Elapsed.TotalSeconds-lt8){$visibleBreaks=Get-BreakWindow $script:appPid;if($visibleBreaks.Count-eq1){$restoredBreak=$visibleBreaks[0];break};Start-Sleep -Milliseconds 100};Require ($restoredBreak-ne[IntPtr]::Zero) 'Installed app opens Break after system Forced Colors is disabled'
+    Wait-ForRingProgress 'Installed Break after system Forced Colors is disabled'
     $breakRestored=Capture-PrintWindow $script:mainWindow 'installed-custom-break-after-forced-colors.png';if($breakRestored){Assert-InstalledTimerRingPixel $breakRestored '#F97316' 'Installed Break accent restored after system Forced Colors'}
     Click-Control $restoredBreak 24 'Finish installed restored Break accent check';Require ((Wait-ForStatus 'Running')-like'*Running*') 'Installed app returns to Work after system Forced Colors is disabled'
   }
@@ -1555,7 +1587,7 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
     Close-InstalledColorPicker $workPicker $true
     $afterWork=Read-SettingsMap $settingsPath
     Require ($afterWork['customWorkAccent'] -eq '1' -and $afterWork['workAccentColor'] -eq [string][int]0x8B5CF6 -and $afterWork['customBreakAccent'] -eq '0') 'Installed Work picker saves a custom RGB independently'
-    Switch-Timer;Click-Control $script:mainWindow 21 'Reset installed Work ring before pixel capture';Start-Sleep -Milliseconds 1200
+    Switch-Timer;Click-Control $script:mainWindow 21 'Reset installed Work ring before pixel capture';Wait-ForRingProgress 'Installed Work accent after the v1.2.1 upgrade'
     $installedWorkShot=Capture-ActiveWindow $script:mainWindow 'installed-upgrade-custom-work-ring.png';if($installedWorkShot){Assert-InstalledTimerRingPixel $installedWorkShot '#8B5CF6' 'Installed Work accent after the v1.2.1 upgrade'}
     Switch-Settings 4
     $breakPicker=Open-InstalledColorPicker 128 'Installed Break Mode colour picker'
@@ -1572,6 +1604,7 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
     Click-Control $script:mainWindow 22 'Start installed custom Break pixel check'
     $breakWait=[Diagnostics.Stopwatch]::StartNew();$customBreakWindow=[IntPtr]::Zero;while($breakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$customBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
     Require ($customBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Installed custom Break retains its existing named state'
+    Wait-ForRingProgress 'Installed custom Break after the v1.2.1 upgrade'
     $installedBreakShot=Capture-ActiveWindow $script:mainWindow 'installed-upgrade-custom-break-ring.png';if($installedBreakShot){Assert-InstalledTimerRingPixel $installedBreakShot '#F97316' 'Installed Break accent after the v1.2.1 upgrade'}
     Click-Control $customBreakWindow 24 'Finish installed custom Break pixel check'
     Require ((Get-Status)-like'*Running*') 'Installed app returns to the Work Mode after its custom Break'

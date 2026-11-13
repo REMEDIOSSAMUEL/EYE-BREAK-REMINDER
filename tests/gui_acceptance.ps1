@@ -269,19 +269,20 @@ function Test-SystemHighContrast {
     for($theme=0;$theme -le 4;$theme++){
       Set-Theme $theme
       Assert-That ((Get-SettingLine 'workAccentColor') -eq $storedWork -and (Get-SettingLine 'breakAccentColor') -eq $storedBreak -and (Get-SettingLine 'customWorkAccent') -eq $customWork -and (Get-SettingLine 'customBreakAccent') -eq $customBreak) "Windows Forced Colors preserves saved custom colours under $($names[$theme])" ([pscustomobject]@{Work=$storedWork;Break=$storedBreak;WorkOverride=$customWork;BreakOverride=$customBreak})
-      Click-Control $script:mainWindow 21 "Reset Work timer under system Forced Colors $($names[$theme])";Start-Sleep -Milliseconds 1100
+      Click-Control $script:mainWindow 21 "Reset Work timer under system Forced Colors $($names[$theme])";Wait-RingProgress "Windows Forced Colors $($names[$theme]) Work"
       $workShot=Save-Screenshot $script:mainWindow "system-forced-colors-$($names[$theme])-work.png"
       Assert-TimerRingPixel $workShot $highlight "Windows Forced Colors $($names[$theme]) Work Mode ring"
       Click-Control $script:mainWindow 22 "Start Break under system Forced Colors $($names[$theme])"
       $breakWindow=Wait-BreakWindow
       Assert-That ((Wait-Status 'Taking an eye break') -like '*Taking an eye break*') "Windows Forced Colors $($names[$theme]) retains the named Break status"
       Assert-That ([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 42 'Break countdown caption').Handle) -eq 'Break time remaining') "Windows Forced Colors $($names[$theme]) retains a distinct Break countdown caption"
+      Wait-RingProgress "Windows Forced Colors $($names[$theme]) Break"
       $breakShot=Save-Screenshot $script:mainWindow "system-forced-colors-$($names[$theme])-break.png"
       $hotlight=Get-SystemColorHex 26
       Assert-TimerRingPixel $breakShot $hotlight "Windows Forced Colors $($names[$theme]) Break Mode ring"
       Click-Control $breakWindow 24 "Complete Break under system Forced Colors $($names[$theme])"
       Assert-That ((Wait-Status 'Running') -like '*Running*') "Windows Forced Colors $($names[$theme]) returns to Work Mode after Break"
-      Start-Sleep -Milliseconds 100
+      Wait-RingProgress "Windows Forced Colors $($names[$theme]) Work after Break"
       $returnShot=Save-Screenshot $script:mainWindow "system-forced-colors-$($names[$theme])-work-after-break.png"
       Assert-TimerRingPixel $returnShot $highlight "Windows Forced Colors $($names[$theme]) restores Work Mode ring after Break"
     }
@@ -296,9 +297,10 @@ function Test-SystemHighContrast {
     [void][EBR_GUI_NATIVE]::SendMessageW($script:mainWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero)
     Set-Theme 2
     Assert-That ((Get-SettingLine 'workAccentColor') -eq $storedWork -and (Get-SettingLine 'breakAccentColor') -eq $storedBreak) 'Turning Windows High Contrast off restores saved custom colour preferences'
-    Switch-Timer;Click-Control $script:mainWindow 21 'Restore normal Work ring after system Forced Colors test';Start-Sleep -Milliseconds 1100
+    Switch-Timer;Click-Control $script:mainWindow 21 'Restore normal Work ring after system Forced Colors test';Wait-RingProgress 'Disabling Windows Forced Colors restored Work'
     Assert-TimerRingPixel (Save-Screenshot $script:mainWindow 'system-forced-colors-disabled-restored-custom-work.png') '#22C55E' 'Disabling Windows Forced Colors restores custom Work Mode accent'
     Click-Control $script:mainWindow 22 'Verify restored Break accent after system Forced Colors';$breakWindow=Wait-BreakWindow
+    Wait-RingProgress 'Disabling Windows Forced Colors restored Break'
     Assert-TimerRingPixel (Save-Screenshot $script:mainWindow 'system-forced-colors-disabled-restored-custom-break.png') '#EF4444' 'Disabling Windows Forced Colors restores custom Break Mode accent'
     Click-Control $breakWindow 24 'Finish restored Break accent check'
     Assert-That ((Wait-Status 'Running') -like '*Running*') 'Normal Work mode returns after system Forced Colors is disabled'
@@ -362,6 +364,12 @@ function Get-TimerSeconds {
   $text=[EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 40 'Timer countdown').Handle)
   if ($text -notmatch '^(\d+):(\d{2})$') { throw "Unexpected timer format: $text" }
   return ([int]$Matches[1]*60+[int]$Matches[2])
+}
+function Wait-RingProgress([string]$Name) {
+  $start=Get-TimerSeconds;$watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds-lt5-and(Get-TimerSeconds)-ge$start){Start-Sleep -Milliseconds 100}
+  Assert-That ((Get-TimerSeconds)-lt$start) "$Name countdown advances before rendered ring sampling"
+  Start-Sleep -Milliseconds 4500
 }
 function Get-UiaNames([IntPtr]$Window) {
   $root=[System.Windows.Automation.AutomationElement]::FromHandle($Window)
@@ -570,7 +578,7 @@ try {
     Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 126 'Break accent swatch').Handle)) -eq $combo.BreakHex) "$($combo.Name) Break Mode swatch updates immediately"
     Save-Screenshot $script:mainWindow "settings-custom-combo-$($combo.Name).png" | Out-Null
 
-    Switch-Timer;Click-Control $script:mainWindow 21 'Reset before rendered work ring check';Start-Sleep -Milliseconds 1200
+    Switch-Timer;Click-Control $script:mainWindow 21 'Reset before rendered work ring check';Wait-RingProgress "$($combo.Name) Work"
     $workShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-work.png"
     Assert-TimerRingPixel $workShot $combo.WorkHex "$($combo.Name) Work Mode"
     Click-Control $script:mainWindow 22 'Start custom-colour break'
@@ -587,7 +595,7 @@ try {
     $workStartSeconds=Get-TimerSeconds;$workProgressWatch=[Diagnostics.Stopwatch]::StartNew()
     while($workProgressWatch.Elapsed.TotalSeconds -lt 5 -and (Get-TimerSeconds) -ge $workStartSeconds){Start-Sleep -Milliseconds 100}
     Assert-That ((Get-TimerSeconds) -lt $workStartSeconds) "$($combo.Name) Work countdown advances after Break completion"
-    Start-Sleep -Milliseconds 1400;$returnShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-work-after-break.png"
+    Start-Sleep -Milliseconds 4500;$returnShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-work-after-break.png"
     Assert-TimerRingPixel $returnShot $combo.WorkHex "$($combo.Name) Work Mode after break"
     Switch-Settings 4
   }
@@ -672,6 +680,7 @@ try {
     Assert-That ((Wait-Status 'Taking an eye break') -like '*Taking an eye break*') "$($themeNames[$theme]) break state label"
     Assert-That ([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 42 'Break countdown caption').Handle) -eq 'Break time remaining') "$($themeNames[$theme]) break countdown has a distinct label"
     Assert-StatusAlignment "$($themeNames[$theme]) break"
+    Wait-RingProgress "$($themeNames[$theme]) Break"
     Save-Screenshot $script:mainWindow ("timer-{0}-break.png" -f $themeNames[$theme]) | Out-Null
     if($theme -eq 3){Assert-TimerRingPixel (Join-Path $EvidenceDirectory ("timer-{0}-break.png" -f $themeNames[$theme])) '#00FFFF' 'High Contrast Dark overrides custom Break Mode colour'}
     if($theme -eq 4){Assert-TimerRingPixel (Join-Path $EvidenceDirectory ("timer-{0}-break.png" -f $themeNames[$theme])) '#005A00' 'High Contrast Light overrides custom Break Mode colour'}
