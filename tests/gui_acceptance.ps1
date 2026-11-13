@@ -842,6 +842,7 @@ try {
   Switch-Settings 4
   Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 125 'Work accent swatch').Handle)) -eq '#60A5FA' -and ([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 126 'Break accent swatch').Handle)) -eq '#2DD4BF') 'Reset restores the original Dark theme accent colours'
   Switch-Timer
+  Wait-RingProgress 'Reset to default Work Mode'
   $resetRingShot=Save-Screenshot $script:mainWindow 'custom-reset-default-work.png'
   Assert-TimerRingPixel $resetRingShot '#60A5FA' 'Reset restores rendered default Work Mode ring'
   Close-TestProcess
