@@ -1,4 +1,5 @@
 #pragma once
+#include "theme.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -110,6 +111,8 @@ struct Settings {
     int workMinutes=20, breakSeconds=20, sound=0, volume=55, mode=0, monitor=0, theme=2;
     bool alarm=true, repeat=false, notifications=true, snooze=true, autoStart=true;
     bool startup=false, tray=true, restore=true, pauseLocked=true, history=true, trayExplained=false, breakModeColors=true;
+    bool customWorkAccent=false, customBreakAccent=false;
+    theme::Color workAccentColor=theme::rgb(96,165,250), breakAccentColor=theme::rgb(45,212,191);
     int width=820, height=720, x=-32000, y=-32000;
     std::string selectedMonitor;
     Schedule schedule;
@@ -117,6 +120,7 @@ struct Settings {
         workMinutes=std::clamp(workMinutes,1,180); breakSeconds=std::clamp(breakSeconds,5,300);
         sound=std::clamp(sound,0,4); volume=std::clamp(volume,0,100); mode=std::clamp(mode,0,2);
         monitor=std::clamp(monitor,0,2); theme=std::clamp(theme,0,4);
+        workAccentColor&=0x00ffffffu; breakAccentColor&=0x00ffffffu;
         width=std::clamp(width,520,2560); height=std::clamp(height,480,2160);
         if(selectedMonitor.size()>128) selectedMonitor.clear();
         schedule.validate();
@@ -253,6 +257,7 @@ inline std::string encodeSettings(const Settings&s) {
     std::ostringstream o;
 #define EYE_WRITE(field) o<<#field<<'='<<s.field<<'\n'
     EYE_WRITE(workMinutes);EYE_WRITE(breakSeconds);EYE_WRITE(sound);EYE_WRITE(volume);EYE_WRITE(mode);EYE_WRITE(monitor);EYE_WRITE(theme);EYE_WRITE(breakModeColors);
+    EYE_WRITE(customWorkAccent);EYE_WRITE(customBreakAccent);EYE_WRITE(workAccentColor);EYE_WRITE(breakAccentColor);
     EYE_WRITE(alarm);EYE_WRITE(repeat);EYE_WRITE(notifications);EYE_WRITE(snooze);EYE_WRITE(autoStart);EYE_WRITE(startup);EYE_WRITE(tray);
     EYE_WRITE(restore);EYE_WRITE(pauseLocked);EYE_WRITE(history);EYE_WRITE(trayExplained);EYE_WRITE(width);EYE_WRITE(height);EYE_WRITE(x);EYE_WRITE(y);EYE_WRITE(selectedMonitor);
 #undef EYE_WRITE
@@ -263,13 +268,22 @@ inline std::string encodeSettings(const Settings&s) {
 }
 inline bool decodeSettings(const std::string& text, Settings& out) {
     if(text.size()>65536)return false;
-    Settings s;std::istringstream input(text);std::string line;int count=0;
+    Settings s;std::istringstream input(text);std::string line;int count=0;bool hasWorkAccentColor=false,hasBreakAccentColor=false;
     std::array<std::array<int,Schedule::maxPeriods>,7> stored;for(auto&day:stored)day.fill(-1);
     while(std::getline(input,line)) {
         if(line.empty())continue;
         auto eq=line.find('=');if(eq==std::string::npos)return false;
-        auto key=line.substr(0,eq),value=line.substr(eq+1);++count;
+        auto key=line.substr(0,eq),value=line.substr(eq+1);if(!value.empty()&&value.back()=='\r')value.pop_back();++count;
         if(key=="selectedMonitor"){if(value.size()>128||value.find('\r')!=std::string::npos)return false;s.selectedMonitor=value;continue;}
+        if(key=="workAccentColor"||key=="breakAccentColor"||key=="customWorkAccent"||key=="customBreakAccent"){
+            int n=0;bool valid=false;try{std::size_t used=0;n=std::stoi(value,&used);valid=used==value.size();}catch(...){}
+            if(key=="customWorkAccent"){s.customWorkAccent=valid&&(n==1);continue;}
+            if(key=="customBreakAccent"){s.customBreakAccent=valid&&(n==1);continue;}
+            const bool inRange=valid&&n>=0&&n<=0x00ffffff;
+            if(key=="workAccentColor"){hasWorkAccentColor=inRange;if(inRange)s.workAccentColor=theme::Color(n);else s.customWorkAccent=false;}
+            else{hasBreakAccentColor=inRange;if(inRange)s.breakAccentColor=theme::Color(n);else s.customBreakAccent=false;}
+            continue;
+        }
         int n=0;try{std::size_t used=0;n=std::stoi(value,&used);if(used!=value.size())return false;}catch(...){return false;}
 #define EYE_INT(field) if(key==#field){s.field=n;continue;}
 #define EYE_BOOL(field) if(key==#field){if(n!=0&&n!=1)return false;s.field=n!=0;continue;}
@@ -285,6 +299,8 @@ inline bool decodeSettings(const std::string& text, Settings& out) {
             break;}
     }
     if(count==0)return false;
+    if(!hasWorkAccentColor)s.customWorkAccent=false;
+    if(!hasBreakAccentColor)s.customBreakAccent=false;
     for(int d=0;d<7;++d){int k=0;for(int value:stored[d])if(value>=0)decodePeriod(value,s.schedule.periods[d][k++]);if(k)s.schedule.counts[d]=k;}
     s.validate();out=s;return true;
 }

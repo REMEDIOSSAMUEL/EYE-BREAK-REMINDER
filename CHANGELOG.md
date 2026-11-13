@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.0 (feature branch; prepared, not published)
+
+Added
+
+- Independent Work Mode and Break Mode accent colours under Settings → General → Appearance. **Choose Colour...** opens the native Windows `ChooseColorW` dialog with full colour selection, RGB entry, basic colours and a reusable custom-colour palette.
+- Live accent updates for the timer ring, primary action, active navigation, status text and break reminder. Choices are saved in the existing settings file; older settings without colour entries retain the familiar blue and teal/green defaults.
+- **Reset to Default Colours**, which clears only the accent overrides and leaves the theme, timer and other preferences intact.
+
+Accessibility
+
+- Custom button text uses a contrasting black or white foreground. Low-contrast status text is adjusted for readability while the saved RGB value stays unchanged.
+- High Contrast Dark, High Contrast Light and Windows Forced Colors override decorative custom accents while preserving saved choices. The optional distinct-break-colour setting remains in effect in normal themes.
+
+Verification
+
+- The isolated Windows GUI suite automates the real native colour dialog, checks RGB persistence and cancel behavior, samples actual work/break timer-ring pixels, and exercises repeated dialogs with USER/GDI/handle/memory trend checks. See `docs/VERIFICATION.md` for the prepared build results.
+
 ## 1.2.1 (unpublished hotfix candidate)
 
 Fixed

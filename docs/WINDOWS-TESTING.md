@@ -2,6 +2,22 @@
 
 Record OS build, display scaling, SDK/tool versions and actual results where available. Do not mark items passed from source inspection alone.
 
+## v1.3.0 custom accent colour acceptance
+
+Build `make all gui-test`, then run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/gui_acceptance.ps1
+```
+
+The script launches only `build/gui-test/EyeBreakReminder.exe` or its fixed test-only copy at `%TEMP%\EyeBreakReminder-GuiAcceptance\EyeBreakReminder.exe`. Its profile is always `test-data` beside that executable; it refuses to use the installed executable or another profile. Use the temp copy when the checkout itself is inside a cloud-synced folder, so generated settings and history do not race file synchronization. It opens the real `ChooseColorW` common dialog from **Settings → General → Appearance** using the button's keyboard Space path, checks its basic/custom colour controls, RGB fields and OK/Cancel buttons, enters RGB values, and captures the dialog. It checks saved integer RGB values, swatches, live timer continuity, cancel behavior and restart persistence.
+
+The script captures Work and Break timer pages for Purple/Orange, Blue/Pink, Green/Red and extreme Black/White combinations. It samples the actual timer-ring pixels from each captured window and requires exact selected RGB pixels; it also verifies Work Mode is used for breaks when the distinct-break-colour option is disabled. High Contrast Dark and High Contrast Light must render their built-in accessible ring colours while preserving saved custom preferences. Reset is checked in high contrast and the Dark theme, including timer checkpoint preservation.
+
+For the resource regression, the script warms up five native dialogs, then records USER objects, GDI objects, process handles, private bytes and working set after 40 further dialog closes split equally between OK and Cancel. It also creates and closes 20 reminder windows and measures the same process resources after each one. It writes the time series and screenshots under `build/gui-test/evidence`; slopes and endpoint medians must stay within the recorded thresholds. The larger test also switches themes. Do not treat the sample as evidence about the system-wide Windows Forced Colors setting unless that setting is actually active during the run.
+
+The final run's `gui-acceptance-results.json`, resource measurements and PNG captures are part of the verification evidence. This test does not publish a release or use the installed profile.
+
 ## v1.2.0 isolated GUI acceptance
 
 Build `make gui-test` and launch `build/gui-test/EyeBreakReminder.exe` through Windows GUI automation. This binary uses a 10x monotonic clock and stores settings/history under `build/gui-test/test-data`; it does not read or write `%LOCALAPPDATA%\EyeBreakReminder`. Use the app's native UI and capture screenshots of Timer, History, Settings → General and Settings → About. Do not change system-wide display, text-size, Forced Colors or reduced-motion settings just for this run.

@@ -1,4 +1,21 @@
-# Verification — Windows x64 release 1.0.4 (earlier releases cross-compiled from Linux)
+# Verification — Windows x64 release 1.3.0 (feature branch)
+
+## Prepared feature verification (2026-11-13)
+
+Version 1.3.0 adds independent custom Work Mode and Break Mode accents using the native Win32 `ChooseColorW` common dialog. The feature branch is prepared for review; no v1.3.0 tag or GitHub release has been published.
+
+- **Core tests:** `make test` passed with **6,699 assertions**.
+- **Build:** `make all` passed for the Windows x64 application; `make gui-test` rebuilt the isolated acceptance executable.
+- **Native picker and live UI:** the Windows acceptance script opened and operated the actual Basic colours, Custom colours, RGB controls, full-colour selector, OK and Cancel controls. Work and Break colors applied immediately, persisted through restart, and reset independently without changing timer settings. Cancel preserved both the selected color and running countdown.
+- **Rendered output:** **362 GUI assertions passed** with **59 screenshots**. Exact timer-ring pixels were checked for purple/orange (`#8B5CF6` / `#F97316`), blue/pink (`#3B82F6` / `#EC4899`), green/red (`#22C55E` / `#EF4444`), and black/white extremes. The test also confirmed each break color returns to its Work color, and turning off distinct break accents reuses the Work color. The five themes, both high-contrast themes, focus visibility, custom-color persistence through theme changes, invalid/legacy settings and Reset were exercised.
+- **Resource regression:** 40 extra picker cycles (20 OK, 20 Cancel) and 20 reminder-window create/close cycles were sampled. Picker first/last-quartile medians were USER objects 162/162, GDI objects 75/75, handles 191/191, private bytes 3,530,752/3,530,752, and working set 19,226,624/19,226,624 (bytes); ranges were 162, 75–76, 191, 3,530,752–3,567,616, and 19,226,624–19,263,488 respectively. Reminder-window medians were USER objects 163/163, GDI objects 75/73, handles 191/191, private bytes 3,620,864/3,629,056, and working set 19,320,832/19,312,640; ranges were 163–165, 73–75, 191, 3,571,712–3,629,056, and 19,279,872–19,324,928 respectively. These repeated measurements show no sustained resource growth proportional to the interactions. CSV time series and selected screenshots are included under `docs/evidence/v1.3.0-custom-accent-colours/`.
+- **Package:** `make package` passed, including **104 binary/package assertions**. The verifier checked the x64 Windows GUI PE, required OS DLL allowlist (including `comdlg32.dll` for `ChooseColorW`), embedded resources, NSIS x86 Unicode installer, source/portable archive contents and SHA-256 manifest. It produced `EyeBreakReminder.exe`, `EyeBreakReminder-Setup-x64.exe`, `EyeBreakReminder-Portable-x64.zip`, `EyeBreakReminder-Source.zip` and `EyeBreakReminder-SHA256.txt`. The app and installer are unsigned.
+
+**Remaining runtime limits:** `SPI_GETHIGHCONTRAST` reported Windows High Contrast/Forced Colors inactive, and system-wide settings were not changed. Both app High Contrast themes were exercised, and the test sent `WM_THEMECHANGED` in Follow Windows mode; an actual Windows Forced Colors transition and its `WM_SETTINGCHANGE` notification remain to be verified. The installer was built and package-checked but not installed or uninstalled. Shell notification appearance was not separately pixel-verified. The release is unsigned. These limits are not represented as completed tests.
+
+## Historical verification records
+
+### Windows x64 release 1.0.4 (earlier releases cross-compiled from Linux)
 
 This deliverable uses **C++17 / native Win32**, replacing the earlier WinUI/.NET implementation at the user's request to compile from Linux.
 

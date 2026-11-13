@@ -70,8 +70,9 @@ require(app.subsystem==2,'Application must use Windows GUI subsystem')
 require(app.flags&0x160==0x160,'ASLR, NX and high-entropy VA flags')
 require(app.directory(4)==(0,0),'Expected unsigned release')
 imports=app.imports()
-allowed={'advapi32.dll','comctl32.dll','dwmapi.dll','gdi32.dll','gdiplus.dll','kernel32.dll','msvcrt.dll','ole32.dll','shell32.dll','user32.dll','wtsapi32.dll','winmm.dll','uxtheme.dll','winhttp.dll','version.dll'}
+allowed={'advapi32.dll','comctl32.dll','comdlg32.dll','dwmapi.dll','gdi32.dll','gdiplus.dll','kernel32.dll','msvcrt.dll','ole32.dll','shell32.dll','user32.dll','wtsapi32.dll','winmm.dll','uxtheme.dll','winhttp.dll','version.dll'}
 require(all(d.lower() in allowed or d.lower().startswith(('api-ms-win-','ext-ms-win-')) for d in imports),'Only built-in Windows DLLs and OS API-set contracts')
+require('comdlg32.dll' in {d.lower() for d in imports},'Native Windows common-dialog library is linked for ChooseColorW')
 require(not any('libgcc' in d.lower() or 'libstdc++' in d.lower() for d in imports),'No external GCC/C++ runtime DLLs')
 resources=app.resources()
 def resource(kind,name):
@@ -134,6 +135,6 @@ if hashes.exists():
  for line in hashes.read_text().splitlines():
   digest,name=line.split('  ',1)
   require(hashlib.sha256((ROOT/'release'/name).read_bytes()).hexdigest()==digest,'SHA256 '+name)
-report={'application':'EyeBreakReminder.exe','machine':'AMD64 / x64','subsystem':'Windows GUI','windows_dll_imports':imports,'embedded_icon_sizes':sorted(sizes),'embedded_alarm_count':5,'unsigned':True,'windows_11_runtime_tested':False,'binary_and_package_assertions_passed':checks}
+report={'application':'EyeBreakReminder.exe','machine':'AMD64 / x64','subsystem':'Windows GUI','windows_dll_imports':imports,'embedded_icon_sizes':sorted(sizes),'embedded_alarm_count':5,'unsigned':True,'runtime_tested_by_this_script':False,'binary_and_package_assertions_passed':checks}
 (ROOT/'release/BINARY-VERIFICATION.json').write_text(json.dumps(report,indent=2)+'\n')
-print(f'PASS: {checks} binary/package assertions. Actual x64 Windows GUI executable; 5 embedded sounds; 9 icon sizes. Windows runtime NOT tested.')
+print(f'PASS: {checks} binary/package assertions. Actual x64 Windows GUI executable; ChooseColorW common-dialog library linked; 5 embedded sounds; 9 icon sizes. Runtime checks are reported separately.')

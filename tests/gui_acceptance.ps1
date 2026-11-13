@@ -7,8 +7,9 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $expectedVersion = (Get-Content -LiteralPath (Join-Path $repoRoot 'VERSION') -Raw).Trim()
 if($expectedVersion -notmatch '^\d+\.\d+\.\d+$'){throw 'VERSION must contain a three-component release version.'}
 $expectedExe = [IO.Path]::GetFullPath((Join-Path $repoRoot 'build\gui-test\EyeBreakReminder.exe'))
+$temporaryExe = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) 'EyeBreakReminder-GuiAcceptance\EyeBreakReminder.exe'))
 $exePath = [IO.Path]::GetFullPath($Executable)
-if ($exePath -ine $expectedExe) { throw "Refusing to launch anything other than the isolated GUI test executable: $expectedExe" }
+if ($exePath -ine $expectedExe -and $exePath -ine $temporaryExe) { throw "Refusing to launch anything other than the isolated GUI test executable or its fixed temp copy: $expectedExe" }
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { throw "GUI test executable is missing: $exePath (run make gui-test first)." }
 $expectedEvidence=[IO.Path]::GetFullPath((Join-Path $repoRoot 'build\gui-test\evidence'))
 if ([IO.Path]::GetFullPath($EvidenceDirectory) -ine $expectedEvidence) { throw "Refusing to write screenshots outside the isolated test evidence folder: $expectedEvidence" }
@@ -23,6 +24,8 @@ $script:assertionCount = 0
 $script:updateStatusHandle = [IntPtr]::Zero
 $script:updateLatestHandle = [IntPtr]::Zero
 $script:updateInstalledHandle = [IntPtr]::Zero
+$script:pickerResourceSamples = [System.Collections.Generic.List[object]]::new()
+$script:breakResourceSamples = [System.Collections.Generic.List[object]]::new()
 
 $native = @'
 using System;
@@ -42,6 +45,10 @@ public static class EBR_GUI_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetFocus();
   [DllImport("user32.dll", SetLastError=true)] public static extern int GetDlgCtrlID(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool IsWindow(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetDlgItem(IntPtr parent,int id);
+  [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW", SetLastError=true)] public static extern IntPtr GetWindowLongPtrW(IntPtr hwnd,int index);
+  [DllImport("user32.dll", SetLastError=true)] public static extern int GetGuiResources(IntPtr process,uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool IsWindowEnabled(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd, out EBR_GUI_RECT rect);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool GetClientRect(IntPtr hwnd, out EBR_GUI_RECT rect);
@@ -67,6 +74,7 @@ public static class EBR_GUI_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] public static extern int GetSystemMetrics(int index);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte virtualKey,byte scanCode,uint flags,UIntPtr extraInfo);
   public static string Text(IntPtr hwnd) { int n=SendMessageW(hwnd,0x000E,IntPtr.Zero,IntPtr.Zero).ToInt32();IntPtr b=Marshal.AllocHGlobal(Math.Max(2,n+2)*2);try{SendMessageW(hwnd,0x000D,new IntPtr(Math.Max(2,n+2)),b);return Marshal.PtrToStringUni(b)??"";}finally{Marshal.FreeHGlobal(b);} }
   public static string ClassName(IntPtr hwnd) { StringBuilder b=new StringBuilder(256); GetClassNameW(hwnd,b,b.Capacity); return b.ToString(); }
   public static IntPtr[] TopWindowsForProcess(int pid) {
@@ -146,10 +154,9 @@ function Set-AppFocus([IntPtr]$Handle) {
 function Set-Edit([IntPtr]$Root,[int]$Id,[string]$Value,[string]$Name) {
   $control = Get-Control $Root $Id $Name
   if ($control.Class -ne 'Edit' -or -not $control.Enabled) { throw "$Name is not an enabled Edit control." }
-  Set-AppFocus $control.Handle
   if(-not [EBR_GUI_NATIVE]::SetRemoteControlText($control.Handle,$Value)){throw "WM_SETTEXT failed for $Name."}
-  $nextId=if($Id -eq 100){101}else{130}
-  Set-AppFocus (Get-Control $Root $nextId 'Focus target after edit').Handle
+  $encodedCommand=($Id -bor (0x0200 -shl 16))
+  [void][EBR_GUI_NATIVE]::SendMessageW([EBR_GUI_NATIVE]::GetParent($control.Handle),0x0111,[IntPtr]$encodedCommand,$control.Handle)
   $actualText=[EBR_GUI_NATIVE]::Text($control.Handle)
   Assert-That ($actualText.Trim() -eq $Value) "$Name text" ([pscustomobject]@{Expected=$Value;Actual=$actualText})
   $settingKey=if($Id -eq 100){'workMinutes'}elseif($Id -eq 101){'breakSeconds'}else{''}
@@ -193,6 +200,58 @@ function Wait-BreakWindow([int]$TimeoutSeconds=8) {
   $watch=[Diagnostics.Stopwatch]::StartNew()
   while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds) { $window=Find-BreakWindow;if($window -ne [IntPtr]::Zero){return $window};Start-Sleep -Milliseconds 100 }
   throw 'The expected eye-break reminder window did not open.'
+}
+function Find-ColorPicker {
+  $matches=@([EBR_GUI_NATIVE]::TopWindowsForProcess($script:testPid) | Where-Object { [EBR_GUI_NATIVE]::IsWindowVisible($_) -and [EBR_GUI_NATIVE]::ClassName($_) -eq '#32770' })
+  if($matches.Count -gt 1){throw 'More than one common dialog belongs to the isolated application.'}
+  if($matches.Count -eq 1){return $matches[0]}
+  return [IntPtr]::Zero
+}
+function Wait-ColorPicker([int]$TimeoutSeconds=5) {
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){$dialog=Find-ColorPicker;if($dialog -ne [IntPtr]::Zero){return $dialog};Start-Sleep -Milliseconds 50}
+  throw 'The native ChooseColorW dialog did not open.'
+}
+function Open-ColorPicker([int]$ButtonId,[string]$Name) {
+  $control=Get-Control $script:mainWindow $ButtonId $Name
+  if(-not $control.Enabled){throw "$Name is disabled."}
+  $style=[EBR_GUI_NATIVE]::GetWindowLongPtrW($control.Handle,-16).ToInt64()
+  Assert-That (($style -band 0x00010000) -ne 0) "$Name has the Win32 WS_TABSTOP keyboard style" ([pscustomobject]@{Style=('0x{0:X}' -f $style)})
+  Set-AppFocus $control.Handle
+  [void][EBR_GUI_NATIVE]::PostMessageW($control.Handle,0x0100,[IntPtr]0x20,[IntPtr]::Zero)
+  [void][EBR_GUI_NATIVE]::PostMessageW($control.Handle,0x0101,[IntPtr]0x20,[IntPtr]::Zero)
+  Wait-ColorPicker
+}
+function Set-NativePickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue) {
+  foreach($item in @(@{Id=706;Value=$Red;Name='Red'},@{Id=707;Value=$Green;Name='Green'},@{Id=708;Value=$Blue;Name='Blue'})){
+    $field=[EBR_GUI_NATIVE]::GetDlgItem($Dialog,$item.Id)
+    if($field -eq [IntPtr]::Zero -or [EBR_GUI_NATIVE]::ClassName($field) -ne 'Edit'){throw "ChooseColorW did not expose its native $($item.Name) RGB edit control (ID $($item.Id))."}
+    [void][EBR_GUI_NATIVE]::SendMessageW($field,0x00B1,[IntPtr]::Zero,[IntPtr](-1))
+    [void][EBR_GUI_NATIVE]::SendMessageW($field,0x0102,[IntPtr]0x08,[IntPtr]::Zero)
+    foreach($digit in ([string]$item.Value).ToCharArray()){[void][EBR_GUI_NATIVE]::SendMessageW($field,0x0102,[IntPtr][int][char]$digit,[IntPtr]::Zero)}
+    $notification=($item.Id -bor (0x0300 -shl 16))
+    [void][EBR_GUI_NATIVE]::SendMessageW([EBR_GUI_NATIVE]::GetParent($field),0x0111,[IntPtr]$notification,$field)
+    if(([EBR_GUI_NATIVE]::Text($field)).Trim() -ne [string]$item.Value){throw "The native $($item.Name) field did not retain its value."}
+  }
+}
+function Close-NativePicker([IntPtr]$Dialog,[bool]$Accept) {
+  $id=if($Accept){1}else{2};$button=[EBR_GUI_NATIVE]::GetDlgItem($Dialog,$id)
+  if($button -eq [IntPtr]::Zero){throw "ChooseColorW is missing its native $(if($Accept){'OK'}else{'Cancel'}) button."}
+  [void][EBR_GUI_NATIVE]::SendMessageW($button,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds -lt 5 -and [EBR_GUI_NATIVE]::IsWindow($Dialog)){Start-Sleep -Milliseconds 25}
+  if([EBR_GUI_NATIVE]::IsWindow($Dialog)){throw 'The native color dialog did not close after its button was activated.'}
+}
+function Get-PickerResourceSample([int]$Cycle) {
+  $process=[Diagnostics.Process]::GetProcessById($script:testPid)
+  try{$process.Refresh();[pscustomobject]@{Cycle=$Cycle;UserObjects=[EBR_GUI_NATIVE]::GetGuiResources($process.Handle,1);GdiObjects=[EBR_GUI_NATIVE]::GetGuiResources($process.Handle,0);HandleCount=$process.HandleCount;PrivateBytes=$process.PrivateMemorySize64;WorkingSetBytes=$process.WorkingSet64}}
+  finally{$process.Dispose()}
+}
+function Get-PickerResourceTrend([string]$Name,[string]$Property,$Samples=$script:pickerResourceSamples) {
+  $values=[double[]]@($Samples|ForEach-Object{[double]$_.$Property});$first=[double[]]@($values|Select-Object -First 5|Sort-Object);$last=[double[]]@($values|Select-Object -Last 5|Sort-Object)
+  $n=$values.Count;$meanX=($n+1)/2.0;$meanY=($values|Measure-Object -Average).Average;$numerator=0.0;$denominator=0.0
+  for($i=0;$i -lt $n;$i++){$x=$i+1;$numerator+=($x-$meanX)*($values[$i]-$meanY);$denominator+=[Math]::Pow($x-$meanX,2)}
+  [pscustomobject]@{Resource=$Name;StartMedian=$first[2];EndMedian=$last[2];SlopePerInteraction=[Math]::Round($numerator/[Math]::Max(1.0,$denominator),5);Samples=$n;Minimum=($values|Measure-Object -Minimum).Minimum;Maximum=($values|Measure-Object -Maximum).Maximum}
 }
 function Wait-Status([string]$Expected,[int]$TimeoutSeconds=5) {
   $watch=[Diagnostics.Stopwatch]::StartNew();$last=''
@@ -258,6 +317,32 @@ function Save-Screenshot([IntPtr]$Window,[string]$Name) {
   Add-Result 'Screenshot' 'PASS' $path
   return $path
 }
+function Assert-TimerRingPixel([string]$ScreenshotPath,[string]$Hex,[string]$Name) {
+  $expected=[Drawing.ColorTranslator]::FromHtml($Hex);$bounds=Get-Rect $script:mainWindow;$client=Get-ClientGeometry $script:mainWindow
+  $dpi=[EBR_GUI_NATIVE]::GetDpiForWindow($script:mainWindow);$scale=100
+  try{$scale=[int](Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Accessibility' -Name TextScaleFactor -ErrorAction Stop)}catch{}
+  $textScale=[Math]::Min(2.25,[Math]::Max(1.0,$scale/100.0));$px={param([double]$v)[int][Math]::Floor($v*$dpi/96.0+0.5)}
+  $button=Get-Control $script:mainWindow 22 'Ring geometry reference button';$buttonTop=$button.Rect.Top-$client.Top
+  $navBottom=(& $px 16)+(& $px ([Math]::Max(40.0,31.0*$textScale)));$timerTop=$navBottom+(& $px 22);$statusBottom=$timerTop+(& $px 88)
+  $diameter=[Math]::Min((& $px 272),[Math]::Min($client.Width-(& $px 100),$buttonTop-$statusBottom-(& $px 18)));$diameter=[Math]::Max(1,$diameter)
+  $ringDiameter=$diameter-(& $px 8);$ringX=[int][Math]::Floor(($client.Width-$diameter)/2.0)+(& $px 4);$ringY=$statusBottom+(& $px 8)+(& $px 4)
+  $centerX=($client.Left-$bounds.Left)+$ringX+$ringDiameter/2.0;$centerY=($client.Top-$bounds.Top)+$ringY+$ringDiameter/2.0;$radius=$ringDiameter/2.0
+  $bitmap=[Drawing.Bitmap]::new($ScreenshotPath);$matches=0
+  try{
+    for($y=[Math]::Max(0,$ringY+($client.Top-$bounds.Top)-8);$y -lt [Math]::Min($bitmap.Height,$ringY+($client.Top-$bounds.Top)+$ringDiameter+8);$y++){
+      for($x=[Math]::Max(0,$ringX+($client.Left-$bounds.Left)-8);$x -lt [Math]::Min($bitmap.Width,$ringX+($client.Left-$bounds.Left)+$ringDiameter+8);$x++){
+        $distance=[Math]::Abs([Math]::Sqrt([Math]::Pow($x-$centerX,2)+[Math]::Pow($y-$centerY,2))-$radius)
+        if($distance -gt 4.5){continue};$pixel=$bitmap.GetPixel($x,$y)
+        if([Math]::Abs($pixel.R-$expected.R) -le 1 -and [Math]::Abs($pixel.G-$expected.G) -le 1 -and [Math]::Abs($pixel.B-$expected.B) -le 1){$matches++}
+      }
+    }
+  }finally{$bitmap.Dispose()}
+  Assert-That ($matches -ge 2) "$Name rendered timer-ring pixels equal $Hex" ([pscustomobject]@{Expected=$Hex;MatchingRingPixels=$matches;RingDiameter=$ringDiameter;Screenshot=$ScreenshotPath})
+}
+function Get-SettingLine([string]$Key) {
+  $content=Get-Content -LiteralPath (Join-Path $dataDirectory 'settings.ini') -Raw;$match=[regex]::Match($content,"(?m)^$([regex]::Escape($Key))=(.*)$")
+  if(-not $match.Success){throw "Saved setting '$Key' is missing."};return $match.Groups[1].Value
+}
 function Assert-StatusAlignment([string]$Name) {
   $dpi=[EBR_GUI_NATIVE]::GetDpiForWindow($script:mainWindow)
   $scale=100
@@ -288,7 +373,7 @@ function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Fai
   if($Delay -ge 2000){Switch-Timer;$before=Get-TimerSeconds}
   Switch-Settings 5
   Initialize-UpdateHandles
-  $fixtureDelay=[Math]::Max($Delay,300)
+  $fixtureDelay=[Math]::Max($Delay,1500)
   Write-UpdateFixture $Status $Body $Failure $fixtureDelay
   Click-Control $script:mainWindow 160 'Check for Updates'
   $button=Get-Control $script:mainWindow 160 'Check for Updates'
@@ -339,7 +424,7 @@ try {
 
   Switch-Settings 2
   Set-Check $script:mainWindow 32 $false 'Alarm enabled'
-  Set-Intervals 2 30
+  Set-Intervals 20 30
   Switch-Timer
   Click-Control $script:mainWindow 21 'Reset timer'
   Assert-That ((Wait-Status 'Running') -like '*Running*') 'Timer reaches Running state'
@@ -357,9 +442,111 @@ try {
   Assert-StatusAlignment 'default window'
   Save-Screenshot $script:mainWindow 'timer-dynamic-schedule.png' | Out-Null
 
+  Set-Theme 2
+  Switch-Settings 4
+  $appearanceNames=Get-UiaNames $script:mainWindow
+  Assert-That ($appearanceNames -contains 'Work Mode colour' -and $appearanceNames -contains 'Break Mode colour' -and $appearanceNames -contains 'Reset to Default Colours') 'Appearance exposes custom accent labels and reset through UI Automation' ($appearanceNames -join ' | ')
+  Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 125 'Work accent swatch').Handle)) -eq '#60A5FA') 'Dark theme displays the existing default work accent'
+  Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 126 'Break accent swatch').Handle)) -eq '#2DD4BF') 'Dark theme displays the existing default break accent'
+  Save-Screenshot $script:mainWindow 'settings-custom-accent-colours.png' | Out-Null
+
+  $customCombos=@(
+    [pscustomobject]@{Name='extreme-black-white';Work=@(0,0,0);Break=@(255,255,255);WorkHex='#000000';BreakHex='#FFFFFF'},
+    [pscustomobject]@{Name='purple-orange';Work=@(139,92,246);Break=@(249,115,22);WorkHex='#8B5CF6';BreakHex='#F97316'},
+    [pscustomobject]@{Name='blue-pink';Work=@(59,130,246);Break=@(236,72,153);WorkHex='#3B82F6';BreakHex='#EC4899'},
+    [pscustomobject]@{Name='green-red';Work=@(34,197,94);Break=@(239,68,68);WorkHex='#22C55E';BreakHex='#EF4444'}
+  )
+  foreach($combo in $customCombos){
+    Switch-Timer;$timerBeforeWorkPicker=Get-TimerSeconds;Switch-Settings 4
+    $workDialog=Open-ColorPicker 127 'Choose Work Mode colour'
+    Assert-That ([EBR_GUI_NATIVE]::ClassName($workDialog) -eq '#32770') "$($combo.Name) opens the actual native common colour dialog" ([EBR_GUI_NATIVE]::Text($workDialog))
+    if($combo.Name -eq 'purple-orange'){
+      foreach($id in @(719,720,721,706,707,708,1,2)){$child=[EBR_GUI_NATIVE]::GetDlgItem($workDialog,$id);Assert-That ($child -ne [IntPtr]::Zero -and [EBR_GUI_NATIVE]::IsWindowVisible($child)) "Native colour picker exposes required dialog control $id"}
+      Save-Screenshot $workDialog 'native-choose-color-dialog.png' | Out-Null
+    }
+    if($combo.Name -eq 'purple-orange'){
+      Start-Sleep -Milliseconds 1600
+    }
+    Set-NativePickerRgb $workDialog $combo.Work[0] $combo.Work[1] $combo.Work[2]
+    Close-NativePicker $workDialog $true
+    Switch-Timer;$workAfterPicker=Get-TimerSeconds
+    Assert-That ($workAfterPicker -le $timerBeforeWorkPicker) "$($combo.Name) Work Mode colour change leaves the countdown running without resetting it" ([pscustomobject]@{Before=$timerBeforeWorkPicker;After=$workAfterPicker})
+    if($combo.Name -eq 'purple-orange'){
+      Assert-That ($workAfterPicker -lt $timerBeforeWorkPicker) 'Work countdown advances while the native colour picker is open' ([pscustomobject]@{Before=$timerBeforeWorkPicker;After=$workAfterPicker})
+    }
+    Switch-Settings 4
+    Assert-That ((Get-SettingLine 'customWorkAccent') -eq '1' -and (Get-SettingLine 'workAccentColor') -eq [string][int]([Convert]::ToInt32($combo.WorkHex.Substring(1),16))) "$($combo.Name) Work Mode RGB selection is saved as integer RGB"
+    Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 125 'Work accent swatch').Handle)) -eq $combo.WorkHex) "$($combo.Name) Work Mode swatch updates immediately"
+
+    $breakDialog=Open-ColorPicker 128 'Choose Break Mode colour'
+    Set-NativePickerRgb $breakDialog $combo.Break[0] $combo.Break[1] $combo.Break[2]
+    Close-NativePicker $breakDialog $true
+    Switch-Timer
+    Assert-That ((Get-SettingLine 'customBreakAccent') -eq '1' -and (Get-SettingLine 'breakAccentColor') -eq [string][int]([Convert]::ToInt32($combo.BreakHex.Substring(1),16))) "$($combo.Name) Break Mode RGB selection is saved independently"
+    Switch-Settings 4
+    Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 126 'Break accent swatch').Handle)) -eq $combo.BreakHex) "$($combo.Name) Break Mode swatch updates immediately"
+    Save-Screenshot $script:mainWindow "settings-custom-combo-$($combo.Name).png" | Out-Null
+
+    Switch-Timer;Click-Control $script:mainWindow 21 'Reset before rendered work ring check';Start-Sleep -Milliseconds 1200
+    $workShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-work.png"
+    Assert-TimerRingPixel $workShot $combo.WorkHex "$($combo.Name) Work Mode"
+    Click-Control $script:mainWindow 22 'Start custom-colour break'
+    $breakWindow=Wait-BreakWindow
+    Assert-That ((Wait-Status 'Taking an eye break') -like '*Taking an eye break*') "$($combo.Name) break keeps the existing Taking an eye break status"
+    $breakShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-break.png"
+    Assert-TimerRingPixel $breakShot $combo.BreakHex "$($combo.Name) Break Mode"
+    Click-Control $breakWindow 24 'Finish custom-colour break'
+    Assert-That ((Wait-Status 'Running') -like '*Running*') "$($combo.Name) break returns to work"
+    Start-Sleep -Milliseconds 150;$returnShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-work-after-break.png"
+    Assert-TimerRingPixel $returnShot $combo.WorkHex "$($combo.Name) Work Mode after break"
+    Switch-Settings 4
+  }
+
+  Switch-Timer;$countBeforeCancel=Get-TimerSeconds;Switch-Settings 4
+  $beforeCancelWork=Get-SettingLine 'workAccentColor';$beforeCancelCustom=Get-SettingLine 'customWorkAccent';$cancelDialog=Open-ColorPicker 127 'Choose Work Mode colour';Set-NativePickerRgb $cancelDialog 255 255 255
+  Start-Sleep -Milliseconds 1300
+  Close-NativePicker $cancelDialog $false
+  Switch-Timer;$countDuringCancel=Get-TimerSeconds
+  Assert-That ($countDuringCancel -lt $countBeforeCancel) 'Countdown keeps running while a picker selection is pending'
+  Assert-That ((Get-SettingLine 'workAccentColor') -eq $beforeCancelWork -and (Get-SettingLine 'customWorkAccent') -eq $beforeCancelCustom) 'Cancel leaves the stored Work Mode colour unchanged'
+  Switch-Settings 4
+  Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 125 'Work accent swatch').Handle)) -eq '#22C55E') 'Cancel leaves the visible swatch unchanged'
+  Switch-Timer;$cancelShot=Save-Screenshot $script:mainWindow 'custom-cancel-keeps-green.png';Assert-TimerRingPixel $cancelShot '#22C55E' 'Cancelled Work Mode selection'
+
+  Switch-Settings 4;$resourceWarmup=5;$resourceCycles=40
+  for($i=0;$i -lt ($resourceWarmup+$resourceCycles);$i++){
+    $beforeValue=Get-SettingLine 'workAccentColor';$dialog=Open-ColorPicker 127 'Repeated Work Mode colour picker'
+    $accept=($i%2 -eq 0)
+    if($accept){Close-NativePicker $dialog $true}
+    else{Set-NativePickerRgb $dialog 255 255 255;Close-NativePicker $dialog $false}
+    $afterValue=Get-SettingLine 'workAccentColor'
+    Assert-That ($afterValue -eq $beforeValue) "Repeated picker $(if($accept){'OK'}else{'Cancel'}) action $($i+1) preserves the current RGB" $afterValue
+    if($i -ge $resourceWarmup){$script:pickerResourceSamples.Add((Get-PickerResourceSample ($i-$resourceWarmup+1)))}
+  }
+  $resourceTrends=@((Get-PickerResourceTrend 'USER objects' 'UserObjects'),(Get-PickerResourceTrend 'GDI objects' 'GdiObjects'),(Get-PickerResourceTrend 'process handles' 'HandleCount'),(Get-PickerResourceTrend 'private bytes' 'PrivateBytes'),(Get-PickerResourceTrend 'working set bytes' 'WorkingSetBytes'))
+  foreach($trend in $resourceTrends){
+    $tolerance=switch($trend.Resource){'private bytes'{1048576}'working set bytes'{8388608}default{2}}
+    $needsFlatSlope=($trend.Resource -notin @('private bytes','working set bytes'))
+    Assert-That ($trend.EndMedian -le ($trend.StartMedian+$tolerance) -and (-not $needsFlatSlope -or $trend.SlopePerInteraction -le 0.15)) "Repeated native picker has no sustained $($trend.Resource) growth" ([pscustomobject]@{Trend=$trend;AllowedMedianDrift=$tolerance})
+  }
+  Add-Result 'Repeated native picker resource soak' 'INFO' ([pscustomobject]@{WarmupDialogs=$resourceWarmup;MeasuredDialogs=$resourceCycles;OkActions=[int]($resourceCycles/2);CancelActions=[int]($resourceCycles/2);Trends=$resourceTrends})
+  Switch-Timer;$breakResourceCycles=20
+  for($i=1;$i -le $breakResourceCycles;$i++){
+    Click-Control $script:mainWindow 22 "Resource-soak eye break $i";$resourceBreak=Wait-BreakWindow
+    Click-Control $resourceBreak 24 "Close resource-soak eye break $i"
+    Assert-That ((Wait-Status 'Running') -like '*Running*') "Reminder window resource cycle $i returned to Work Mode"
+    Assert-That ((Find-BreakWindow) -eq [IntPtr]::Zero) "Reminder window resource cycle $i destroyed its window"
+    $script:breakResourceSamples.Add((Get-PickerResourceSample $i))
+  }
+  $breakResourceTrends=@((Get-PickerResourceTrend 'USER objects' 'UserObjects' $script:breakResourceSamples),(Get-PickerResourceTrend 'GDI objects' 'GdiObjects' $script:breakResourceSamples),(Get-PickerResourceTrend 'process handles' 'HandleCount' $script:breakResourceSamples),(Get-PickerResourceTrend 'private bytes' 'PrivateBytes' $script:breakResourceSamples),(Get-PickerResourceTrend 'working set bytes' 'WorkingSetBytes' $script:breakResourceSamples))
+  foreach($trend in $breakResourceTrends){$tolerance=switch($trend.Resource){'private bytes'{1048576}'working set bytes'{8388608}default{2}};$flat=($trend.Resource -notin @('private bytes','working set bytes'));Assert-That ($trend.EndMedian -le ($trend.StartMedian+$tolerance) -and (-not $flat -or $trend.SlopePerInteraction -le 0.15)) "Repeated reminder windows have no sustained $($trend.Resource) growth" ([pscustomobject]@{Trend=$trend;AllowedMedianDrift=$tolerance})}
+  Add-Result 'Repeated reminder-window resource soak' 'INFO' ([pscustomobject]@{MeasuredCycles=$breakResourceCycles;ClosedWindows=$breakResourceCycles;Trends=$breakResourceTrends})
+  Set-Intervals 2 30;Switch-Timer;Click-Control $script:mainWindow 21 'Reset after picker verification'
+
   $themeNames=@('follow-windows','light','dark','high-contrast-dark','high-contrast-light')
   foreach ($theme in 0..4) {
     Set-Theme $theme
+    Assert-That ((Get-SettingLine 'workAccentColor') -eq [string][int]0x22C55E -and (Get-SettingLine 'breakAccentColor') -eq [string][int]0xEF4444) "$($themeNames[$theme]) preserves both custom colours"
     if ($theme -eq 0) {
       [void][EBR_GUI_NATIVE]::SendMessageW($script:mainWindow,0x031A,[IntPtr]::Zero,[IntPtr]::Zero)
       Start-Sleep -Milliseconds 150
@@ -367,6 +554,8 @@ try {
     }
     Assert-StatusAlignment "$($themeNames[$theme]) work"
     Save-Screenshot $script:mainWindow ("timer-{0}-work.png" -f $themeNames[$theme]) | Out-Null
+    if($theme -eq 3){$contrastWorkShot=Save-Screenshot $script:mainWindow 'custom-high-contrast-dark-work.png';Assert-TimerRingPixel $contrastWorkShot '#FFFF00' 'High Contrast Dark overrides custom Work Mode colour'}
+    if($theme -eq 4){$contrastWorkShot=Save-Screenshot $script:mainWindow 'custom-high-contrast-light-work.png';Assert-TimerRingPixel $contrastWorkShot '#0000B3' 'High Contrast Light overrides custom Work Mode colour'}
     Click-Control $script:mainWindow 11 'History navigation'
     Save-Screenshot $script:mainWindow ("history-{0}.png" -f $themeNames[$theme]) | Out-Null
     Switch-Settings 4
@@ -394,6 +583,8 @@ try {
     Assert-That ([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 42 'Break countdown caption').Handle) -eq 'Break time remaining') "$($themeNames[$theme]) break countdown has a distinct label"
     Assert-StatusAlignment "$($themeNames[$theme]) break"
     Save-Screenshot $script:mainWindow ("timer-{0}-break.png" -f $themeNames[$theme]) | Out-Null
+    if($theme -eq 3){Assert-TimerRingPixel (Join-Path $EvidenceDirectory ("timer-{0}-break.png" -f $themeNames[$theme])) '#00FFFF' 'High Contrast Dark overrides custom Break Mode colour'}
+    if($theme -eq 4){Assert-TimerRingPixel (Join-Path $EvidenceDirectory ("timer-{0}-break.png" -f $themeNames[$theme])) '#005A00' 'High Contrast Light overrides custom Break Mode colour'}
     Save-Screenshot $breakWindow ("reminder-{0}.png" -f $themeNames[$theme]) | Out-Null
     $breakCount=[EBR_GUI_NATIVE]::Text((Get-Control $breakWindow 40 'Break countdown').Handle)
     Assert-That ($breakCount -match '^\d+:\d{2}$') "$($themeNames[$theme]) break duration visible" $breakCount
@@ -499,7 +690,9 @@ try {
   Switch-Timer
   Click-Control $script:mainWindow 22 'Dark break with optional accent disabled'
   $breakWindow=Wait-BreakWindow
-  Save-Screenshot $script:mainWindow 'timer-dark-break-accent-off.png' | Out-Null
+  Start-Sleep -Milliseconds 1300
+  $disabledAccentShot=Save-Screenshot $script:mainWindow 'timer-dark-break-accent-off.png'
+  Assert-TimerRingPixel $disabledAccentShot '#22C55E' 'Distinct break accent disabled uses the Work Mode ring colour'
   Save-Screenshot $breakWindow 'reminder-dark-break-accent-off.png' | Out-Null
   Click-Control $breakWindow 24 'End dark accent preference check'
   Switch-Settings 4
@@ -516,7 +709,22 @@ try {
   $script:updateStatusHandle=$script:updateLatestHandle=$script:updateInstalledHandle=[IntPtr]::Zero
   Switch-Settings 4
   Assert-That ((Get-Combo $script:mainWindow 106 'Theme') -eq 4) 'Selected theme persists across application restart'
+  Assert-That ((Get-SettingLine 'customWorkAccent') -eq '1' -and (Get-SettingLine 'workAccentColor') -eq [string][int]0x22C55E) 'Custom Work Mode colour persists across application restart'
+  Assert-That ((Get-SettingLine 'customBreakAccent') -eq '1' -and (Get-SettingLine 'breakAccentColor') -eq [string][int]0xEF4444) 'Custom Break Mode colour persists across application restart'
+  Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 125 'Work accent swatch').Handle)) -eq '#22C55E' -and ([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 126 'Break accent swatch').Handle)) -eq '#EF4444') 'Both custom color swatches restore after application restart'
   Save-Screenshot $script:mainWindow 'theme-persistence-high-contrast-light.png' | Out-Null
+  $timerBeforeReset=Get-Content -LiteralPath (Join-Path $dataDirectory 'timer.dat') -Raw
+  Click-Control $script:mainWindow 129 'Reset to Default Colours'
+  Assert-That ((Get-SettingLine 'customWorkAccent') -eq '0' -and (Get-SettingLine 'customBreakAccent') -eq '0') 'Reset clears only both custom accent overrides'
+  Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 125 'Work accent swatch').Handle)) -eq '#0000B3' -and ([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 126 'Break accent swatch').Handle)) -eq '#005A00') 'Reset shows the accessible defaults for the active high-contrast theme'
+  Assert-That ((Get-Combo $script:mainWindow 106 'Theme') -eq 4) 'Reset preserves the selected theme'
+  Assert-That ((Get-Content -LiteralPath (Join-Path $dataDirectory 'timer.dat') -Raw) -eq $timerBeforeReset) 'Reset does not modify saved timer state'
+  Set-Theme 2
+  Switch-Settings 4
+  Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 125 'Work accent swatch').Handle)) -eq '#60A5FA' -and ([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 126 'Break accent swatch').Handle)) -eq '#2DD4BF') 'Reset restores the original Dark theme accent colours'
+  Switch-Timer
+  $resetRingShot=Save-Screenshot $script:mainWindow 'custom-reset-default-work.png'
+  Assert-TimerRingPixel $resetRingShot '#60A5FA' 'Reset restores rendered default Work Mode ring'
   Close-TestProcess
   Add-Result 'GUI acceptance suite' 'PASS' ([pscustomobject]@{Assertions=$script:assertionCount;EvidenceDirectory=$EvidenceDirectory;TestDataDirectory=$dataDirectory;Version=$version})
 }
@@ -527,6 +735,8 @@ catch {
 finally {
   Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
   try { Close-TestProcess } catch { Add-Result 'test-app cleanup' 'FAIL' $_.Exception.Message }
+  if($script:pickerResourceSamples.Count){$script:pickerResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'picker-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
+  if($script:breakResourceSamples.Count){$script:breakResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'reminder-window-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
   $report=[pscustomobject]@{Version=$expectedVersion;Assertions=$script:assertionCount;Events=$script:events.ToArray();EvidenceDirectory=$EvidenceDirectory;TestDataDirectory=$dataDirectory}
   $report | ConvertTo-Json -Depth 9 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'gui-acceptance-results.json') -Encoding UTF8
   Write-Output "GUI acceptance: $($script:assertionCount) assertions; evidence: $EvidenceDirectory"

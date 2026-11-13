@@ -14,11 +14,11 @@ ManifestSupportedOS Win10
 ManifestDPIAwareness PerMonitorV2
 SetCompressor /SOLID lzma
 BrandingText "Eye Break Reminder"
-VIProductVersion "1.2.1.0"
+VIProductVersion "1.3.0.0"
 VIAddVersionKey /LANG=1033 "ProductName" "Eye Break Reminder"
 VIAddVersionKey /LANG=1033 "FileDescription" "Eye Break Reminder Setup"
-VIAddVersionKey /LANG=1033 "FileVersion" "1.2.1.0"
-VIAddVersionKey /LANG=1033 "ProductVersion" "1.2.1"
+VIAddVersionKey /LANG=1033 "FileVersion" "1.3.0.0"
+VIAddVersionKey /LANG=1033 "ProductVersion" "1.3.0"
 !define MUI_ICON "${EB_PROJECT_ROOT}\assets\App.ico"
 !define MUI_UNICON "${EB_PROJECT_ROOT}\assets\App.ico"
 !define MUI_ABORTWARNING
@@ -84,7 +84,7 @@ Section "Eye Break Reminder (required)" MainSection
   CreateShortcut "$SMPROGRAMS\Eye Break Reminder\Eye Break Reminder.lnk" "$INSTDIR\EyeBreakReminder.exe" "" "$INSTDIR\EyeBreakReminder.exe" 0
   WriteRegStr HKCU "Software\EyeBreakReminder" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayName" "Eye Break Reminder"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayVersion" "1.2.1"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayVersion" "1.3.0"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayIcon" "$INSTDIR\EyeBreakReminder.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "InstallLocation" "$INSTDIR"
