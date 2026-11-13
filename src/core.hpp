@@ -113,6 +113,12 @@ struct Settings {
     bool startup=false, tray=true, restore=true, pauseLocked=true, history=true, trayExplained=false, breakModeColors=true;
     bool customWorkAccent=false, customBreakAccent=false;
     theme::Color workAccentColor=theme::rgb(96,165,250), breakAccentColor=theme::rgb(45,212,191);
+    std::array<theme::Color,16> pickerCustomColors{{
+        theme::rgb(255,255,255),theme::rgb(192,192,192),theme::rgb(128,128,128),theme::rgb(0,0,0),
+        theme::rgb(255,0,0),theme::rgb(128,0,0),theme::rgb(255,255,0),theme::rgb(128,128,0),
+        theme::rgb(0,255,0),theme::rgb(0,128,0),theme::rgb(0,255,255),theme::rgb(0,128,128),
+        theme::rgb(0,0,255),theme::rgb(0,0,128),theme::rgb(255,0,255),theme::rgb(128,0,128)
+    }};
     int width=820, height=720, x=-32000, y=-32000;
     std::string selectedMonitor;
     Schedule schedule;
@@ -121,6 +127,7 @@ struct Settings {
         sound=std::clamp(sound,0,4); volume=std::clamp(volume,0,100); mode=std::clamp(mode,0,2);
         monitor=std::clamp(monitor,0,2); theme=std::clamp(theme,0,4);
         workAccentColor&=0x00ffffffu; breakAccentColor&=0x00ffffffu;
+        for(auto& color:pickerCustomColors)color&=0x00ffffffu;
         width=std::clamp(width,520,2560); height=std::clamp(height,480,2160);
         if(selectedMonitor.size()>128) selectedMonitor.clear();
         schedule.validate();
@@ -258,6 +265,7 @@ inline std::string encodeSettings(const Settings&s) {
 #define EYE_WRITE(field) o<<#field<<'='<<s.field<<'\n'
     EYE_WRITE(workMinutes);EYE_WRITE(breakSeconds);EYE_WRITE(sound);EYE_WRITE(volume);EYE_WRITE(mode);EYE_WRITE(monitor);EYE_WRITE(theme);EYE_WRITE(breakModeColors);
     EYE_WRITE(customWorkAccent);EYE_WRITE(customBreakAccent);EYE_WRITE(workAccentColor);EYE_WRITE(breakAccentColor);
+    for(std::size_t i=0;i<s.pickerCustomColors.size();++i)o<<"pickerCustomColor"<<i<<'='<<(s.pickerCustomColors[i]&0x00ffffffu)<<'\n';
     EYE_WRITE(alarm);EYE_WRITE(repeat);EYE_WRITE(notifications);EYE_WRITE(snooze);EYE_WRITE(autoStart);EYE_WRITE(startup);EYE_WRITE(tray);
     EYE_WRITE(restore);EYE_WRITE(pauseLocked);EYE_WRITE(history);EYE_WRITE(trayExplained);EYE_WRITE(width);EYE_WRITE(height);EYE_WRITE(x);EYE_WRITE(y);EYE_WRITE(selectedMonitor);
 #undef EYE_WRITE
@@ -284,6 +292,8 @@ inline bool decodeSettings(const std::string& text, Settings& out) {
             else{hasBreakAccentColor=inRange;if(inRange)s.breakAccentColor=theme::Color(n);else s.customBreakAccent=false;}
             continue;
         }
+        int pickerIndex=-1;for(int i=0;i<16;++i)if(key=="pickerCustomColor"+std::to_string(i)){pickerIndex=i;break;}
+        if(pickerIndex>=0){int n=0;bool valid=false;try{std::size_t used=0;n=std::stoi(value,&used);valid=used==value.size();}catch(...){}if(valid&&n>=0&&n<=0x00ffffff)s.pickerCustomColors[pickerIndex]=theme::Color(n);else s.pickerCustomColors[pickerIndex]=Settings{}.pickerCustomColors[pickerIndex];continue;}
         int n=0;try{std::size_t used=0;n=std::stoi(value,&used);if(used!=value.size())return false;}catch(...){return false;}
 #define EYE_INT(field) if(key==#field){s.field=n;continue;}
 #define EYE_BOOL(field) if(key==#field){if(n!=0&&n!=1)return false;s.field=n!=0;continue;}

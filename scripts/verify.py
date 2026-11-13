@@ -121,12 +121,13 @@ for name in ['EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip']:
     require('EyeBreakReminder/tests/windows_break_user_resource_soak.ps1' in names,'Source archive includes the comparative scheduled resource soak')
     require('EyeBreakReminder/docs/FINAL_PRE_RELEASE_VERIFICATION.md' not in names,'Final verification report is excluded to avoid a self-referential source ZIP digest')
     require('EyeBreakReminder/docs/V1.2.1_HOTFIX_VERIFICATION.md' not in names,'Hotfix verification report is excluded to avoid a self-referential source ZIP digest')
+    require('EyeBreakReminder/docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md' not in names,'v1.3.0 final pre-release report is excluded to avoid a self-referential source ZIP digest')
     require(not any('/release/' in p or p.endswith('/core-tests') for p in names),'Source archive excludes build outputs')
     # No compiled test binary (Linux or Windows name), other binaries, archives, temporary files, signing secrets or tool folders.
     banned=('.exe','.dll','.o','.obj','.pdb','.zip','.tmp','.pyc','.pfx','.pem','.p12','.key')
     require(not any(p.lower().endswith(banned) or any(part in {'build','dist','__pycache__'} or (part.startswith('.') and part!='.github') for part in p.split('/')[1:-1]) for p in names),'Source archive has no binaries, build outputs, secrets or tool folders')
     # Everything needed to build, test and package is present: sources, test sources, scripts, installer, assets, documentation.
-    shipped={str(f.relative_to(ROOT)).replace('\\','/') for d in ['src','scripts','installer','assets','docs'] for f in (ROOT/d).rglob('*') if f.is_file() and not f.name.lower().endswith(banned) and '__pycache__' not in f.parts and f.relative_to(ROOT) not in {Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md')}}
+    shipped={str(f.relative_to(ROOT)).replace('\\','/') for d in ['src','scripts','installer','assets','docs'] for f in (ROOT/d).rglob('*') if f.is_file() and not f.name.lower().endswith(banned) and '__pycache__' not in f.parts and f.relative_to(ROOT) not in {Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md'),Path('docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md')}}
     shipped|={'tests/core_tests.cpp','Makefile','VERSION','README.md','CHANGELOG.md','CONTRIBUTING.md','.editorconfig','.gitattributes','.gitignore'}
     missing=sorted(p for p in shipped if 'EyeBreakReminder/'+p not in names)
     require(not missing,'Source archive is missing '+', '.join(missing))

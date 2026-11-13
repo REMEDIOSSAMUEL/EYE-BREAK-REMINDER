@@ -1,7 +1,7 @@
 param(
   [string]$InstallerPath = (Join-Path $PSScriptRoot '..\release\EyeBreakReminder-Setup-x64.exe'),
   [string]$EvidenceDirectory = (Join-Path $PSScriptRoot '..\build\pre-release-evidence'),
-  [string]$ExpectedProductVersion = '1.2.0'
+  [string]$ExpectedProductVersion = '1.3.0'
 )
 $script:expectedProductVersion = $ExpectedProductVersion
 $ErrorActionPreference = 'Stop'
@@ -67,6 +67,8 @@ public static class EBR_PRE_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetFocus();
   [DllImport("user32.dll", SetLastError=true)] public static extern int GetDlgCtrlID(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool IsWindow(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetDlgItem(IntPtr parent,int id);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool IsWindowEnabled(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd, out EBR_PRE_RECT rect);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool GetClientRect(IntPtr hwnd, out EBR_PRE_RECT rect);
@@ -82,6 +84,7 @@ public static class EBR_PRE_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", SetLastError=true)] public static extern uint GetDpiForWindow(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint GetSysColor(int index);
   [DllImport("user32.dll", SetLastError=true)] public static extern int GetSystemMetrics(int index);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
@@ -102,6 +105,7 @@ public static class EBR_PRE_NATIVE {
   public static IntPtr[] TopWindowsForProcess(int pid) { List<IntPtr> r=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){uint actual;GetWindowThreadProcessId(h,out actual);if(actual==(uint)pid)r.Add(h);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return r.ToArray(); }
   public static IntPtr[] TopWindows() { List<IntPtr> r=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){r.Add(h);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return r.ToArray(); }
   public static IntPtr[] Children(IntPtr root) { List<IntPtr> r=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){r.Add(h);return true;};EnumChildWindows(root,cb,IntPtr.Zero);GC.KeepAlive(cb);return r.ToArray(); }
+  public static IntPtr ChildById(IntPtr root,int id){foreach(IntPtr h in Children(root))if(GetDlgCtrlID(h)==id)return h;return IntPtr.Zero;}
   public static bool AppResponds(IntPtr hwnd,uint timeout){IntPtr result;return SendMessageTimeoutW(hwnd,0,IntPtr.Zero,IntPtr.Zero,2,timeout,out result)!=IntPtr.Zero;}
   public static bool GetTrayRect(IntPtr hwnd,uint uid,out EBR_PRE_RECT rect){EBR_PRE_NOTIFYICONIDENTIFIER id=new EBR_PRE_NOTIFYICONIDENTIFIER();id.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_NOTIFYICONIDENTIFIER));id.hWnd=hwnd;id.uID=uid;id.guidItem=Guid.Empty;return Shell_NotifyIconGetRect(ref id,out rect)==0;}
   public static bool GetHighContrast(out uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));bool ok=SystemParametersInfoW(0x0042,h.cbSize,ref h,0);flags=h.dwFlags;return ok;}
@@ -400,6 +404,35 @@ function Assert-StatusCentered([string]$Name) {
   $expected=$client.Left+$client.Width/2.0
   $difference=[Math]::Abs($actual-$expected)
   Require ($difference -le 1.0) "Timer status centered over countdown ($Name)" ([pscustomobject]@{Dpi=[EBR_PRE_NATIVE]::GetDpiForWindow($script:mainWindow);ActualCenter=$actual;ExpectedCenter=$expected;DifferencePx=$difference;ClientWidth=$client.Width})
+}
+function Assert-InstalledTimerRingPixel([string]$ScreenshotPath,[string]$Hex,[string]$Name) {
+  $expected=[Drawing.ColorTranslator]::FromHtml($Hex);$bounds=Get-Rect $script:mainWindow;$client=Get-ClientGeometry $script:mainWindow;$dpi=[EBR_PRE_NATIVE]::GetDpiForWindow($script:mainWindow);$scale=100
+  try{$scale=[int](Get-ItemPropertyValue -LiteralPath $accessibilityKey -Name TextScaleFactor -ErrorAction Stop)}catch{}
+  $textScale=[Math]::Min(2.25,[Math]::Max(1.0,$scale/100.0));$px={param([double]$v)[int][Math]::Floor($v*$dpi/96.0+0.5)}
+  $button=Get-Control $script:mainWindow 22 'Installed ring geometry reference button';$buttonTop=$button.Rect.Top-$client.Top;$navBottom=(& $px 16)+(& $px ([Math]::Max(40.0,31.0*$textScale)));$timerTop=$navBottom+(& $px 22);$statusBottom=$timerTop+(& $px 88)
+  $diameter=[Math]::Min((& $px 272),[Math]::Min($client.Width-(& $px 100),$buttonTop-$statusBottom-(& $px 18)));$diameter=[Math]::Max(1,$diameter);$ringDiameter=$diameter-(& $px 8);$ringX=[int][Math]::Floor(($client.Width-$diameter)/2.0)+(& $px 4);$ringY=$statusBottom+(& $px 8)+(& $px 4)
+  $centerX=($client.Left-$bounds.Left)+$ringX+$ringDiameter/2.0;$centerY=($client.Top-$bounds.Top)+$ringY+$ringDiameter/2.0;$radius=$ringDiameter/2.0;$bitmap=[Drawing.Bitmap]::FromFile($ScreenshotPath);$matches=0
+  try{for($y=[Math]::Max(0,$ringY+($client.Top-$bounds.Top)-8);$y -lt [Math]::Min($bitmap.Height,$ringY+($client.Top-$bounds.Top)+$ringDiameter+8);$y++){for($x=[Math]::Max(0,$ringX+($client.Left-$bounds.Left)-8);$x -lt [Math]::Min($bitmap.Width,$ringX+($client.Left-$bounds.Left)+$ringDiameter+8);$x++){$distance=[Math]::Abs([Math]::Sqrt([Math]::Pow($x-$centerX,2)+[Math]::Pow($y-$centerY,2))-$radius);if($distance -gt 4.5){continue};$pixel=$bitmap.GetPixel($x,$y);if([Math]::Abs($pixel.R-$expected.R) -le 1 -and [Math]::Abs($pixel.G-$expected.G) -le 1 -and [Math]::Abs($pixel.B-$expected.B) -le 1){$matches++}}}}finally{$bitmap.Dispose()}
+  Require ($matches -ge 2) "$Name rendered installed timer ring pixels equal $Hex" ([pscustomobject]@{Expected=$Hex;MatchingRingPixels=$matches;RingDiameter=$ringDiameter;Screenshot=$ScreenshotPath})
+}
+function Get-InstalledSystemColorHex([int]$Index) {
+  $color=[EBR_PRE_NATIVE]::GetSysColor($Index);$red=[int]($color -band 0xff);$green=[int](($color -shr 8) -band 0xff);$blue=[int](($color -shr 16) -band 0xff)
+  return ('#{0:X2}{1:X2}{2:X2}' -f $red,$green,$blue)
+}
+function Find-InstalledColorPicker {
+  $dialogs=@([EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)|Where-Object{[EBR_PRE_NATIVE]::IsWindowVisible($_)-and[EBR_PRE_NATIVE]::ClassName($_)-eq'#32770'})
+  if($dialogs.Count-gt1){throw 'More than one native common dialog belongs to the installed app.'};if($dialogs.Count-eq1){return $dialogs[0]};return [IntPtr]::Zero
+}
+function Open-InstalledColorPicker([int]$ButtonId,[string]$Name) {
+  $control=Get-Control $script:mainWindow $ButtonId $Name;if(-not $control.Enabled){throw "$Name is disabled."};Focus-AppControl $control.Handle;Send-VirtualKey 32
+  $watch=[Diagnostics.Stopwatch]::StartNew();while($watch.Elapsed.TotalSeconds-lt8){$dialog=Find-InstalledColorPicker;if($dialog-ne[IntPtr]::Zero){return $dialog};Start-Sleep -Milliseconds 50};throw 'The installed application did not open its native ChooseColorW dialog.'
+}
+function Set-InstalledPickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue) {
+  foreach($item in @(@{Id=706;Value=$Red;Name='Red'},@{Id=707;Value=$Green;Name='Green'},@{Id=708;Value=$Blue;Name='Blue'})){$field=[EBR_PRE_NATIVE]::GetDlgItem($Dialog,$item.Id);if($field-eq[IntPtr]::Zero-or[EBR_PRE_NATIVE]::ClassName($field)-ne'Edit'){throw "Installed ChooseColorW dialog has no $($item.Name) RGB edit field."};[void][EBR_PRE_NATIVE]::SendMessageW($field,0x00B1,[IntPtr]::Zero,[IntPtr](-1));[void][EBR_PRE_NATIVE]::SendMessageW($field,0x0102,[IntPtr]0x08,[IntPtr]::Zero);foreach($digit in ([string]$item.Value).ToCharArray()){[void][EBR_PRE_NATIVE]::SendMessageW($field,0x0102,[IntPtr][int][char]$digit,[IntPtr]::Zero)};$notification=$item.Id-bor(0x0300-shl16);[void][EBR_PRE_NATIVE]::SendMessageW([EBR_PRE_NATIVE]::GetParent($field),0x0111,[IntPtr]$notification,$field);Require (([EBR_PRE_NATIVE]::Text($field)).Trim()-eq[string]$item.Value) "Installed native picker accepts $($item.Name) RGB input" $item.Value}
+}
+function Close-InstalledColorPicker([IntPtr]$Dialog,[bool]$Accept) {
+  $buttonId=if($Accept){1}else{2};$button=[EBR_PRE_NATIVE]::GetDlgItem($Dialog,$buttonId);if($button-eq[IntPtr]::Zero){throw 'Installed native picker is missing OK or Cancel.'};[void][EBR_PRE_NATIVE]::SendMessageW($button,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+  $watch=[Diagnostics.Stopwatch]::StartNew();while([EBR_PRE_NATIVE]::IsWindow($Dialog)-and$watch.Elapsed.TotalSeconds-lt8){Start-Sleep -Milliseconds 50};if([EBR_PRE_NATIVE]::IsWindow($Dialog)){throw 'Installed native picker remained open after the button action.'}
 }
 function Start-InstalledApp {
   if($script:appPid){throw 'The test app is already tracked as running.'}
@@ -819,29 +852,29 @@ function Download-OfficialV11Installer {
   Pass 'Official v1.1.0 installer downloaded only from the Eye Break Reminder release' ([pscustomobject]@{Path=$path;Asset=$setup.name;Sha256=$actualDigest;ReleaseUrl=$release.html_url})
   return $path
 }
-function Download-OfficialV120Installer {
-  $release=Get-OfficialRelease 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tags/v1.2.0' 'Official v1.2.0 release-tag API'
-  if(-not $release){Not-Tested 'Official v1.2.0 installer availability' "Unauthenticated release API request failed: $script:liveApiError";return $null}
-  if($release.tag_name -cne 'v1.2.0' -or $release.draft -or $release.prerelease -or $release.html_url -cne 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.2.0'){
-    Add-Event 'Official v1.2.0 release metadata identifies the stable Eye Break Reminder release' 'FAIL' ([pscustomobject]@{Tag=$release.tag_name;Url=$release.html_url;Draft=$release.draft;Prerelease=$release.prerelease});throw 'The v1.2.0 release metadata did not identify the expected stable release.'
+function Download-OfficialV121Installer {
+  $release=Get-OfficialRelease 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tags/v1.2.1' 'Official v1.2.1 release-tag API'
+  if(-not $release){Not-Tested 'Official v1.2.1 installer availability' "Unauthenticated release API request failed: $script:liveApiError";return $null}
+  if($release.tag_name -cne 'v1.2.1' -or $release.draft -or $release.prerelease -or $release.html_url -cne 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.2.1'){
+    Add-Event 'Official v1.2.1 release metadata identifies the stable Eye Break Reminder release' 'FAIL' ([pscustomobject]@{Tag=$release.tag_name;Url=$release.html_url;Draft=$release.draft;Prerelease=$release.prerelease});throw 'The v1.2.1 release metadata did not identify the expected stable release.'
   }
   $setup=@($release.assets|Where-Object{$_.name -eq 'EyeBreakReminder-Setup-x64.exe'})|Select-Object -First 1
-  if(-not $setup){Not-Tested 'Official v1.2.0 installer availability' 'The official release exposes no x64 installer.';return $null}
-  if($setup.browser_download_url -notmatch '^https://github\.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1\.2\.0/'){
-    Add-Event 'Official v1.2.0 installer uses the correct project release URL' 'FAIL' $setup.browser_download_url;throw 'Refusing a non-official v1.2.0 installer URL.'
+  if(-not $setup){Not-Tested 'Official v1.2.1 installer availability' 'The official release exposes no x64 installer.';return $null}
+  if($setup.browser_download_url -notmatch '^https://github\.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1\.2\.1/'){
+    Add-Event 'Official v1.2.1 installer uses the correct project release URL' 'FAIL' $setup.browser_download_url;throw 'Refusing a non-official v1.2.1 installer URL.'
   }
   $manifestAsset=@($release.assets|Where-Object{$_.name -eq 'EyeBreakReminder-SHA256.txt'})|Select-Object -First 1
   $manifestText=''
   if($manifestAsset){try{$manifestText=(Invoke-WebRequest -UseBasicParsing -Uri $manifestAsset.browser_download_url -TimeoutSec 30 -Headers @{'User-Agent'='EyeBreakReminder-ReleaseVerification'}).Content}catch{}}
-  $path=Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-v1.2.0-Setup-x64.exe'
-  try{Invoke-WebRequest -UseBasicParsing -Uri $setup.browser_download_url -OutFile $path -TimeoutSec 120 -Headers @{'User-Agent'='EyeBreakReminder-ReleaseVerification'}}catch{Not-Tested 'Official v1.2.0 installer download' $_.Exception.Message;return $null}
+  $path=Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-v1.2.1-Setup-x64.exe'
+  try{Invoke-WebRequest -UseBasicParsing -Uri $setup.browser_download_url -OutFile $path -TimeoutSec 120 -Headers @{'User-Agent'='EyeBreakReminder-ReleaseVerification'}}catch{Not-Tested 'Official v1.2.1 installer download' $_.Exception.Message;return $null}
   $expectedDigest=Get-AssetDigest $setup $manifestText
   $actualDigest=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-  if(-not $expectedDigest){Not-Tested 'Official v1.2.0 installer digest verification' 'GitHub supplied no digest and the release manifest had no matching entry; the installer will not be executed.';return $null}
-  Require ($actualDigest -eq $expectedDigest) 'Official v1.2.0 installer matches the release asset digest' ([pscustomobject]@{Expected=$expectedDigest;Actual=$actualDigest;Bytes=(Get-Item $path).Length})
+  if(-not $expectedDigest){Not-Tested 'Official v1.2.1 installer digest verification' 'GitHub supplied no digest and the release manifest had no matching entry; the installer will not be executed.';return $null}
+  Require ($actualDigest -eq $expectedDigest) 'Official v1.2.1 installer matches the release asset digest' ([pscustomobject]@{Expected=$expectedDigest;Actual=$actualDigest;Bytes=(Get-Item $path).Length})
   $version=(Get-Item -LiteralPath $path).VersionInfo.ProductVersion
-  Require ($version -match '^1\.2\.0(\.0)?$') 'Official v1.2.0 installer has 1.2.0 metadata' $version
-  Pass 'Official v1.2.0 installer downloaded from the public Eye Break Reminder release' ([pscustomobject]@{Path=$path;Sha256=$actualDigest;ReleaseUrl=$release.html_url})
+  Require ($version -match '^1\.2\.1(\.0)?$') 'Official v1.2.1 installer has 1.2.1 metadata' $version
+  Pass 'Official v1.2.1 installer downloaded from the published Eye Break Reminder release' ([pscustomobject]@{Path=$path;Sha256=$actualDigest;ReleaseUrl=$release.html_url})
   return $path
 }
 function Probe-UiaNames([IntPtr]$Window) {
@@ -951,6 +984,11 @@ function Test-OsAppearanceAndTextScale {
   }
   $flags=[uint32]0
   if([EBR_PRE_NATIVE]::GetHighContrast([ref]$flags)){$script:highContrastOriginal=$flags}else{$script:highContrastOriginal=$null}
+  Switch-Settings 4
+  $workPicker=Open-InstalledColorPicker 127 'Work picker for installed Forced Colors test';Set-InstalledPickerRgb $workPicker 139 92 246;Close-InstalledColorPicker $workPicker $true
+  $breakPicker=Open-InstalledColorPicker 128 'Break picker for installed Forced Colors test';Set-InstalledPickerRgb $breakPicker 249 115 22;Close-InstalledColorPicker $breakPicker $true
+  $forcedFixture=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
+  Require ($forcedFixture['customWorkAccent'] -eq '1' -and $forcedFixture['workAccentColor'] -eq [string][int]0x8B5CF6 -and $forcedFixture['customBreakAccent'] -eq '1' -and $forcedFixture['breakAccentColor'] -eq [string][int]0xF97316) 'Installed system Forced Colors test starts with distinct saved Work and Break accents' ([pscustomobject]@{Work=$forcedFixture['workAccentColor'];Break=$forcedFixture['breakAccentColor']})
   try {
     Switch-Settings 4
     Set-Combo $script:mainWindow 106 0 'Follow Windows Theme'
@@ -989,6 +1027,21 @@ function Test-OsAppearanceAndTextScale {
         if($visiblePixel -eq $forcedPixel){Pass 'Forced Colors palette is visible in the active desktop capture' ([pscustomobject]@{WindowPixel=('0x{0:X8}' -f $forcedPixel);ScreenPixel=('0x{0:X8}' -f $visiblePixel)})}
         else{Not-Tested 'Visible Forced Colors screenshot confirmation' ([pscustomobject]@{Reason='A Windows transition/foreground overlay obscured the app; the screenshot pixel did not match the app window DC.';WindowPixel=('0x{0:X8}' -f $forcedPixel);ScreenPixel=('0x{0:X8}' -f $visiblePixel)})}
       }
+      $themeNames=@('follow-windows','light','dark','high-contrast-dark','high-contrast-light')
+      for($theme=0;$theme -le 4;$theme++){
+        Switch-Settings 4;Set-Combo $script:mainWindow 106 $theme "System Forced Colors $($themeNames[$theme])";Switch-Timer
+        $saved=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
+        Require ($saved['customWorkAccent'] -eq '1' -and $saved['workAccentColor'] -eq [string][int]0x8B5CF6 -and $saved['customBreakAccent'] -eq '1' -and $saved['breakAccentColor'] -eq [string][int]0xF97316) "Installed Windows Forced Colors preserves saved custom colours under $($themeNames[$theme])" ([pscustomobject]@{Work=$saved['workAccentColor'];Break=$saved['breakAccentColor']})
+        $highlight=Get-InstalledSystemColorHex 13;Click-Control $script:mainWindow 21 "Reset installed Work timer for $($themeNames[$theme]) system contrast";Start-Sleep -Milliseconds 1100
+        $workShot=Capture-PrintWindow $script:mainWindow "installed-system-forced-colors-$($themeNames[$theme])-work.png";if($workShot){Assert-InstalledTimerRingPixel $workShot $highlight "Installed Forced Colors $($themeNames[$theme]) Work ring"}
+        Click-Control $script:mainWindow 22 "Start installed Break under $($themeNames[$theme]) system contrast"
+        $wait=[Diagnostics.Stopwatch]::StartNew();$forcedBreak=[IntPtr]::Zero;while($wait.Elapsed.TotalSeconds-lt8){$visibleBreaks=Get-BreakWindow $script:appPid;if($visibleBreaks.Count-eq1){$forcedBreak=$visibleBreaks[0];break};Start-Sleep -Milliseconds 100}
+        Require ($forcedBreak-ne[IntPtr]::Zero-and(Wait-ForStatus 'Taking an eye break')-like'*Taking an eye break*') "Installed $($themeNames[$theme]) system Forced Colors keeps the named Break state"
+        Require ([EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 42 'System Forced Colors break countdown caption').Handle) -eq 'Break time remaining') "Installed $($themeNames[$theme]) system Forced Colors keeps a distinct Break countdown label"
+        $hotlight=Get-InstalledSystemColorHex 26;$breakShot=Capture-PrintWindow $script:mainWindow "installed-system-forced-colors-$($themeNames[$theme])-break.png";if($breakShot){Assert-InstalledTimerRingPixel $breakShot $hotlight "Installed Forced Colors $($themeNames[$theme]) Break ring"}
+        Click-Control $forcedBreak 24 "End installed $($themeNames[$theme]) system Forced Colors break";Require ((Wait-ForStatus 'Running')-like'*Running*') "Installed $($themeNames[$theme]) system Forced Colors returns to Work"
+        $returnShot=Capture-PrintWindow $script:mainWindow "installed-system-forced-colors-$($themeNames[$theme])-work-after-break.png";if($returnShot){Assert-InstalledTimerRingPixel $returnShot $highlight "Installed Forced Colors $($themeNames[$theme]) restores Work ring"}
+      }
       [void][EBR_PRE_NATIVE]::SetHighContrast($script:highContrastOriginal)
       [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')
       Pass 'Windows High Contrast system setting restored after the test'
@@ -1020,7 +1073,11 @@ function Test-OsAppearanceAndTextScale {
     Switch-Settings 4
     Set-Combo $script:mainWindow 106 1 'Restore Light theme after Windows appearance testing'
     Require ((Get-Combo $script:mainWindow 106 'Restored test theme') -eq 1) 'Appearance integration restores the Light theme test fixture'
-    Switch-Timer
+    Switch-Timer;Click-Control $script:mainWindow 21 'Restore Work state after installed Windows appearance tests';Start-Sleep -Milliseconds 1100
+    $workRestored=Capture-PrintWindow $script:mainWindow 'installed-custom-work-after-forced-colors.png';if($workRestored){Assert-InstalledTimerRingPixel $workRestored '#8B5CF6' 'Installed Work accent restored after system Forced Colors'}
+    Click-Control $script:mainWindow 22 'Verify installed Break accent restored after system Forced Colors';$restoredBreak=[IntPtr]::Zero;$restoredWait=[Diagnostics.Stopwatch]::StartNew();while($restoredWait.Elapsed.TotalSeconds-lt8){$visibleBreaks=Get-BreakWindow $script:appPid;if($visibleBreaks.Count-eq1){$restoredBreak=$visibleBreaks[0];break};Start-Sleep -Milliseconds 100};Require ($restoredBreak-ne[IntPtr]::Zero) 'Installed app opens Break after system Forced Colors is disabled'
+    $breakRestored=Capture-PrintWindow $script:mainWindow 'installed-custom-break-after-forced-colors.png';if($breakRestored){Assert-InstalledTimerRingPixel $breakRestored '#F97316' 'Installed Break accent restored after system Forced Colors'}
+    Click-Control $restoredBreak 24 'Finish installed restored Break accent check';Require ((Wait-ForStatus 'Running')-like'*Running*') 'Installed app returns to Work after system Forced Colors is disabled'
   }
 }
 function Assert-InstallationMetadata([string]$ExpectedVersion) {
@@ -1422,63 +1479,119 @@ function Test-UpgradeFromV11([string]$OldInstaller) {
   Require ($settingsStill -and $historyStill) 'Final uninstall preserves the runner-created settings and history for cleanup verification' ([pscustomobject]@{SettingsPreserved=$settingsStill;HistoryPreserved=$historyStill})
 }
 
-function Test-UpgradeFromV120([string]$OldInstaller) {
-  if(-not $OldInstaller -or -not (Test-Path -LiteralPath $OldInstaller -PathType Leaf)) {Not-Tested 'Official v1.2.0 to v1.2.1 in-place upgrade and data migration' 'A digest-verified official v1.2.0 installer was not available.';return}
-  if(-not $script:interactiveDesktop){Not-Tested 'Official v1.2.0 UI state preparation and in-place upgrade' 'No interactive Explorer desktop was available.';return}
+function Test-UpgradeFromV121([string]$OldInstaller) {
+  if(-not $OldInstaller -or -not (Test-Path -LiteralPath $OldInstaller -PathType Leaf)) {Not-Tested 'Official v1.2.1 to v1.3.0 in-place upgrade and data migration' 'A digest-verified official v1.2.1 installer was not available.';return}
+  if(-not $script:interactiveDesktop){Not-Tested 'Official v1.2.1 UI state preparation and in-place upgrade' 'No interactive Explorer desktop was available.';return}
   if(Test-Path -LiteralPath $dataDir){Remove-Item -LiteralPath $dataDir -Recurse -Force}
   $oldVersion=(Get-Item -LiteralPath $OldInstaller).VersionInfo.ProductVersion
-  Require ($oldVersion -match '^1\.2\.0(\.0)?$') 'Upgrade source installer is exactly v1.2.0' $oldVersion
-  Invoke-Install $OldInstaller 'official v1.2.0 production installer' $true
-  Assert-InstallationMetadata '1.2.0'
-  if(-not (Start-And-CheckApp '1.2.0')){Not-Tested 'v1.2.0 application UI state preparation' 'The installed v1.2.0 app could not be opened interactively.';Stop-InstalledApp;Invoke-Uninstall 'v1.2.0 upgrade setup cleanup' $false;return}
+  Require ($oldVersion -match '^1\.2\.1(\.0)?$') 'Upgrade source installer is exactly the published v1.2.1 build' $oldVersion
+  Invoke-Install $OldInstaller 'published official v1.2.1 production installer' $true
+  Assert-InstallationMetadata '1.2.1'
+  if(-not (Start-And-CheckApp '1.2.1')){Not-Tested 'v1.2.1 application UI state preparation' 'The installed v1.2.1 app could not be opened interactively.';Stop-InstalledApp;Invoke-Uninstall 'v1.2.1 upgrade setup cleanup' $false;return}
   $candidateVersion=$script:expectedProductVersion
-  $script:expectedProductVersion='1.2.0'
+  $script:expectedProductVersion='1.2.1'
   try { Test-InstalledUpdateCheck }
   finally { $script:expectedProductVersion=$candidateVersion }
   Switch-Settings 0
-  Set-Edit $script:mainWindow 100 '7' 'v1.2.0 work interval'
-  Set-Edit $script:mainWindow 101 '45' 'v1.2.0 break duration'
+  Set-Edit $script:mainWindow 100 '7' 'v1.2.1 work interval'
+  Set-Edit $script:mainWindow 101 '45' 'v1.2.1 break duration'
+  Switch-Settings 1
+  Set-Check $script:mainWindow 120 $true 'v1.2.1 operating schedule'
+  Click-Control $script:mainWindow 122 'Set the v1.2.1 schedule to every day'
   Switch-Settings 2
-  Set-Check $script:mainWindow 32 $false 'v1.2.0 alarm enabled'
+  Set-Check $script:mainWindow 32 $false 'v1.2.1 alarm enabled'
   Switch-Settings 4
-  Set-Combo $script:mainWindow 106 1 'v1.2.0 Light theme'
-  Set-Check $script:mainWindow 111 $true 'v1.2.0 start with Windows'
+  Set-Combo $script:mainWindow 106 1 'v1.2.1 Light theme'
+  Set-Check $script:mainWindow 111 $true 'v1.2.1 start with Windows'
   Switch-Timer
-  Click-Control $script:mainWindow 22 'v1.2.0 manual break for upgrade history'
+  Click-Control $script:mainWindow 22 'v1.2.1 manual break for upgrade history'
   $breakWait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
   while($breakWait.Elapsed.TotalSeconds -lt 10){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$breakWindow=$breaks[0];break};Start-Sleep -Milliseconds 100}
-  Require ($breakWindow -ne [IntPtr]::Zero) 'v1.2.0 creates a real break window before upgrade'
-  Click-Control $breakWindow 23 'Complete v1.2.0 break and generate history'
+  Require ($breakWindow -ne [IntPtr]::Zero) 'v1.2.1 creates a real break window before upgrade'
+  Click-Control $breakWindow 23 'Complete v1.2.1 break and generate history'
   Stop-InstalledApp
   $settingsPath=Join-Path $dataDir 'settings.ini';$historyPath=Join-Path $dataDir 'history.dat'
+  $scheduleProfile=[IO.File]::ReadAllText($settingsPath)
+  foreach($day in @('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')){
+    $dayPattern="(?m)^schedule$day=\d+$";$periodPattern="(?m)^schedule${day}1=\d+$"
+    if([regex]::IsMatch($scheduleProfile,$dayPattern)){$scheduleProfile=[regex]::Replace($scheduleProfile,$dayPattern,"schedule$day=1")}else{$scheduleProfile+="`nschedule$day=1"}
+    if([regex]::IsMatch($scheduleProfile,$periodPattern)){$scheduleProfile=[regex]::Replace($scheduleProfile,$periodPattern,"schedule$($day)1=00002400")}else{$scheduleProfile+="`nschedule$($day)1=00002400"}
+  }
+  [IO.File]::WriteAllText($settingsPath,$scheduleProfile,[Text.UTF8Encoding]::new($false))
   $beforeSettings=Read-SettingsMap $settingsPath;$beforeHistoryRows=@(Get-Content -LiteralPath $historyPath|Where-Object{$_.Trim()})
-  Require ($beforeSettings['workMinutes'] -eq '7' -and $beforeSettings['breakSeconds'] -eq '45' -and $beforeSettings['startup'] -eq '1' -and $beforeSettings['theme'] -eq '1') 'v1.2.0 interval, Light theme, and startup preferences were configured' ([pscustomobject]@{Settings=$beforeSettings})
-  Require ($beforeHistoryRows.Count -ge 1) 'v1.2.0 generated a history/statistics record before upgrade' $beforeHistoryRows.Count
+  Require ($beforeSettings['workMinutes'] -eq '7' -and $beforeSettings['breakSeconds'] -eq '45' -and $beforeSettings['startup'] -eq '1' -and $beforeSettings['theme'] -eq '1' -and $beforeSettings['schedule'] -eq '1' -and $beforeSettings['scheduleMonday'] -eq '1' -and $beforeSettings['scheduleMonday1'] -eq '00002400' -and $beforeSettings['scheduleSunday'] -eq '1' -and $beforeSettings['scheduleSunday1'] -eq '00002400') 'v1.2.1 nondefault intervals, Light theme, enabled all-day schedule, and startup preferences were configured' ([pscustomobject]@{Settings=$beforeSettings})
+  Require ($beforeHistoryRows.Count -ge 1) 'v1.2.1 generated a history/statistics record before upgrade' $beforeHistoryRows.Count
   $beforeHistoryHash=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
-  Invoke-Install $InstallerPath 'candidate in-place upgrade from official v1.2.0' $true
+  Invoke-Install $InstallerPath 'candidate in-place upgrade from published official v1.2.1' $true
   Assert-InstallationMetadata $script:expectedProductVersion
   $installedHash=(Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash.ToLowerInvariant()
-  Require ($installedHash -eq $script:packagedExecutableHash) 'v1.2.1 upgrade installs the exact verified packaged executable' ([pscustomobject]@{Expected=$script:packagedExecutableHash;Actual=$installedHash})
+  Require ($installedHash -eq $script:packagedExecutableHash) 'v1.2.1 upgrade installs the exact verified v1.3.0 packaged executable' ([pscustomobject]@{Expected=$script:packagedExecutableHash;Actual=$installedHash})
   $afterSettings=Read-SettingsMap $settingsPath
-  Require ($afterSettings['workMinutes'] -eq '7' -and $afterSettings['breakSeconds'] -eq '45' -and $afterSettings['startup'] -eq '1' -and $afterSettings['theme'] -eq '1') 'v1.2.1 preserves v1.2.0 interval, theme, and startup preferences' ([pscustomobject]@{Settings=$afterSettings})
+  Require ($afterSettings['workMinutes'] -eq '7' -and $afterSettings['breakSeconds'] -eq '45' -and $afterSettings['startup'] -eq '1' -and $afterSettings['theme'] -eq '1' -and $afterSettings['schedule'] -eq '1' -and $afterSettings['scheduleMonday1'] -eq '00002400' -and $afterSettings['scheduleSunday1'] -eq '00002400') 'v1.3.0 preserves v1.2.1 intervals, Light theme, all-day schedule, and startup preferences' ([pscustomobject]@{Settings=$afterSettings})
   $afterHistoryHash=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
-  Require ($afterHistoryHash -eq $beforeHistoryHash) 'v1.2.1 preserves v1.2.0 history bytes during in-place upgrade' ([pscustomobject]@{Before=$beforeHistoryHash;After=$afterHistoryHash;Rows=$beforeHistoryRows.Count})
+  Require ($afterHistoryHash -eq $beforeHistoryHash) 'v1.3.0 preserves v1.2.1 history bytes during in-place upgrade' ([pscustomobject]@{Before=$beforeHistoryHash;After=$afterHistoryHash;Rows=$beforeHistoryRows.Count})
   $runValues=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties|Where-Object{$_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder'})
-  Require ($runValues.Count -eq 1) 'v1.2.0 to v1.2.1 upgrade leaves exactly one startup registration' $runValues.Count
+  Require ($runValues.Count -eq 1) 'v1.2.1 to v1.3.0 upgrade leaves exactly one startup registration' $runValues.Count
   if(Start-And-CheckApp $script:expectedProductVersion){
     Switch-Settings 4
-    Require ((Get-Combo $script:mainWindow 106 'Upgraded theme') -eq 1) 'Upgraded app loads the v1.2.0 Light theme preference'
-    Switch-Settings 0
-    Require ([EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 100 'Upgraded work interval').Handle) -eq '7') 'Upgraded app loads the v1.2.0 work interval' '7'
-    Click-Control $script:mainWindow 11 'History after v1.2.0 upgrade'
-    $list=Get-Control $script:mainWindow 200 'Migrated v1.2.0 history list'
-    $rows=[EBR_PRE_NATIVE]::SendMessageW($list.Handle,0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
-    Require ($rows -ge $beforeHistoryRows.Count) 'Upgraded app loads v1.2.0 history rows and statistics source data' ([pscustomobject]@{Before=$beforeHistoryRows.Count;VisibleRows=$rows})
-    Capture-ActiveWindow $script:mainWindow 'upgrade-v120-history-statistics-active.png'|Out-Null
+    Require ((Get-Combo $script:mainWindow 106 'Upgraded theme') -eq 1) 'Upgraded app loads the v1.2.1 Light theme preference'
+    $defaultWorkSwatch=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 125 'Default Work Mode swatch after upgrade').Handle);$defaultBreakSwatch=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 126 'Default Break Mode swatch after upgrade').Handle)
+    Require ($defaultWorkSwatch -eq '#1D4ED8' -and $defaultBreakSwatch -eq '#0F766E' -and !$afterSettings.ContainsKey('customWorkAccent') -and !$afterSettings.ContainsKey('customBreakAccent')) 'v1.2.1 settings without accent overrides load the original Light theme Work and Break colours' ([pscustomobject]@{WorkSwatch=$defaultWorkSwatch;BreakSwatch=$defaultBreakSwatch;LegacySettingsHaveNoCustomKeys=(!$afterSettings.ContainsKey('customWorkAccent')-and!$afterSettings.ContainsKey('customBreakAccent'))})
+    $workPicker=Open-InstalledColorPicker 127 'Installed Work Mode colour picker'
+    Require ([EBR_PRE_NATIVE]::ClassName($workPicker) -eq '#32770') 'Installed application opens the native ChooseColorW dialog' ([EBR_PRE_NATIVE]::Text($workPicker))
+    Set-InstalledPickerRgb $workPicker 139 92 246
+    $addPalette=[EBR_PRE_NATIVE]::GetDlgItem($workPicker,712);Require ($addPalette-ne[IntPtr]::Zero) 'Installed native picker exposes Add to Custom Colors'
+    [void][EBR_PRE_NATIVE]::SendMessageW($addPalette,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+    Close-InstalledColorPicker $workPicker $true
+    $afterWork=Read-SettingsMap $settingsPath
+    Require ($afterWork['customWorkAccent'] -eq '1' -and $afterWork['workAccentColor'] -eq [string][int]0x8B5CF6 -and $afterWork['customBreakAccent'] -eq '0') 'Installed Work picker saves a custom RGB independently'
+    Switch-Timer;Click-Control $script:mainWindow 21 'Reset installed Work ring before pixel capture';Start-Sleep -Milliseconds 1200
+    $installedWorkShot=Capture-ActiveWindow $script:mainWindow 'installed-upgrade-custom-work-ring.png';if($installedWorkShot){Assert-InstalledTimerRingPixel $installedWorkShot '#8B5CF6' 'Installed Work accent after the v1.2.1 upgrade'}
+    Switch-Settings 4
+    $breakPicker=Open-InstalledColorPicker 128 'Installed Break Mode colour picker'
+    Set-InstalledPickerRgb $breakPicker 249 115 22
+    Close-InstalledColorPicker $breakPicker $true
+    $afterBreak=Read-SettingsMap $settingsPath
+    Require ($afterBreak['customWorkAccent'] -eq '1' -and $afterBreak['workAccentColor'] -eq [string][int]0x8B5CF6 -and $afterBreak['customBreakAccent'] -eq '1' -and $afterBreak['breakAccentColor'] -eq [string][int]0xF97316) 'Installed Break picker saves its colour independently of Work'
+    $beforeCancel=Get-Content -LiteralPath $settingsPath -Raw
+    $cancelPicker=Open-InstalledColorPicker 127 'Installed Work Mode picker Cancel regression'
+    Set-InstalledPickerRgb $cancelPicker 255 255 255
+    Close-InstalledColorPicker $cancelPicker $false
+    Require ((Get-Content -LiteralPath $settingsPath -Raw) -ceq $beforeCancel) 'Installed picker Cancel leaves stored preferences unchanged'
+    Switch-Timer
+    Click-Control $script:mainWindow 22 'Start installed custom Break pixel check'
+    $breakWait=[Diagnostics.Stopwatch]::StartNew();$customBreakWindow=[IntPtr]::Zero;while($breakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$customBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
+    Require ($customBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Installed custom Break retains its existing named state'
+    $installedBreakShot=Capture-ActiveWindow $script:mainWindow 'installed-upgrade-custom-break-ring.png';if($installedBreakShot){Assert-InstalledTimerRingPixel $installedBreakShot '#F97316' 'Installed Break accent after the v1.2.1 upgrade'}
+    Click-Control $customBreakWindow 24 'Finish installed custom Break pixel check'
+    Require ((Get-Status)-like'*Running*') 'Installed app returns to the Work Mode after its custom Break'
     Stop-InstalledApp
+    if(Start-And-CheckApp $script:expectedProductVersion){
+      Switch-Settings 4
+      $reloaded=Read-SettingsMap $settingsPath
+      Require ($reloaded['customWorkAccent'] -eq '1' -and $reloaded['workAccentColor'] -eq [string][int]0x8B5CF6 -and $reloaded['customBreakAccent'] -eq '1' -and $reloaded['breakAccentColor'] -eq [string][int]0xF97316) 'Installed custom Work and Break colours persist after application restart'
+      $paletteValues=@(0..15|ForEach-Object{$reloaded["pickerCustomColor$_"]}|Where-Object{$_-ne$null})
+      Require ($paletteValues -contains [string][int]0x8B5CF6) 'Installed native picker custom palette is serialized into existing settings'
+      $pickerAfterRestart=Open-InstalledColorPicker 127 'Installed Work picker after restart'
+      $paletteSlot=-1;for($i=0;$i-lt16;$i++){if($reloaded["pickerCustomColor$i"]-eq[string][int]0x8B5CF6){$paletteSlot=$i;break}}
+      Require ($paletteSlot-ge0) 'Installed picker palette contains the selected Work colour' $paletteSlot
+      $paletteSwatch=[EBR_PRE_NATIVE]::GetDlgItem($pickerAfterRestart,721+$paletteSlot);Require ($paletteSwatch-ne[IntPtr]::Zero) 'Installed restarted picker exposes the saved custom palette cell' $paletteSlot
+      [void][EBR_PRE_NATIVE]::SendMessageW($paletteSwatch,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+      $selectedRgb=@(@(706,707,708)|ForEach-Object{[int]([EBR_PRE_NATIVE]::Text([EBR_PRE_NATIVE]::GetDlgItem($pickerAfterRestart,$_)).Trim())})
+      Require (($selectedRgb-join',')-eq'139,92,246') 'Installed restarted native picker restores the custom palette RGB' $selectedRgb
+      Close-InstalledColorPicker $pickerAfterRestart $false
+      Switch-Timer
+      $listId=200
+      Click-Control $script:mainWindow 11 'History after v1.2.1 upgrade'
+      $list=Get-Control $script:mainWindow $listId 'Migrated v1.2.1 history list'
+      $rows=[EBR_PRE_NATIVE]::SendMessageW($list.Handle,0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+      Require ($rows-ge$beforeHistoryRows.Count) 'Upgraded app loads v1.2.1 history rows and statistics source data' ([pscustomobject]@{Before=$beforeHistoryRows.Count;VisibleRows=$rows})
+      Capture-ActiveWindow $script:mainWindow 'upgrade-v121-history-statistics-active.png'|Out-Null
+      Stop-InstalledApp
+    }
   }
-  Invoke-Uninstall 'candidate post-v1.2.0-upgrade' $false
-  Require ((Test-Path -LiteralPath $settingsPath) -and (Test-Path -LiteralPath $historyPath)) 'Uninstall after v1.2.0 upgrade preserves runner-created settings and history' ([pscustomobject]@{Settings=(Test-Path $settingsPath);History=(Test-Path $historyPath)})
+  Invoke-Uninstall 'candidate post-v1.2.1-upgrade' $false
+  Require ((Test-Path -LiteralPath $settingsPath) -and (Test-Path -LiteralPath $historyPath)) 'Uninstall after v1.2.1 upgrade preserves runner-created settings and history' ([pscustomobject]@{Settings=(Test-Path $settingsPath);History=(Test-Path $historyPath)})
 }
 
 function Test-V11InteractiveUninstaller([string]$OldInstaller) {
@@ -1514,7 +1627,7 @@ try {
   } else {$script:liveLatestError=$script:liveApiError;Not-Tested 'Live latest stable GitHub release/version comparison' "Official unauthenticated endpoint unavailable: $script:liveLatestError"}
 
   $oldInstaller=Download-OfficialV11Installer
-  $v120Installer=Download-OfficialV120Installer
+  $v121Installer=Download-OfficialV121Installer
   if($script:interactiveDesktop){
     Invoke-Install $InstallerPath 'candidate production installer' $true
     Require ((Get-Item -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe')).VersionInfo.ProductVersion -match ('^'+[regex]::Escape($script:expectedProductVersion)+'(\.0)?$')) 'Installed application file version is candidate' (Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
@@ -1548,7 +1661,7 @@ try {
 
   Test-UpgradeFromV11 $oldInstaller
   Test-V11InteractiveUninstaller $oldInstaller
-  Test-UpgradeFromV120 $v120Installer
+  Test-UpgradeFromV121 $v121Installer
   if(-not $script:interactiveDesktop){
     Not-Tested 'Real Windows theme switching and Forced Colors' 'Runner desktop capability probe reported no Explorer shell/taskbar.'
     Not-Tested 'Tray menu actions and actual Shell notification surface' 'Runner desktop capability probe reported no Explorer shell/taskbar.'

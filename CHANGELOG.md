@@ -5,6 +5,7 @@
 Added
 
 - Independent Work Mode and Break Mode accent colours under Settings → General → Appearance. **Choose Colour...** opens the native Windows `ChooseColorW` dialog with full colour selection, RGB entry, basic colours and a reusable custom-colour palette.
+- The picker custom-colour palette is saved with the existing settings and restored after restart. The final pre-release workflow records isolated Windows High Contrast, installer upgrade, and long resource-soak results before publication approval.
 - Live accent updates for the timer ring, primary action, active navigation, status text and break reminder. Choices are saved in the existing settings file; older settings without colour entries retain the familiar blue and teal/green defaults.
 - **Reset to Default Colours**, which clears only the accent overrides and leaves the theme, timer and other preferences intact.
 

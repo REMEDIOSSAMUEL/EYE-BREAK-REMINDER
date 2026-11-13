@@ -2,7 +2,7 @@ param(
   [Parameter(Mandatory=$true)][string]$ExecutablePath,
   [string]$EvidenceDirectory='build/hotfix-user-object-evidence/soak',
   [ValidateRange(10,200)][int]$Cycles=120,
-  [ValidateSet('1.2.0','1.2.1')][string]$ExpectedProductVersion='1.2.1',
+  [ValidateSet('1.2.0','1.2.1','1.3.0')][string]$ExpectedProductVersion='1.2.1',
   [ValidateSet('Growth','NoGrowth')][string]$ExpectedResourceBehavior='NoGrowth'
 )
 $ErrorActionPreference='Stop'
@@ -26,9 +26,13 @@ public static class EBR_SOAK_NATIVE {
  [DllImport("user32.dll",SetLastError=true)] public static extern int GetDlgCtrlID(IntPtr hwnd);
  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetParent(IntPtr hwnd);
  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
+ [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern bool SetWindowTextW(IntPtr hwnd,string text);
  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp,uint flags,uint timeout,out IntPtr result);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool IsWindow(IntPtr hwnd);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool IsWindowVisible(IntPtr hwnd);
+ [DllImport("user32.dll",SetLastError=true)] public static extern bool IsIconic(IntPtr hwnd);
+ [DllImport("user32.dll",SetLastError=true)] public static extern bool ShowWindow(IntPtr hwnd,int command);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll",SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd,out EBR_SOAK_RECT rect);
@@ -102,6 +106,30 @@ function Set-Theme([int]$Theme,[int]$Cycle){
  Check ($saved -match ("(?m)^theme=$Theme$")) "Cycle $Cycle persisted theme $Theme"
  if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($script:main,10))){throw 'Timer navigation did not respond after theme change.'}
 }
+function Get-SavedSetting([string]$Key){$content=Get-Content -LiteralPath (Join-Path $script:dataPath 'settings.ini') -Raw;$match=[regex]::Match($content,"(?m)^$([regex]::Escape($Key))=(.*)$");if(-not $match.Success){return $null};return $match.Groups[1].Value}
+function Set-PickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue){
+ foreach($item in @(@{Id=706;Value=$Red},@{Id=707;Value=$Green},@{Id=708;Value=$Blue})){$field=[EBR_SOAK_NATIVE]::ChildById($Dialog,$item.Id);if($field-eq[IntPtr]::Zero-or[EBR_SOAK_NATIVE]::ClassName($field)-ne'Edit'){throw "ChooseColorW RGB field $($item.Id) is missing."};[void][EBR_SOAK_NATIVE]::SendMessageW($field,0x00B1,[IntPtr]::Zero,[IntPtr](-1));[void][EBR_SOAK_NATIVE]::SendMessageW($field,0x0102,[IntPtr]0x08,[IntPtr]::Zero);foreach($digit in ([string]$item.Value).ToCharArray()){[void][EBR_SOAK_NATIVE]::SendMessageW($field,0x0102,[IntPtr][int][char]$digit,[IntPtr]::Zero)};$notification=$item.Id-bor(0x0300-shl16);[void][EBR_SOAK_NATIVE]::SendMessageW([EBR_SOAK_NATIVE]::GetParent($field),0x0111,[IntPtr]$notification,$field);if(([EBR_SOAK_NATIVE]::Text($field)).Trim()-ne[string]$item.Value){throw "ChooseColorW RGB field $($item.Id) did not retain its value."}}
+}
+function Invoke-PickerOperation([int]$Cycle){
+ $work=($Cycle%2-eq 1);$buttonId=if($work){127}else{128};$mode=if($work){'Work'}else{'Break'};$desired=if($work){@(139,92,246)}else{@(249,115,22)};$desiredColor=if($work){0x8B5CF6}else{0xF97316};$cancelColor=if($work){@(1,2,3)}else{@(3,2,1)};$key=if($work){'workAccentColor'}else{'breakAccentColor'};$customKey=if($work){'customWorkAccent'}else{'customBreakAccent'}
+ $beforeColor=Get-SavedSetting $key;$beforeCustom=Get-SavedSetting $customKey
+ [void](Sample $Cycle 'before-picker')
+ if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($script:main,12))){throw "Cycle $Cycle Settings navigation failed before $mode picker."}
+ if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($script:main,134))){throw "Cycle $Cycle Appearance section failed before $mode picker."}
+ $button=[EBR_SOAK_NATIVE]::ChildById($script:main,$buttonId);if($button-eq[IntPtr]::Zero-or-not[EBR_SOAK_NATIVE]::IsWindowEnabled($button)){throw "Cycle $Cycle $mode picker button is missing or disabled."}
+ $wParam=[IntPtr]((1-shl16)-bor$buttonId);if(-not[EBR_SOAK_NATIVE]::PostMessageW($script:main,0x0111,$wParam,$button)){throw "Cycle $Cycle asynchronous $mode picker command failed."}
+ $watch=[Diagnostics.Stopwatch]::StartNew();$dialog=[IntPtr]::Zero;while($watch.Elapsed.TotalSeconds-lt8){$dialog=[EBR_SOAK_NATIVE]::FindWindow($script:process.Id,'#32770');if($dialog-ne[IntPtr]::Zero){break};Start-Sleep -Milliseconds 50};if($dialog-eq[IntPtr]::Zero){throw "Cycle $Cycle native $mode colour picker did not open."}
+ [void](Sample $Cycle 'picker-open')
+ $accept=($Cycle%4-eq 1-or$Cycle%4-eq 2)
+ if($accept){Set-PickerRgb $dialog $desired[0] $desired[1] $desired[2]}else{Set-PickerRgb $dialog $cancelColor[0] $cancelColor[1] $cancelColor[2]}
+ $resultId=if($accept){1}else{2};$resultButton=[EBR_SOAK_NATIVE]::ChildById($dialog,$resultId);if($resultButton-eq[IntPtr]::Zero-or-not[EBR_SOAK_NATIVE]::Click($resultButton)){throw "Cycle $Cycle native picker $(if($accept){'OK'}else{'Cancel'}) failed."}
+ $watch=[Diagnostics.Stopwatch]::StartNew();while([EBR_SOAK_NATIVE]::IsWindow($dialog)-and$watch.Elapsed.TotalSeconds-lt8){Start-Sleep -Milliseconds 50};if([EBR_SOAK_NATIVE]::IsWindow($dialog)){throw "Cycle $Cycle native picker failed to close."}
+ [void](Sample $Cycle 'picker-closed')
+ if($accept){$expectedFlag='1';$expectedValue=[string]$desiredColor}else{$expectedFlag=$beforeCustom;$expectedValue=$beforeColor}
+ $actualFlag=Get-SavedSetting $customKey;$actualValue=Get-SavedSetting $key
+ Check ($actualFlag-eq$expectedFlag-and$actualValue-eq$expectedValue) "Cycle $Cycle $mode picker $(if($accept){'OK'}else{'Cancel'}) $(if($accept){'persists selected RGB'}else{'preserves saved RGB'})" ([pscustomobject]@{Mode=$mode;Accepted=$accept;ExpectedCustom=$expectedFlag;ActualCustom=$actualFlag;ExpectedColor=$expectedValue;ActualColor=$actualValue})
+ if(-not[EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($script:main,10))){throw "Cycle $Cycle Timer navigation failed after $mode picker."}
+}
 function Act-On-Break([IntPtr]$Window,[string]$Action,[int]$Cycle){
  switch($Action){
   'Skip' {if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($Window,24))){throw "Cycle $Cycle Skip button failed."};Wait-Closed $Window 12 $Cycle 'Skip'}
@@ -148,7 +176,7 @@ try{
  if(Test-Path -LiteralPath $script:dataPath){throw "Refusing to overwrite existing test profile data: $script:dataPath"}
  if([EBR_SOAK_NATIVE]::FindWindowW('EyeBreakReminder.Native',$null)-ne[IntPtr]::Zero){throw 'Refusing to run alongside an existing application.'}
  [void][IO.Directory]::CreateDirectory($script:dataPath);$script:ownedData=$true
- $settings=@('workMinutes=1','breakSeconds=30','theme=2','breakModeColors=1','alarm=0','notifications=0','repeat=0','snooze=1','autoStart=1','startup=0','tray=1','restore=1','history=1','trayExplained=1')-join"`n"
+ $settings=@('workMinutes=1','breakSeconds=30','theme=2','breakModeColors=1','alarm=0','notifications=0','repeat=0','snooze=1','autoStart=1','startup=0','tray=0','restore=1','history=1','trayExplained=1')-join"`n"
  if($settings.Contains("`r")){throw 'Test settings fixture must use LF-only newlines because the production settings reader parses raw bytes.'}
  [IO.File]::WriteAllText((Join-Path $script:dataPath 'settings.ini'),$settings,[Text.UTF8Encoding]::new($false))
  $script:process=Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
@@ -187,6 +215,8 @@ try{
   $row=[pscustomobject]@{Cycle=$i;Action=$action;BreakWindowsOpened=$windowCount;UserBefore=$before.UserObjects;UserDuring=$open.UserObjects;UserAfter=$after.UserObjects;GdiBefore=$before.GdiObjects;GdiDuring=$open.GdiObjects;GdiAfter=$after.GdiObjects;HandlesBefore=$before.HandleCount;HandlesAfter=$after.HandleCount;PrivateBytesAfter=$after.PrivateBytes;WorkingSetAfter=$after.WorkingSetBytes;CpuMsAfter=$after.CpuTotalMilliseconds;WindowsAfter=$after.TopLevelWindows;BreakWindowsAfter=$after.BreakWindowCount;StatusAfter=$after.TimerStatus;ElapsedSeconds=$after.ElapsedSeconds}
   $script:cycleRecords.Add($row);Check ($after.BreakWindowCount-eq 0 -and $after.TimerStatus-match'Running') "Cycle $i reminder window closed and work resumed" $row
   if($i%20-eq 0){Set-Theme (($i/20)%5) $i}
+  if($i-le100){Invoke-PickerOperation $i}
+  if($i%10-eq 0){[void][EBR_SOAK_NATIVE]::ShowWindow($script:main,6);if(-not(Wait-Until {[EBR_SOAK_NATIVE]::IsIconic($script:main)} 5 'minimize-main-window' $i)){throw "Cycle $i main window did not minimize."};[void](Sample $i 'main-window-minimized');[void][EBR_SOAK_NATIVE]::ShowWindow($script:main,9);if(-not(Wait-Until {[EBR_SOAK_NATIVE]::IsWindowVisible($script:main)-and-not[EBR_SOAK_NATIVE]::IsIconic($script:main)} 5 'restore-main-window' $i)){throw "Cycle $i main window did not restore."};[void](Sample $i 'main-window-restored');Check $true "Cycle $i minimize and restore preserves the main window"}
   if($i%25-eq 0){
    $pause=[EBR_SOAK_NATIVE]::ChildById($script:main,20)
    if(-not [EBR_SOAK_NATIVE]::Click($pause)){throw "Cycle $i Pause did not respond."}
@@ -197,12 +227,19 @@ try{
   }
   if($i%10-eq 0){Write-Output ("{0}/{1} scheduled cycles; USER={2}; GDI={3}; handles={4}; elapsed={5}"-f$i,$Cycles,$after.UserObjects,$after.GdiObjects,$after.HandleCount,$script:started.Elapsed.ToString('hh\:mm\:ss'))}
  }
+ $pickerOk=@($script:events|Where-Object{$_.Name-match'picker OK' -and $_.Status-eq'PASS'}).Count;$pickerCancel=@($script:events|Where-Object{$_.Name-match'picker Cancel' -and $_.Status-eq'PASS'}).Count
+ Check ($Cycles-ge110-and$pickerOk-ge50-and$pickerCancel-ge50) 'Combined soak completed at least 110 reminder cycles and 100 native picker operations with both OK and Cancel' ([pscustomobject]@{ReminderCycles=$script:cycleRecords.Count;PickerOk=$pickerOk;PickerCancel=$pickerCancel;PickerTotal=$pickerOk+$pickerCancel})
  $user=Summary 'USER objects' 'UserAfter';$gdi=Summary 'GDI objects' 'GdiAfter';$handles=Summary 'process handles' 'HandlesAfter';$private=Summary 'private bytes' 'PrivateBytesAfter';$working=Summary 'working set bytes' 'WorkingSetAfter'
  $drift=$user.EndMedian-$user.StartMedian
  if($ExpectedResourceBehavior-eq'Growth'){$minimum=[math]::Max(4,[math]::Floor($Cycles*0.5));Check ($user.SlopePerCycle-ge 0.5 -and $drift-ge$minimum) 'Published v1.2.0 reproduces sustained USER-object growth' ([pscustomobject]@{SlopePerCycle=$user.SlopePerCycle;StartMedian=$user.StartMedian;EndMedian=$user.EndMedian;Drift=$drift;MinimumExpectedDrift=$minimum;Basis='Half the observed approximately +2 USER objects per break window.'})}
  else{$limit=$idleRange+1;Check ($user.SlopePerCycle-le($limit/[math]::Max(1,$Cycles)) -and $drift-le$limit) 'Candidate USER-object trend remains within measured idle noise' ([pscustomobject]@{SlopePerCycle=$user.SlopePerCycle;StartMedian=$user.StartMedian;EndMedian=$user.EndMedian;Drift=$drift;IdleRange=$idleRange;AllowedDrift=$limit;Basis='Idle range plus one USER object; sustained positive trend is rejected.'})}
  Check (@($script:cycleRecords|Where-Object{$_.BreakWindowsAfter -ne 0}).Count-eq 0) 'All scheduled break windows were destroyed'
- Add-Event 'Other process-resource trend summary' 'INFO' @($gdi,$handles,$private,$working)
+ $gdiDrift=$gdi.EndMedian-$gdi.StartMedian;$handleDrift=$handles.EndMedian-$handles.StartMedian;$privateDrift=$private.EndMedian-$private.StartMedian;$workingDrift=$working.EndMedian-$working.StartMedian
+ Check ($gdiDrift-le2-and$gdi.SlopePerCycle-le0.10) 'GDI-object trend has no sustained growth across reminder, picker, settings and theme cycles' ([pscustomobject]@{Trend=$gdi;AllowedMedianDrift=2;AllowedSlopePerCycle=0.10})
+ Check ($handleDrift-le5-and$handles.SlopePerCycle-le0.15) 'Process-handle trend has no sustained growth across the combined soak' ([pscustomobject]@{Trend=$handles;AllowedMedianDrift=5;AllowedSlopePerCycle=0.15})
+ Check ($privateDrift-le4194304-and$private.SlopePerCycle-le65536) 'Private-byte trend remains bounded across the combined soak' ([pscustomobject]@{Trend=$private;AllowedMedianDrift=4194304;AllowedSlopePerCycle=65536})
+ Check ($workingDrift-le20971520-and$working.SlopePerCycle-le262144) 'Working-set trend remains bounded across the combined soak' ([pscustomobject]@{Trend=$working;AllowedMedianDrift=20971520;AllowedSlopePerCycle=262144})
+ Add-Event 'Picker and window interaction coverage' 'INFO' ([pscustomobject]@{PickerOperations=@($script:events|Where-Object{$_.Name-match'picker (OK|Cancel)'}).Count;PickerOK=@($script:events|Where-Object{$_.Name-match'picker OK'}).Count;PickerCancel=@($script:events|Where-Object{$_.Name-match'picker Cancel'}).Count;MinimizeRestoreCycles=[int][math]::Floor($Cycles/10);ReminderCycles=$script:cycleRecords.Count})
  # Deliberately terminate only the owned test app during a break and verify its documented fresh-work restart behavior.
  if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($script:main,22))){throw 'Active-break restart probe could not start a manual break.'}
  $restartWindow=Wait-Break 12 ($Cycles+1);$settingsHashBeforeRestart=(Get-FileHash -LiteralPath (Join-Path $script:dataPath 'settings.ini') -Algorithm SHA256).Hash;$oldPid=$script:process.Id;$script:process.Kill();if(-not $script:process.WaitForExit(10000)){throw 'Test application failed to exit for restart probe.'}
@@ -221,7 +258,7 @@ $script:processStopped=$true
  if($script:cycleRecords.Count){$script:cycleRecords|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'cycle-results.csv') -NoTypeInformation -Encoding utf8}
  if($script:metrics.Count){
   $script:metrics|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'resource-time-series.csv') -NoTypeInformation -Encoding utf8
-  $width=1200;$chartHeight=880;$panelHeight=190;$left=115;$right=1160;$plotWidth=$right-$left
+  $width=1200;$chartHeight=1050;$panelHeight=190;$left=115;$right=1160;$plotWidth=$right-$left
   $svg=[Text.StringBuilder]::new()
   [void]$svg.AppendLine('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="'+$chartHeight+'" viewBox="0 0 1200 '+$chartHeight+'">')
   [void]$svg.AppendLine('<rect width="1200" height="'+$chartHeight+'" fill="white"/>')
@@ -230,7 +267,8 @@ $script:processStopped=$true
    @{Name='USER objects';Property='UserObjects';Color='#1664a0';Scale=1.0},
    @{Name='GDI objects';Property='GdiObjects';Color='#16855b';Scale=1.0},
    @{Name='Process handles';Property='HandleCount';Color='#a05016';Scale=1.0},
-   @{Name='Private bytes (MiB)';Property='PrivateBytes';Color='#7446a3';Scale=1048576.0}
+   @{Name='Private bytes (MiB)';Property='PrivateBytes';Color='#7446a3';Scale=1048576.0},
+   @{Name='Working set (MiB)';Property='WorkingSetBytes';Color='#296f84';Scale=1048576.0}
   )
   for($panelIndex=0;$panelIndex-lt$panels.Count;$panelIndex++){
    $panel=$panels[$panelIndex];$top=55+$panelIndex*($panelHeight+10);$bottom=$top+$panelHeight

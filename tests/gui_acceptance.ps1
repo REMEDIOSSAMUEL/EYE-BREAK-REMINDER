@@ -1,6 +1,7 @@
 param(
   [string]$Executable = (Join-Path $PSScriptRoot '..\build\gui-test\EyeBreakReminder.exe'),
-  [string]$EvidenceDirectory = (Join-Path $PSScriptRoot '..\build\gui-test\evidence')
+  [string]$EvidenceDirectory = (Join-Path $PSScriptRoot '..\build\gui-test\evidence'),
+  [switch]$TestSystemHighContrast
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -34,6 +35,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 [StructLayout(LayoutKind.Sequential)] public struct EBR_GUI_RECT { public int Left, Top, Right, Bottom; }
 [StructLayout(LayoutKind.Sequential)] public struct EBR_GUI_POINT { public int X, Y; }
+[StructLayout(LayoutKind.Sequential)] public struct EBR_GUI_HIGHCONTRAST { public uint cbSize, dwFlags; public IntPtr scheme; }
 public static class EBR_GUI_NATIVE {
   public delegate bool EnumCallback(IntPtr hwnd, IntPtr data);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool EnumWindows(EnumCallback callback, IntPtr data);
@@ -74,6 +76,10 @@ public static class EBR_GUI_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] public static extern int GetSystemMetrics(int index);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll", SetLastError=true)] private static extern bool SystemParametersInfoW(uint action,uint parameter,ref EBR_GUI_HIGHCONTRAST value,uint flags);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint GetSysColor(int index);
+  public static bool GetHighContrast(out uint flags){EBR_GUI_HIGHCONTRAST value=new EBR_GUI_HIGHCONTRAST();value.cbSize=(uint)Marshal.SizeOf(typeof(EBR_GUI_HIGHCONTRAST));bool ok=SystemParametersInfoW(0x0042,value.cbSize,ref value,0);flags=value.dwFlags;return ok;}
+  public static bool SetHighContrast(uint flags){EBR_GUI_HIGHCONTRAST value=new EBR_GUI_HIGHCONTRAST();value.cbSize=(uint)Marshal.SizeOf(typeof(EBR_GUI_HIGHCONTRAST));value.dwFlags=flags;return SystemParametersInfoW(0x0043,value.cbSize,ref value,2);}
   [DllImport("user32.dll")] public static extern void keybd_event(byte virtualKey,byte scanCode,uint flags,UIntPtr extraInfo);
   public static string Text(IntPtr hwnd) { int n=SendMessageW(hwnd,0x000E,IntPtr.Zero,IntPtr.Zero).ToInt32();IntPtr b=Marshal.AllocHGlobal(Math.Max(2,n+2)*2);try{SendMessageW(hwnd,0x000D,new IntPtr(Math.Max(2,n+2)),b);return Marshal.PtrToStringUni(b)??"";}finally{Marshal.FreeHGlobal(b);} }
   public static string ClassName(IntPtr hwnd) { StringBuilder b=new StringBuilder(256); GetClassNameW(hwnd,b,b.Capacity); return b.ToString(); }
@@ -232,6 +238,74 @@ function Set-NativePickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue) {
     $notification=($item.Id -bor (0x0300 -shl 16))
     [void][EBR_GUI_NATIVE]::SendMessageW([EBR_GUI_NATIVE]::GetParent($field),0x0111,[IntPtr]$notification,$field)
     if(([EBR_GUI_NATIVE]::Text($field)).Trim() -ne [string]$item.Value){throw "The native $($item.Name) field did not retain its value."}
+  }
+}
+function Get-NativePickerRgb([IntPtr]$Dialog) {
+  $values=@();foreach($id in @(706,707,708)){$value=0;if(-not [int]::TryParse(([EBR_GUI_NATIVE]::Text([EBR_GUI_NATIVE]::GetDlgItem($Dialog,$id))).Trim(),[ref]$value)){throw "Native RGB field $id was not numeric."};$values+=,$value};return ,$values
+}
+function Get-SystemColorHex([int]$Index) {
+  $color=[EBR_GUI_NATIVE]::GetSysColor($Index);$red=[int]($color -band 0xff);$green=[int](($color -shr 8) -band 0xff);$blue=[int](($color -shr 16) -band 0xff)
+  return ('#{0:X2}{1:X2}{2:X2}' -f $red,$green,$blue)
+}
+function Get-ContrastRatio([string]$First,[string]$Second) {
+  $luminance={param([string]$Hex)$rgb=@(0,2,4|ForEach-Object{[Convert]::ToInt32($Hex.Substring(1+$_,2),16)/255.0});$linear=@($rgb|ForEach-Object{if($_ -le 0.04045){$_/12.92}else{[Math]::Pow(($_+0.055)/1.055,2.4)}});return 0.2126*$linear[0]+0.7152*$linear[1]+0.0722*$linear[2]}
+  $a=&$luminance $First;$b=&$luminance $Second;return ([Math]::Max($a,$b)+0.05)/([Math]::Min($a,$b)+0.05)
+}
+function Test-SystemHighContrast {
+  if(-not $TestSystemHighContrast){Add-Result 'Actual Windows High Contrast / Forced Colors test' 'NOT TESTED' 'This test is gated to disposable hosted Windows runners; no personal Windows accessibility settings were changed.';return}
+  $original=[uint32]0
+  if(-not [EBR_GUI_NATIVE]::GetHighContrast([ref]$original)){Add-Result 'Actual Windows High Contrast / Forced Colors test' 'NOT TESTED' 'SPI_GETHIGHCONTRAST was unavailable.';return}
+  $highContrastWasEnabled=($original -band 1) -ne 0
+  try {
+    if(-not $highContrastWasEnabled -and -not [EBR_GUI_NATIVE]::SetHighContrast($original -bor 1)){Add-Result 'Actual Windows High Contrast / Forced Colors test' 'NOT TESTED' 'SPI_SETHIGHCONTRAST was unavailable or rejected by this runner.';return}
+    Start-Sleep -Seconds 2
+    $observed=[uint32]0
+    if(-not [EBR_GUI_NATIVE]::GetHighContrast([ref]$observed) -or ($observed -band 1) -eq 0){Add-Result 'Actual Windows High Contrast / Forced Colors test' 'NOT TESTED' 'Windows did not report the requested system High Contrast state.';return}
+    $window=Get-SystemColorHex 5;$windowText=Get-SystemColorHex 8;$buttonFace=Get-SystemColorHex 15;$highlight=Get-SystemColorHex 13;$highlightText=Get-SystemColorHex 14
+    $windowContrast=Get-ContrastRatio $windowText $window;$buttonContrast=Get-ContrastRatio $highlightText $highlight;$focusContrast=Get-ContrastRatio $highlight $buttonFace
+    Assert-That ($windowContrast -ge 4.5 -and $buttonContrast -ge 4.5 -and $focusContrast -ge 3.0) 'Actual Windows Forced Colors text, primary-button and focus colours meet contrast thresholds' ([pscustomobject]@{WindowText=$windowText;WindowBackground=$window;WindowTextRatio=[Math]::Round($windowContrast,2);ButtonText=$highlightText;ButtonBackground=$highlight;ButtonTextRatio=[Math]::Round($buttonContrast,2);Focus=$highlight;ButtonFace=$buttonFace;FocusRatio=[Math]::Round($focusContrast,2)})
+    $names=@('follow-windows','light','dark','high-contrast-dark','high-contrast-light')
+    $storedWork=Get-SettingLine 'workAccentColor';$storedBreak=Get-SettingLine 'breakAccentColor';$customWork=Get-SettingLine 'customWorkAccent';$customBreak=Get-SettingLine 'customBreakAccent'
+    for($theme=0;$theme -le 4;$theme++){
+      Set-Theme $theme
+      Assert-That ((Get-SettingLine 'workAccentColor') -eq $storedWork -and (Get-SettingLine 'breakAccentColor') -eq $storedBreak -and (Get-SettingLine 'customWorkAccent') -eq $customWork -and (Get-SettingLine 'customBreakAccent') -eq $customBreak) "Windows Forced Colors preserves saved custom colours under $($names[$theme])" ([pscustomobject]@{Work=$storedWork;Break=$storedBreak;WorkOverride=$customWork;BreakOverride=$customBreak})
+      Click-Control $script:mainWindow 21 "Reset Work timer under system Forced Colors $($names[$theme])";Start-Sleep -Milliseconds 1100
+      $workShot=Save-Screenshot $script:mainWindow "system-forced-colors-$($names[$theme])-work.png"
+      Assert-TimerRingPixel $workShot $highlight "Windows Forced Colors $($names[$theme]) Work Mode ring"
+      Click-Control $script:mainWindow 22 "Start Break under system Forced Colors $($names[$theme])"
+      $breakWindow=Wait-BreakWindow
+      Assert-That ((Wait-Status 'Taking an eye break') -like '*Taking an eye break*') "Windows Forced Colors $($names[$theme]) retains the named Break status"
+      Assert-That ([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 42 'Break countdown caption').Handle) -eq 'Break time remaining') "Windows Forced Colors $($names[$theme]) retains a distinct Break countdown caption"
+      $breakShot=Save-Screenshot $script:mainWindow "system-forced-colors-$($names[$theme])-break.png"
+      $hotlight=Get-SystemColorHex 26
+      Assert-TimerRingPixel $breakShot $hotlight "Windows Forced Colors $($names[$theme]) Break Mode ring"
+      Click-Control $breakWindow 24 "Complete Break under system Forced Colors $($names[$theme])"
+      Assert-That ((Wait-Status 'Running') -like '*Running*') "Windows Forced Colors $($names[$theme]) returns to Work Mode after Break"
+      Start-Sleep -Milliseconds 100
+      $returnShot=Save-Screenshot $script:mainWindow "system-forced-colors-$($names[$theme])-work-after-break.png"
+      Assert-TimerRingPixel $returnShot $highlight "Windows Forced Colors $($names[$theme]) restores Work Mode ring after Break"
+    }
+    Switch-Settings 4
+    $focusControl=Get-Control $script:mainWindow 127 'Work accent picker focus target under system Forced Colors'
+    Set-AppFocus $focusControl.Handle
+    Assert-That ([EBR_GUI_NATIVE]::IsWindowEnabled($focusControl.Handle)) 'Work colour picker remains keyboard-accessible under actual Windows Forced Colors'
+    Save-Screenshot $script:mainWindow 'system-forced-colors-visible-keyboard-focus.png' | Out-Null
+    [void][EBR_GUI_NATIVE]::SetHighContrast($original -band 0xfffffffe);Start-Sleep -Seconds 2
+    $disabledFlags=[uint32]0
+    Assert-That ([EBR_GUI_NATIVE]::GetHighContrast([ref]$disabledFlags) -and ($disabledFlags -band 1) -eq 0) 'Windows reports Forced Colors disabled before testing saved custom accents'
+    [void][EBR_GUI_NATIVE]::SendMessageW($script:mainWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero)
+    Set-Theme 2
+    Assert-That ((Get-SettingLine 'workAccentColor') -eq $storedWork -and (Get-SettingLine 'breakAccentColor') -eq $storedBreak) 'Turning Windows High Contrast off restores saved custom colour preferences'
+    Switch-Timer;Click-Control $script:mainWindow 21 'Restore normal Work ring after system Forced Colors test';Start-Sleep -Milliseconds 1100
+    Assert-TimerRingPixel (Save-Screenshot $script:mainWindow 'system-forced-colors-disabled-restored-custom-work.png') '#22C55E' 'Disabling Windows Forced Colors restores custom Work Mode accent'
+    Click-Control $script:mainWindow 22 'Verify restored Break accent after system Forced Colors';$breakWindow=Wait-BreakWindow
+    Assert-TimerRingPixel (Save-Screenshot $script:mainWindow 'system-forced-colors-disabled-restored-custom-break.png') '#EF4444' 'Disabling Windows Forced Colors restores custom Break Mode accent'
+    Click-Control $breakWindow 24 'Finish restored Break accent check'
+    Assert-That ((Wait-Status 'Running') -like '*Running*') 'Normal Work mode returns after system Forced Colors is disabled'
+  } finally {
+    [void][EBR_GUI_NATIVE]::SetHighContrast($original);Start-Sleep -Seconds 2
+    [void][EBR_GUI_NATIVE]::SendMessageW($script:mainWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero)
+    [void][EBR_GUI_NATIVE]::SendMessageW($script:mainWindow,0x031A,[IntPtr]::Zero,[IntPtr]::Zero)
   }
 }
 function Close-NativePicker([IntPtr]$Dialog,[bool]$Accept) {
@@ -454,6 +528,10 @@ try {
     [pscustomobject]@{Name='extreme-black-white';Work=@(0,0,0);Break=@(255,255,255);WorkHex='#000000';BreakHex='#FFFFFF'},
     [pscustomobject]@{Name='purple-orange';Work=@(139,92,246);Break=@(249,115,22);WorkHex='#8B5CF6';BreakHex='#F97316'},
     [pscustomobject]@{Name='blue-pink';Work=@(59,130,246);Break=@(236,72,153);WorkHex='#3B82F6';BreakHex='#EC4899'},
+    [pscustomobject]@{Name='bright-yellow-dark-navy';Work=@(255,255,0);Break=@(0,0,128);WorkHex='#FFFF00';BreakHex='#000080'},
+    [pscustomobject]@{Name='saturated-red-very-pale';Work=@(255,0,0);Break=@(255,247,237);WorkHex='#FF0000';BreakHex='#FFF7ED'},
+    [pscustomobject]@{Name='identical-work-break';Work=@(51,65,85);Break=@(51,65,85);WorkHex='#334155';BreakHex='#334155'},
+    [pscustomobject]@{Name='similar-work-break';Work=@(30,64,175);Break=@(29,78,216);WorkHex='#1E40AF';BreakHex='#1D4ED8'},
     [pscustomobject]@{Name='green-red';Work=@(34,197,94);Break=@(239,68,68);WorkHex='#22C55E';BreakHex='#EF4444'}
   )
   foreach($combo in $customCombos){
@@ -468,6 +546,11 @@ try {
       Start-Sleep -Milliseconds 1600
     }
     Set-NativePickerRgb $workDialog $combo.Work[0] $combo.Work[1] $combo.Work[2]
+    if($combo.Name -eq 'green-red'){
+      $addToPalette=[EBR_GUI_NATIVE]::GetDlgItem($workDialog,712)
+      Assert-That ($addToPalette -ne [IntPtr]::Zero -and [EBR_GUI_NATIVE]::IsWindowVisible($addToPalette)) 'Native ChooseColorW exposes Add to Custom Colors'
+      [void][EBR_GUI_NATIVE]::SendMessageW($addToPalette,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+    }
     Close-NativePicker $workDialog $true
     Switch-Timer;$workAfterPicker=Get-TimerSeconds
     Assert-That ($workAfterPicker -le $timerBeforeWorkPicker) "$($combo.Name) Work Mode colour change leaves the countdown running without resetting it" ([pscustomobject]@{Before=$timerBeforeWorkPicker;After=$workAfterPicker})
@@ -592,6 +675,8 @@ try {
     Assert-That ((Wait-Status 'Running') -like '*Running*') "$($themeNames[$theme]) returns to work after skip"
   }
 
+  Test-SystemHighContrast
+
   Set-Intervals 1 300
   Switch-Timer
   Click-Control $script:mainWindow 21 'Reset accelerated timer'
@@ -712,6 +797,16 @@ try {
   Assert-That ((Get-SettingLine 'customWorkAccent') -eq '1' -and (Get-SettingLine 'workAccentColor') -eq [string][int]0x22C55E) 'Custom Work Mode colour persists across application restart'
   Assert-That ((Get-SettingLine 'customBreakAccent') -eq '1' -and (Get-SettingLine 'breakAccentColor') -eq [string][int]0xEF4444) 'Custom Break Mode colour persists across application restart'
   Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 125 'Work accent swatch').Handle)) -eq '#22C55E' -and ([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 126 'Break accent swatch').Handle)) -eq '#EF4444') 'Both custom color swatches restore after application restart'
+  $paletteIndex=-1
+  for($i=0;$i -lt 16;$i++){if((Get-SettingLine "pickerCustomColor$i") -eq [string][int]0x22C55E){$paletteIndex=$i;break}}
+  Assert-That ($paletteIndex -ge 0) 'Native picker custom-colour palette persists its added colour across restart' ([pscustomobject]@{PaletteIndex=$paletteIndex;Stored=if($paletteIndex -ge 0){Get-SettingLine "pickerCustomColor$paletteIndex"}else{$null}})
+  $paletteDialog=Open-ColorPicker 127 'Reopen Work Mode colour picker after restart'
+  $paletteSwatch=[EBR_GUI_NATIVE]::GetDlgItem($paletteDialog,721+$paletteIndex)
+  Assert-That ($paletteSwatch -ne [IntPtr]::Zero) 'Restarted native picker exposes the persisted custom swatch' ([pscustomobject]@{ControlId=721+$paletteIndex})
+  [void][EBR_GUI_NATIVE]::SendMessageW($paletteSwatch,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+  $paletteRgb=Get-NativePickerRgb $paletteDialog
+  Assert-That (($paletteRgb -join ',') -eq '34,197,94') 'Persisted native custom-colour swatch selects the same RGB after restart' $paletteRgb
+  Close-NativePicker $paletteDialog $false
   Save-Screenshot $script:mainWindow 'theme-persistence-high-contrast-light.png' | Out-Null
   $timerBeforeReset=Get-Content -LiteralPath (Join-Path $dataDirectory 'timer.dat') -Raw
   Click-Control $script:mainWindow 129 'Reset to Default Colours'

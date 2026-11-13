@@ -14,7 +14,7 @@ Work and break colours are independent. In normal themes, the Work Mode colour i
 
 The normal Dark theme defaults are Work `#60A5FA` and Break `#2DD4BF`. The Light theme uses its existing blue and teal accents (`#1D4ED8` and `#0F766E`). High-contrast themes use their accessible palette. With **Follow Windows Theme**, the defaults follow the selected Windows light/dark appearance.
 
-Pressing **OK** applies and saves the choice immediately. Pressing **Cancel** discards the dialog's pending selection. Neither action resets or pauses the timer. Saved colours remain when the theme changes or the application restarts. High contrast and Windows Forced Colors temporarily take priority while keeping custom preferences saved.
+Pressing **OK** applies and saves the choice immediately. Pressing **Cancel** discards the dialog's pending selection. Neither action resets or pauses the timer. Saved colours and the picker's custom-colour palette remain when the theme changes or the application restarts. High contrast and Windows Forced Colors temporarily take priority while keeping custom preferences saved.
 
 ## Reset
 

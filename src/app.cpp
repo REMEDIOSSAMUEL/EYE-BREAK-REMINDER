@@ -131,7 +131,7 @@ public:
  void saveHistory(){saveFile(L"history.dat",encodeHistory(history));}
  void load(){
   directory=dataDirectory();std::string text;bool damaged=false;
-  auto path=directory+L"\\settings.ini";if(exists(path)&&(!read(path,text,65536)||!decodeSettings(text,settings))){quarantine(path);settings={};damaged=true;}settings.validate();settings.startup=startupEnabled();
+  auto path=directory+L"\\settings.ini";if(exists(path)&&(!read(path,text,65536)||!decodeSettings(text,settings))){quarantine(path);settings={};damaged=true;}settings.validate();for(std::size_t i=0;i<pickerCustomColors.size();++i){auto color=settings.pickerCustomColors[i];pickerCustomColors[i]=RGB((color>>16)&0xff,(color>>8)&0xff,color&0xff);}settings.startup=startupEnabled();
   engine=std::make_unique<Engine>(settings,monotonic,utc,localTime);Saved saved;path=directory+L"\\timer.dat";
   if(settings.restore&&exists(path)){if(!read(path,text,1024)||!decodeTimer(text,saved)||!engine->restore(saved)){quarantine(path);damaged=true;}}
   path=directory+L"\\history.dat";if(exists(path)&&(!read(path,text)||!decodeHistory(text,history,utc()))){quarantine(path);history.clear();damaged=true;}
@@ -757,7 +757,7 @@ public:
  void chooseAccentColor(bool work){
   auto pendingColors=pickerCustomColors;CHOOSECOLORW picker{};picker.lStructSize=sizeof(picker);picker.hwndOwner=main;picker.lpCustColors=pendingColors.data();picker.rgbResult=accentSwatch(work);picker.Flags=CC_FULLOPEN|CC_RGBINIT|CC_ANYCOLOR;
   if(!ChooseColorW(&picker))return;
-  pickerCustomColors=pendingColors;theme::Color selected=theme::rgb(GetRValue(picker.rgbResult),GetGValue(picker.rgbResult),GetBValue(picker.rgbResult));
+  pickerCustomColors=pendingColors;for(std::size_t i=0;i<pickerCustomColors.size();++i)settings.pickerCustomColors[i]=theme::rgb(GetRValue(pickerCustomColors[i]),GetGValue(pickerCustomColors[i]),GetBValue(pickerCustomColors[i]));theme::Color selected=theme::rgb(GetRValue(picker.rgbResult),GetGValue(picker.rgbResult),GetBValue(picker.rgbResult));
   if(work){settings.customWorkAccent=true;settings.workAccentColor=selected;}
   else{settings.customBreakAccent=true;settings.breakAccentColor=selected;}
   persistAccentPreferences();

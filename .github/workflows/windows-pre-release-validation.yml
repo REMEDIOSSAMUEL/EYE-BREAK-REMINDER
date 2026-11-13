@@ -1,9 +1,6 @@
-name: Windows v1.2.0 pre-release validation
+name: Windows v1.3.0 final pre-release validation
 
 on:
-  push:
-    branches:
-      - feature/v1.2.0-theme-accessibility-break-mode
   workflow_dispatch:
 
 permissions:
@@ -12,7 +9,7 @@ permissions:
 jobs:
   windows-pre-release:
     runs-on: windows-2025
-    timeout-minutes: 60
+    timeout-minutes: 300
     steps:
       - name: Check out the requested feature branch
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -53,7 +50,22 @@ jobs:
           makensis_path="$nsis_root/makensis.exe"
           test -x "$makensis_path"
           "$makensis_path" -VERSION
-          make -B package gui-test \
+          make -B test \
+            CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
+            WINDRES=windres \
+            MAKENSIS="$makensis_path" \
+            PYTHON=python
+          make all \
+            CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
+            WINDRES=windres \
+            MAKENSIS="$makensis_path" \
+            PYTHON=python
+          make package \
+            CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
+            WINDRES=windres \
+            MAKENSIS="$makensis_path" \
+            PYTHON=python
+          make gui-test \
             CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
             WINDRES=windres \
             MAKENSIS="$makensis_path" \
@@ -104,7 +116,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path 'build/pre-release-evidence' | Out-Null
-          & .\tests\gui_acceptance.ps1
+          & .\tests\gui_acceptance.ps1 -TestSystemHighContrast
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Record the existing GUI suite as unavailable on a headless runner
@@ -114,7 +126,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path 'build/gui-test/evidence' | Out-Null
           $record = [pscustomobject]@{
-            Version = '1.2.0'
+            Version = '1.3.0'
             Assertions = 0
             Events = @([pscustomobject]@{
               Name = 'Existing native Win32 GUI acceptance suite'
@@ -134,7 +146,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path 'build/gui-test/evidence' | Out-Null
           $record = [pscustomobject]@{
-            Version = '1.2.0'
+            Version = '1.3.0'
             Assertions = 0
             Events = @([pscustomobject]@{
               Name = 'Existing native Win32 GUI acceptance suite'
@@ -154,14 +166,42 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & .\tests\windows_pre_release_acceptance.ps1 `
             -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
-            -EvidenceDirectory '.\build\pre-release-evidence'
+            -EvidenceDirectory '.\build\pre-release-evidence' `
+            -ExpectedProductVersion '1.3.0'
+
+      - name: Run the 110-cycle reminder and 100-dialog resource soak
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_break_user_resource_soak.ps1 `
+            -ExecutablePath '.\release\EyeBreakReminder.exe' `
+            -ExpectedProductVersion '1.3.0' `
+            -ExpectedResourceBehavior NoGrowth `
+            -Cycles 110 `
+            -EvidenceDirectory '.\build\pre-release-evidence\resource-soak'
+
+      - name: Record the long resource soak as unavailable on a headless runner
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE != 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'build/pre-release-evidence/resource-soak' | Out-Null
+          [pscustomobject]@{
+            Version = '1.3.0'
+            Status = 'NOT TESTED'
+            Reason = 'The GitHub-hosted runner exposed no interactive Explorer desktop. A timed GUI soak cannot be represented by static checks.'
+            RequestedReminderCycles = 110
+            RequestedPickerOperations = 100
+            CompletedUtc = [DateTime]::UtcNow.ToString('o')
+          } | ConvertTo-Json -Depth 4 | Set-Content 'build/pre-release-evidence/resource-soak/not-tested.json' -Encoding UTF8
 
       # Never upload release binaries or archives here. This artifact contains evidence only.
       - name: Upload validation evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: eye-break-reminder-v1.2.0-pre-release-evidence-${{ github.run_id }}
+          name: eye-break-reminder-v1.3.0-final-pre-release-evidence-${{ github.run_id }}
           path: |
             build/pre-release-evidence/**
             build/gui-test/evidence/**
