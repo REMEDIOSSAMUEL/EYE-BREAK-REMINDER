@@ -108,6 +108,13 @@ function Set-Theme([int]$Theme,[int]$Cycle){
  if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($script:main,10))){throw 'Timer navigation did not respond after theme change.'}
 }
 function Get-SavedSetting([string]$Key){$content=Get-Content -LiteralPath (Join-Path $script:dataPath 'settings.ini') -Raw;$match=[regex]::Match($content,"(?m)^$([regex]::Escape($Key))=(.*)$");if(-not $match.Success){return $null};return $match.Groups[1].Value}
+function Get-PickerFieldText([IntPtr]$Field){
+ $messageResult=[IntPtr]::Zero;$sent=[EBR_SOAK_NATIVE]::SendMessageTimeoutW($Field,0x000E,[IntPtr]::Zero,[IntPtr]::Zero,[uint32]2,[uint32]3000,[ref]$messageResult)
+ if($sent-eq[IntPtr]::Zero){throw "Timed out reading ChooseColorW RGB edit length for HWND 0x$('{0:X}' -f $Field.ToInt64())."}
+ $capacity=[Math]::Max(2,$messageResult.ToInt32()+2);$buffer=[Runtime.InteropServices.Marshal]::AllocHGlobal($capacity*2)
+ try{$messageResult=[IntPtr]::Zero;$sent=[EBR_SOAK_NATIVE]::SendMessageTimeoutW($Field,0x000D,[IntPtr]::new($capacity),$buffer,[uint32]2,[uint32]3000,[ref]$messageResult);if($sent-eq[IntPtr]::Zero){throw "Timed out reading ChooseColorW RGB edit text for HWND 0x$('{0:X}' -f $Field.ToInt64())."};return [Runtime.InteropServices.Marshal]::PtrToStringUni($buffer)}
+ finally{[Runtime.InteropServices.Marshal]::FreeHGlobal($buffer)}
+}
 function Set-PickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue){
  foreach($item in @(@{Id=706;Value=$Red},@{Id=707;Value=$Green},@{Id=708;Value=$Blue})){
   $field=[EBR_SOAK_NATIVE]::ChildById($Dialog,$item.Id);if($field-eq[IntPtr]::Zero-or[EBR_SOAK_NATIVE]::ClassName($field)-ne'Edit'){throw "ChooseColorW RGB field $($item.Id) is missing."}
@@ -115,7 +122,7 @@ function Set-PickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue){
   [void][EBR_SOAK_NATIVE]::SendMessageW($field,0x0102,[IntPtr]0x08,[IntPtr]::Zero)
   foreach($digit in ([string]$item.Value).ToCharArray()){[void][EBR_SOAK_NATIVE]::SendMessageW($field,0x0102,[IntPtr][int][char]$digit,[IntPtr]::Zero)}
   $notification=($item.Id -bor (0x0300 -shl 16));[void][EBR_SOAK_NATIVE]::SendMessageW([EBR_SOAK_NATIVE]::GetParent($field),0x0111,[IntPtr]$notification,$field)
-  $actual=([EBR_SOAK_NATIVE]::Text($field)).Trim();if($actual-ne[string]$item.Value){throw "ChooseColorW RGB field $($item.Id) did not retain the native character input ($actual)."}
+  $actual=(Get-PickerFieldText $field).Trim();if($actual-ne[string]$item.Value){throw "ChooseColorW RGB field $($item.Id) did not retain the native character input ($actual)."}
  }
 }
 function Invoke-PickerOperation([int]$Cycle){
