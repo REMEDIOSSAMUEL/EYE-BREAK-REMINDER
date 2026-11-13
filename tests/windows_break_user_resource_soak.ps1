@@ -118,7 +118,8 @@ function Invoke-PickerOperation([int]$Cycle){
  if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($script:main,12))){throw "Cycle $Cycle Settings navigation failed before $mode picker."}
  if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($script:main,134))){throw "Cycle $Cycle Appearance section failed before $mode picker."}
  $button=[EBR_SOAK_NATIVE]::ChildById($script:main,$buttonId);if($button-eq[IntPtr]::Zero-or-not[EBR_SOAK_NATIVE]::IsWindowEnabled($button)){throw "Cycle $Cycle $mode picker button is missing or disabled."}
- $wParam=[IntPtr]((1-shl16)-bor$buttonId);if(-not[EBR_SOAK_NATIVE]::PostMessageW($script:main,0x0111,$wParam,$button)){throw "Cycle $Cycle asynchronous $mode picker command failed."}
+ # BN_CLICKED is zero: post the real WM_COMMAND low word and source HWND.
+ $wParam=[IntPtr]$buttonId;if(-not[EBR_SOAK_NATIVE]::PostMessageW($script:main,0x0111,$wParam,$button)){throw "Cycle $Cycle asynchronous $mode picker command failed."}
  $watch=[Diagnostics.Stopwatch]::StartNew();$dialog=[IntPtr]::Zero;while($watch.Elapsed.TotalSeconds-lt8){$dialog=[EBR_SOAK_NATIVE]::FindWindow($script:process.Id,'#32770');if($dialog-ne[IntPtr]::Zero){break};Start-Sleep -Milliseconds 50};if($dialog-eq[IntPtr]::Zero){throw "Cycle $Cycle native $mode colour picker did not open."}
  [void](Sample $Cycle 'picker-open')
  $accept=($Cycle%4-eq 1-or$Cycle%4-eq 2)

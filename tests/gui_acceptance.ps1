@@ -576,6 +576,10 @@ try {
     Click-Control $script:mainWindow 22 'Start custom-colour break'
     $breakWindow=Wait-BreakWindow
     Assert-That ((Wait-Status 'Taking an eye break') -like '*Taking an eye break*') "$($combo.Name) break keeps the existing Taking an eye break status"
+    $breakStartSeconds=Get-TimerSeconds;$breakProgressWatch=[Diagnostics.Stopwatch]::StartNew()
+    while($breakProgressWatch.Elapsed.TotalSeconds -lt 5 -and (Get-TimerSeconds) -ge $breakStartSeconds){Start-Sleep -Milliseconds 100}
+    Assert-That ((Get-TimerSeconds) -lt $breakStartSeconds) "$($combo.Name) Break countdown advances before ring pixel sampling"
+    Start-Sleep -Milliseconds 250
     $breakShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-break.png"
     Assert-TimerRingPixel $breakShot $combo.BreakHex "$($combo.Name) Break Mode"
     Click-Control $breakWindow 24 'Finish custom-colour break'
