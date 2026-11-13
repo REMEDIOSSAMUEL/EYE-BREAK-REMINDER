@@ -1608,7 +1608,7 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
       Require ($paletteSlot-ge0) 'Installed picker palette contains the selected Work colour' $paletteSlot
       $paletteSwatch=[EBR_PRE_NATIVE]::GetDlgItem($pickerAfterRestart,721+$paletteSlot);Require ($paletteSwatch-ne[IntPtr]::Zero) 'Installed restarted picker exposes the saved custom palette cell' $paletteSlot
       [void][EBR_PRE_NATIVE]::SendMessageW($paletteSwatch,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
-      $selectedRgb=@(@(706,707,708)|ForEach-Object{[int]([EBR_PRE_NATIVE]::Text([EBR_PRE_NATIVE]::GetDlgItem($pickerAfterRestart,$_)).Trim())})
+      $selectedRgb=@(@(706,707,708)|ForEach-Object{[int]((Get-InstalledChildText ([EBR_PRE_NATIVE]::GetDlgItem($pickerAfterRestart,$_))).Trim())})
       Require (($selectedRgb-join',')-eq'139,92,246') 'Installed restarted native picker restores the custom palette RGB' $selectedRgb
       Close-InstalledColorPicker $pickerAfterRestart $false
       Switch-Timer
