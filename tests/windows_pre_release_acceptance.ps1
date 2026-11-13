@@ -1593,7 +1593,7 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
     $breakWait=[Diagnostics.Stopwatch]::StartNew();$customBreakWindow=[IntPtr]::Zero;while($breakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$customBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
     Require ($customBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Installed custom Break retains its existing named state'
     Wait-ForRingProgress 'Installed custom Break after the v1.2.1 upgrade'
-    $installedBreakShot=Capture-ActiveWindow $script:mainWindow 'installed-upgrade-custom-break-ring.png';if($installedBreakShot){Assert-InstalledTimerRingPixel $installedBreakShot '#F97316' 'Installed Break accent after the v1.2.1 upgrade'}
+    $installedBreakShot=Capture-PrintWindow $script:mainWindow 'installed-upgrade-custom-break-ring.png';if($installedBreakShot){Assert-InstalledTimerRingPixel $installedBreakShot '#F97316' 'Installed Break accent after the v1.2.1 upgrade'}
     Click-Control $customBreakWindow 24 'Finish installed custom Break pixel check'
     Require ((Get-Status)-like'*Running*') 'Installed app returns to the Work Mode after its custom Break'
     Stop-InstalledApp
