@@ -579,7 +579,7 @@ try {
     $breakStartSeconds=Get-TimerSeconds;$breakProgressWatch=[Diagnostics.Stopwatch]::StartNew()
     while($breakProgressWatch.Elapsed.TotalSeconds -lt 5 -and (Get-TimerSeconds) -ge $breakStartSeconds){Start-Sleep -Milliseconds 100}
     Assert-That ((Get-TimerSeconds) -lt $breakStartSeconds) "$($combo.Name) Break countdown advances before ring pixel sampling"
-    Start-Sleep -Milliseconds 250
+    Start-Sleep -Milliseconds 1400
     $breakShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-break.png"
     Assert-TimerRingPixel $breakShot $combo.BreakHex "$($combo.Name) Break Mode"
     Click-Control $breakWindow 24 'Finish custom-colour break'
@@ -587,7 +587,7 @@ try {
     $workStartSeconds=Get-TimerSeconds;$workProgressWatch=[Diagnostics.Stopwatch]::StartNew()
     while($workProgressWatch.Elapsed.TotalSeconds -lt 5 -and (Get-TimerSeconds) -ge $workStartSeconds){Start-Sleep -Milliseconds 100}
     Assert-That ((Get-TimerSeconds) -lt $workStartSeconds) "$($combo.Name) Work countdown advances after Break completion"
-    Start-Sleep -Milliseconds 250;$returnShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-work-after-break.png"
+    Start-Sleep -Milliseconds 1400;$returnShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-work-after-break.png"
     Assert-TimerRingPixel $returnShot $combo.WorkHex "$($combo.Name) Work Mode after break"
     Switch-Settings 4
   }

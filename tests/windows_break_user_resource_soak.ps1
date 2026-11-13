@@ -21,6 +21,10 @@ public static class EBR_SOAK_NATIVE {
  [DllImport("user32.dll",SetLastError=true)] private static extern bool EnumChildWindows(IntPtr parent,EnumProc callback,IntPtr data);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string cls,string title);
  [DllImport("user32.dll",SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
+ [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+ [DllImport("user32.dll",SetLastError=true)] public static extern bool AttachThreadInput(uint attach,uint attachTo,bool attachState);
+ [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SetFocus(IntPtr hwnd);
+ [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetFocus();
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] private static extern int GetClassNameW(IntPtr hwnd,StringBuilder text,int max);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr hwnd,StringBuilder text,int max);
  [DllImport("user32.dll",SetLastError=true)] public static extern int GetDlgCtrlID(IntPtr hwnd);
@@ -35,6 +39,8 @@ public static class EBR_SOAK_NATIVE {
  [DllImport("user32.dll",SetLastError=true)] public static extern bool IsIconic(IntPtr hwnd);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool ShowWindow(IntPtr hwnd,int command);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
+ [DllImport("user32.dll")] private static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
+ public static void Key(byte key,bool up){keybd_event(key,0,up?2u:0u,UIntPtr.Zero);}
  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll",SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd,out EBR_SOAK_RECT rect);
  [DllImport("user32.dll",SetLastError=true)] public static extern int GetGuiResources(IntPtr process,uint flags);
@@ -108,8 +114,10 @@ function Set-Theme([int]$Theme,[int]$Cycle){
  if(-not [EBR_SOAK_NATIVE]::Click([EBR_SOAK_NATIVE]::ChildById($script:main,10))){throw 'Timer navigation did not respond after theme change.'}
 }
 function Get-SavedSetting([string]$Key){$content=Get-Content -LiteralPath (Join-Path $script:dataPath 'settings.ini') -Raw;$match=[regex]::Match($content,"(?m)^$([regex]::Escape($Key))=(.*)$");if(-not $match.Success){return $null};return $match.Groups[1].Value}
+function Focus-PickerEdit([IntPtr]$Dialog,[IntPtr]$Field){$pid=[uint32]0;$thread=[EBR_SOAK_NATIVE]::GetWindowThreadProcessId($Field,[ref]$pid);$current=[EBR_SOAK_NATIVE]::GetCurrentThreadId();if($pid-ne$script:process.Id-or-not[EBR_SOAK_NATIVE]::IsWindowEnabled($Field)){throw 'Refusing to focus an RGB edit outside the enabled isolated app.'};[void][EBR_SOAK_NATIVE]::SetForegroundWindow($Dialog);if(-not[EBR_SOAK_NATIVE]::AttachThreadInput($current,$thread,$true)){throw 'Could not attach keyboard input to the isolated color picker.'};try{[void][EBR_SOAK_NATIVE]::SetFocus($Field);$actual=[EBR_SOAK_NATIVE]::GetFocus()}finally{[void][EBR_SOAK_NATIVE]::AttachThreadInput($current,$thread,$false)};if($actual-ne$Field){throw 'The expected isolated ChooseColorW RGB edit did not receive focus.'}}
+function Send-PickerKey([byte]$Key){[EBR_SOAK_NATIVE]::Key($Key,$false);Start-Sleep -Milliseconds 25;[EBR_SOAK_NATIVE]::Key($Key,$true);Start-Sleep -Milliseconds 25}
 function Set-PickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue){
- foreach($item in @(@{Id=706;Value=$Red},@{Id=707;Value=$Green},@{Id=708;Value=$Blue})){$field=[EBR_SOAK_NATIVE]::ChildById($Dialog,$item.Id);if($field-eq[IntPtr]::Zero-or[EBR_SOAK_NATIVE]::ClassName($field)-ne'Edit'){throw "ChooseColorW RGB field $($item.Id) is missing."};[void][EBR_SOAK_NATIVE]::SendMessageW($field,0x00B1,[IntPtr]::Zero,[IntPtr](-1));[void][EBR_SOAK_NATIVE]::SendMessageW($field,0x0102,[IntPtr]0x08,[IntPtr]::Zero);foreach($digit in ([string]$item.Value).ToCharArray()){[void][EBR_SOAK_NATIVE]::SendMessageW($field,0x0102,[IntPtr][int][char]$digit,[IntPtr]::Zero)};$notification=($item.Id -bor (0x0300 -shl 16));[void][EBR_SOAK_NATIVE]::SendMessageW([EBR_SOAK_NATIVE]::GetParent($field),0x0111,[IntPtr]$notification,$field);if(([EBR_SOAK_NATIVE]::Text($field)).Trim()-ne[string]$item.Value){throw "ChooseColorW RGB field $($item.Id) did not retain its value."}}
+ foreach($item in @(@{Id=706;Value=$Red},@{Id=707;Value=$Green},@{Id=708;Value=$Blue})){$field=[EBR_SOAK_NATIVE]::ChildById($Dialog,$item.Id);if($field-eq[IntPtr]::Zero-or[EBR_SOAK_NATIVE]::ClassName($field)-ne'Edit'){throw "ChooseColorW RGB field $($item.Id) is missing."};Focus-PickerEdit $Dialog $field;[EBR_SOAK_NATIVE]::Key(0x11,$false);[EBR_SOAK_NATIVE]::Key(0x41,$false);Start-Sleep -Milliseconds 25;[EBR_SOAK_NATIVE]::Key(0x41,$true);[EBR_SOAK_NATIVE]::Key(0x11,$true);foreach($digit in ([string]$item.Value).ToCharArray()){Send-PickerKey ([byte][int][char]$digit)};Start-Sleep -Milliseconds 100;if(([EBR_SOAK_NATIVE]::Text($field)).Trim()-ne[string]$item.Value){throw "ChooseColorW RGB field $($item.Id) did not retain its keyboard-entered value."}}
 }
 function Invoke-PickerOperation([int]$Cycle){
  $work=($Cycle%2-eq 1);$buttonId=if($work){127}else{128};$mode=if($work){'Work'}else{'Break'};$desired=if($work){@(139,92,246)}else{@(249,115,22)};$desiredColor=if($work){0x8B5CF6}else{0xF97316};$cancelColor=if($work){@(1,2,3)}else{@(3,2,1)};$key=if($work){'workAccentColor'}else{'breakAccentColor'};$customKey=if($work){'customWorkAccent'}else{'customBreakAccent'}
