@@ -135,9 +135,13 @@ function Get-Control([IntPtr]$Root,[int]$Id,[string]$Name) {
   $matches[0]
 }
 function Click-Control([IntPtr]$Root,[int]$Id,[string]$Name) {
-  $control = Get-Control $Root $Id $Name
-  if (-not $control.Enabled) { throw "$Name is disabled." }
-  [void][EBR_GUI_NATIVE]::SendMessageW($control.Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+  $handle=[EBR_GUI_NATIVE]::GetDlgItem($Root,$Id)
+  if($handle-eq[IntPtr]::Zero){$matches=@([EBR_GUI_NATIVE]::Children($Root)|Where-Object{[EBR_GUI_NATIVE]::GetDlgCtrlID($_)-eq$Id-and[EBR_GUI_NATIVE]::IsWindowVisible($_)});if($matches.Count-ne1){throw "Expected one visible $Name control ID $Id, found $($matches.Count)."};$handle=$matches[0]}
+  if(-not[EBR_GUI_NATIVE]::IsWindow($handle)-or-not[EBR_GUI_NATIVE]::IsWindowVisible($handle)){throw "$Name control ID $Id disappeared before click."}
+  $processId=[uint32]0;[void][EBR_GUI_NATIVE]::GetWindowThreadProcessId($handle,[ref]$processId)
+  if($processId-ne$script:testPid){throw "$Name control ID $Id belongs to process $processId, expected $($script:testPid)."}
+  if(-not[EBR_GUI_NATIVE]::IsWindowEnabled($handle)){throw "$Name is disabled."}
+  [void][EBR_GUI_NATIVE]::SendMessageW($handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
 }
 function Get-Check([IntPtr]$Root,[int]$Id,[string]$Name) {
   $control = Get-Control $Root $Id $Name

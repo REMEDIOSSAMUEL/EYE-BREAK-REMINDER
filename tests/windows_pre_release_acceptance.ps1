@@ -230,15 +230,6 @@ function Focus-AppControl([IntPtr]$Handle) {
   finally {[void][EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$false)}
   if($actual -ne $Handle){throw 'The expected app control did not receive focus.'}
 }
-function Focus-InstalledPickerField([IntPtr]$Dialog,[IntPtr]$Handle) {
-  $targetPid=[uint32]0;$targetThread=[EBR_PRE_NATIVE]::GetWindowThreadProcessId($Handle,[ref]$targetPid);$currentThread=[EBR_PRE_NATIVE]::GetCurrentThreadId()
-  if($targetPid-ne$script:appPid-or-not[EBR_PRE_NATIVE]::IsWindowEnabled($Handle)){throw 'Refusing to focus a color-picker field outside the enabled installed application.'}
-  [void][EBR_PRE_NATIVE]::SetForegroundWindow($Dialog);$attached=[EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$true)
-  if(-not$attached){throw 'Could not attach keyboard input to the installed color picker.'}
-  try{[void][EBR_PRE_NATIVE]::SetFocus($Handle);$actual=[EBR_PRE_NATIVE]::GetFocus()}
-  finally{[void][EBR_PRE_NATIVE]::AttachThreadInput($currentThread,$targetThread,$false)}
-  if($actual-ne$Handle){throw 'The expected installed color-picker RGB field did not receive keyboard focus.'}
-}
 function Get-AppFocusedControl {
   $targetPid=[uint32]0;$targetThread=[EBR_PRE_NATIVE]::GetWindowThreadProcessId($script:mainWindow,[ref]$targetPid)
   $currentThread=[EBR_PRE_NATIVE]::GetCurrentThreadId()
@@ -447,13 +438,13 @@ function Set-InstalledPickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue
   foreach($item in @(@{Id=706;Value=$Red;Name='Red'},@{Id=707;Value=$Green;Name='Green'},@{Id=708;Value=$Blue;Name='Blue'})){
     $field=[EBR_PRE_NATIVE]::GetDlgItem($Dialog,$item.Id)
     if($field-eq[IntPtr]::Zero-or[EBR_PRE_NATIVE]::ClassName($field)-ne'Edit'){throw "Installed ChooseColorW dialog has no $($item.Name) RGB edit field."}
-    Focus-InstalledPickerField $Dialog $field
     [void][EBR_PRE_NATIVE]::SendMessageW($field,0x00B1,[IntPtr]::Zero,[IntPtr](-1))
     [void][EBR_PRE_NATIVE]::SendMessageW($field,0x0102,[IntPtr]0x08,[IntPtr]::Zero)
     foreach($digit in ([string]$item.Value).ToCharArray()){[void][EBR_PRE_NATIVE]::SendMessageW($field,0x0102,[IntPtr][int][char]$digit,[IntPtr]::Zero)}
     $notification=($item.Id -bor (0x0300 -shl 16));[void][EBR_PRE_NATIVE]::SendMessageW([EBR_PRE_NATIVE]::GetParent($field),0x0111,[IntPtr]$notification,$field)
     $actual=([EBR_PRE_NATIVE]::Text($field)).Trim()
-    Require ($actual-eq[string]$item.Value) "Installed native picker accepts $($item.Name) RGB input" ([pscustomobject]@{Expected=$item.Value;Actual=$actual;FieldId=$item.Id;KeyboardFocused=$true;InputMethod='WM_CHAR to native ChooseColorW Edit'})
+    $rect=Get-Rect $field
+    Require ($actual-eq[string]$item.Value) "Installed native picker accepts $($item.Name) RGB input" ([pscustomobject]@{Expected=$item.Value;Actual=$actual;FieldId=$item.Id;DialogTitle=[EBR_PRE_NATIVE]::Text($Dialog);FieldVisible=[EBR_PRE_NATIVE]::IsWindowVisible($field);FieldEnabled=[EBR_PRE_NATIVE]::IsWindowEnabled($field);FieldBounds=$rect;InputMethod='WM_CHAR to native ChooseColorW Edit'})
   }
 }
 function Close-InstalledColorPicker([IntPtr]$Dialog,[bool]$Accept) {

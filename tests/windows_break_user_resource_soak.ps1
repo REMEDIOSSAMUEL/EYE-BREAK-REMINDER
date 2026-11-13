@@ -21,10 +21,6 @@ public static class EBR_SOAK_NATIVE {
  [DllImport("user32.dll",SetLastError=true)] private static extern bool EnumChildWindows(IntPtr parent,EnumProc callback,IntPtr data);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string cls,string title);
  [DllImport("user32.dll",SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
- [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
- [DllImport("user32.dll",SetLastError=true)] public static extern bool AttachThreadInput(uint attach,uint attachTo,bool attachState);
- [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SetFocus(IntPtr hwnd);
- [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetFocus();
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] private static extern int GetClassNameW(IntPtr hwnd,StringBuilder text,int max);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr hwnd,StringBuilder text,int max);
  [DllImport("user32.dll",SetLastError=true)] public static extern int GetDlgCtrlID(IntPtr hwnd);
@@ -115,7 +111,6 @@ function Get-SavedSetting([string]$Key){$content=Get-Content -LiteralPath (Join-
 function Set-PickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue){
  foreach($item in @(@{Id=706;Value=$Red},@{Id=707;Value=$Green},@{Id=708;Value=$Blue})){
   $field=[EBR_SOAK_NATIVE]::ChildById($Dialog,$item.Id);if($field-eq[IntPtr]::Zero-or[EBR_SOAK_NATIVE]::ClassName($field)-ne'Edit'){throw "ChooseColorW RGB field $($item.Id) is missing."}
-  Focus-PickerEdit $Dialog $field
   [void][EBR_SOAK_NATIVE]::SendMessageW($field,0x00B1,[IntPtr]::Zero,[IntPtr](-1))
   [void][EBR_SOAK_NATIVE]::SendMessageW($field,0x0102,[IntPtr]0x08,[IntPtr]::Zero)
   foreach($digit in ([string]$item.Value).ToCharArray()){[void][EBR_SOAK_NATIVE]::SendMessageW($field,0x0102,[IntPtr][int][char]$digit,[IntPtr]::Zero)}
