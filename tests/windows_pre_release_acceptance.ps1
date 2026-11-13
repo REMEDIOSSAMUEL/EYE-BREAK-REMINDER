@@ -209,15 +209,28 @@ function Find-ScheduleReplacementDialog {
 function Click-SchedulePresetAndConfirm([int]$Id,[string]$Name) {
   $control=Get-Control $script:mainWindow $Id $Name
   if(-not $control.Enabled){throw "$Name control is disabled."}
-  # Queue BM_CLICK so the application's modal TaskDialog cannot block this automation thread.
-  Require ([EBR_PRE_NATIVE]::PostMessageW($control.Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)) "$Name click was queued to the application thread"
+  Capture-ActiveWindow $script:mainWindow 'installed-v121-schedule-before-everyday-preset.png' | Out-Null
+  # Make the confirmation path deterministic even if an earlier migration test left this exact preset selected.
+  $before=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
+  $samePreset=$true
+  foreach($day in @('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')){
+    if($before["schedule$day"] -ne '1' -or $before["schedule${day}1"] -ne '09001700' -or $before.ContainsKey("schedule${day}2") -or $before.ContainsKey("schedule${day}3")){$samePreset=$false}
+  }
+  if($samePreset){Set-Check $script:mainWindow 285 $false 'Make the v1.2.1 schedule differ before testing its preset confirmation'}
+  $rect=Get-Rect $control.Handle;$x=[int](($rect.Left+$rect.Right)/2);$y=[int](($rect.Top+$rect.Bottom)/2)
+  Require ([EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow)) "$Name activates the installed v1.2.1 app before a real desktop click"
+  Start-Sleep -Milliseconds 100
+  $foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid)
+  Require ($foregroundPid -eq $script:appPid -and [EBR_PRE_NATIVE]::SetCursorPos($x,$y)) "$Name button is clickable on the isolated interactive desktop" ([pscustomobject]@{ForegroundPid=$foregroundPid;AppPid=$script:appPid;ButtonRect=$rect})
+  [EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 60;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+  Require $true "$Name real pointer click was sent to the visible Win32 preset button" ([pscustomobject]@{ControlId=$Id;ParentClass=[EBR_PRE_NATIVE]::ClassName([EBR_PRE_NATIVE]::GetParent($control.Handle));ButtonRect=$rect})
   $watch=[Diagnostics.Stopwatch]::StartNew();$dialog=[IntPtr]::Zero
   while($watch.Elapsed.TotalSeconds -lt 8){$dialog=Find-ScheduleReplacementDialog;if($dialog -ne [IntPtr]::Zero){break};Start-Sleep -Milliseconds 50}
   Require ($dialog -ne [IntPtr]::Zero) "$Name opens the weekly-hours replacement confirmation"
   $yes=[EBR_PRE_NATIVE]::GetDlgItem($dialog,6)
   Require ($yes -ne [IntPtr]::Zero -and [EBR_PRE_NATIVE]::ClassName($yes) -eq 'Button' -and [EBR_PRE_NATIVE]::IsWindowVisible($yes) -and [EBR_PRE_NATIVE]::IsWindowEnabled($yes) -and [EBR_PRE_NATIVE]::Text($yes) -match '^\s*&?Yes\s*$') "$Name confirmation exposes an enabled Yes button" ([pscustomobject]@{DialogTitle=[EBR_PRE_NATIVE]::Text($dialog);ButtonText=[EBR_PRE_NATIVE]::Text($yes);ButtonId=[EBR_PRE_NATIVE]::GetDlgCtrlID($yes)})
   Capture-ActiveWindow $dialog 'installed-v121-schedule-replacement-confirmation.png' | Out-Null
-  Require ([EBR_PRE_NATIVE]::PostMessageW($yes,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)) "$Name confirmation Yes click was queued"
+  [void][EBR_PRE_NATIVE]::SendMessageW($yes,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
   $closeWatch=[Diagnostics.Stopwatch]::StartNew()
   while([EBR_PRE_NATIVE]::IsWindow($dialog) -and $closeWatch.Elapsed.TotalSeconds -lt 8){Start-Sleep -Milliseconds 50}
   Require (-not [EBR_PRE_NATIVE]::IsWindow($dialog)) "$Name confirmation closes after Yes"
