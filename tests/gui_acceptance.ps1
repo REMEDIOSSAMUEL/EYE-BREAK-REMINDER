@@ -680,13 +680,13 @@ try {
     Assert-That ((Wait-Status 'Taking an eye break') -like '*Taking an eye break*') "$($themeNames[$theme]) break state label"
     Assert-That ([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 42 'Break countdown caption').Handle) -eq 'Break time remaining') "$($themeNames[$theme]) break countdown has a distinct label"
     Assert-StatusAlignment "$($themeNames[$theme]) break"
+    Save-Screenshot $breakWindow ("reminder-{0}.png" -f $themeNames[$theme]) | Out-Null
+    $breakCount=[EBR_GUI_NATIVE]::Text((Get-Control $breakWindow 40 'Break countdown').Handle)
+    Assert-That ($breakCount -match '^\d+:\d{2}$') "$($themeNames[$theme]) break duration visible" $breakCount
     Wait-RingProgress "$($themeNames[$theme]) Break"
     Save-Screenshot $script:mainWindow ("timer-{0}-break.png" -f $themeNames[$theme]) | Out-Null
     if($theme -eq 3){Assert-TimerRingPixel (Join-Path $EvidenceDirectory ("timer-{0}-break.png" -f $themeNames[$theme])) '#00FFFF' 'High Contrast Dark overrides custom Break Mode colour'}
     if($theme -eq 4){Assert-TimerRingPixel (Join-Path $EvidenceDirectory ("timer-{0}-break.png" -f $themeNames[$theme])) '#005A00' 'High Contrast Light overrides custom Break Mode colour'}
-    Save-Screenshot $breakWindow ("reminder-{0}.png" -f $themeNames[$theme]) | Out-Null
-    $breakCount=[EBR_GUI_NATIVE]::Text((Get-Control $breakWindow 40 'Break countdown').Handle)
-    Assert-That ($breakCount -match '^\d+:\d{2}$') "$($themeNames[$theme]) break duration visible" $breakCount
     Click-Control $breakWindow 24 'Skip eye break'
     Assert-That ((Wait-Status 'Running') -like '*Running*') "$($themeNames[$theme]) returns to work after skip"
   }
