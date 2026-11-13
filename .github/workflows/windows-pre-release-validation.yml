@@ -1,6 +1,11 @@
 name: Windows v1.3.0 final pre-release validation
 
 on:
+  push:
+    branches:
+      - feature/v1.3.0-custom-accent-colours
+    paths-ignore:
+      - docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md
   workflow_dispatch:
 
 permissions:
