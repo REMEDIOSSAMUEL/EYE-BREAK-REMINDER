@@ -657,6 +657,7 @@ try {
       Start-Sleep -Milliseconds 150
       Assert-That ((Wait-Status 'Running') -like '*Running*') 'Follow Windows repaints on WM_THEMECHANGED'
     }
+    Wait-RingProgress "$($themeNames[$theme]) Work"
     Assert-StatusAlignment "$($themeNames[$theme]) work"
     Save-Screenshot $script:mainWindow ("timer-{0}-work.png" -f $themeNames[$theme]) | Out-Null
     if($theme -eq 3){$contrastWorkShot=Save-Screenshot $script:mainWindow 'custom-high-contrast-dark-work.png';Assert-TimerRingPixel $contrastWorkShot '#FFFF00' 'High Contrast Dark overrides custom Work Mode colour'}

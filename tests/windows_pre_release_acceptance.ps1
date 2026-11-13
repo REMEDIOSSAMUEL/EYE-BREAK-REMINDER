@@ -201,11 +201,34 @@ function Click-Control([IntPtr]$Root, [int]$Id, [string]$Name) {
 }
 function Find-ScheduleReplacementDialog {
   foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){
-    if(-not [EBR_PRE_NATIVE]::IsWindowVisible($window) -or [EBR_PRE_NATIVE]::ClassName($window) -ne '#32770' -or [EBR_PRE_NATIVE]::Text($window) -ne 'Eye Break Reminder'){continue}
-    $texts=@(foreach($child in [EBR_PRE_NATIVE]::Children($window)){[EBR_PRE_NATIVE]::Text($child)}) -join ' '
+    if(-not [EBR_PRE_NATIVE]::IsWindowVisible($window)){continue}
+    $windowText=@([EBR_PRE_NATIVE]::Text($window))
+    foreach($child in [EBR_PRE_NATIVE]::Children($window)){$windowText+=,[EBR_PRE_NATIVE]::Text($child)}
+    $texts=$windowText -join ' '
     if($texts -match 'Replace the weekly hours\?'){return $window}
+    try{
+      $root=[System.Windows.Automation.AutomationElement]::FromHandle($window)
+      if($root){
+        $names=@();$elements=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+        foreach($element in $elements){try{$name=$element.Current.Name;if($name){$names+=,$name}}catch{}}
+        if(($names -join ' ') -match 'Replace the weekly hours\?'){return $window}
+      }
+    }catch{}
   }
   return [IntPtr]::Zero
+}
+function Get-InstalledTopWindowDiagnostics {
+  @(
+    foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){
+      $childText=@();foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$childText+=,$text}}
+      $names=@()
+      try{
+        $root=[System.Windows.Automation.AutomationElement]::FromHandle($window)
+        if($root){$elements=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($element in $elements){try{$name=$element.Current.Name;if($name){$names+=,$name}}catch{}}}
+      }catch{}
+      [pscustomobject]@{Handle=('0x{0:X}' -f $window.ToInt64());Class=[EBR_PRE_NATIVE]::ClassName($window);Title=[EBR_PRE_NATIVE]::Text($window);Visible=[EBR_PRE_NATIVE]::IsWindowVisible($window);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($window);ChildText=$childText;AutomationNames=$names}
+    }
+  )
 }
 function Click-SchedulePresetAndConfirm([int]$Id,[string]$Name) {
   $control=Get-Control $script:mainWindow $Id $Name
@@ -225,7 +248,7 @@ function Click-SchedulePresetAndConfirm([int]$Id,[string]$Name) {
   $clickTask=[EBR_PRE_NATIVE]::SendButtonClickAsync($control.Handle)
   $watch=[Diagnostics.Stopwatch]::StartNew();$dialog=[IntPtr]::Zero
   while($watch.Elapsed.TotalSeconds -lt 8){$dialog=Find-ScheduleReplacementDialog;if($dialog -ne [IntPtr]::Zero){break};Start-Sleep -Milliseconds 50}
-  if($dialog -eq [IntPtr]::Zero){$afterClick=Read-SettingsMap (Join-Path $dataDir 'settings.ini');$beforeDays=@{};$afterDays=@{};foreach($day in @('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')){$beforeDays[$day]=@($before["schedule$day"],$before["schedule${day}1"],$before["schedule${day}2"],$before["schedule${day}3"]);$afterDays[$day]=@($afterClick["schedule$day"],$afterClick["schedule${day}1"],$afterClick["schedule${day}2"],$afterClick["schedule${day}3"])};Require $false "$Name opens the weekly-hours replacement confirmation" ([pscustomobject]@{ClickTaskStatus=$clickTask.Status.ToString();Before=$beforeDays;After=$afterDays;ParentClass=[EBR_PRE_NATIVE]::ClassName($parent);ButtonText=[EBR_PRE_NATIVE]::Text($control.Handle)})}
+  if($dialog -eq [IntPtr]::Zero){$afterClick=Read-SettingsMap (Join-Path $dataDir 'settings.ini');$beforeDays=@{};$afterDays=@{};foreach($day in @('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')){$beforeDays[$day]=@($before["schedule$day"],$before["schedule${day}1"],$before["schedule${day}2"],$before["schedule${day}3"]);$afterDays[$day]=@($afterClick["schedule$day"],$afterClick["schedule${day}1"],$afterClick["schedule${day}2"],$afterClick["schedule${day}3"])};$foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0;if($foreground-ne[IntPtr]::Zero){[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid);if($foregroundPid-eq$script:appPid-and[EBR_PRE_NATIVE]::IsWindowVisible($foreground)){Capture-ActiveWindow $foreground 'installed-v121-schedule-unmatched-foreground-window.png'|Out-Null}};Require $false "$Name opens the weekly-hours replacement confirmation" ([pscustomobject]@{ClickTaskStatus=$clickTask.Status.ToString();Before=$beforeDays;After=$afterDays;ParentClass=[EBR_PRE_NATIVE]::ClassName($parent);ButtonText=[EBR_PRE_NATIVE]::Text($control.Handle);ForegroundWindow=if($foreground-eq[IntPtr]::Zero){$null}else{[pscustomobject]@{Class=[EBR_PRE_NATIVE]::ClassName($foreground);Title=[EBR_PRE_NATIVE]::Text($foreground);ProcessId=$foregroundPid}};OwnedWindows=(Get-InstalledTopWindowDiagnostics)})}
   $yes=[EBR_PRE_NATIVE]::GetDlgItem($dialog,6)
   Require ($yes -ne [IntPtr]::Zero -and [EBR_PRE_NATIVE]::ClassName($yes) -eq 'Button' -and [EBR_PRE_NATIVE]::IsWindowVisible($yes) -and [EBR_PRE_NATIVE]::IsWindowEnabled($yes) -and [EBR_PRE_NATIVE]::Text($yes) -match '^\s*&?Yes\s*$') "$Name confirmation exposes an enabled Yes button" ([pscustomobject]@{DialogTitle=[EBR_PRE_NATIVE]::Text($dialog);ButtonText=[EBR_PRE_NATIVE]::Text($yes);ButtonId=[EBR_PRE_NATIVE]::GetDlgCtrlID($yes)})
   Capture-ActiveWindow $dialog 'installed-v121-schedule-replacement-confirmation.png' | Out-Null
