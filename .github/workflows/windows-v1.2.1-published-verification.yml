@@ -1,0 +1,128 @@
+name: Windows v1.2.1 published release verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  published-binary-install-and-update:
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      - name: Check out the main release source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Independently download and validate all five published assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/verify_published_release.ps1 -ReleaseTag 'v1.2.1' -ExpectedMainCommit $env:GITHUB_SHA -Destination "$PWD/release"
+
+      - name: Launch the exact published standalone executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hash = (Get-FileHash -LiteralPath './release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          & ./tests/windows_published_binary_smoke.ps1 -ExecutablePath "$PWD/release/EyeBreakReminder.exe" -ExpectedProductVersion '1.2.1' -ExpectedSHA256 $hash -EvidencePath 'build/published-release-evidence/standalone-smoke.json'
+
+      - name: Launch the exact executable from the published portable ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $portableDir = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-v1.2.1-portable-smoke'
+          Expand-Archive -LiteralPath './release/EyeBreakReminder-Portable-x64.zip' -DestinationPath $portableDir
+          $exe = Join-Path $portableDir 'EyeBreakReminder.exe'
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          & ./tests/windows_published_binary_smoke.ps1 -ExecutablePath $exe -ExpectedProductVersion '1.2.1' -ExpectedSHA256 $hash -EvidencePath 'build/published-release-evidence/portable-smoke.json'
+
+      - name: Exercise the published installer, v1.2.0 upgrade, update checker, and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/windows_pre_release_acceptance.ps1 -InstallerPath "$PWD/release/EyeBreakReminder-Setup-x64.exe" -EvidenceDirectory "$PWD/build/pre-release-evidence" -ExpectedProductVersion '1.2.1'
+
+      - name: Upload published Windows lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.2.1-published-windows-lifecycle
+          path: |
+            release/published-release-validation.json
+            build/published-release-evidence/**
+            build/pre-release-evidence/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  published-soak-windows-server-2025:
+    runs-on: windows-2025
+    timeout-minutes: 350
+    steps:
+      - name: Check out the main release source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download and authenticate the exact v1.2.1 release executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/verify_published_release.ps1 -ReleaseTag 'v1.2.1' -ExpectedMainCommit $env:GITHUB_SHA -Destination "$PWD/release"
+
+      - name: Soak the exact published executable for 110 real break cycles
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/windows_break_user_resource_soak.ps1 -ExecutablePath "$PWD/release/EyeBreakReminder.exe" -ExpectedProductVersion '1.2.1' -ExpectedResourceBehavior NoGrowth -Cycles 110 -EvidenceDirectory "$PWD/build/v1.2.1-published-windows-server-2025-soak"
+
+      - name: Upload exact published binary resource measurements
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.2.1-published-windows-server-2025-soak
+          path: |
+            release/published-release-validation.json
+            build/v1.2.1-published-windows-server-2025-soak/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  published-soak-windows-11-arm64:
+    runs-on: windows-11-arm
+    timeout-minutes: 350
+    steps:
+      - name: Check out the main release source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download and authenticate the exact v1.2.1 release executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/verify_published_release.ps1 -ReleaseTag 'v1.2.1' -ExpectedMainCommit $env:GITHUB_SHA -Destination "$PWD/release"
+
+      - name: Soak the exact published executable for 110 real break cycles under x64 emulation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $architecture = [pscustomobject]@{OS=(Get-CimInstance Win32_OperatingSystem).Caption;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();Note='The released app is x64 and uses Windows ARM64 x64 emulation; this does not establish native x64 Windows 11 compatibility.'}
+          New-Item -ItemType Directory -Force -Path "$PWD/build/v1.2.1-published-windows-11-arm64-soak" | Out-Null
+          $architecture | ConvertTo-Json | Set-Content "$PWD/build/v1.2.1-published-windows-11-arm64-soak/environment.json" -Encoding utf8
+          & ./tests/windows_break_user_resource_soak.ps1 -ExecutablePath "$PWD/release/EyeBreakReminder.exe" -ExpectedProductVersion '1.2.1' -ExpectedResourceBehavior NoGrowth -Cycles 110 -EvidenceDirectory "$PWD/build/v1.2.1-published-windows-11-arm64-soak"
+
+      - name: Upload exact published binary ARM64-emulation measurements
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.2.1-published-windows-11-arm64-soak
+          path: |
+            release/published-release-validation.json
+            build/v1.2.1-published-windows-11-arm64-soak/**
+          if-no-files-found: warn
+          retention-days: 30

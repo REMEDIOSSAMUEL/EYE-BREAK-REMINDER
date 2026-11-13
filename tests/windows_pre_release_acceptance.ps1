@@ -819,6 +819,31 @@ function Download-OfficialV11Installer {
   Pass 'Official v1.1.0 installer downloaded only from the Eye Break Reminder release' ([pscustomobject]@{Path=$path;Asset=$setup.name;Sha256=$actualDigest;ReleaseUrl=$release.html_url})
   return $path
 }
+function Download-OfficialV120Installer {
+  $release=Get-OfficialRelease 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tags/v1.2.0' 'Official v1.2.0 release-tag API'
+  if(-not $release){Not-Tested 'Official v1.2.0 installer availability' "Unauthenticated release API request failed: $script:liveApiError";return $null}
+  if($release.tag_name -cne 'v1.2.0' -or $release.draft -or $release.prerelease -or $release.html_url -cne 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.2.0'){
+    Add-Event 'Official v1.2.0 release metadata identifies the stable Eye Break Reminder release' 'FAIL' ([pscustomobject]@{Tag=$release.tag_name;Url=$release.html_url;Draft=$release.draft;Prerelease=$release.prerelease});throw 'The v1.2.0 release metadata did not identify the expected stable release.'
+  }
+  $setup=@($release.assets|Where-Object{$_.name -eq 'EyeBreakReminder-Setup-x64.exe'})|Select-Object -First 1
+  if(-not $setup){Not-Tested 'Official v1.2.0 installer availability' 'The official release exposes no x64 installer.';return $null}
+  if($setup.browser_download_url -notmatch '^https://github\.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1\.2\.0/'){
+    Add-Event 'Official v1.2.0 installer uses the correct project release URL' 'FAIL' $setup.browser_download_url;throw 'Refusing a non-official v1.2.0 installer URL.'
+  }
+  $manifestAsset=@($release.assets|Where-Object{$_.name -eq 'EyeBreakReminder-SHA256.txt'})|Select-Object -First 1
+  $manifestText=''
+  if($manifestAsset){try{$manifestText=(Invoke-WebRequest -UseBasicParsing -Uri $manifestAsset.browser_download_url -TimeoutSec 30 -Headers @{'User-Agent'='EyeBreakReminder-ReleaseVerification'}).Content}catch{}}
+  $path=Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-v1.2.0-Setup-x64.exe'
+  try{Invoke-WebRequest -UseBasicParsing -Uri $setup.browser_download_url -OutFile $path -TimeoutSec 120 -Headers @{'User-Agent'='EyeBreakReminder-ReleaseVerification'}}catch{Not-Tested 'Official v1.2.0 installer download' $_.Exception.Message;return $null}
+  $expectedDigest=Get-AssetDigest $setup $manifestText
+  $actualDigest=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+  if(-not $expectedDigest){Not-Tested 'Official v1.2.0 installer digest verification' 'GitHub supplied no digest and the release manifest had no matching entry; the installer will not be executed.';return $null}
+  Require ($actualDigest -eq $expectedDigest) 'Official v1.2.0 installer matches the release asset digest' ([pscustomobject]@{Expected=$expectedDigest;Actual=$actualDigest;Bytes=(Get-Item $path).Length})
+  $version=(Get-Item -LiteralPath $path).VersionInfo.ProductVersion
+  Require ($version -match '^1\.2\.0(\.0)?$') 'Official v1.2.0 installer has 1.2.0 metadata' $version
+  Pass 'Official v1.2.0 installer downloaded from the public Eye Break Reminder release' ([pscustomobject]@{Path=$path;Sha256=$actualDigest;ReleaseUrl=$release.html_url})
+  return $path
+}
 function Probe-UiaNames([IntPtr]$Window) {
   try {@(Get-UiaElements $Window | ForEach-Object { try { $_.Current.Name } catch { '' } } | Where-Object { $_ })} catch {@()}
 }
@@ -1397,6 +1422,65 @@ function Test-UpgradeFromV11([string]$OldInstaller) {
   Require ($settingsStill -and $historyStill) 'Final uninstall preserves the runner-created settings and history for cleanup verification' ([pscustomobject]@{SettingsPreserved=$settingsStill;HistoryPreserved=$historyStill})
 }
 
+function Test-UpgradeFromV120([string]$OldInstaller) {
+  if(-not $OldInstaller -or -not (Test-Path -LiteralPath $OldInstaller -PathType Leaf)) {Not-Tested 'Official v1.2.0 to v1.2.1 in-place upgrade and data migration' 'A digest-verified official v1.2.0 installer was not available.';return}
+  if(-not $script:interactiveDesktop){Not-Tested 'Official v1.2.0 UI state preparation and in-place upgrade' 'No interactive Explorer desktop was available.';return}
+  if(Test-Path -LiteralPath $dataDir){Remove-Item -LiteralPath $dataDir -Recurse -Force}
+  $oldVersion=(Get-Item -LiteralPath $OldInstaller).VersionInfo.ProductVersion
+  Require ($oldVersion -match '^1\.2\.0(\.0)?$') 'Upgrade source installer is exactly v1.2.0' $oldVersion
+  Invoke-Install $OldInstaller 'official v1.2.0 production installer' $true
+  Assert-InstallationMetadata '1.2.0'
+  if(-not (Start-And-CheckApp '1.2.0')){Not-Tested 'v1.2.0 application UI state preparation' 'The installed v1.2.0 app could not be opened interactively.';Stop-InstalledApp;Invoke-Uninstall 'v1.2.0 upgrade setup cleanup' $false;return}
+  $candidateVersion=$script:expectedProductVersion
+  $script:expectedProductVersion='1.2.0'
+  try { Test-InstalledUpdateCheck }
+  finally { $script:expectedProductVersion=$candidateVersion }
+  Switch-Settings 0
+  Set-Edit $script:mainWindow 100 '7' 'v1.2.0 work interval'
+  Set-Edit $script:mainWindow 101 '45' 'v1.2.0 break duration'
+  Switch-Settings 2
+  Set-Check $script:mainWindow 32 $false 'v1.2.0 alarm enabled'
+  Switch-Settings 4
+  Set-Combo $script:mainWindow 106 1 'v1.2.0 Light theme'
+  Set-Check $script:mainWindow 111 $true 'v1.2.0 start with Windows'
+  Switch-Timer
+  Click-Control $script:mainWindow 22 'v1.2.0 manual break for upgrade history'
+  $breakWait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
+  while($breakWait.Elapsed.TotalSeconds -lt 10){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$breakWindow=$breaks[0];break};Start-Sleep -Milliseconds 100}
+  Require ($breakWindow -ne [IntPtr]::Zero) 'v1.2.0 creates a real break window before upgrade'
+  Click-Control $breakWindow 23 'Complete v1.2.0 break and generate history'
+  Stop-InstalledApp
+  $settingsPath=Join-Path $dataDir 'settings.ini';$historyPath=Join-Path $dataDir 'history.dat'
+  $beforeSettings=Read-SettingsMap $settingsPath;$beforeHistoryRows=@(Get-Content -LiteralPath $historyPath|Where-Object{$_.Trim()})
+  Require ($beforeSettings['workMinutes'] -eq '7' -and $beforeSettings['breakSeconds'] -eq '45' -and $beforeSettings['startup'] -eq '1' -and $beforeSettings['theme'] -eq '1') 'v1.2.0 interval, Light theme, and startup preferences were configured' ([pscustomobject]@{Settings=$beforeSettings})
+  Require ($beforeHistoryRows.Count -ge 1) 'v1.2.0 generated a history/statistics record before upgrade' $beforeHistoryRows.Count
+  $beforeHistoryHash=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
+  Invoke-Install $InstallerPath 'candidate in-place upgrade from official v1.2.0' $true
+  Assert-InstallationMetadata $script:expectedProductVersion
+  $installedHash=(Get-FileHash -LiteralPath $appExe -Algorithm SHA256).Hash.ToLowerInvariant()
+  Require ($installedHash -eq $script:packagedExecutableHash) 'v1.2.1 upgrade installs the exact verified packaged executable' ([pscustomobject]@{Expected=$script:packagedExecutableHash;Actual=$installedHash})
+  $afterSettings=Read-SettingsMap $settingsPath
+  Require ($afterSettings['workMinutes'] -eq '7' -and $afterSettings['breakSeconds'] -eq '45' -and $afterSettings['startup'] -eq '1' -and $afterSettings['theme'] -eq '1') 'v1.2.1 preserves v1.2.0 interval, theme, and startup preferences' ([pscustomobject]@{Settings=$afterSettings})
+  $afterHistoryHash=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
+  Require ($afterHistoryHash -eq $beforeHistoryHash) 'v1.2.1 preserves v1.2.0 history bytes during in-place upgrade' ([pscustomobject]@{Before=$beforeHistoryHash;After=$afterHistoryHash;Rows=$beforeHistoryRows.Count})
+  $runValues=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties|Where-Object{$_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder'})
+  Require ($runValues.Count -eq 1) 'v1.2.0 to v1.2.1 upgrade leaves exactly one startup registration' $runValues.Count
+  if(Start-And-CheckApp $script:expectedProductVersion){
+    Switch-Settings 4
+    Require ((Get-Combo $script:mainWindow 106 'Upgraded theme') -eq 1) 'Upgraded app loads the v1.2.0 Light theme preference'
+    Switch-Settings 0
+    Require ([EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 100 'Upgraded work interval').Handle) -eq '7') 'Upgraded app loads the v1.2.0 work interval' '7'
+    Click-Control $script:mainWindow 11 'History after v1.2.0 upgrade'
+    $list=Get-Control $script:mainWindow 200 'Migrated v1.2.0 history list'
+    $rows=[EBR_PRE_NATIVE]::SendMessageW($list.Handle,0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+    Require ($rows -ge $beforeHistoryRows.Count) 'Upgraded app loads v1.2.0 history rows and statistics source data' ([pscustomobject]@{Before=$beforeHistoryRows.Count;VisibleRows=$rows})
+    Capture-ActiveWindow $script:mainWindow 'upgrade-v120-history-statistics-active.png'|Out-Null
+    Stop-InstalledApp
+  }
+  Invoke-Uninstall 'candidate post-v1.2.0-upgrade' $false
+  Require ((Test-Path -LiteralPath $settingsPath) -and (Test-Path -LiteralPath $historyPath)) 'Uninstall after v1.2.0 upgrade preserves runner-created settings and history' ([pscustomobject]@{Settings=(Test-Path $settingsPath);History=(Test-Path $historyPath)})
+}
+
 function Test-V11InteractiveUninstaller([string]$OldInstaller) {
   if(-not $OldInstaller -or -not $script:interactiveDesktop){Not-Tested 'Official v1.1.0 no-argument interactive uninstall comparison' 'A digest-verified v1.1.0 installer and interactive desktop are both required.';return}
   Invoke-Install $OldInstaller 'official v1.1.0 uninstall comparison' $false
@@ -1430,6 +1514,7 @@ try {
   } else {$script:liveLatestError=$script:liveApiError;Not-Tested 'Live latest stable GitHub release/version comparison' "Official unauthenticated endpoint unavailable: $script:liveLatestError"}
 
   $oldInstaller=Download-OfficialV11Installer
+  $v120Installer=Download-OfficialV120Installer
   if($script:interactiveDesktop){
     Invoke-Install $InstallerPath 'candidate production installer' $true
     Require ((Get-Item -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe')).VersionInfo.ProductVersion -match ('^'+[regex]::Escape($script:expectedProductVersion)+'(\.0)?$')) 'Installed application file version is candidate' (Get-Item -LiteralPath $appExe).VersionInfo.ProductVersion
@@ -1463,6 +1548,7 @@ try {
 
   Test-UpgradeFromV11 $oldInstaller
   Test-V11InteractiveUninstaller $oldInstaller
+  Test-UpgradeFromV120 $v120Installer
   if(-not $script:interactiveDesktop){
     Not-Tested 'Real Windows theme switching and Forced Colors' 'Runner desktop capability probe reported no Explorer shell/taskbar.'
     Not-Tested 'Tray menu actions and actual Shell notification surface' 'Runner desktop capability probe reported no Explorer shell/taskbar.'
