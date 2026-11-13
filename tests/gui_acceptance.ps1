@@ -280,8 +280,9 @@ function Test-SystemHighContrast {
       $breakWindow=Wait-BreakWindow
       Assert-That ((Wait-Status 'Taking an eye break') -like '*Taking an eye break*') "Windows Forced Colors $($names[$theme]) retains the named Break status"
       Assert-That ([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 42 'Break countdown caption').Handle) -eq 'Break time remaining') "Windows Forced Colors $($names[$theme]) retains a distinct Break countdown caption"
+      Save-Screenshot $breakWindow "system-forced-colors-$($names[$theme])-reminder.png" | Out-Null
       Wait-RingProgress "Windows Forced Colors $($names[$theme]) Break"
-      $breakShot=Save-Screenshot $script:mainWindow "system-forced-colors-$($names[$theme])-break.png"
+      $breakShot=Save-Screenshot $script:mainWindow "system-forced-colors-$($names[$theme])-break.png" -PreserveForeground
       $hotlight=Get-SystemColorHex 26
       Assert-TimerRingPixel $breakShot $hotlight "Windows Forced Colors $($names[$theme]) Break Mode ring"
       Click-Control $breakWindow 24 "Complete Break under system Forced Colors $($names[$theme])"
@@ -304,8 +305,9 @@ function Test-SystemHighContrast {
     Switch-Timer;Click-Control $script:mainWindow 21 'Restore normal Work ring after system Forced Colors test';Wait-RingProgress 'Disabling Windows Forced Colors restored Work'
     Assert-TimerRingPixel (Save-Screenshot $script:mainWindow 'system-forced-colors-disabled-restored-custom-work.png') '#22C55E' 'Disabling Windows Forced Colors restores custom Work Mode accent'
     Click-Control $script:mainWindow 22 'Verify restored Break accent after system Forced Colors';$breakWindow=Wait-BreakWindow
+    Save-Screenshot $breakWindow 'system-forced-colors-disabled-restored-custom-break-reminder.png' | Out-Null
     Wait-RingProgress 'Disabling Windows Forced Colors restored Break'
-    Assert-TimerRingPixel (Save-Screenshot $script:mainWindow 'system-forced-colors-disabled-restored-custom-break.png') '#EF4444' 'Disabling Windows Forced Colors restores custom Break Mode accent'
+    Assert-TimerRingPixel (Save-Screenshot $script:mainWindow 'system-forced-colors-disabled-restored-custom-break.png' -PreserveForeground) '#EF4444' 'Disabling Windows Forced Colors restores custom Break Mode accent'
     Click-Control $breakWindow 24 'Finish restored Break accent check'
     Assert-That ((Wait-Status 'Running') -like '*Running*') 'Normal Work mode returns after system Forced Colors is disabled'
   } finally {
@@ -381,10 +383,9 @@ function Get-UiaNames([IntPtr]$Window) {
   $items=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
   @($items | Where-Object { $_.Current.ProcessId -eq $script:testPid } | ForEach-Object { try { $_.Current.Name } catch { '' } } | Where-Object { $_ })
 }
-function Save-Screenshot([IntPtr]$Window,[string]$Name) {
+function Save-Screenshot([IntPtr]$Window,[string]$Name,[switch]$PreserveForeground) {
   if (-not [EBR_GUI_NATIVE]::IsWindowVisible($Window)) { throw "Screenshot window is not visible: $Name" }
-  [void][EBR_GUI_NATIVE]::SetForegroundWindow($Window)
-  Start-Sleep -Milliseconds 180
+  if(-not $PreserveForeground){[void][EBR_GUI_NATIVE]::SetForegroundWindow($Window);Start-Sleep -Milliseconds 180}
   $bounds=Get-Rect $Window
   if ($bounds.Width -lt 100 -or $bounds.Height -lt 80) { throw 'Screenshot window bounds are invalid.' }
   $path=Join-Path $EvidenceDirectory $Name
@@ -588,11 +589,12 @@ try {
     Click-Control $script:mainWindow 22 'Start custom-colour break'
     $breakWindow=Wait-BreakWindow
     Assert-That ((Wait-Status 'Taking an eye break') -like '*Taking an eye break*') "$($combo.Name) break keeps the existing Taking an eye break status"
+    Save-Screenshot $breakWindow "reminder-custom-$($combo.Name)-break.png" | Out-Null
     $breakStartSeconds=Get-TimerSeconds;$breakProgressWatch=[Diagnostics.Stopwatch]::StartNew()
     while($breakProgressWatch.Elapsed.TotalSeconds -lt 5 -and (Get-TimerSeconds) -ge $breakStartSeconds){Start-Sleep -Milliseconds 100}
     Assert-That ((Get-TimerSeconds) -lt $breakStartSeconds) "$($combo.Name) Break countdown advances before ring pixel sampling"
     Start-Sleep -Milliseconds 1400
-    $breakShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-break.png"
+    $breakShot=Save-Screenshot $script:mainWindow "custom-$($combo.Name)-break.png" -PreserveForeground
     Assert-TimerRingPixel $breakShot $combo.BreakHex "$($combo.Name) Break Mode"
     Click-Control $breakWindow 24 'Finish custom-colour break'
     Assert-That ((Wait-Status 'Running') -like '*Running*') "$($combo.Name) break returns to work"
@@ -688,7 +690,7 @@ try {
     $breakCount=[EBR_GUI_NATIVE]::Text((Get-Control $breakWindow 40 'Break countdown').Handle)
     Assert-That ($breakCount -match '^\d+:\d{2}$') "$($themeNames[$theme]) break duration visible" $breakCount
     Wait-RingProgress "$($themeNames[$theme]) Break"
-    Save-Screenshot $script:mainWindow ("timer-{0}-break.png" -f $themeNames[$theme]) | Out-Null
+    Save-Screenshot $script:mainWindow ("timer-{0}-break.png" -f $themeNames[$theme]) -PreserveForeground | Out-Null
     if($theme -eq 3){Assert-TimerRingPixel (Join-Path $EvidenceDirectory ("timer-{0}-break.png" -f $themeNames[$theme])) '#00FFFF' 'High Contrast Dark overrides custom Break Mode colour'}
     if($theme -eq 4){Assert-TimerRingPixel (Join-Path $EvidenceDirectory ("timer-{0}-break.png" -f $themeNames[$theme])) '#005A00' 'High Contrast Light overrides custom Break Mode colour'}
     Click-Control $breakWindow 24 'Skip eye break'

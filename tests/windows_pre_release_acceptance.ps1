@@ -434,17 +434,27 @@ function Open-InstalledColorPicker([int]$ButtonId,[string]$Name) {
   $control=Get-Control $script:mainWindow $ButtonId $Name;if(-not $control.Enabled){throw "$Name is disabled."};Focus-AppControl $control.Handle;Send-VirtualKey 32
   $watch=[Diagnostics.Stopwatch]::StartNew();while($watch.Elapsed.TotalSeconds-lt8){$dialog=Find-InstalledColorPicker;if($dialog-ne[IntPtr]::Zero){return $dialog};Start-Sleep -Milliseconds 50};throw 'The installed application did not open its native ChooseColorW dialog.'
 }
+function Get-InstalledChildText([IntPtr]$Window) {
+  $length=[EBR_PRE_NATIVE]::SendMessageW($Window,0x000E,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+  $capacity=[Math]::Max(2,$length+2);$buffer=[Runtime.InteropServices.Marshal]::AllocHGlobal($capacity*2)
+  try {[void][EBR_PRE_NATIVE]::SendMessageW($Window,0x000D,[IntPtr]$capacity,$buffer);return [Runtime.InteropServices.Marshal]::PtrToStringUni($buffer)}
+  finally {[Runtime.InteropServices.Marshal]::FreeHGlobal($buffer)}
+}
 function Set-InstalledPickerRgb([IntPtr]$Dialog,[int]$Red,[int]$Green,[int]$Blue) {
+  if(-not $script:installedPickerInputScreenshotCaptured){Capture-PrintWindow $Dialog 'installed-native-picker-before-rgb-input.png' | Out-Null;$script:installedPickerInputScreenshotCaptured=$true}
   foreach($item in @(@{Id=706;Value=$Red;Name='Red'},@{Id=707;Value=$Green;Name='Green'},@{Id=708;Value=$Blue;Name='Blue'})){
     $field=[EBR_PRE_NATIVE]::GetDlgItem($Dialog,$item.Id)
     if($field-eq[IntPtr]::Zero-or[EBR_PRE_NATIVE]::ClassName($field)-ne'Edit'){throw "Installed ChooseColorW dialog has no $($item.Name) RGB edit field."}
+    $parent=[EBR_PRE_NATIVE]::GetParent($field);$steps=[Collections.Generic.List[object]]::new();$steps.Add([pscustomobject]@{Stage='Before';Text=(Get-InstalledChildText $field)})
     [void][EBR_PRE_NATIVE]::SendMessageW($field,0x00B1,[IntPtr]::Zero,[IntPtr](-1))
     [void][EBR_PRE_NATIVE]::SendMessageW($field,0x0102,[IntPtr]0x08,[IntPtr]::Zero)
-    foreach($digit in ([string]$item.Value).ToCharArray()){[void][EBR_PRE_NATIVE]::SendMessageW($field,0x0102,[IntPtr][int][char]$digit,[IntPtr]::Zero)}
-    $notification=($item.Id -bor (0x0300 -shl 16));[void][EBR_PRE_NATIVE]::SendMessageW([EBR_PRE_NATIVE]::GetParent($field),0x0111,[IntPtr]$notification,$field)
-    $actual=([EBR_PRE_NATIVE]::Text($field)).Trim()
+    $steps.Add([pscustomobject]@{Stage='AfterSelectAndBackspace';Text=(Get-InstalledChildText $field)})
+    foreach($digit in ([string]$item.Value).ToCharArray()){[void][EBR_PRE_NATIVE]::SendMessageW($field,0x0102,[IntPtr][int][char]$digit,[IntPtr]::Zero);$steps.Add([pscustomobject]@{Stage="AfterChar-$digit";Text=(Get-InstalledChildText $field)})}
+    $notification=($item.Id -bor (0x0300 -shl 16));[void][EBR_PRE_NATIVE]::SendMessageW($parent,0x0111,[IntPtr]$notification,$field)
+    $actual=(Get-InstalledChildText $field).Trim();$dialogPid=[uint32]0;$fieldPid=[uint32]0
+    [void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($Dialog,[ref]$dialogPid);[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($field,[ref]$fieldPid)
     $rect=Get-Rect $field
-    Require ($actual-eq[string]$item.Value) "Installed native picker accepts $($item.Name) RGB input" ([pscustomobject]@{Expected=$item.Value;Actual=$actual;FieldId=$item.Id;DialogTitle=[EBR_PRE_NATIVE]::Text($Dialog);FieldVisible=[EBR_PRE_NATIVE]::IsWindowVisible($field);FieldEnabled=[EBR_PRE_NATIVE]::IsWindowEnabled($field);FieldBounds=$rect;InputMethod='WM_CHAR to native ChooseColorW Edit'})
+    Require ($actual-eq[string]$item.Value) "Installed native picker accepts $($item.Name) RGB input" ([pscustomobject]@{Expected=$item.Value;Actual=$actual;Stages=@($steps);FieldId=$item.Id;DialogTitle=[EBR_PRE_NATIVE]::Text($Dialog);DialogClass=[EBR_PRE_NATIVE]::ClassName($Dialog);DialogProcessId=$dialogPid;FieldProcessId=$fieldPid;ParentClass=[EBR_PRE_NATIVE]::ClassName($parent);ParentText=[EBR_PRE_NATIVE]::Text($parent);FieldVisible=[EBR_PRE_NATIVE]::IsWindowVisible($field);FieldEnabled=[EBR_PRE_NATIVE]::IsWindowEnabled($field);FieldBounds=$rect;InputMethod='WM_CHAR to native ChooseColorW Edit; value read with cross-process WM_GETTEXT'})
   }
 }
 function Close-InstalledColorPicker([IntPtr]$Dialog,[bool]$Accept) {
