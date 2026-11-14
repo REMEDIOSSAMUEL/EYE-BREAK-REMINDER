@@ -1665,6 +1665,11 @@ function Test-ShellTrayAndNaturalNotification {
     Not-Tested 'Production audio playback' 'Hosted runners do not provide a physically verified speaker output.'
     return
   }
+  # The restart checks below compare persisted timer history and settings from
+  # this function scope. Paths assigned inside the fresh-install helpers are
+  # function-local in PowerShell and are not visible here.
+  $settingsPath=Join-Path $dataDir 'settings.ini'
+  $historyPath=Join-Path $dataDir 'history.dat'
   $tray=New-Object EBR_PRE_RECT
   if(-not [EBR_PRE_NATIVE]::GetTrayRect($script:mainWindow,1,[ref]$tray)){
     Not-Tested 'Real system tray icon/menu, actions, hide/reopen and duplicate instance behavior' 'Shell_NotifyIconGetRect did not expose the app icon in the runner desktop.'
