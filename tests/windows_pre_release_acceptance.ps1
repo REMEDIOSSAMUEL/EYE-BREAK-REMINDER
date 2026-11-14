@@ -1727,11 +1727,39 @@ function Test-ShellTrayAndNaturalNotification {
   $owned=@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue | Where-Object { try{[IO.Path]::GetFullPath($_.Path) -ieq $appExe}catch{$false} })
   $secondExit=if($second.HasExited){$second.ExitCode}else{'still running'}
   Require ($owned.Count -eq 1) 'Second app launch is routed to the running instance without a duplicate process' ([pscustomobject]@{OwnedProcessCount=$owned.Count;PrimaryPid=$script:appPid;SecondLaunchExitCode=$secondExit})
+  $runningRemainingBeforeRestart=Get-TimerSeconds
+  $runningHistoryBeforeRestart=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
   Invoke-TrayCommand 'Exit'
   $primary=Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
   if($primary){Require ($primary.WaitForExit(10000)) 'Tray Exit command terminates the application process' $script:appPid}else{Pass 'Tray Exit command terminates the application process' $script:appPid}
   $script:appPid=0;$script:mainWindow=[IntPtr]::Zero
   if(-not (Start-InstalledApp)){Not-Tested 'Automatic break, Shell notification and snooze after tray restart' 'The runner stopped exposing the installed GUI after restarting from tray exit.';return}
+  Require ((Wait-ForStatus 'Running') -like '*Running*') 'A running Work countdown is restored after exit from the tray'
+  $runningRemainingAfterRestart=Get-TimerSeconds;$runningElapsedDelta=$runningRemainingBeforeRestart-$runningRemainingAfterRestart
+  Require ($runningElapsedDelta-ge0-and$runningElapsedDelta-le20) 'Running Work restart deducts only the short process downtime' ([pscustomobject]@{Before=$runningRemainingBeforeRestart;After=$runningRemainingAfterRestart;ElapsedDelta=$runningElapsedDelta})
+  Require (@(Get-BreakWindow $script:appPid).Count-eq0) 'Running Work restart does not create a duplicate Break reminder'
+  $runningHistoryAfterRestart=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
+  Require ($runningHistoryBeforeRestart-eq$runningHistoryAfterRestart) 'Running Work restart leaves history unchanged'
+  Invoke-TrayCommand 'Pause timer'
+  Require ((Wait-ForStatus 'Paused') -like '*Paused*') 'Installed timer can be paused before testing paused recovery'
+  $pausedRemainingBeforeRestart=Get-TimerSeconds
+  $pausedHistoryBeforeRestart=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
+  Require ([EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)) 'Close the paused installed app to the tray before restart'
+  $pausedHideWatch=[Diagnostics.Stopwatch]::StartNew();while([EBR_PRE_NATIVE]::IsWindowVisible($script:mainWindow)-and$pausedHideWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
+  Require (-not [EBR_PRE_NATIVE]::IsWindowVisible($script:mainWindow)) 'Paused app is hidden in the tray before restart'
+  Invoke-TrayCommand 'Exit'
+  $pausedProcess=Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
+  if($pausedProcess){Require ($pausedProcess.WaitForExit(10000)) 'Paused app exits cleanly from its tray menu'}else{Pass 'Paused app is already stopped after tray Exit'}
+  $script:appPid=0;$script:mainWindow=[IntPtr]::Zero
+  Require (Start-InstalledApp) 'Installed candidate restarts from Paused while previously hidden in the tray'
+  Require ((Wait-ForStatus 'Paused') -like '*Paused*') 'Paused Work state is restored after a controlled application restart'
+  $pausedRemainingAfterRestart=Get-TimerSeconds
+  Require ($pausedRemainingAfterRestart-eq$pausedRemainingBeforeRestart) 'Paused Work restart preserves its remaining countdown exactly' ([pscustomobject]@{Before=$pausedRemainingBeforeRestart;After=$pausedRemainingAfterRestart})
+  Require (@(Get-BreakWindow $script:appPid).Count-eq0) 'Paused Work restart does not create a Break reminder'
+  $pausedHistoryAfterRestart=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
+  Require ($pausedHistoryBeforeRestart-eq$pausedHistoryAfterRestart) 'Paused Work restart leaves history unchanged'
+  Invoke-TrayCommand 'Resume timer'
+  Require ((Wait-ForStatus 'Running') -like '*Running*') 'Installed timer resumes after the paused-recovery check'
   Switch-Settings 3
   Set-Check $script:mainWindow 108 $true 'Windows notifications enabled'
   Switch-Timer
@@ -1752,6 +1780,29 @@ function Test-ShellTrayAndNaturalNotification {
   Click-Control $naturalBreak 25 'Snooze one minute in the installed application'
   Invoke-TrayCommand 'Open Eye Break Reminder'
   Require ((Wait-ForStatus 'Snoozed') -like '*Snoozed*') 'Installed app clearly reports Snoozed after a real break reminder is snoozed'
+  $snoozeSettingsBefore=Read-SettingsMap $settingsPath
+  $snoozeHistoryBefore=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
+  $snoozePreferenceKeys=@('theme','customWorkAccent','workAccentColor','customBreakAccent','breakAccentColor','breakModeColors')
+  $snoozePreferencesBefore=@{};foreach($key in $snoozePreferenceKeys){if($snoozeSettingsBefore.ContainsKey($key)){$snoozePreferencesBefore[$key]=$snoozeSettingsBefore[$key]}}
+  Require ([EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)) 'Close snoozed installed app to the tray before restart'
+  $snoozeHideWatch=[Diagnostics.Stopwatch]::StartNew();while([EBR_PRE_NATIVE]::IsWindowVisible($script:mainWindow)-and$snoozeHideWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
+  Require (-not [EBR_PRE_NATIVE]::IsWindowVisible($script:mainWindow)) 'Snoozed app is hidden in the tray before restart'
+  Invoke-TrayCommand 'Exit'
+  $snoozedProcess=Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
+  if($snoozedProcess){Require ($snoozedProcess.WaitForExit(10000)) 'Snoozed app exits cleanly from its tray menu'}else{Pass 'Snoozed app is already stopped after tray Exit'}
+  $script:appPid=0;$script:mainWindow=[IntPtr]::Zero
+  Require (Start-InstalledApp) 'Installed candidate restarts from Snooze while previously hidden in the tray'
+  Require ((Wait-ForStatus 'Snoozed') -like '*Snoozed*') 'Snoozed countdown is restored after a controlled application restart'
+  Start-Sleep -Milliseconds 500
+  $duplicateSnoozeBreaks=@(Get-BreakWindow $script:appPid)
+  Require ($duplicateSnoozeBreaks.Count -eq 0) 'Restarting during Snooze does not replay or duplicate the reminder window' $duplicateSnoozeBreaks.Count
+  $snoozeSettingsAfter=Read-SettingsMap $settingsPath
+  $snoozePreferenceDifferences=@(foreach($key in $snoozePreferenceKeys){if($snoozePreferencesBefore.ContainsKey($key)-and$snoozePreferencesBefore[$key]-ne$snoozeSettingsAfter[$key]){$key}})
+  Require ($snoozePreferenceDifferences.Count-eq0) 'Restarting during Snooze preserves theme and custom accent preferences' $snoozePreferenceDifferences
+  $snoozeHistoryAfter=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
+  Require ($snoozeHistoryBefore-eq$snoozeHistoryAfter) 'Restarting during Snooze adds no duplicate or false history record' ([pscustomobject]@{Before=$snoozeHistoryBefore;After=$snoozeHistoryAfter})
+  $snoozeOwned=@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue|Where-Object{try{[IO.Path]::GetFullPath($_.Path)-ieq$appExe}catch{$false}})
+  Require ($snoozeOwned.Count-eq1) 'Restarting during Snooze leaves exactly one installed candidate process' $snoozeOwned.Count
   [void][EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
   $snoozeWatch=[Diagnostics.Stopwatch]::StartNew();$returned=[IntPtr]::Zero
   while($snoozeWatch.Elapsed.TotalSeconds -lt 80){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$returned=$breaks[0];break};Start-Sleep -Milliseconds 200}
