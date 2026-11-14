@@ -45,8 +45,10 @@ jobs:
         shell: msys2 {0}
         run: |
           mkdir -p "$RUNNER_TEMP/eye-break-reminder-tmp"
+          mkdir -p build/pre-release-evidence
           export TMP="$(cygpath -u "$RUNNER_TEMP/eye-break-reminder-tmp")"
           export TEMP="$TMP"
+          set -o pipefail
           # The Makefile invokes the cross-prefixed strip name. Some MSYS2
           # MINGW64 package revisions expose only the unprefixed binary.
           if ! command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
@@ -56,29 +58,45 @@ jobs:
           nsis_root="$(cygpath -u "$NSISDIR")"
           makensis_path="$nsis_root/makensis.exe"
           test -x "$makensis_path"
-          "$makensis_path" -VERSION
+          {
+            echo "SOURCE_COMMIT=$GITHUB_SHA"
+            echo '--- x86_64-w64-mingw32-g++ ---'
+            x86_64-w64-mingw32-g++ --version | head -n 1
+            echo '--- ld ---'
+            ld --version | head -n 1
+            echo '--- windres ---'
+            windres --version | head -n 1
+            echo '--- make ---'
+            make --version | head -n 1
+            echo '--- python ---'
+            python --version 2>&1
+            echo '--- NSIS ---'
+            "$makensis_path" -VERSION
+          } > build/pre-release-evidence/toolchain-provenance.txt 2>&1
+          pacman -Q > build/pre-release-evidence/msys2-packages.txt
           make -B test \
             CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
             WINDRES=windres \
             MAKENSIS="$makensis_path" \
-            PYTHON=python
+            PYTHON=python 2>&1 | tee build/pre-release-evidence/make-test.log
           make all \
             CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
             WINDRES=windres \
             MAKENSIS="$makensis_path" \
-            PYTHON=python
+            PYTHON=python 2>&1 | tee build/pre-release-evidence/make-all.log
           make package \
             CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
             WINDRES=windres \
             MAKENSIS="$makensis_path" \
-            PYTHON=python
+            PYTHON=python 2>&1 | tee build/pre-release-evidence/make-package.log
           make gui-test \
             CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
             WINDRES=windres \
             MAKENSIS="$makensis_path" \
-            PYTHON=python
+            PYTHON=python 2>&1 | tee build/pre-release-evidence/make-gui-test.log
 
-      - name: Record the five rebuilt release artifact identities
+      - name: Record initial artifact identities and exact build provenance
+        id: identities
         if: always()
         shell: pwsh
         run: |
@@ -103,6 +121,41 @@ jobs:
           $identity | ConvertTo-Json -Depth 4 | Set-Content 'build/pre-release-evidence/release-artifact-identities.json' -Encoding UTF8
           if (Test-Path -LiteralPath 'release/EyeBreakReminder-SHA256.txt') {
             Copy-Item 'release/EyeBreakReminder-SHA256.txt' 'build/pre-release-evidence/final-package-sha256.txt' -Force
+          }
+          $os = Get-CimInstance Win32_OperatingSystem
+          $plugins = foreach ($architecture in @('x86-unicode','x86-ansi')) {
+            $pluginDirectory = Join-Path $env:NSISDIR "Plugins\$architecture"
+            if (Test-Path -LiteralPath $pluginDirectory) {
+              Get-ChildItem -LiteralPath $pluginDirectory -File | ForEach-Object {
+                [pscustomobject]@{Architecture=$architecture;Name=$_.Name;Bytes=$_.Length;SHA256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
+              }
+            }
+          }
+          $makefile = Get-Content -LiteralPath 'Makefile'
+          $flags = ($makefile | Where-Object { $_ -match '^FLAGS\s*=' } | Select-Object -First 1) -replace '^FLAGS\s*=\s*',''
+          $libraries = ($makefile | Where-Object { $_ -match '^LIBS\s*=' } | Select-Object -First 1) -replace '^LIBS\s*=\s*',''
+          $provenance = [pscustomobject]@{
+            Application='Eye Break Reminder';Version=(Get-Content -LiteralPath 'VERSION' -Raw).Trim()
+            SourceCommit=$env:GITHUB_SHA;Branch=$env:GITHUB_REF_NAME;RunId=$env:GITHUB_RUN_ID;RunAttempt=$env:GITHUB_RUN_ATTEMPT
+            RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            Runner=[pscustomobject]@{Image=$env:ImageOS;ImageVersion=$env:ImageVersion;Caption=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;Architecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()}
+            BuildActions=[pscustomobject]@{Checkout='actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 (v6.1.0)';Msys2='msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 (v2.32.0; MINGW64; update=true)';Nsis='nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 (v1; NSIS 3.11)';UploadArtifact='actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 (v7.0.2)'}
+            ToolchainRecord='build/pre-release-evidence/toolchain-provenance.txt'
+            Msys2Packages='build/pre-release-evidence/msys2-packages.txt'
+            Compiler='x86_64-w64-mingw32-g++ with -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00'
+            ResourceCompiler='windres';Stripper='x86_64-w64-mingw32-strip';Python='python';NsisDirectory=$env:NSISDIR
+            CxxFlags=$flags;Libraries=$libraries;InstallerCompiler='NSIS 3.11; Unicode x86 bootstrap; /SOLID lzma'
+            InstallerScriptSHA256=(Get-FileHash -LiteralPath 'installer/setup.nsi' -Algorithm SHA256).Hash.ToLowerInvariant()
+            MakefileSHA256=(Get-FileHash -LiteralPath 'Makefile' -Algorithm SHA256).Hash.ToLowerInvariant()
+            PackagingScriptSHA256=(Get-FileHash -LiteralPath 'scripts/package.py' -Algorithm SHA256).Hash.ToLowerInvariant()
+            VerificationScriptSHA256=(Get-FileHash -LiteralPath 'scripts/verify.py' -Algorithm SHA256).Hash.ToLowerInvariant()
+            NsisPluginFiles=@($plugins)
+            BuildOutputsBeforeRuntimeTests=@($identity)
+          }
+          $provenance | ConvertTo-Json -Depth 8 | Set-Content 'build/pre-release-evidence/build-provenance.json' -Encoding UTF8
+          if (Test-Path -LiteralPath "$env:NSISDIR\Plugins\x86-unicode\System.dll") {
+            [pscustomobject]@{Path="$env:NSISDIR\Plugins\x86-unicode\System.dll";SHA256=(Get-FileHash -LiteralPath "$env:NSISDIR\Plugins\x86-unicode\System.dll" -Algorithm SHA256).Hash.ToLowerInvariant()} |
+              ConvertTo-Json | Set-Content 'build/pre-release-evidence/nsis-system-plugin.json' -Encoding UTF8
           }
 
       - name: Detect whether this runner exposes an interactive Windows desktop
@@ -179,6 +232,7 @@ jobs:
             -ExpectedProductVersion '1.3.0'
 
       - name: Run the 110-cycle reminder and 100-dialog resource soak
+        id: resource_soak
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' }}
         shell: pwsh
         run: |
@@ -222,7 +276,143 @@ jobs:
             CompletedUtc = [DateTime]::UtcNow.ToString('o')
           } | ConvertTo-Json -Depth 4 | Set-Content 'build/pre-release-evidence/resource-soak/not-tested.json' -Encoding UTF8
 
-      # Never upload release binaries or archives here. This artifact contains evidence only.
+      - name: Launch the exact standalone and portable candidate executables
+        id: candidate_smoke
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' && steps.resource_soak.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_candidate_binary_smoke.ps1 `
+            -StandaloneExecutable '.\release\EyeBreakReminder.exe' `
+            -PortableArchive '.\release\EyeBreakReminder-Portable-x64.zip' `
+            -EvidenceDirectory '.\build\pre-release-evidence' `
+            -ExpectedProductVersion '1.3.0'
+
+      - name: Require complete exact-candidate runtime acceptance before retaining a release candidate
+        if: ${{ always() && steps.build.outcome == 'success' && (steps.runner_probe.outcome != 'success' || env.GUI_DESKTOP_AVAILABLE != 'true' || steps.gui_acceptance.outcome != 'success' || steps.installed_acceptance.outcome != 'success' || steps.resource_soak.outcome != 'success' || steps.candidate_smoke.outcome != 'success') }}
+        shell: pwsh
+        run: |
+          Write-Error "The complete interactive Windows acceptance set did not pass. No authoritative release-candidate artifact will be uploaded. Runner probe=${{ steps.runner_probe.outcome }}, desktop=$env:GUI_DESKTOP_AVAILABLE, GUI=${{ steps.gui_acceptance.outcome }}, installer/upgrade=${{ steps.installed_acceptance.outcome }}, soak=${{ steps.resource_soak.outcome }}, standalone/portable=${{ steps.candidate_smoke.outcome }}."
+          exit 1
+
+      - name: Seal and verify the tested release-candidate files
+        id: seal_candidate
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' && steps.resource_soak.outcome == 'success' && steps.candidate_smoke.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = @(
+            'release/EyeBreakReminder.exe',
+            'release/EyeBreakReminder-Setup-x64.exe',
+            'release/EyeBreakReminder-Portable-x64.zip',
+            'release/EyeBreakReminder-Source.zip',
+            'release/EyeBreakReminder-SHA256.txt'
+          )
+          $before = @(Get-Content -LiteralPath 'build/pre-release-evidence/release-artifact-identities.json' -Raw | ConvertFrom-Json)
+          if ($before.Count -ne 5 -or @($before | Where-Object { $_.Missing }).Count) { throw 'Initial build did not produce exactly five release files.' }
+          foreach ($path in $expected) {
+            $record = $before | Where-Object { $_.Path -eq $path }
+            if (-not $record) { throw "The pre-test identity list is missing $path." }
+            $file = Get-Item -LiteralPath $path -ErrorAction Stop
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($file.Length -ne [long]$record.Bytes -or $hash -ne [string]$record.SHA256) { throw "Release file changed after build/test identity capture: $path" }
+          }
+          if ((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA) { throw 'Checked-out source does not match GITHUB_SHA.' }
+          if ((Get-Content -LiteralPath 'VERSION' -Raw).Trim() -cne '1.3.0') { throw 'Source VERSION is not 1.3.0.' }
+          foreach ($file in @('release/EyeBreakReminder.exe','release/EyeBreakReminder-Setup-x64.exe')) {
+            $version = [string](Get-Item -LiteralPath $file).VersionInfo.ProductVersion
+            if ($version -notmatch '^1\.3\.0(\.0)?$') { throw "$file has unexpected ProductVersion '$version'." }
+          }
+          $expectedManifest = @{}
+          foreach ($path in $expected[0..3]) { $expectedManifest[[IO.Path]::GetFileName($path)] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() }
+          $manifestLines = @(Get-Content -LiteralPath 'release/EyeBreakReminder-SHA256.txt')
+          if ($manifestLines.Count -ne 4) { throw 'SHA-256 manifest must contain exactly the four package payload entries.' }
+          $seenManifest = @{}
+          foreach ($line in $manifestLines) {
+            if ($line -notmatch '^([0-9a-fA-F]{64})  (.+)$') { throw "Malformed SHA-256 manifest row: $line" }
+            $name = $Matches[2]
+            if (-not $expectedManifest.ContainsKey($name) -or $seenManifest.ContainsKey($name) -or $Matches[1].ToLowerInvariant() -ne $expectedManifest[$name]) { throw "SHA-256 manifest mismatch, duplicate or unexpected entry: $name" }
+            $seenManifest[$name] = $true
+          }
+          if ($seenManifest.Count -ne $expectedManifest.Count) { throw 'SHA-256 manifest omitted one or more package files.' }
+          if ($env:GITHUB_REF_NAME -cne 'feature/v1.3.0-custom-accent-colours') { throw "Build is not running from the approved feature branch: $env:GITHUB_REF_NAME" }
+          $temp = Join-Path $env:RUNNER_TEMP ('ebr-candidate-seal-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $temp | Out-Null
+          try {
+            Expand-Archive -LiteralPath 'release/EyeBreakReminder-Portable-x64.zip' -DestinationPath (Join-Path $temp 'portable')
+            $portableExe = Join-Path $temp 'portable\EyeBreakReminder.exe'
+            $appHash = (Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ((Get-FileHash -LiteralPath $portableExe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $appHash) { throw 'Portable ZIP does not contain the exact standalone application bytes.' }
+          } finally { Remove-Item -LiteralPath $temp -Recurse -Force }
+          $packageReport = Get-Content -LiteralPath 'release/BINARY-VERIFICATION.json' -Raw | ConvertFrom-Json
+          if (-not $packageReport.unsigned -or $packageReport.binary_and_package_assertions_passed -lt 90) { throw 'Package verifier did not record the expected unsigned application and package checks.' }
+          $coreRuns = foreach ($log in @('make-test.log','make-all.log','make-package.log')) {
+            $match = Select-String -LiteralPath (Join-Path 'build/pre-release-evidence' $log) -Pattern 'PASS: (\d+) core assertions executed\.' | Select-Object -Last 1
+            if (-not $match) { throw "Core assertion result is missing from $log." }
+            [int]$match.Matches[0].Groups[1].Value
+          }
+          if ($coreRuns.Count -ne 3 -or @($coreRuns | Where-Object { $_ -ne $coreRuns[0] -or $_ -lt 6000 }).Count) { throw 'The three required core test runs did not all report the expected passing assertions.' }
+          $gui = Get-Content -LiteralPath 'build/gui-test/evidence/gui-acceptance-results.json' -Raw | ConvertFrom-Json
+          if ([int]$gui.Assertions -lt 400 -or @($gui.Events | Where-Object Status -eq 'FAIL').Count) { throw 'Native GUI acceptance results are incomplete or contain failures.' }
+          $forced = @($gui.Events | Where-Object { $_.Status -eq 'PASS' -and $_.Name -match 'Actual Windows Forced Colors text, primary-button and focus colours meet contrast thresholds' })
+          if (-not $forced.Count) { throw 'Actual Windows High Contrast / Forced Colors evidence is missing.' }
+          $installed = Get-Content -LiteralPath 'build/pre-release-evidence/windows-pre-release-results.json' -Raw | ConvertFrom-Json
+          if (-not $installed.InteractiveDesktopAvailable -or [int]$installed.Fail -gt 0) { throw 'Installed candidate acceptance did not pass on an interactive desktop.' }
+          if ($installed.SourceCommit -cne $env:GITHUB_SHA) { throw 'Installed acceptance evidence belongs to a different source commit.' }
+          $payload = @($installed.Events | Where-Object { $_.Name -eq 'v1.2.1 upgrade installs the exact verified v1.3.0 packaged executable' -and $_.Status -eq 'PASS' })
+          $breakRestart = @($installed.Events | Where-Object { $_.Name -eq 'Installed candidate restarts from the Start Menu after an interrupted Break' -and $_.Status -eq 'PASS' })
+          $pickerChecks = @($installed.Events | Where-Object { $_.Status -eq 'PASS' -and $_.Name -in @('Installed application opens the native ChooseColorW dialog','Installed Work picker saves a custom RGB independently','Installed Break picker saves its colour independently of Work','Installed picker Cancel leaves stored preferences unchanged','Installed custom Work and Break colours persist after application restart') })
+          $resetChecks = @($installed.Events | Where-Object { $_.Status -eq 'PASS' -and $_.Name -in @('Installed Reset clears both custom accent overrides','Installed Reset preserves theme, intervals, schedule and startup preferences','Installed Reset restores the original Light theme Work and Break accents','Installed Reset does not reset or change the running timer','Installed Reset leaves history unchanged') })
+          $forcedThemeChecks = @($installed.Events | Where-Object { $_.Status -eq 'PASS' -and $_.Name -match '^Installed Windows Forced Colors preserves saved custom colours under ' })
+          $forcedWorkRings = @($installed.Events | Where-Object { $_.Status -eq 'PASS' -and $_.Name -match '^Installed Forced Colors .* Work ring rendered installed timer ring pixels equal ' })
+          $forcedBreakRings = @($installed.Events | Where-Object { $_.Status -eq 'PASS' -and $_.Name -match '^Installed Forced Colors .* Break ring rendered installed timer ring pixels equal ' })
+          if (-not $payload.Count -or -not $breakRestart.Count -or $pickerChecks.Count -lt 5 -or $resetChecks.Count -lt 5 -or $forcedThemeChecks.Count -lt 5 -or $forcedWorkRings.Count -lt 5 -or $forcedBreakRings.Count -lt 5) { throw 'Exact installer payload, custom picker/reset, active-Break restart, or production Forced Colors ring evidence is missing.' }
+          $soak = Get-Content -LiteralPath 'build/pre-release-evidence/resource-soak/soak-summary.json' -Raw | ConvertFrom-Json
+          if ([int]$soak.CompletedCycles -lt 110 -or [int]$soak.Fail -gt 0 -or [int]$soak.MetricSamples -lt 1000 -or $soak.SHA256 -ne $appHash) { throw 'The exact production executable did not complete the required resource soak.' }
+          $pickerCoverage = @($soak.Events | Where-Object { $_.Name -eq 'Combined soak completed at least 110 reminder cycles and 100 native picker operations with both OK and Cancel' -and $_.Status -eq 'PASS' })
+          if (-not $pickerCoverage.Count) { throw 'The required colour-picker and resource soak assertion is missing.' }
+          $pickerDetails = $pickerCoverage[0].Details
+          if ([int]$pickerDetails.ReminderCycles -lt 110 -or [int]$pickerDetails.PickerOk -lt 50 -or [int]$pickerDetails.PickerCancel -lt 50) { throw 'The resource-soak event does not prove 110 cycles and both picker actions.' }
+          $smoke = Get-Content -LiteralPath 'build/pre-release-evidence/candidate-binary-smoke-results.json' -Raw | ConvertFrom-Json
+          if ([int]$smoke.Passed -ne 2 -or [int]$smoke.Failed -ne 0 -or $smoke.StandaloneSHA256 -ne $appHash -or $smoke.PortableExecutableSHA256 -ne $appHash) { throw 'Standalone/portable exact-candidate launch evidence is incomplete.' }
+          $candidate = [pscustomobject]@{
+            Name='EyeBreakReminder-v1.3.0-VERIFIED-RELEASE-CANDIDATE'
+            Application='Eye Break Reminder';Version='1.3.0';SourceCommit=$env:GITHUB_SHA
+            RunId=$env:GITHUB_RUN_ID;RunAttempt=$env:GITHUB_RUN_ATTEMPT;RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            ArtifactFiles=@($before | ForEach-Object { [pscustomobject]@{Name=[IO.Path]::GetFileName($_.Path);Bytes=[long]$_.Bytes;SHA256=[string]$_.SHA256} })
+            Tests=[pscustomobject]@{CoreRuns=@($coreRuns);PackageAssertions=[int]$packageReport.binary_and_package_assertions_passed;GuiAssertions=[int]$gui.Assertions;InstalledPass=[int]$installed.Pass;InstalledFail=[int]$installed.Fail;InstalledNotTested=[int]$installed.NotTested;ProductionPickerChecks=$pickerChecks.Count;ProductionResetChecks=$resetChecks.Count;ProductionForcedColorsThemes=$forcedThemeChecks.Count;ProductionForcedWorkRings=$forcedWorkRings.Count;ProductionForcedBreakRings=$forcedBreakRings.Count;ForcedColors='PASS';InstallerPayloadIdentity='PASS';RestartDuringBreak='PASS';ResourceCycles=[int]$soak.CompletedCycles;PickerOperations=[int]$pickerDetails.PickerTotal;PickerOk=[int]$pickerDetails.PickerOk;PickerCancel=[int]$pickerDetails.PickerCancel;ResourceSamples=[int]$soak.MetricSamples;StandalonePortableSmokeChecks=[int]$smoke.Passed}
+            Signing='UNSIGNED';CandidateSealUtc=[DateTime]::UtcNow.ToString('o')
+          }
+          $candidate | ConvertTo-Json -Depth 10 | Set-Content 'build/pre-release-evidence/authoritative-release-candidate.json' -Encoding UTF8
+          $summary = "Sealed v1.3.0 candidate at $env:GITHUB_SHA; all five pretest identities are unchanged; GUI=$($gui.Assertions), installed PASS=$($installed.Pass), soak=$($soak.CompletedCycles) cycles/$($soak.MetricSamples) samples."
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Upload the exact verified v1.3.0 release-candidate files
+        id: candidate_artifact
+        if: ${{ steps.seal_candidate.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.3.0-VERIFIED-RELEASE-CANDIDATE
+          path: |
+            release/EyeBreakReminder.exe
+            release/EyeBreakReminder-Setup-x64.exe
+            release/EyeBreakReminder-Portable-x64.zip
+            release/EyeBreakReminder-Source.zip
+            release/EyeBreakReminder-SHA256.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+      - name: Record the retained candidate download identity
+        if: ${{ steps.candidate_artifact.outcome == 'success' }}
+        shell: pwsh
+        env:
+          CANDIDATE_ARTIFACT_ID: ${{ steps.candidate_artifact.outputs.artifact-id }}
+          CANDIDATE_ARTIFACT_URL: ${{ steps.candidate_artifact.outputs.artifact-url }}
+        run: |
+          [pscustomobject]@{Name='EyeBreakReminder-v1.3.0-VERIFIED-RELEASE-CANDIDATE';ArtifactId=$env:CANDIDATE_ARTIFACT_ID;ArtifactUrl=$env:CANDIDATE_ARTIFACT_URL;RunId=$env:GITHUB_RUN_ID;RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID";DownloadedFiles=@(Get-Content 'build/pre-release-evidence/authoritative-release-candidate.json' -Raw | ConvertFrom-Json | Select-Object -ExpandProperty ArtifactFiles)} |
+            ConvertTo-Json -Depth 8 | Set-Content 'build/pre-release-evidence/candidate-artifact-download.json' -Encoding UTF8
+
       - name: Upload validation evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -232,4 +422,4 @@ jobs:
             build/pre-release-evidence/**
             build/gui-test/evidence/**
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 90

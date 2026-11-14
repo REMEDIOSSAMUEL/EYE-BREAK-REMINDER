@@ -1670,8 +1670,33 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
     Require ($customBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Installed custom Break retains its existing named state'
     Wait-ForRingProgress 'Installed custom Break after the v1.2.1 upgrade'
     $installedBreakShot=Capture-PrintWindow $script:mainWindow 'installed-upgrade-custom-break-ring.png';if($installedBreakShot){Assert-InstalledTimerRingPixel $installedBreakShot '#F97316' 'Installed Break accent after the v1.2.1 upgrade'}
-    Click-Control $customBreakWindow 24 'Finish installed custom Break pixel check'
-    Require ((Get-Status)-like'*Running*') 'Installed app returns to the Work Mode after its custom Break'
+    $interruptedBreakHistoryHash=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
+    $interruptedBreakCountdown=[EBR_PRE_NATIVE]::Text((Get-Control $customBreakWindow 40 'Active Break countdown before restart').Handle)
+    Require ($interruptedBreakCountdown -match '^\d+:\d{2}$') 'Active Break countdown is present before controlled restart' $interruptedBreakCountdown
+    Stop-InstalledApp
+    Require (@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue).Count -eq 0) 'Installed app exits cleanly while a Break is active' 'No candidate process remained after its normal Exit message'
+    $restartDuringBreak=Start-InstalledApp
+    Require $restartDuringBreak 'Installed candidate restarts from the Start Menu after an interrupted Break'
+    if($restartDuringBreak){
+      Require ((Wait-ForStatus 'Work after interrupted Break restart') -like '*Running*') 'Interrupted Break restarts into the documented fresh Work timer state'
+      Start-Sleep -Milliseconds 500
+      $duplicateBreakWindows=@(Get-BreakWindow $script:appPid)
+      Require ($duplicateBreakWindows.Count -eq 0) 'Restarting during Break does not replay or duplicate the reminder window' $duplicateBreakWindows.Count
+      $restartSettings=Read-SettingsMap $settingsPath
+      Require ($restartSettings['customWorkAccent'] -eq '1' -and $restartSettings['workAccentColor'] -eq [string][int]0x8B5CF6 -and $restartSettings['customBreakAccent'] -eq '1' -and $restartSettings['breakAccentColor'] -eq [string][int]0xF97316) 'Custom Work and Break colours persist through restart during Break'
+      $interruptedBreakHistoryAfter=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
+      Require ($interruptedBreakHistoryHash -eq $interruptedBreakHistoryAfter) 'Interrupted Break restart does not add a false completion or alter history' ([pscustomobject]@{Before=$interruptedBreakHistoryHash;After=$interruptedBreakHistoryAfter})
+      Switch-Timer
+      Wait-ForRingProgress 'Work ring after interrupted Break restart'
+      $restartWorkShot=Capture-PrintWindow $script:mainWindow 'restart-during-break-restores-custom-work-ring.png';if($restartWorkShot){Assert-InstalledTimerRingPixel $restartWorkShot '#8B5CF6' 'Work accent after interrupted Break restart'}
+      Click-Control $script:mainWindow 22 'Start a new Break after interrupted Break restart'
+      $afterRestartBreakWait=[Diagnostics.Stopwatch]::StartNew();$afterRestartBreakWindow=[IntPtr]::Zero;while($afterRestartBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$afterRestartBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
+      Require ($afterRestartBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'A fresh Break can start after interrupted Break recovery'
+      Wait-ForRingProgress 'Break ring after interrupted Break recovery'
+      $restartBreakShot=Capture-PrintWindow $script:mainWindow 'restart-during-break-new-custom-break-ring.png';if($restartBreakShot){Assert-InstalledTimerRingPixel $restartBreakShot '#F97316' 'Break accent after interrupted Break recovery'}
+      Click-Control $afterRestartBreakWindow 24 'Finish the post-restart Break'
+      Require ((Get-Status)-like'*Running*') 'Work resumes after completing a post-restart Break'
+    }
     Stop-InstalledApp
     if(Start-And-CheckApp $script:expectedProductVersion){
       Switch-Settings 4
@@ -1694,6 +1719,36 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
       $rows=[EBR_PRE_NATIVE]::SendMessageW($list.Handle,0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
       Require ($rows-ge$beforeHistoryRows.Count) 'Upgraded app loads v1.2.1 history rows and statistics source data' ([pscustomobject]@{Before=$beforeHistoryRows.Count;VisibleRows=$rows})
       Capture-ActiveWindow $script:mainWindow 'upgrade-v121-history-statistics-active.png'|Out-Null
+      Stop-InstalledApp
+    }
+    if(Start-And-CheckApp $script:expectedProductVersion){
+      Switch-Timer
+      $resetBefore=Read-SettingsMap $settingsPath
+      $resetStatusBefore=Get-Status
+      $resetTimerBefore=Get-TimerSeconds
+      $resetHistoryBefore=(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash
+      Switch-Settings 4
+      Click-Control $script:mainWindow 129 'Reset installed candidate custom accents to defaults'
+      $resetAfter=Read-SettingsMap $settingsPath
+      Require ($resetAfter['customWorkAccent'] -eq '0' -and $resetAfter['customBreakAccent'] -eq '0') 'Installed Reset clears both custom accent overrides'
+      Require ($resetAfter['theme'] -eq $resetBefore['theme'] -and $resetAfter['workMinutes'] -eq $resetBefore['workMinutes'] -and $resetAfter['breakSeconds'] -eq $resetBefore['breakSeconds'] -and $resetAfter['schedule'] -eq $resetBefore['schedule'] -and $resetAfter['startup'] -eq $resetBefore['startup']) 'Installed Reset preserves theme, intervals, schedule and startup preferences' ([pscustomobject]@{Before=$resetBefore;After=$resetAfter})
+      $defaultWorkReset=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 125 'Reset Work Mode swatch').Handle)
+      $defaultBreakReset=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 126 'Reset Break Mode swatch').Handle)
+      Require ($defaultWorkReset -eq '#1D4ED8' -and $defaultBreakReset -eq '#0F766E') 'Installed Reset restores the original Light theme Work and Break accents' ([pscustomobject]@{Work=$defaultWorkReset;Break=$defaultBreakReset})
+      Switch-Timer
+      $resetTimerAfter=Get-TimerSeconds
+      $resetTimerDelta=$resetTimerBefore-$resetTimerAfter
+      Require ((Get-Status) -eq $resetStatusBefore -and $resetTimerDelta -ge -1 -and $resetTimerDelta -le 3) 'Installed Reset does not reset or change the running timer' ([pscustomobject]@{StatusBefore=$resetStatusBefore;StatusAfter=(Get-Status);SecondsBefore=$resetTimerBefore;SecondsAfter=$resetTimerAfter;ElapsedDelta=$resetTimerDelta})
+      Require ((Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash -eq $resetHistoryBefore) 'Installed Reset leaves history unchanged'
+      Wait-ForRingProgress 'Installed default Work ring after Reset'
+      $resetWorkShot=Capture-PrintWindow $script:mainWindow 'installed-reset-default-work-ring.png';if($resetWorkShot){Assert-InstalledTimerRingPixel $resetWorkShot '#1D4ED8' 'Installed Reset Work ring default'}
+      Click-Control $script:mainWindow 22 'Start installed default Break ring check after Reset'
+      $resetBreakWait=[Diagnostics.Stopwatch]::StartNew();$resetBreakWindow=[IntPtr]::Zero;while($resetBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$resetBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
+      Require ($resetBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Installed default Break remains available after Reset'
+      Wait-ForRingProgress 'Installed default Break ring after Reset'
+      $resetBreakShot=Capture-PrintWindow $script:mainWindow 'installed-reset-default-break-ring.png';if($resetBreakShot){Assert-InstalledTimerRingPixel $resetBreakShot '#0F766E' 'Installed Reset Break ring default'}
+      Click-Control $resetBreakWindow 24 'Finish installed default Break ring check after Reset'
+      Require ((Get-Status)-like'*Running*') 'Installed Work resumes after the post-Reset Break'
       Stop-InstalledApp
     }
   }
