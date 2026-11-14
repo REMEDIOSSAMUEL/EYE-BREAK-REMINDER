@@ -1678,7 +1678,7 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
     $restartDuringBreak=Start-InstalledApp
     Require $restartDuringBreak 'Installed candidate restarts from the Start Menu after an interrupted Break'
     if($restartDuringBreak){
-      Require ((Wait-ForStatus 'Work after interrupted Break restart') -like '*Running*') 'Interrupted Break restarts into the documented fresh Work timer state'
+      Require ((Wait-ForStatus 'Running') -like '*Running*') 'Interrupted Break restarts into the documented fresh Work timer state'
       Start-Sleep -Milliseconds 500
       $duplicateBreakWindows=@(Get-BreakWindow $script:appPid)
       Require ($duplicateBreakWindows.Count -eq 0) 'Restarting during Break does not replay or duplicate the reminder window' $duplicateBreakWindows.Count
