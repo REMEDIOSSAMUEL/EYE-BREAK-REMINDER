@@ -129,7 +129,10 @@ for name in ['EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip']:
     require(not any(p.lower().endswith(banned) or any(part in {'build','dist','__pycache__'} or (part.startswith('.') and part!='.github') for part in p.split('/')[1:-1]) for p in names),'Source archive has no binaries, build outputs, secrets or tool folders')
     # Everything needed to build, test and package is present: sources, test sources, scripts, installer, assets, documentation.
     excluded_reports={Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md'),Path('docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.3.0_EXHAUSTIVE_FINAL_TEST_REPORT.md'),Path('docs/V1.3.0_COMPLETION_PROGRESS.md'),Path('docs/evidence/v1.3.0-exhaustive-final/acceptance-matrix.json')}
-    shipped={str(f.relative_to(ROOT)).replace('\\','/') for d in ['src','scripts','installer','assets','docs'] for f in (ROOT/d).rglob('*') if f.is_file() and not f.name.lower().endswith(banned) and '__pycache__' not in f.parts and f.relative_to(ROOT) not in excluded_reports}
+    excluded_evidence_prefixes=('docs/evidence/v1.3.0-final-pre-release/','docs/evidence/v1.3.0-exhaustive-final/')
+    def is_excluded_evidence(relative):return any(relative.as_posix().startswith(prefix) for prefix in excluded_evidence_prefixes)
+    require(not any(name.startswith(tuple('EyeBreakReminder/'+p for p in excluded_evidence_prefixes)) for name in names),'Source archive excludes candidate-specific v1.3.0 run evidence with older artifact identities')
+    shipped={str(f.relative_to(ROOT)).replace('\\','/') for d in ['src','scripts','installer','assets','docs'] for f in (ROOT/d).rglob('*') if f.is_file() and not f.name.lower().endswith(banned) and '__pycache__' not in f.parts and f.relative_to(ROOT) not in excluded_reports and not is_excluded_evidence(f.relative_to(ROOT))}
     shipped|={'tests/core_tests.cpp','Makefile','VERSION','README.md','CHANGELOG.md','CONTRIBUTING.md','.editorconfig','.gitattributes','.gitignore'}
     missing=sorted(p for p in shipped if 'EyeBreakReminder/'+p not in names)
     require(not missing,'Source archive is missing '+', '.join(missing))
@@ -140,6 +143,7 @@ for name in ['EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip']:
      if relative==Path('.git'):return False
      if any(p in excluded_dirs or (p.startswith('.') and p!='.github') for p in parts[:-1]):return False
      if relative in excluded_reports:return False
+     if is_excluded_evidence(relative):return False
      if relative==Path('tests/core-tests') or relative.suffix.lower() in excluded_suffixes:return False
      return True
     expected_source={str(path.relative_to(ROOT)).replace('\\','/') for path in ROOT.rglob('*') if path.is_file() and include_source(path.relative_to(ROOT))}
