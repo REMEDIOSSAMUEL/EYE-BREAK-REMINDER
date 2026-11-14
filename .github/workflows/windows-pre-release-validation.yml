@@ -423,3 +423,78 @@ jobs:
             build/gui-test/evidence/**
           if-no-files-found: warn
           retention-days: 90
+
+  windows-11-arm64-app-acceptance:
+    name: Windows 11 ARM64 x64-emulation acceptance
+    needs: windows-pre-release
+    runs-on: windows-11-arm
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the tested branch and acceptance scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the exact sealed candidate from this workflow run
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.3.0-VERIFIED-RELEASE-CANDIDATE
+          path: release
+
+      - name: Verify exact candidate identity and Windows 11 ARM64 environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $actual = @(Get-ChildItem -LiteralPath 'release' -File | Sort-Object -Property Name | Select-Object -ExpandProperty Name)
+          if (($actual -join "`n") -cne (($expected | Sort-Object) -join "`n")) { throw "Candidate contains an unexpected file set: $($actual -join ', ')" }
+          $manifest = Get-Content -LiteralPath 'release/EyeBreakReminder-SHA256.txt'
+          if ($manifest.Count -ne 4) { throw 'The candidate manifest must identify exactly four payload files.' }
+          foreach ($line in $manifest) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "Malformed candidate manifest line: $line" }
+            $path = Join-Path 'release' $Matches[2]
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Manifest asset missing: $path" }
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($hash -cne $Matches[1]) { throw "Candidate hash mismatch for ${path}: $hash" }
+          }
+          $os = Get-CimInstance Win32_OperatingSystem
+          $arch = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          if ($os.Caption -notmatch 'Windows 11' -or $arch -ne 'Arm64') { throw "Expected Windows 11 ARM64, got $($os.Caption) / $arch." }
+          $exe = Get-Item -LiteralPath 'release/EyeBreakReminder.exe'
+          if ($exe.VersionInfo.ProductVersion -notmatch '^1\.3\.0(\.0)?$') { throw "Wrong candidate version: $($exe.VersionInfo.ProductVersion)" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path 'release/EyeBreakReminder-Portable-x64.zip'))
+          try {
+            $portable = $zip.GetEntry('EyeBreakReminder.exe')
+            if (-not $portable) { throw 'Portable archive lacks EyeBreakReminder.exe.' }
+            $portablePath = Join-Path $env:TEMP 'EyeBreakReminder-portable-candidate.exe'
+            $stream = $portable.Open(); $file = [IO.File]::Create($portablePath)
+            try { $stream.CopyTo($file) } finally { $stream.Dispose(); $file.Dispose() }
+            $portableHash = (Get-FileHash -LiteralPath $portablePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            Remove-Item -LiteralPath $portablePath -Force
+          } finally { $zip.Dispose() }
+          $standaloneHash = (Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($portableHash -cne $standaloneHash) { throw 'Portable executable differs from the verified standalone candidate.' }
+          [pscustomobject]@{RunId=$env:GITHUB_RUN_ID;SourceCommit=$env:GITHUB_SHA;OS=$os.Caption;OSVersion=$os.Version;OSArchitecture=$arch;ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();ApplicationArchitecture='x64';ExecutionMode='Windows x64 emulation on genuine Windows 11 ARM64; not native Windows 11 x64';ExecutableSHA256=$standaloneHash;InstallerSHA256=(Get-FileHash 'release/EyeBreakReminder-Setup-x64.exe' -Algorithm SHA256).Hash.ToLowerInvariant();PortableSHA256=(Get-FileHash 'release/EyeBreakReminder-Portable-x64.zip' -Algorithm SHA256).Hash.ToLowerInvariant();SourceSHA256=(Get-FileHash 'release/EyeBreakReminder-Source.zip' -Algorithm SHA256).Hash.ToLowerInvariant()} |
+            ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'windows-11-arm64-candidate-identity.json' -Encoding utf8
+
+      - name: Run installed-candidate integration acceptance on Windows 11 ARM64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_pre_release_acceptance.ps1 -EvidenceDirectory (Join-Path (Get-Location) 'build/pre-release-evidence')
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows 11 ARM64 emulation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.3.0-windows-11-arm64-x64-emulation-${{ github.run_id }}
+          path: |
+            windows-11-arm64-candidate-identity.json
+            build/pre-release-evidence/**
+          if-no-files-found: warn
+          retention-days: 90
