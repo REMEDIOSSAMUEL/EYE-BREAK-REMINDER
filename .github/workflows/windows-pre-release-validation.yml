@@ -465,6 +465,11 @@ jobs:
           if ($os.Caption -notmatch 'Windows 11' -or $arch -ne 'Arm64') { throw "Expected Windows 11 ARM64, got $($os.Caption) / $arch." }
           $exe = Get-Item -LiteralPath 'release/EyeBreakReminder.exe'
           if ($exe.VersionInfo.ProductVersion -notmatch '^1\.3\.0(\.0)?$') { throw "Wrong candidate version: $($exe.VersionInfo.ProductVersion)" }
+          $installerVersion = (Get-Item -LiteralPath 'release/EyeBreakReminder-Setup-x64.exe').VersionInfo.ProductVersion
+          if ($installerVersion -notmatch '^1\.3\.0(\.0)?$') { throw "Wrong installer version: $installerVersion" }
+          $reader = [IO.BinaryReader]::new([IO.File]::OpenRead((Resolve-Path 'release/EyeBreakReminder.exe')))
+          try { $reader.BaseStream.Position = 0x3C; $peOffset = $reader.ReadInt32(); $reader.BaseStream.Position = $peOffset; $signature = $reader.ReadUInt32(); if ($signature -ne 0x00004550) { throw 'Candidate executable has no PE signature.' }; $machine = $reader.ReadUInt16() } finally { $reader.Dispose() }
+          if ($machine -ne 0x8664) { throw "Candidate executable is not AMD64 x64 (PE machine 0x$($machine.ToString('X4')))." }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path 'release/EyeBreakReminder-Portable-x64.zip'))
           try {
@@ -478,7 +483,7 @@ jobs:
           } finally { $zip.Dispose() }
           $standaloneHash = (Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($portableHash -cne $standaloneHash) { throw 'Portable executable differs from the verified standalone candidate.' }
-          [pscustomobject]@{RunId=$env:GITHUB_RUN_ID;SourceCommit=$env:GITHUB_SHA;OS=$os.Caption;OSVersion=$os.Version;OSArchitecture=$arch;ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();ApplicationArchitecture='x64';ExecutionMode='Windows x64 emulation on genuine Windows 11 ARM64; not native Windows 11 x64';ExecutableSHA256=$standaloneHash;InstallerSHA256=(Get-FileHash 'release/EyeBreakReminder-Setup-x64.exe' -Algorithm SHA256).Hash.ToLowerInvariant();PortableSHA256=(Get-FileHash 'release/EyeBreakReminder-Portable-x64.zip' -Algorithm SHA256).Hash.ToLowerInvariant();SourceSHA256=(Get-FileHash 'release/EyeBreakReminder-Source.zip' -Algorithm SHA256).Hash.ToLowerInvariant()} |
+          [pscustomobject]@{RunId=$env:GITHUB_RUN_ID;SourceCommit=$env:GITHUB_SHA;OS=$os.Caption;OSVersion=$os.Version;OSArchitecture=$arch;ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();ApplicationArchitecture='x64';PEMachine=('0x{0:X4}' -f $machine);ExecutionMode='Windows x64 emulation on genuine Windows 11 ARM64; not native Windows 11 x64';ExecutableSHA256=$standaloneHash;InstallerSHA256=(Get-FileHash 'release/EyeBreakReminder-Setup-x64.exe' -Algorithm SHA256).Hash.ToLowerInvariant();PortableSHA256=(Get-FileHash 'release/EyeBreakReminder-Portable-x64.zip' -Algorithm SHA256).Hash.ToLowerInvariant();SourceSHA256=(Get-FileHash 'release/EyeBreakReminder-Source.zip' -Algorithm SHA256).Hash.ToLowerInvariant();ManifestSHA256=(Get-FileHash 'release/EyeBreakReminder-SHA256.txt' -Algorithm SHA256).Hash.ToLowerInvariant();InstallerProductVersion=$installerVersion} |
             ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'windows-11-arm64-candidate-identity.json' -Encoding utf8
 
       - name: Run installed-candidate integration acceptance on Windows 11 ARM64

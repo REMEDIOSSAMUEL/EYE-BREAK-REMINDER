@@ -84,10 +84,10 @@
   "caseStatusTotals": {
     "PASS": 48,
     "FAIL": 0,
-    "NOT TESTED": 33,
+    "NOT TESTED": 34,
     "NOT APPLICABLE": 1,
     "BLOCKED": 10,
-    "TOTAL_CASES": 92
+    "TOTAL_CASES": 93
   },
   "releaseAssessment": {
     "confirmedProductDefect": "None in retained evidence.",
@@ -2057,6 +2057,26 @@
       ],
       "status": "NOT TESTED",
       "limitation": "Requires installed GUI sweep and rendered contrast sampling.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-015",
+      "category": "Windows integration",
+      "description": "Windows 11 ARM64 x64-candidate emulation acceptance (supplemental; not native x64)",
+      "expected": "The exact sealed x64 candidate installs and exercises Windows 11 OS integration, native picker, theme/Forced Colors and persistence under x64 emulation.",
+      "actual": "A dependent Windows 11 ARM64 acceptance job was added locally; no result exists until a successful candidate workflow executes it.",
+      "environment": {
+        "available": true,
+        "runner": "windows-11-arm",
+        "repository": "public; standard runner",
+        "architecture": "ARM64",
+        "execution": "x64 application emulation"
+      },
+      "binarySha256": null,
+      "evidence": [],
+      "status": "NOT TESTED",
+      "limitation": "Does not establish native Windows 11 x64 CPU/driver behavior; runner and candidate identity must be checked in the workflow result.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     }
