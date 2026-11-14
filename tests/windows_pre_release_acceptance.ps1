@@ -1217,6 +1217,163 @@ function Start-And-CheckApp([string]$ExpectedVersion) {
   Pass 'Installed app launched and exposes its native UI Automation tree' ([pscustomobject]@{WindowTitle=[EBR_PRE_NATIVE]::Text($script:mainWindow);NameCount=$names.Count;Names=@($names | Select-Object -First 20)})
   return $true
 }
+function Find-InstalledConfirmation([string]$Pattern) {
+  foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){
+    if(-not [EBR_PRE_NATIVE]::IsWindowVisible($window)){continue}
+    $texts=@([EBR_PRE_NATIVE]::Text($window))
+    foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$texts+=,$text}}
+    if(($texts -join ' ') -match $Pattern){return $window}
+    try{
+      $root=[System.Windows.Automation.AutomationElement]::FromHandle($window)
+      if($root){$names=@();$elements=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($element in $elements){try{$name=$element.Current.Name;if($name){$names+=,$name}}catch{}};if(($names -join ' ') -match $Pattern){return $window}}
+    }catch{}
+  }
+  return [IntPtr]::Zero
+}
+function Invoke-InstalledYesConfirmation([int]$ControlId,[string]$Name,[string]$PromptPattern) {
+  $control=Get-Control $script:mainWindow $ControlId $Name
+  $clickTask=[EBR_PRE_NATIVE]::SendButtonClickAsync($control.Handle)
+  $watch=[Diagnostics.Stopwatch]::StartNew();$dialog=[IntPtr]::Zero
+  while($watch.Elapsed.TotalSeconds -lt 8){$dialog=Find-InstalledConfirmation $PromptPattern;if($dialog -ne [IntPtr]::Zero){break};Start-Sleep -Milliseconds 50}
+  Require ($dialog -ne [IntPtr]::Zero) "$Name opens the expected confirmation dialog" ([pscustomobject]@{PromptPattern=$PromptPattern;TaskStatus=$clickTask.Status.ToString()})
+  $yes=@([EBR_PRE_NATIVE]::Children($dialog)|Where-Object{[EBR_PRE_NATIVE]::ClassName($_)-eq'Button' -and [EBR_PRE_NATIVE]::IsWindowVisible($_) -and [EBR_PRE_NATIVE]::IsWindowEnabled($_) -and [EBR_PRE_NATIVE]::Text($_)-match '^\s*&?Yes\s*$'})
+  Require ($yes.Count -eq 1) "$Name confirmation exposes one enabled Yes button" ([pscustomobject]@{Candidates=$yes.Count;Labels=@($yes|ForEach-Object{[EBR_PRE_NATIVE]::Text($_)})})
+  Capture-ActiveWindow $dialog ("settings-confirmation-{0}.png" -f ($Name -replace '[^A-Za-z0-9]+','-').Trim('-')) | Out-Null
+  [void][EBR_PRE_NATIVE]::SendMessageW($yes[0],0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+  $closed=[Diagnostics.Stopwatch]::StartNew();while($closed.Elapsed.TotalSeconds -lt 5 -and [EBR_PRE_NATIVE]::IsWindow($dialog)){Start-Sleep -Milliseconds 50}
+  Require (-not [EBR_PRE_NATIVE]::IsWindow($dialog)) "$Name confirmation closes after Yes"
+  Require ($clickTask.Wait(8000)) "$Name confirmation click returns after closing" ([pscustomobject]@{TaskStatus=$clickTask.Status.ToString()})
+}
+function Assert-InstalledSetting([string]$Key,[string]$Expected,[string]$Name) {
+  $saved=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
+  Require ($saved.ContainsKey($Key) -and [string]$saved[$Key] -ceq $Expected) $Name ([pscustomobject]@{Key=$Key;Expected=$Expected;Actual=$saved[$Key]})
+}
+function Set-InstalledVolume([int]$Value) {
+  $slider=Get-Control $script:mainWindow 103 'Alarm volume slider'
+  if($Value -lt 0 -or $Value -gt 100){throw 'Volume test value is outside 0..100.'}
+  [void][EBR_PRE_NATIVE]::SendMessageW($slider.Handle,0x0405,[IntPtr]::new(1),[IntPtr]::new($Value))
+  $packed=[IntPtr]::new([long](8 -bor ($Value -shl 16))) # TB_ENDTRACK, current position
+  [void][EBR_PRE_NATIVE]::SendMessageW([EBR_PRE_NATIVE]::GetParent($slider.Handle),0x0114,$packed,$slider.Handle)
+  Assert-InstalledSetting 'volume' ([string]$Value) "Alarm volume $Value persists after trackbar interaction"
+}
+function Send-InstalledShortcut([byte[]]$Modifiers,[byte]$Key) {
+  [void][EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow)
+  foreach($modifier in $Modifiers){[EBR_PRE_NATIVE]::Key($modifier,$false)}
+  Send-VirtualKey $Key
+  for($i=$Modifiers.Length-1;$i -ge 0;$i--){[EBR_PRE_NATIVE]::Key($Modifiers[$i],$true)}
+  Start-Sleep -Milliseconds 200
+}
+function Test-InstalledSettingsControls {
+  if(-not $script:interactiveDesktop){Not-Tested 'Installed settings-control sweep' 'No interactive desktop was available.';return}
+  Invoke-Install $InstallerPath 'candidate settings-control sweep installation' $false
+  Assert-InstallationMetadata $script:expectedProductVersion
+  Require (Start-And-CheckApp $script:expectedProductVersion) 'Candidate application starts for the installed settings-control sweep'
+  $settingsPath=Join-Path $dataDir 'settings.ini';$historyPath=Join-Path $dataDir 'history.dat'
+  $initial=Read-SettingsMap $settingsPath
+  Switch-Settings 2
+  foreach($sound in 0..4){Set-Combo $script:mainWindow 102 $sound "Alarm sound $sound";Assert-InstalledSetting 'sound' ([string]$sound) "Alarm sound $sound persists"}
+  foreach($volume in @(0,100,55)){Set-InstalledVolume $volume}
+  Set-Check $script:mainWindow 107 $true 'Repeat alarm enabled';Assert-InstalledSetting 'repeat' '1' 'Repeat alarm setting persists enabled'
+  Set-Check $script:mainWindow 107 $false 'Repeat alarm disabled';Assert-InstalledSetting 'repeat' '0' 'Repeat alarm setting persists disabled'
+  Set-Check $script:mainWindow 32 $false 'Alarm disabled in settings sweep';Assert-InstalledSetting 'alarm' '0' 'Alarm disabled setting persists'
+  Set-Check $script:mainWindow 32 $true 'Alarm enabled in settings sweep';Assert-InstalledSetting 'alarm' '1' 'Alarm enabled setting persists'
+  foreach($sound in 0..4){Set-Combo $script:mainWindow 102 $sound "Preview alarm sound $sound";Click-Control $script:mainWindow 116 "Preview alarm sound $sound";Start-Sleep -Milliseconds 150;Click-Control $script:mainWindow 117 "Stop preview alarm sound $sound";Pass "Preview and Stop controls respond for alarm sound $sound" ([pscustomobject]@{SoundIndex=$sound;AcousticOutput='Not measured; no verified capture endpoint'})}
+
+  Switch-Settings 3
+  foreach($entry in @(@(108,'notifications','Windows notifications'),@(109,'snooze','Allow snooze'))){
+    $id=[int]$entry[0];$key=[string]$entry[1];$name=[string]$entry[2]
+    foreach($value in @($false,$true)){Set-Check $script:mainWindow $id $value $name;Assert-InstalledSetting $key ([string][int]$value) "$name persists as $value"}
+  }
+  foreach($mode in 0..2){Set-Combo $script:mainWindow 104 $mode "Break presentation mode $mode";Assert-InstalledSetting 'mode' ([string]$mode) "Break presentation mode $mode persists"}
+  foreach($monitor in 0..2){Set-Combo $script:mainWindow 105 $monitor "Preferred monitor mode $monitor";Assert-InstalledSetting 'monitor' ([string]$monitor) "Preferred monitor mode $monitor persists"}
+  $selected=Get-Control $script:mainWindow 115 'Selected display'
+  $displayCount=[EBR_PRE_NATIVE]::SendMessageW($selected.Handle,0x0146,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+  Require ($displayCount -ge 1) 'At least one actual selected display is available to the control' $displayCount
+  for($display=0;$display -lt $displayCount;$display++){Set-Combo $script:mainWindow 115 $display "Selected display $display";Require ((Read-SettingsMap $settingsPath)['selectedMonitor'].Length -gt 0) "Selected display $display persists a device identity"}
+
+  Switch-Settings 4
+  foreach($theme in 0..4){
+    Set-Combo $script:mainWindow 106 $theme "Theme sweep $theme";Assert-InstalledSetting 'theme' ([string]$theme) "Theme $theme persists";Capture-ActiveWindow $script:mainWindow "settings-theme-$theme.png"|Out-Null
+    Switch-Timer;Capture-ActiveWindow $script:mainWindow "theme-$theme-timer.png"|Out-Null
+    Click-Control $script:mainWindow 11 "Theme $theme History navigation";Capture-ActiveWindow $script:mainWindow "theme-$theme-history.png"|Out-Null
+    Switch-Timer;Click-Control $script:mainWindow 22 "Theme $theme reminder preview"
+    $themeBreakWait=[Diagnostics.Stopwatch]::StartNew();$themeBreakWindow=[IntPtr]::Zero;while($themeBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$themeBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
+    Require ($themeBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') "Theme $theme creates a named Break reminder"
+    Capture-ActiveWindow $themeBreakWindow "theme-$theme-reminder.png"|Out-Null
+    Click-Control $themeBreakWindow 24 "Complete theme $theme reminder preview";Require ((Get-Status)-like'*Running*') "Theme $theme returns to Work after reminder completion"
+    Switch-Settings 4
+  }
+  foreach($value in @($false,$true)){Set-Check $script:mainWindow 124 $value 'Distinct Break accent';Assert-InstalledSetting 'breakModeColors' ([string][int]$value) "Distinct Break accent setting persists as $value"}
+  foreach($entry in @(@(110,'autoStart','Start timer automatically'),@(111,'startup','Start with Windows'),@(112,'tray','Minimize to system tray'),@(113,'restore','Resume countdown on reopening'),@(114,'pauseLocked','Pause while workstation is locked'))){
+    $id=[int]$entry[0];$key=[string]$entry[1];$name=[string]$entry[2]
+    foreach($value in @($false,$true)){Set-Check $script:mainWindow $id $value $name;Assert-InstalledSetting $key ([string][int]$value) "$name persists as $value"}
+  }
+  Set-Check $script:mainWindow 110 $false 'Start timer automatically disabled for launch behavior';Assert-InstalledSetting 'autoStart' '0' 'Automatic timer start disabled preference persists'
+  Stop-InstalledApp;Require (Start-InstalledApp) 'Installed candidate relaunches with automatic timer start disabled';Require ((Wait-ForStatus 'Paused') -like '*Paused*') 'Automatic timer start disabled opens the timer paused'
+  Switch-Settings 4;Set-Check $script:mainWindow 113 $false 'Disable saved timer-state restore for automatic-start behavior';Assert-InstalledSetting 'restore' '0' 'Timer restore disabled preference persists'
+  Set-Check $script:mainWindow 110 $true 'Start timer automatically enabled for launch behavior';Assert-InstalledSetting 'autoStart' '1' 'Automatic timer start enabled preference persists'
+  Stop-InstalledApp;Require (Start-InstalledApp) 'Installed candidate relaunches with automatic timer start enabled';Require ((Wait-ForStatus 'Running') -like '*Running*') 'Automatic timer start enabled creates a running Work timer on launch';Switch-Settings 4
+  Set-Check $script:mainWindow 113 $true 'Restore saved timer-state preference after automatic-start test';Assert-InstalledSetting 'restore' '1' 'Timer restore preference is returned to its original enabled value'
+  $runValues=@();if(Test-Path -LiteralPath $runKey){$runValues=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties|Where-Object{$_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder'})}
+  Require ($runValues.Count -eq 1 -and [string]$runValues[0].Value -match [regex]::Escape($appExe)) 'Start with Windows creates exactly one registration pointing to the installed candidate' $runValues
+  Set-Check $script:mainWindow 111 $false 'Start with Windows registration removal'
+  $runValues=@();if(Test-Path -LiteralPath $runKey){$runValues=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties|Where-Object{$_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder'})}
+  Require ($runValues.Count -eq 0) 'Disabling Start with Windows removes its owned registration'
+
+  foreach($mode in 0..2){
+    Switch-Settings 3;Set-Combo $script:mainWindow 104 $mode "Reminder presentation $mode for real window test";Switch-Timer
+    Click-Control $script:mainWindow 22 "Open reminder presentation $mode"
+    $wait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
+    while($wait.Elapsed.TotalSeconds -lt 8){$wins=Get-BreakWindow $script:appPid;if($wins.Count -eq 1){$breakWindow=$wins[0];break};Start-Sleep -Milliseconds 100}
+    Require ($breakWindow -ne [IntPtr]::Zero) "Reminder presentation $mode creates one visible break window"
+    Require ((Get-Status)-like '*Taking an eye break*') "Reminder presentation $mode keeps the named Break state"
+    $rect=Get-Rect $breakWindow
+    if($mode -eq 0){$normalHeight=$rect.Height;Require ($rect.Height -gt 0 -and $rect.Width -gt 0) 'Normal reminder has positive visible geometry' $rect}
+    elseif($mode -eq 1){Require ($rect.Height -lt $normalHeight) 'Compact reminder is shorter than the normal reminder' ([pscustomobject]@{NormalHeight=$normalHeight;Compact=$rect})}
+    else{$screenW=[EBR_PRE_NATIVE]::GetSystemMetrics(0);$screenH=[EBR_PRE_NATIVE]::GetSystemMetrics(1);Require ($rect.Width -ge ($screenW-4) -and $rect.Height -ge ($screenH-4)) 'Opt-in fullscreen reminder covers the actual primary display' ([pscustomobject]@{Window=$rect;DisplayWidth=$screenW;DisplayHeight=$screenH})}
+    Capture-ActiveWindow $breakWindow "reminder-presentation-$mode.png"|Out-Null
+    Click-Control $breakWindow 24 "Complete reminder presentation $mode"
+    Require ((Get-Status)-like '*Running*') "Reminder presentation $mode returns to Work"
+  }
+
+  Switch-Settings 0;Set-Edit $script:mainWindow 100 '180' 'Work interval before shortcut test';Set-Edit $script:mainWindow 101 '300' 'Break duration before shortcut test'
+  Switch-Timer;Start-Sleep -Milliseconds 500;Send-InstalledShortcut ([byte[]]@(0x11)) 0x52
+  $resetSeconds=Get-TimerSeconds;Require ($resetSeconds -ge 10798) 'Ctrl+R resets to the configured 180-minute Work interval' $resetSeconds
+  Send-InstalledShortcut ([byte[]]@(0x11)) 0xBC
+  $settingsButton=Get-Control $script:mainWindow 130 'Settings section after Ctrl+comma'
+  Require ([EBR_PRE_NATIVE]::IsWindowVisible($settingsButton.Handle)) 'Ctrl+comma opens Settings'
+  Send-InstalledShortcut ([byte[]]@(0x11,0x10)) 0x42
+  $wait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
+  while($wait.Elapsed.TotalSeconds -lt 8){$wins=Get-BreakWindow $script:appPid;if($wins.Count -eq 1){$breakWindow=$wins[0];break};Start-Sleep -Milliseconds 100}
+  Require ($breakWindow -ne [IntPtr]::Zero) 'Ctrl+Shift+B opens a manual Break from Settings'
+  Click-Control $breakWindow 24 'Complete keyboard shortcut Break';Require ((Get-Status)-like '*Running*') 'Keyboard shortcut Break returns to Work'
+
+  Click-Control $script:mainWindow 11 'History navigation for settings sweep'
+  foreach($value in @($false,$true)){Set-Check $script:mainWindow 30 $value 'Save history on this device';Assert-InstalledSetting 'history' ([string][int]$value) "History-save preference persists as $value"}
+  $historyBefore=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
+  Require ($historyBefore) 'Settings sweep has a history file before Reset All'
+  Switch-Settings 5
+  Invoke-InstalledYesConfirmation 118 'Reset all settings' 'Reset all settings\?'
+  $reset=Read-SettingsMap $settingsPath
+  Require ($reset['workMinutes'] -eq '20' -and $reset['breakSeconds'] -eq '20' -and $reset['schedule'] -eq '0' -and $reset['theme'] -eq '2' -and $reset['startup'] -eq '0' -and $reset['customWorkAccent'] -eq '0' -and $reset['customBreakAccent'] -eq '0' -and $reset['breakModeColors'] -eq '1') 'Reset all settings restores documented preference defaults' $reset
+  Require ((Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash -eq $historyBefore) 'Reset all settings preserves history bytes'
+  $runValues=@();if(Test-Path -LiteralPath $runKey){$runValues=@((Get-ItemProperty -LiteralPath $runKey).PSObject.Properties|Where-Object{$_.Name -notmatch '^PS' -and [string]$_.Value -match 'EyeBreakReminder'})}
+  Require ($runValues.Count -eq 0) 'Reset all settings disables and removes Start with Windows registration'
+  Switch-Timer
+  Require ((Get-Status)-like '*Running*' -and (Get-TimerSeconds)-ge1197) 'Reset all settings starts the documented default Work interval' (Get-TimerSeconds)
+  Click-Control $script:mainWindow 11 'History navigation before Clear History'
+  $rowsControl=Get-Control $script:mainWindow 200 'History before clearing'
+  $rows=[EBR_PRE_NATIVE]::SendMessageW($rowsControl.Handle,0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+  Require ($rows -ge 1) 'History remains visible after Reset all settings' $rows
+  Invoke-InstalledYesConfirmation 31 'Clear History' 'Clear all history\?'
+  $remaining=if(Test-Path -LiteralPath $historyPath){@(Get-Content -LiteralPath $historyPath|Where-Object{$_.Trim()}).Count}else{0}
+  $rows=[EBR_PRE_NATIVE]::SendMessageW($rowsControl.Handle,0x1004,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+  Require ($remaining -eq 0 -and $rows -eq 0) 'Clear History removes records from storage and the visible list' ([pscustomobject]@{FileRows=$remaining;VisibleRows=$rows})
+  Pass 'Installed candidate settings sweep complete' ([pscustomobject]@{Sounds=5;Volumes=@(0,55,100);Themes=5;BreakModes=3;MonitorPolicies=3;InteractiveReminderModes=3;ShortcutTests=3;HistoryReset='PASS';GlobalReset='PASS'})
+  Stop-InstalledApp
+  Invoke-Uninstall 'candidate settings-control sweep cleanup' $false
+  Require ((Test-Path -LiteralPath $settingsPath) -and (Test-Path -LiteralPath $historyPath)) 'Settings-control sweep uninstall preserves its test profile for final runner cleanup'
+}
 function Test-FreshInstallApp {
   if(-not $script:interactiveDesktop -or $script:mainWindow -eq [IntPtr]::Zero){Not-Tested 'Installed app settings, History, timer layout and UI interactions' 'No interactive app window was available.';return}
   $names=Probe-UiaNames $script:mainWindow
@@ -1824,6 +1981,7 @@ try {
   Test-UpgradeFromV11 $oldInstaller
   Test-V11InteractiveUninstaller $oldInstaller
   Test-UpgradeFromV121 $v121Installer
+  Test-InstalledSettingsControls
   if(-not $script:interactiveDesktop){
     Not-Tested 'Real Windows theme switching and Forced Colors' 'Runner desktop capability probe reported no Explorer shell/taskbar.'
     Not-Tested 'Tray menu actions and actual Shell notification surface' 'Runner desktop capability probe reported no Explorer shell/taskbar.'

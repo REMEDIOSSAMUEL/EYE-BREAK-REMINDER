@@ -128,7 +128,7 @@ for name in ['EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip']:
     banned=('.exe','.dll','.o','.obj','.pdb','.zip','.tmp','.pyc','.pfx','.pem','.p12','.key')
     require(not any(p.lower().endswith(banned) or any(part in {'build','dist','__pycache__'} or (part.startswith('.') and part!='.github') for part in p.split('/')[1:-1]) for p in names),'Source archive has no binaries, build outputs, secrets or tool folders')
     # Everything needed to build, test and package is present: sources, test sources, scripts, installer, assets, documentation.
-    excluded_reports={Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md'),Path('docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.3.0_COMPLETION_PROGRESS.md')}
+    excluded_reports={Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md'),Path('docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.3.0_EXHAUSTIVE_FINAL_TEST_REPORT.md'),Path('docs/V1.3.0_COMPLETION_PROGRESS.md'),Path('docs/evidence/v1.3.0-exhaustive-final/acceptance-matrix.json')}
     shipped={str(f.relative_to(ROOT)).replace('\\','/') for d in ['src','scripts','installer','assets','docs'] for f in (ROOT/d).rglob('*') if f.is_file() and not f.name.lower().endswith(banned) and '__pycache__' not in f.parts and f.relative_to(ROOT) not in excluded_reports}
     shipped|={'tests/core_tests.cpp','Makefile','VERSION','README.md','CHANGELOG.md','CONTRIBUTING.md','.editorconfig','.gitattributes','.gitignore'}
     missing=sorted(p for p in shipped if 'EyeBreakReminder/'+p not in names)

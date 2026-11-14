@@ -84,10 +84,10 @@
   "caseStatusTotals": {
     "PASS": 48,
     "FAIL": 0,
-    "NOT TESTED": 26,
+    "NOT TESTED": 33,
     "NOT APPLICABLE": 1,
     "BLOCKED": 10,
-    "TOTAL_CASES": 85
+    "TOTAL_CASES": 92
   },
   "releaseAssessment": {
     "confirmedProductDefect": "None in retained evidence.",
@@ -1924,6 +1924,139 @@
       ],
       "status": "NOT TESTED",
       "limitation": "Needs disposable standard-user desktop.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "ACCESS-007",
+      "category": "Accessibility",
+      "description": "DPI/text scaling across all pages and dialogs",
+      "expected": "Check Settings, History, reminder and dialogs at multiple DPI and text scale levels for clipping and focus.",
+      "actual": "Timer centering and representative settings/text scaling passed; full all-pages matrix was not recorded.",
+      "environment": {
+        "available": false,
+        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43577697331/artifacts/14112075293"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "Requires interactive per-scale screenshots and layout checks.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SETTING-019",
+      "category": "Settings",
+      "description": "Reset all settings UI action",
+      "expected": "Confirm dialog resets global settings, clears startup registration, resets timer preferences, preserves history as documented.",
+      "actual": "Core tests cover default/reset model; exact installed Reset all settings button flow and confirmation were not directly driven.",
+      "environment": {
+        "available": false,
+        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43577697331/artifacts/14112075293"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "Needs installed candidate UI test; confirm history and timer semantics.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SETTING-020",
+      "category": "Behavior",
+      "description": "Start timer automatically on launch UI preference",
+      "expected": "Toggle auto-start preference and verify behavior on app launch/restart.",
+      "actual": "Core fixture confirms autoStart=false recovery semantics; direct installed checkbox interaction and launch behavior were not recorded.",
+      "environment": {
+        "available": false,
+        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43577697331/artifacts/14112075293"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "Needs installed candidate UI/relaunch scenario; distinct from Windows startup registration.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "THEME-001",
+      "category": "Appearance",
+      "description": "Full theme-by-surface interaction matrix",
+      "expected": "For all five themes inspect Timer, Settings, History, reminder, dialogs, hover, focus, selected and disabled states.",
+      "actual": "Each theme and key timer/ring/Forced Colors states were exercised, but the entire page/control/state cross-product was not observed.",
+      "environment": {
+        "available": false,
+        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43577697331/artifacts/14112075293"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "Requires additional theme-by-page UI captures/inspection on interactive Windows.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "TIMER-009",
+      "category": "Timer",
+      "description": "Restart while snoozed, schedule-held and hidden in tray",
+      "expected": "Restart each state and verify documented recovery, no duplicate reminder or history change.",
+      "actual": "Work, paused, active Break and schedule checkpoint semantics have coverage; exact app process restart while snoozed/held/hidden was not separately executed.",
+      "environment": {
+        "available": false,
+        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43577697331/artifacts/14112075293"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "Needs isolated installed candidate scenarios for each persisted runtime state.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-013",
+      "category": "Windows integration",
+      "description": "Reminder after focus or display configuration change",
+      "expected": "Verify app-owned reminder remains visible and correctly positioned after focus/display change.",
+      "actual": "Reminder, theme changes and resize were covered; focus-loss/display-topology transition during reminder was not recorded.",
+      "environment": {
+        "available": false,
+        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43577697331/artifacts/14112075293"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "Requires interactive desktop and display topology change.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-014",
+      "category": "Windows integration",
+      "description": "Disabled control, hover and selected-state contrast across themes",
+      "expected": "Check disabled, hover, selected and focus indicators in every theme, including custom extreme colors.",
+      "actual": "Focus, contrast and selected controls had representative coverage; all control states across every theme were not measured.",
+      "environment": {
+        "available": false,
+        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43577697331/artifacts/14112075293"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "Requires installed GUI sweep and rendered contrast sampling.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     }
