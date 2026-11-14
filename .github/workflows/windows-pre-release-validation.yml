@@ -6,7 +6,10 @@ on:
       - feature/v1.3.0-custom-accent-colours
     paths-ignore:
       - docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md
+      - docs/V1.3.0_EXHAUSTIVE_FINAL_TEST_REPORT.md
+      - docs/V1.3.0_COMPLETION_PROGRESS.md
       - docs/evidence/v1.3.0-final-pre-release/**
+      - docs/evidence/v1.3.0-exhaustive-final/**
       - .github/workflows/windows-pre-release-validation.yml
   workflow_dispatch:
 
@@ -17,6 +20,9 @@ jobs:
   windows-pre-release:
     runs-on: windows-2025
     timeout-minutes: 300
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Check out the requested feature branch
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -231,18 +237,79 @@ jobs:
             -EvidenceDirectory '.\build\pre-release-evidence' `
             -ExpectedProductVersion '1.3.0'
 
-      - name: Run the 110-cycle reminder and 100-dialog resource soak
+      - name: Download the previous exact candidate for resource-soak identity comparison
+        id: prior_candidate
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.3.0-VERIFIED-RELEASE-CANDIDATE
+          repository: ${{ github.repository }}
+          run-id: 43636383253
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: build/prior-resource-evidence/candidate
+
+      - name: Download the previous exact-binary resource-soak evidence
+        id: prior_resource_evidence
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.3.0-final-pre-release-evidence-43636383253
+          repository: ${{ github.repository }}
+          run-id: 43636383253
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: build/prior-resource-evidence/evidence
+
+      - name: Verify exact-binary resource evidence or run the 110-cycle reminder and 100-dialog soak
         id: resource_soak
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & .\tests\windows_break_user_resource_soak.ps1 `
-            -ExecutablePath '.\release\EyeBreakReminder.exe' `
-            -ExpectedProductVersion '1.3.0' `
-            -ExpectedResourceBehavior NoGrowth `
-            -Cycles 110 `
-            -EvidenceDirectory '.\build\pre-release-evidence\resource-soak'
+          $evidence = '.\build\pre-release-evidence\resource-soak'
+          $reused = $false
+          $reuseReason = 'No usable prior exact-binary evidence was available; running the full soak.'
+          $currentHash = (Get-FileHash -LiteralPath '.\release\EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          $priorCandidate = '.\build\prior-resource-evidence\candidate'
+          $priorRoot = '.\build\prior-resource-evidence\evidence\pre-release-evidence'
+          $priorExe = Join-Path $priorCandidate 'EyeBreakReminder.exe'
+          $priorManifest = Join-Path $priorCandidate 'EyeBreakReminder-SHA256.txt'
+          $priorSeal = Join-Path $priorRoot 'authoritative-release-candidate.json'
+          $priorSoakRoot = Join-Path $priorRoot 'resource-soak'
+          $priorSummary = Join-Path $priorSoakRoot 'soak-summary.json'
+          if ((Test-Path -LiteralPath $priorExe) -and (Test-Path -LiteralPath $priorManifest) -and (Test-Path -LiteralPath $priorSeal) -and (Test-Path -LiteralPath $priorSummary)) {
+            $priorHash = (Get-FileHash -LiteralPath $priorExe -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifestMatch = Select-String -LiteralPath $priorManifest -Pattern '^([0-9a-f]{64})  EyeBreakReminder\.exe$' | Select-Object -First 1
+            $seal = Get-Content -LiteralPath $priorSeal -Raw | ConvertFrom-Json
+            $soak = Get-Content -LiteralPath $priorSummary -Raw | ConvertFrom-Json
+            $combined = @($soak.Events | Where-Object { $_.Name -eq 'Combined soak completed at least 110 reminder cycles and 100 native picker operations with both OK and Cancel' -and $_.Status -eq 'PASS' }) | Select-Object -First 1
+            $currentOS = Get-CimInstance Win32_OperatingSystem
+            $sameEnvironment = $soak.Environment.OS -eq $currentOS.Caption -and $soak.Environment.OSVersion -eq [Environment]::OSVersion.VersionString -and $soak.Environment.OSArchitecture -eq 'X64' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted'
+            $sameIdentity = $priorHash -eq $currentHash -and $soak.SHA256 -eq $currentHash -and $manifestMatch -and $manifestMatch.Matches[0].Groups[1].Value -eq $priorHash
+            $validSoak = $seal.RunId -eq '43636383253' -and $seal.Version -eq '1.3.0' -and [int]$seal.Tests.ResourceCycles -ge 110 -and $soak.Version -eq '1.3.0' -and $soak.ExpectedBehavior -eq 'NoGrowth' -and [int]$soak.CompletedCycles -ge 110 -and [int]$soak.MetricSamples -ge 1000 -and [int]$soak.Fail -eq 0 -and [int]$soak.NotTested -eq 0 -and $combined -and [int]$combined.Details.PickerTotal -ge 100 -and [int]$combined.Details.PickerOk -ge 50 -and [int]$combined.Details.PickerCancel -ge 50
+            if ($sameIdentity -and $sameEnvironment -and $validSoak) {
+              New-Item -ItemType Directory -Force -Path $evidence | Out-Null
+              Get-ChildItem -LiteralPath $priorSoakRoot -Force | Copy-Item -Destination $evidence -Recurse -Force
+              $reuse = [pscustomobject]@{Status='PASS';EvidenceReused=$true;SourceRunId='43636383253';SourceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43636383253';SourceCommit=$seal.SourceCommit;SourceWindowsEnvironment=$soak.Environment;CurrentWindowsEnvironment=[pscustomobject]@{OS=$currentOS.Caption;OSVersion=[Environment]::OSVersion.VersionString;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()};SameWindowsEnvironment=$sameEnvironment;SourceExecutableSHA256=$priorHash;CurrentExecutableSHA256=$currentHash;ByteIdenticalProductionExecutable=$true;ResourceCycles=[int]$soak.CompletedCycles;PickerOperations=[int]$combined.Details.PickerTotal;PickerOk=[int]$combined.Details.PickerOk;PickerCancel=[int]$combined.Details.PickerCancel;ResourceSamples=[int]$soak.MetricSamples;Reason='The current candidate contains the byte-identical x64 production executable that passed the prior production resource soak on the same Windows environment; the current build reruns GUI, installed-app and exact-candidate acceptance.';VerifiedUtc=[DateTime]::UtcNow.ToString('o')}
+              $reuse | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $evidence 'resource-soak-reuse.json') -Encoding utf8
+              $reused = $true
+              $reuseReason = "Reused verified no-growth soak from run 43636383253 for byte-identical production EXE $currentHash."
+            } else {
+              $reuseReason = "Prior evidence was available but failed identity/environment/completeness checks (binary identity=$sameIdentity, same environment=$sameEnvironment, soak completeness=$validSoak); running the full soak."
+            }
+          }
+          if (-not $reused) {
+            & .\tests\windows_break_user_resource_soak.ps1 `
+              -ExecutablePath '.\release\EyeBreakReminder.exe' `
+              -ExpectedProductVersion '1.3.0' `
+              -ExpectedResourceBehavior NoGrowth `
+              -Cycles 110 `
+              -EvidenceDirectory $evidence
+            $reuse = [pscustomobject]@{Status='PASS';EvidenceReused=$false;SourceRunId=$null;SourceExecutableSHA256=$null;CurrentExecutableSHA256=$currentHash;Reason=$reuseReason;VerifiedUtc=[DateTime]::UtcNow.ToString('o')}
+            $reuse | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $evidence 'resource-soak-reuse.json') -Encoding utf8
+          }
+          Write-Output $reuseReason
 
       - name: Record the long resource soak as unavailable on a headless runner
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE != 'true' }}
@@ -354,11 +421,14 @@ jobs:
           if ($coreRuns.Count -ne 3 -or @($coreRuns | Where-Object { $_ -ne $coreRuns[0] -or $_ -lt 6000 }).Count) { throw 'The three required core test runs did not all report the expected passing assertions.' }
           $gui = Get-Content -LiteralPath 'build/gui-test/evidence/gui-acceptance-results.json' -Raw | ConvertFrom-Json
           if ([int]$gui.Assertions -lt 400 -or @($gui.Events | Where-Object Status -eq 'FAIL').Count) { throw 'Native GUI acceptance results are incomplete or contain failures.' }
+          if ($gui.ExecutableSHA256 -notmatch '^[0-9a-f]{64}$' -or $gui.ExecutableRole -cne 'Accelerated GUI test build; distinct from the production release candidate') { throw 'Native GUI evidence lacks a unique, explicit test-executable identity.' }
           $forced = @($gui.Events | Where-Object { $_.Status -eq 'PASS' -and $_.Name -match 'Actual Windows Forced Colors text, primary-button and focus colours meet contrast thresholds' })
           if (-not $forced.Count) { throw 'Actual Windows High Contrast / Forced Colors evidence is missing.' }
           $installed = Get-Content -LiteralPath 'build/pre-release-evidence/windows-pre-release-results.json' -Raw | ConvertFrom-Json
           if (-not $installed.InteractiveDesktopAvailable -or [int]$installed.Fail -gt 0) { throw 'Installed candidate acceptance did not pass on an interactive desktop.' }
           if ($installed.SourceCommit -cne $env:GITHUB_SHA) { throw 'Installed acceptance evidence belongs to a different source commit.' }
+          $installerHash = (Get-FileHash -LiteralPath 'release/EyeBreakReminder-Setup-x64.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($installed.CandidateExecutableSHA256 -cne $appHash -or $installed.CandidateInstallerSHA256 -cne $installerHash) { throw 'Installed acceptance is not bound to the exact sealed production executable and installer.' }
           $payload = @($installed.Events | Where-Object { $_.Name -eq 'v1.2.1 upgrade installs the exact verified v1.3.0 packaged executable' -and $_.Status -eq 'PASS' })
           $breakRestart = @($installed.Events | Where-Object { $_.Name -eq 'Installed candidate restarts from the Start Menu after an interrupted Break' -and $_.Status -eq 'PASS' })
           $pickerChecks = @($installed.Events | Where-Object { $_.Status -eq 'PASS' -and $_.Name -in @('Installed application opens the native ChooseColorW dialog','Installed Work picker saves a custom RGB independently','Installed Break picker saves its colour independently of Work','Installed picker Cancel leaves stored preferences unchanged','Installed custom Work and Break colours persist after application restart') })
@@ -368,6 +438,7 @@ jobs:
           $forcedBreakRings = @($installed.Events | Where-Object { $_.Status -eq 'PASS' -and $_.Name -match '^Installed Forced Colors .* Break ring rendered installed timer ring pixels equal ' })
           if (-not $payload.Count -or -not $breakRestart.Count -or $pickerChecks.Count -lt 5 -or $resetChecks.Count -lt 5 -or $forcedThemeChecks.Count -lt 5 -or $forcedWorkRings.Count -lt 5 -or $forcedBreakRings.Count -lt 5) { throw 'Exact installer payload, custom picker/reset, active-Break restart, or production Forced Colors ring evidence is missing.' }
           $soak = Get-Content -LiteralPath 'build/pre-release-evidence/resource-soak/soak-summary.json' -Raw | ConvertFrom-Json
+          $reuseInfo = Get-Content -LiteralPath 'build/pre-release-evidence/resource-soak/resource-soak-reuse.json' -Raw | ConvertFrom-Json
           if ([int]$soak.CompletedCycles -lt 110 -or [int]$soak.Fail -gt 0 -or [int]$soak.MetricSamples -lt 1000 -or $soak.SHA256 -ne $appHash) { throw 'The exact production executable did not complete the required resource soak.' }
           $pickerCoverage = @($soak.Events | Where-Object { $_.Name -eq 'Combined soak completed at least 110 reminder cycles and 100 native picker operations with both OK and Cancel' -and $_.Status -eq 'PASS' })
           if (-not $pickerCoverage.Count) { throw 'The required colour-picker and resource soak assertion is missing.' }
@@ -380,7 +451,7 @@ jobs:
             Application='Eye Break Reminder';Version='1.3.0';SourceCommit=$env:GITHUB_SHA
             RunId=$env:GITHUB_RUN_ID;RunAttempt=$env:GITHUB_RUN_ATTEMPT;RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
             ArtifactFiles=@($before | ForEach-Object { [pscustomobject]@{Name=[IO.Path]::GetFileName($_.Path);Bytes=[long]$_.Bytes;SHA256=[string]$_.SHA256} })
-            Tests=[pscustomobject]@{CoreRuns=@($coreRuns);PackageAssertions=[int]$packageReport.binary_and_package_assertions_passed;GuiAssertions=[int]$gui.Assertions;InstalledPass=[int]$installed.Pass;InstalledFail=[int]$installed.Fail;InstalledNotTested=[int]$installed.NotTested;ProductionPickerChecks=$pickerChecks.Count;ProductionResetChecks=$resetChecks.Count;ProductionForcedColorsThemes=$forcedThemeChecks.Count;ProductionForcedWorkRings=$forcedWorkRings.Count;ProductionForcedBreakRings=$forcedBreakRings.Count;ForcedColors='PASS';InstallerPayloadIdentity='PASS';RestartDuringBreak='PASS';ResourceCycles=[int]$soak.CompletedCycles;PickerOperations=[int]$pickerDetails.PickerTotal;PickerOk=[int]$pickerDetails.PickerOk;PickerCancel=[int]$pickerDetails.PickerCancel;ResourceSamples=[int]$soak.MetricSamples;StandalonePortableSmokeChecks=[int]$smoke.Passed}
+            Tests=[pscustomobject]@{CoreRuns=@($coreRuns);PackageAssertions=[int]$packageReport.binary_and_package_assertions_passed;GuiAssertions=[int]$gui.Assertions;GuiTestExecutableSHA256=$gui.ExecutableSHA256;ProductionExecutableSHA256=$appHash;InstallerSHA256=$installerHash;InstalledPass=[int]$installed.Pass;InstalledFail=[int]$installed.Fail;InstalledNotTested=[int]$installed.NotTested;ProductionPickerChecks=$pickerChecks.Count;ProductionResetChecks=$resetChecks.Count;ProductionForcedColorsThemes=$forcedThemeChecks.Count;ProductionForcedWorkRings=$forcedWorkRings.Count;ProductionForcedBreakRings=$forcedBreakRings.Count;ForcedColors='PASS';InstallerPayloadIdentity='PASS';RestartDuringBreak='PASS';ResourceCycles=[int]$soak.CompletedCycles;PickerOperations=[int]$pickerDetails.PickerTotal;PickerOk=[int]$pickerDetails.PickerOk;PickerCancel=[int]$pickerDetails.PickerCancel;ResourceSamples=[int]$soak.MetricSamples;ResourceEvidenceReused=[bool]$reuseInfo.EvidenceReused;ResourceEvidenceRunId=[string]$reuseInfo.SourceRunId;StandalonePortableSmokeChecks=[int]$smoke.Passed}
             Signing='UNSIGNED';CandidateSealUtc=[DateTime]::UtcNow.ToString('o')
           }
           $candidate | ConvertTo-Json -Depth 10 | Set-Content 'build/pre-release-evidence/authoritative-release-candidate.json' -Encoding UTF8

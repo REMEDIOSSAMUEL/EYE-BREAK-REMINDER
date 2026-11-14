@@ -77,9 +77,12 @@ public static class EBR_GUI_NATIVE {
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool SystemParametersInfoW(uint action,uint parameter,ref EBR_GUI_HIGHCONTRAST value,uint flags);
+  [DllImport("user32.dll", EntryPoint="SystemParametersInfoW", SetLastError=true)] private static extern bool SystemParametersInfoAnimationW(uint action,uint parameter,ref int value,uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern uint GetSysColor(int index);
   public static bool GetHighContrast(out uint flags){EBR_GUI_HIGHCONTRAST value=new EBR_GUI_HIGHCONTRAST();value.cbSize=(uint)Marshal.SizeOf(typeof(EBR_GUI_HIGHCONTRAST));bool ok=SystemParametersInfoW(0x0042,value.cbSize,ref value,0);flags=value.dwFlags;return ok;}
   public static bool SetHighContrast(uint flags){EBR_GUI_HIGHCONTRAST value=new EBR_GUI_HIGHCONTRAST();value.cbSize=(uint)Marshal.SizeOf(typeof(EBR_GUI_HIGHCONTRAST));value.dwFlags=flags;return SystemParametersInfoW(0x0043,value.cbSize,ref value,2);}
+  public static bool GetClientAreaAnimation(out bool enabled){int value=0;bool ok=SystemParametersInfoAnimationW(0x1042,0,ref value,0);enabled=value!=0;return ok;}
+  public static bool SetClientAreaAnimation(bool enabled){int value=enabled?1:0;return SystemParametersInfoAnimationW(0x1043,0,ref value,2);}
   [DllImport("user32.dll")] public static extern void keybd_event(byte virtualKey,byte scanCode,uint flags,UIntPtr extraInfo);
   public static string Text(IntPtr hwnd) { int n=SendMessageW(hwnd,0x000E,IntPtr.Zero,IntPtr.Zero).ToInt32();IntPtr b=Marshal.AllocHGlobal(Math.Max(2,n+2)*2);try{SendMessageW(hwnd,0x000D,new IntPtr(Math.Max(2,n+2)),b);return Marshal.PtrToStringUni(b)??"";}finally{Marshal.FreeHGlobal(b);} }
   public static string ClassName(IntPtr hwnd) { StringBuilder b=new StringBuilder(256); GetClassNameW(hwnd,b,b.Capacity); return b.ToString(); }
@@ -314,6 +317,46 @@ function Test-SystemHighContrast {
     [void][EBR_GUI_NATIVE]::SetHighContrast($original);Start-Sleep -Seconds 2
     [void][EBR_GUI_NATIVE]::SendMessageW($script:mainWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero)
     [void][EBR_GUI_NATIVE]::SendMessageW($script:mainWindow,0x031A,[IntPtr]::Zero,[IntPtr]::Zero)
+  }
+}
+function Test-ReducedMotionIntegration {
+  $original=$false
+  if(-not [EBR_GUI_NATIVE]::GetClientAreaAnimation([ref]$original)){Add-Result 'Actual Windows reduced-motion preference' 'NOT TESTED' 'SPI_GETCLIENTAREAANIMATION was unavailable on this runner.';return}
+  $changed=$false
+  try{
+    Switch-Settings 4;Start-Sleep -Milliseconds 650
+    $panes=@([EBR_GUI_NATIVE]::Children($script:mainWindow)|Where-Object{[EBR_GUI_NATIVE]::ClassName($_)-eq'EyeBreakReminder.Settings'})
+    if($panes.Count-ne 1){Add-Result 'Actual Windows reduced-motion response' 'NOT TESTED' "Expected one live settings scroll pane, found $($panes.Count).";return}
+    $pane=$panes[0];$target=[EBR_GUI_NATIVE]::GetDlgItem($pane,127)
+    if($target-eq[IntPtr]::Zero){Add-Result 'Actual Windows reduced-motion response' 'NOT TESTED' 'The appearance scroll target was not present in the settings pane.';return}
+    if(-not [EBR_GUI_NATIVE]::SetClientAreaAnimation($false)){Add-Result 'Actual Windows reduced-motion preference' 'NOT TESTED' 'SPI_SETCLIENTAREAANIMATION(FALSE) was unavailable or rejected by the isolated runner.';return}
+    $changed=$true;$observed=$true
+    if(-not [EBR_GUI_NATIVE]::GetClientAreaAnimation([ref]$observed)-or$observed){Add-Result 'Actual Windows reduced-motion preference' 'NOT TESTED' 'The isolated runner did not expose the requested disabled client-area animation state.';return}
+    [void][EBR_GUI_NATIVE]::SendMessageW($pane,0x0115,[IntPtr]6,[IntPtr]::Zero);Start-Sleep -Milliseconds 350
+    $topDisabled=(Get-Rect $target).Top
+    [void][EBR_GUI_NATIVE]::SendMessageW($pane,0x0115,[IntPtr]7,[IntPtr]::Zero)
+    $disabledImmediate=(Get-Rect $target).Top;Start-Sleep -Milliseconds 80;$disabledSettled=(Get-Rect $target).Top
+    Save-Screenshot $script:mainWindow 'reduced-motion-disabled-scroll.png' | Out-Null
+    Assert-That ([Math]::Abs($disabledImmediate-$disabledSettled)-le 2-and[Math]::Abs($disabledSettled-$topDisabled)-gt 40) 'Windows reduced-motion setting makes settings scrolling jump immediately' ([pscustomobject]@{SPI_GETCLIENTAREAANIMATION=$observed;TopY=$topDisabled;ImmediateY=$disabledImmediate;SettledY=$disabledSettled})
+
+    if(-not [EBR_GUI_NATIVE]::SetClientAreaAnimation($true)){Add-Result 'Actual Windows reduced-motion preference' 'NOT TESTED' 'SPI_SETCLIENTAREAANIMATION(TRUE) was unavailable before the animation comparison.';return}
+    $observed=$false
+    if(-not [EBR_GUI_NATIVE]::GetClientAreaAnimation([ref]$observed)-or-not$observed){Add-Result 'Actual Windows reduced-motion preference' 'NOT TESTED' 'The isolated runner did not expose the requested enabled client-area animation state.';return}
+    [void][EBR_GUI_NATIVE]::SendMessageW($pane,0x0115,[IntPtr]6,[IntPtr]::Zero);Start-Sleep -Milliseconds 700
+    $topEnabled=(Get-Rect $target).Top
+    [void][EBR_GUI_NATIVE]::SendMessageW($pane,0x0115,[IntPtr]7,[IntPtr]::Zero)
+    $enabledImmediate=(Get-Rect $target).Top;Start-Sleep -Milliseconds 80;$enabledIntermediate=(Get-Rect $target).Top
+    Save-Screenshot $script:mainWindow 'reduced-motion-enabled-scroll.png' | Out-Null
+    Start-Sleep -Milliseconds 650;$enabledSettled=(Get-Rect $target).Top
+    Assert-That ([Math]::Abs($enabledImmediate-$enabledSettled)-gt 25-and[Math]::Abs($enabledSettled-$disabledSettled)-le 3) 'Windows client-area animation setting controls the app scroll transition' ([pscustomobject]@{SPI_GETCLIENTAREAANIMATION=$observed;TopY=$topEnabled;ImmediateY=$enabledImmediate;IntermediateY=$enabledIntermediate;SettledY=$enabledSettled;ReducedMotionSettledY=$disabledSettled})
+  }finally{
+    if($changed){
+      [void][EBR_GUI_NATIVE]::SetClientAreaAnimation($original)
+      $restored=$false;$restoreOk=[EBR_GUI_NATIVE]::GetClientAreaAnimation([ref]$restored)
+      if(-not$restoreOk-or$restored-ne$original){Add-Result 'Restore original Windows reduced-motion preference' 'FAIL' ([pscustomobject]@{Expected=$original;Actual=$restored;QuerySucceeded=$restoreOk})}
+      else{Add-Result 'Restore original Windows reduced-motion preference' 'PASS' ([pscustomobject]@{Value=$restored})}
+    }
+    if($script:mainWindow-ne[IntPtr]::Zero){[void][EBR_GUI_NATIVE]::SendMessageW($script:mainWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero)}
   }
 }
 function Close-NativePicker([IntPtr]$Dialog,[bool]$Accept) {
@@ -700,6 +743,7 @@ try {
   }
 
   Test-SystemHighContrast
+  Test-ReducedMotionIntegration
 
   Set-Intervals 1 300
   Switch-Timer
@@ -857,7 +901,9 @@ finally {
   try { Close-TestProcess } catch { Add-Result 'test-app cleanup' 'FAIL' $_.Exception.Message }
   if($script:pickerResourceSamples.Count){$script:pickerResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'picker-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
   if($script:breakResourceSamples.Count){$script:breakResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'reminder-window-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
-  $report=[pscustomobject]@{Version=$expectedVersion;Assertions=$script:assertionCount;Events=$script:events.ToArray();EvidenceDirectory=$EvidenceDirectory;TestDataDirectory=$dataDirectory}
+  $os=Get-CimInstance Win32_OperatingSystem
+  $guiExecutableHash=(Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $report=[pscustomobject]@{Version=$expectedVersion;ExecutableRole='Accelerated GUI test build; distinct from the production release candidate';ExecutableSHA256=$guiExecutableHash;WindowsCaption=$os.Caption;WindowsVersion=$os.Version;WindowsBuild=$os.BuildNumber;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();InteractiveDesktopAvailable=[Environment]::UserInteractive;Assertions=$script:assertionCount;Events=$script:events.ToArray();EvidenceDirectory=$EvidenceDirectory;TestDataDirectory=$dataDirectory}
   $report | ConvertTo-Json -Depth 9 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'gui-acceptance-results.json') -Encoding UTF8
   Write-Output "GUI acceptance: $($script:assertionCount) assertions; evidence: $EvidenceDirectory"
 }

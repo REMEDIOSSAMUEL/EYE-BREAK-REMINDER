@@ -16,6 +16,7 @@ if ($EvidenceDirectory -ine $expectedEvidence) { throw "Refusing to write eviden
 if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) { throw "The candidate installer is missing: $InstallerPath" }
 if (-not (Test-Path -LiteralPath $packagedExecutable -PathType Leaf)) { throw "The executable packaged by the candidate installer is missing: $packagedExecutable" }
 $script:packagedExecutableHash = (Get-FileHash -LiteralPath $packagedExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
+$script:candidateInstallerHash = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
 [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
 
 $installDir = Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder'
@@ -99,6 +100,7 @@ public static class EBR_PRE_NATIVE {
   [DllImport("oleacc.dll", PreserveSig=true)] private static extern int AccessibleObjectFromWindow(IntPtr hwnd, int objectId, ref Guid iid, out IntPtr accessible);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SystemParametersInfoW(uint action, uint parameter, ref EBR_PRE_HIGHCONTRAST value, uint flags);
+  [DllImport("user32.dll", EntryPoint="SystemParametersInfoW", SetLastError=true)] private static extern bool SystemParametersInfoAnimationW(uint action, uint parameter, ref int value, uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SystemParametersInfoSimpleW(uint action, uint parameter, IntPtr value, uint flags);
   [DllImport("shell32.dll", SetLastError=true)] public static extern int Shell_NotifyIconGetRect(ref EBR_PRE_NOTIFYICONIDENTIFIER id, out EBR_PRE_RECT rect);
   public static string Text(IntPtr hwnd) { int n=GetWindowTextLengthW(hwnd);StringBuilder b=new StringBuilder(Math.Max(2,n+2));GetWindowTextW(hwnd,b,b.Capacity);return b.ToString(); }
@@ -112,6 +114,8 @@ public static class EBR_PRE_NATIVE {
   public static bool GetTrayRect(IntPtr hwnd,uint uid,out EBR_PRE_RECT rect){EBR_PRE_NOTIFYICONIDENTIFIER id=new EBR_PRE_NOTIFYICONIDENTIFIER();id.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_NOTIFYICONIDENTIFIER));id.hWnd=hwnd;id.uID=uid;id.guidItem=Guid.Empty;return Shell_NotifyIconGetRect(ref id,out rect)==0;}
   public static bool GetHighContrast(out uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));bool ok=SystemParametersInfoW(0x0042,h.cbSize,ref h,0);flags=h.dwFlags;return ok;}
   public static bool SetHighContrast(uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));h.dwFlags=flags;return SystemParametersInfoW(0x0043,h.cbSize,ref h,2);}
+  public static bool GetClientAreaAnimation(out bool enabled){int value=0;bool ok=SystemParametersInfoAnimationW(0x1042,0,ref value,0);enabled=value!=0;return ok;}
+  public static bool SetClientAreaAnimation(bool enabled){int value=enabled?1:0;return SystemParametersInfoAnimationW(0x1043,0,ref value,2);}
   public static bool BroadcastSetting(IntPtr hwnd,string name){IntPtr text=Marshal.StringToHGlobalUni(name);try{IntPtr result;return SendMessageTimeoutW(hwnd,0x001A,IntPtr.Zero,text,2,1500,out result)!=IntPtr.Zero;}finally{Marshal.FreeHGlobal(text);}}
   public static uint ClientPixel(IntPtr hwnd,int x,int y){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)return 0;try{return GetPixel(dc,x,y);}finally{ReleaseDC(hwnd,dc);}}
   public static object AccessibleWindow(IntPtr hwnd,int objectId){Guid iid=new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");IntPtr accessible;int hr=AccessibleObjectFromWindow(hwnd,objectId,ref iid,out accessible);if(hr<0||accessible==IntPtr.Zero)return null;try{return Marshal.GetObjectForIUnknown(accessible);}finally{Marshal.Release(accessible);}}
@@ -396,6 +400,46 @@ function Switch-Settings([int]$Section) {
   Require $selected 'Installed application selected the requested Settings section' ([pscustomobject]@{Section=$Section;Label=$sectionControl.Text;Selected=$selected})
 }
 function Switch-Timer { Click-Control $script:mainWindow 10 'Timer navigation' }
+function Test-InstalledReducedMotion {
+  $original=$false
+  if(-not [EBR_PRE_NATIVE]::GetClientAreaAnimation([ref]$original)){Not-Tested 'Installed production candidate reduced-motion preference' 'SPI_GETCLIENTAREAANIMATION was unavailable on this isolated runner.';return}
+  $changed=$false
+  try{
+    Switch-Settings 4;Start-Sleep -Milliseconds 650
+    $panes=@([EBR_PRE_NATIVE]::Children($script:mainWindow)|Where-Object{[EBR_PRE_NATIVE]::ClassName($_)-eq'EyeBreakReminder.Settings'})
+    if($panes.Count-ne 1){Not-Tested 'Installed production candidate reduced-motion response' "Expected one Settings scroll pane, found $($panes.Count).";return}
+    $pane=$panes[0];$target=[EBR_PRE_NATIVE]::ChildById($pane,127)
+    if($target-eq[IntPtr]::Zero){Not-Tested 'Installed production candidate reduced-motion response' 'The Work accent settings control was not found in the Settings pane.';return}
+    if(-not [EBR_PRE_NATIVE]::SetClientAreaAnimation($false)){Not-Tested 'Installed production candidate reduced-motion preference' 'SPI_SETCLIENTAREAANIMATION(FALSE) was unavailable on this isolated runner.';return}
+    $changed=$true;$observed=$true
+    if(-not [EBR_PRE_NATIVE]::GetClientAreaAnimation([ref]$observed)-or$observed){Not-Tested 'Installed production candidate reduced-motion preference' 'The isolated runner did not expose the requested disabled client-area animation state.';return}
+    $beforeStatus=Get-Status
+    [void][EBR_PRE_NATIVE]::SendMessageW($pane,0x0115,[IntPtr]6,[IntPtr]::Zero);Start-Sleep -Milliseconds 350
+    $rect=New-Object EBR_PRE_RECT;[void][EBR_PRE_NATIVE]::GetWindowRect($target,[ref]$rect);$topDisabled=$rect.Top
+    [void][EBR_PRE_NATIVE]::SendMessageW($pane,0x0115,[IntPtr]7,[IntPtr]::Zero)
+    $rect=New-Object EBR_PRE_RECT;[void][EBR_PRE_NATIVE]::GetWindowRect($target,[ref]$rect);$disabledImmediate=$rect.Top;Start-Sleep -Milliseconds 80
+    $rect=New-Object EBR_PRE_RECT;[void][EBR_PRE_NATIVE]::GetWindowRect($target,[ref]$rect);$disabledSettled=$rect.Top
+    Require ([Math]::Abs($disabledImmediate-$disabledSettled)-le 2-and[Math]::Abs($disabledSettled-$topDisabled)-gt 40) 'Installed production candidate jumps to the new Settings scroll position when Windows reduced motion is enabled' ([pscustomobject]@{ControlId=127;WindowsAnimationEnabled=$observed;TopY=$topDisabled;ImmediateY=$disabledImmediate;SettledY=$disabledSettled})
+    if(-not [EBR_PRE_NATIVE]::SetClientAreaAnimation($true)){Not-Tested 'Installed production candidate reduced-motion preference' 'SPI_SETCLIENTAREAANIMATION(TRUE) was unavailable before the animation comparison.';return}
+    $observed=$false
+    if(-not [EBR_PRE_NATIVE]::GetClientAreaAnimation([ref]$observed)-or-not$observed){Not-Tested 'Installed production candidate reduced-motion preference' 'The isolated runner did not expose the requested enabled client-area animation state.';return}
+    [void][EBR_PRE_NATIVE]::SendMessageW($pane,0x0115,[IntPtr]6,[IntPtr]::Zero);Start-Sleep -Milliseconds 700
+    $rect=New-Object EBR_PRE_RECT;[void][EBR_PRE_NATIVE]::GetWindowRect($target,[ref]$rect);$topEnabled=$rect.Top
+    [void][EBR_PRE_NATIVE]::SendMessageW($pane,0x0115,[IntPtr]7,[IntPtr]::Zero)
+    $rect=New-Object EBR_PRE_RECT;[void][EBR_PRE_NATIVE]::GetWindowRect($target,[ref]$rect);$enabledImmediate=$rect.Top;Start-Sleep -Milliseconds 80
+    $rect=New-Object EBR_PRE_RECT;[void][EBR_PRE_NATIVE]::GetWindowRect($target,[ref]$rect);$enabledIntermediate=$rect.Top;Start-Sleep -Milliseconds 650
+    $rect=New-Object EBR_PRE_RECT;[void][EBR_PRE_NATIVE]::GetWindowRect($target,[ref]$rect);$enabledSettled=$rect.Top
+    Require ([Math]::Abs($enabledImmediate-$enabledSettled)-gt 25-and[Math]::Abs($enabledSettled-$disabledSettled)-le 3) 'Installed production candidate animates Settings scrolling only when Windows client-area animations are enabled' ([pscustomobject]@{ControlId=127;WindowsAnimationEnabled=$observed;TopY=$topEnabled;ImmediateY=$enabledImmediate;IntermediateY=$enabledIntermediate;SettledY=$enabledSettled;ReducedMotionSettledY=$disabledSettled})
+    Require ((Get-Status)-eq$beforeStatus) 'Installed production candidate preserves timer state during Windows reduced-motion setting changes' ([pscustomobject]@{Before=$beforeStatus;After=(Get-Status)})
+  }finally{
+    if($changed){
+      [void][EBR_PRE_NATIVE]::SetClientAreaAnimation($original)
+      $restored=$false;$restoreOk=[EBR_PRE_NATIVE]::GetClientAreaAnimation([ref]$restored)
+      Require ($restoreOk-and$restored-eq$original) 'Original Windows client-area animation setting was restored after production-candidate testing' ([pscustomobject]@{Expected=$original;Actual=$restored;QuerySucceeded=$restoreOk})
+    }
+    if($script:mainWindow-ne[IntPtr]::Zero){Switch-Timer}
+  }
+}
 function Get-Status { [EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 41 'Timer status').Handle) }
 function Get-TimerSeconds {
   $text=[EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 40 'Timer countdown').Handle)
@@ -1270,6 +1314,7 @@ function Test-InstalledSettingsControls {
   Require (Start-And-CheckApp $script:expectedProductVersion) 'Candidate application starts for the installed settings-control sweep'
   $settingsPath=Join-Path $dataDir 'settings.ini';$historyPath=Join-Path $dataDir 'history.dat'
   $initial=Read-SettingsMap $settingsPath
+  Test-InstalledReducedMotion
   Switch-Settings 2
   foreach($sound in 0..4){Set-Combo $script:mainWindow 102 $sound "Alarm sound $sound";Assert-InstalledSetting 'sound' ([string]$sound) "Alarm sound $sound persists"}
   foreach($volume in @(0,100,55)){Set-InstalledVolume $volume}
@@ -1589,9 +1634,25 @@ function Wait-ForCloseToTrayExplanation([int]$TimeoutSeconds=5) {
       $pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($window,[ref]$pidValue)
       $class=[EBR_PRE_NATIVE]::ClassName($window);$title=[EBR_PRE_NATIVE]::Text($window)
       if($pidValue -ne $script:appPid -and -not ($class -eq '#32770' -and $title -eq 'Eye Break Reminder')){continue}
-      $texts=@(foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$text}})
-      $combined=$texts -join ' '
-      if(($combined -match 'Closing keeps your reminders active' -and $combined -match 'right-click the tray icon') -or ($pidValue -eq $script:appPid -and $title -eq 'Eye Break Reminder')){return [pscustomobject]@{Handle=$window;Texts=$texts;Class=$class;Title=$title;MessageTextExposed=($combined -match 'Closing keeps your reminders active' -and $combined -match 'right-click the tray icon');ProcessId=$pidValue}}
+      $nativeTexts=@(foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$text}})
+      $uiaTexts=@()
+      try{
+        $uiaRoot=[System.Windows.Automation.AutomationElement]::FromHandle($window)
+        $uiaNodes=$uiaRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+        for($i=0;$i-lt$uiaNodes.Count;$i++){
+          try{
+            $node=$uiaNodes.Item($i);$name=[string]$node.Current.Name;if($name){$uiaTexts+=$name}
+            if($node.Current.ControlType -eq [System.Windows.Automation.ControlType]::Text){
+              try{$pattern=[System.Windows.Automation.TextPattern]$node.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern);$text=$pattern.DocumentRange.GetText(-1);if($text){$uiaTexts+=$text}}catch{}
+            }
+          }catch{}
+        }
+      }catch{}
+      $texts=@(@($nativeTexts)+@($uiaTexts)|Where-Object{$_}|Sort-Object -Unique)
+      $nativeCombined=$nativeTexts -join ' ';$uiaCombined=$uiaTexts -join ' ';$combined=$texts -join ' '
+      $messageExposed=($combined -match 'Closing keeps your reminders active' -and $combined -match 'right-click the tray icon')
+      $textSource=if($nativeCombined -match 'Closing keeps your reminders active' -and $nativeCombined -match 'right-click the tray icon'){'GetWindowTextW'}elseif($uiaCombined -match 'Closing keeps your reminders active' -and $uiaCombined -match 'right-click the tray icon'){'UI Automation Name/TextPattern'}else{'Not exposed'}
+      if($messageExposed -or ($pidValue -eq $script:appPid -and $title -eq 'Eye Break Reminder')){return [pscustomobject]@{Handle=$window;Texts=$texts;Class=$class;Title=$title;MessageTextExposed=$messageExposed;TextExposureSource=$textSource;ProcessId=$pidValue}}
     }
     Start-Sleep -Milliseconds 100
   }
@@ -1645,9 +1706,9 @@ function Test-ShellTrayAndNaturalNotification {
     $explanation=Wait-ForCloseToTrayExplanation
     $visibleWindows=@(foreach($window in [EBR_PRE_NATIVE]::TopWindows()){if([EBR_PRE_NATIVE]::IsWindowVisible($window)){$pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($window,[ref]$pidValue);[pscustomobject]@{Handle=('0x{0:X}' -f $window.ToInt64());Pid=$pidValue;Class=[EBR_PRE_NATIVE]::ClassName($window);Title=[EBR_PRE_NATIVE]::Text($window)}}})
     Require ($null -ne $explanation) 'First close-to-tray action shows the one-time reminder explanation' ([pscustomobject]@{Expected='Native TaskDialog titled Eye Break Reminder';Tray=$prefsBeforeClose['tray'];TrayExplained=$prefsBeforeClose['trayExplained'];VisibleWindows=$visibleWindows})
-    Pass 'Close-to-tray explanation is displayed in a visible native dialog' ([pscustomobject]@{Class=$explanation.Class;Title=$explanation.Title;ProcessId=$explanation.ProcessId;MessageTextExposed=$explanation.MessageTextExposed;Texts=$explanation.Texts})
+    Pass 'Close-to-tray explanation is displayed in a visible native dialog' ([pscustomobject]@{Class=$explanation.Class;Title=$explanation.Title;ProcessId=$explanation.ProcessId;MessageTextExposed=$explanation.MessageTextExposed;TextExposureSource=$explanation.TextExposureSource;Texts=$explanation.Texts})
     Capture-ActiveWindow $explanation.Handle 'tray-close-to-tray-explanation.png' | Out-Null
-    if($explanation.MessageTextExposed){Pass 'Close-to-tray explanation text is available through native dialog controls' $explanation.Texts}else{Not-Tested 'Close-to-tray explanation text through native controls' 'The TaskDialog was visible and captured, but Windows did not expose its instruction text through GetWindowText.'}
+    if($explanation.MessageTextExposed){Pass 'Close-to-tray explanation text is exposed through native controls or UI Automation' ([pscustomobject]@{Source=$explanation.TextExposureSource;Texts=$explanation.Texts})}else{Not-Tested 'Close-to-tray explanation accessible text' 'The TaskDialog was visible and captured, but neither GetWindowTextW nor UI Automation exposed its instruction text.'}
     $okButtons=@(foreach($child in [EBR_PRE_NATIVE]::Children($explanation.Handle)){if([EBR_PRE_NATIVE]::ClassName($child) -eq 'Button' -and [EBR_PRE_NATIVE]::IsWindowVisible($child) -and [EBR_PRE_NATIVE]::IsWindowEnabled($child) -and [EBR_PRE_NATIVE]::Text($child) -match '^\s*&?OK\s*$'){[pscustomobject]@{Handle=$child;Text=[EBR_PRE_NATIVE]::Text($child);Id=[EBR_PRE_NATIVE]::GetDlgCtrlID($child)}}})
     Require ($okButtons.Count -eq 1) 'Close-to-tray TaskDialog exposes one enabled OK button' $okButtons
     [void][EBR_PRE_NATIVE]::SendMessageW($okButtons[0].Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
@@ -2049,6 +2110,8 @@ try {
     WindowsCaption=(Get-CimInstance Win32_OperatingSystem).Caption
     WindowsVersion=(Get-CimInstance Win32_OperatingSystem).Version
     WindowsBuild=(Get-CimInstance Win32_OperatingSystem).BuildNumber
+    CandidateInstallerSHA256=$script:candidateInstallerHash
+    CandidateExecutableSHA256=$script:packagedExecutableHash
     InteractiveDesktopAvailable=$script:interactiveDesktop
     Pass=$script:passCount
     Fail=$script:failCount
