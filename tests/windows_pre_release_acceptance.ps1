@@ -1760,6 +1760,36 @@ function Test-ShellTrayAndNaturalNotification {
   Require ($pausedHistoryBeforeRestart-eq$pausedHistoryAfterRestart) 'Paused Work restart leaves history unchanged'
   Invoke-TrayCommand 'Resume timer'
   Require ((Wait-ForStatus 'Running') -like '*Running*') 'Installed timer resumes after the paused-recovery check'
+  Switch-Settings 1
+  Set-Check $script:mainWindow 120 $true 'Enable an installed schedule-held restart fixture'
+  foreach($dayId in 280..286){Set-Check $script:mainWindow $dayId $false 'Clear selected weekday for the schedule-held restart fixture'}
+  $heldProfileBefore=Read-SettingsMap $settingsPath
+  $heldSelectedDays=@(foreach($day in @('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')){if($heldProfileBefore["schedule$day"]-eq'1'){$day}})
+  Require ($heldProfileBefore['schedule']-eq'1'-and$heldSelectedDays.Count-eq0) 'Installed fixture enables the schedule with no active weekdays' $heldProfileBefore
+  Switch-Timer
+  Require ((Wait-ForStatus 'Outside scheduled hours')-like'*Outside scheduled hours*') 'Installed timer enters schedule-held state before restart' (Get-Status)
+  $heldRemainingBefore=Get-TimerSeconds;$heldHistoryBefore=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
+  Start-Sleep -Seconds 2
+  Require ((Get-Status)-like'*Outside scheduled hours*'-and(Get-TimerSeconds)-eq$heldRemainingBefore) 'Schedule-held countdown remains stopped while outside the operating schedule' ([pscustomobject]@{Before=$heldRemainingBefore;After=(Get-TimerSeconds);Status=(Get-Status)})
+  Require ([EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)) 'Close schedule-held app to the tray before restart'
+  $heldHideWatch=[Diagnostics.Stopwatch]::StartNew();while([EBR_PRE_NATIVE]::IsWindowVisible($script:mainWindow)-and$heldHideWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
+  Require (-not [EBR_PRE_NATIVE]::IsWindowVisible($script:mainWindow)) 'Schedule-held app is hidden in the tray before restart'
+  Invoke-TrayCommand 'Exit'
+  $heldProcess=Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
+  if($heldProcess){Require ($heldProcess.WaitForExit(10000)) 'Schedule-held app exits cleanly from its tray menu'}else{Pass 'Schedule-held app is already stopped after tray Exit'}
+  $script:appPid=0;$script:mainWindow=[IntPtr]::Zero
+  Require (Start-InstalledApp) 'Installed candidate restarts from schedule-held state while previously hidden in the tray'
+  Require ((Wait-ForStatus 'Outside scheduled hours')-like'*Outside scheduled hours*') 'Schedule-held state is restored after a controlled application restart'
+  Require (@(Get-BreakWindow $script:appPid).Count-eq0) 'Schedule-held restart does not create a Break reminder'
+  $heldProfileAfter=Read-SettingsMap $settingsPath
+  $heldProfileChanged=@(foreach($key in @('schedule','scheduleMonday','scheduleTuesday','scheduleWednesday','scheduleThursday','scheduleFriday','scheduleSaturday','scheduleSunday')){if($heldProfileBefore[$key]-ne$heldProfileAfter[$key]){$key}})
+  Require ($heldProfileChanged.Count-eq0) 'Schedule-held restart preserves the schedule preferences' $heldProfileChanged
+  $heldHistoryAfter=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
+  Require ($heldHistoryBefore-eq$heldHistoryAfter) 'Schedule-held restart does not add a history record'
+  Switch-Settings 1
+  Set-Check $script:mainWindow 120 $false 'Disable the schedule-held restart fixture before notification tests'
+  Switch-Timer
+  Require ((Wait-ForStatus 'Running')-like'*Running*') 'Installed Work timer resumes when the temporary schedule fixture is disabled'
   Switch-Settings 3
   Set-Check $script:mainWindow 108 $true 'Windows notifications enabled'
   Switch-Timer
