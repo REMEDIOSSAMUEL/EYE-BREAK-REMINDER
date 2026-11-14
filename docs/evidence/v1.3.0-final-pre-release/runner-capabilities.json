@@ -1,0 +1,14 @@
+{
+  "utc": "2026-11-13T23:27:38.2702245Z",
+  "osCaption": "Microsoft Windows Server 2025 Datacenter",
+  "osVersion": "10.0.26100",
+  "osBuild": "26100",
+  "sessionId": 2,
+  "sessionName": null,
+  "userInteractive": true,
+  "shellWindow": "0x100B6",
+  "taskbarWindow": "0xA0010",
+  "shellProcessName": "explorer",
+  "interactiveDesktopAvailable": true,
+  "reason": "Explorer shell and taskbar are present in an interactive user session."
+}

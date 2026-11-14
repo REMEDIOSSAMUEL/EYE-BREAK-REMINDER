@@ -6,6 +6,8 @@ on:
       - feature/v1.3.0-custom-accent-colours
     paths-ignore:
       - docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md
+      - docs/evidence/v1.3.0-final-pre-release/**
+      - .github/workflows/windows-pre-release-validation.yml
   workflow_dispatch:
 
 permissions:

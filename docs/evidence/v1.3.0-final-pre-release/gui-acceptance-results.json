@@ -1,0 +1,4666 @@
+{
+  "Version": "1.3.0",
+  "Assertions": 519,
+  "Events": [
+    {
+      "Name": "Test executable version metadata",
+      "Status": "PASS",
+      "Details": "1.3.0",
+      "Utc": "2026-11-13T23:27:40.1263990Z"
+    },
+    {
+      "Name": "UI Automation exposes main navigation",
+      "Status": "PASS",
+      "Details": "Timer | History | Settings | Running | Next eye break | 19:59 | Take a break now | Pause | Reset",
+      "Utc": "2026-11-13T23:27:41.0601854Z"
+    },
+    {
+      "Name": "New installation defaults to Dark",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:41.1654357Z"
+    },
+    {
+      "Name": "Alarm enabled checkbox",
+      "Status": "PASS",
+      "Details": false,
+      "Utc": "2026-11-13T23:27:41.2508901Z"
+    },
+    {
+      "Name": "Work interval text",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "20",
+        "Actual": "20"
+      },
+      "Utc": "2026-11-13T23:27:41.2934944Z"
+    },
+    {
+      "Name": "Work interval value is applied and persisted",
+      "Status": "PASS",
+      "Details": "workMinutes=20",
+      "Utc": "2026-11-13T23:27:41.3033150Z"
+    },
+    {
+      "Name": "Break duration text",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "30",
+        "Actual": "30"
+      },
+      "Utc": "2026-11-13T23:27:41.3167358Z"
+    },
+    {
+      "Name": "Break duration value is applied and persisted",
+      "Status": "PASS",
+      "Details": "breakSeconds=30",
+      "Utc": "2026-11-13T23:27:41.3177072Z"
+    },
+    {
+      "Name": "Timer reaches Running state",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:41.3437460Z"
+    },
+    {
+      "Name": "Work pause status is clear",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:41.3670205Z"
+    },
+    {
+      "Name": "Status centered above timer at paused work status",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:27:41.4425514Z"
+    },
+    {
+      "Name": "Paused timer remains fixed",
+      "Status": "PASS",
+      "Details": {
+        "Before": 1200,
+        "After": 1200
+      },
+      "Utc": "2026-11-13T23:27:42.1542802Z"
+    },
+    {
+      "Name": "Work timer resumes",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:42.1676638Z"
+    },
+    {
+      "Name": "Resume continues from the saved countdown",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:42.1730717Z"
+    },
+    {
+      "Name": "Status centered above timer at default window",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:27:42.1838596Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-dynamic-schedule.png",
+      "Utc": "2026-11-13T23:27:42.5806039Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 2,
+      "Utc": "2026-11-13T23:27:42.6413421Z"
+    },
+    {
+      "Name": "Appearance exposes custom accent labels and reset through UI Automation",
+      "Status": "PASS",
+      "Details": "Timer | History | Settings | Intervals | Schedule | Alarm | Reminders | General | About | Settings | Appearance | Theme | Dark | Use a distinct accent during eye breaks | CUSTOM ACCENT COLOURS | Work Mode colour | #60A5FA | Choose Colour... | Break Mode colour | #2DD4BF | Choose Colour... | Reset to Default Colours | High contrast themes and Windows Forced Colors always use their accessible system colours. | Behaviour | Start timer automatically on launch | Start with Windows | Open Eye Break Reminder automatically when you sign in. | Minimize to system tray | Closing keeps reminders active. Choose Exit in the tray menu to quit. | Resume countdown when reopening the app | Reinstalling after uninstall starts a fresh work interval. Preferences and history are kept. | Pause while workstation is locked | Sleep counts as elapsed work time. Wake shows at most one reminder. Paused timers stay paused.",
+      "Utc": "2026-11-13T23:27:42.7095589Z"
+    },
+    {
+      "Name": "Dark theme displays the existing default work accent",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:42.7225662Z"
+    },
+    {
+      "Name": "Dark theme displays the existing default break accent",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:42.7362042Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-custom-accent-colours.png",
+      "Utc": "2026-11-13T23:27:43.0082614Z"
+    },
+    {
+      "Name": "Choose Work Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:27:43.0804231Z"
+    },
+    {
+      "Name": "extreme-black-white opens the actual native common colour dialog",
+      "Status": "PASS",
+      "Details": "Color",
+      "Utc": "2026-11-13T23:27:43.1717576Z"
+    },
+    {
+      "Name": "extreme-black-white Work Mode colour change leaves the countdown running without resetting it",
+      "Status": "PASS",
+      "Details": {
+        "Before": 1192,
+        "After": 1189
+      },
+      "Utc": "2026-11-13T23:27:43.2848642Z"
+    },
+    {
+      "Name": "extreme-black-white Work Mode RGB selection is saved as integer RGB",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:43.3196560Z"
+    },
+    {
+      "Name": "extreme-black-white Work Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:43.3332509Z"
+    },
+    {
+      "Name": "Choose Break Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:27:43.3460333Z"
+    },
+    {
+      "Name": "extreme-black-white Break Mode RGB selection is saved independently",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:43.4856469Z"
+    },
+    {
+      "Name": "extreme-black-white Break Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:43.5270047Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-custom-combo-extreme-black-white.png",
+      "Utc": "2026-11-13T23:27:43.7855910Z"
+    },
+    {
+      "Name": "extreme-black-white Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:44.8260293Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-extreme-black-white-work.png",
+      "Utc": "2026-11-13T23:27:49.5823147Z"
+    },
+    {
+      "Name": "extreme-black-white Work Mode rendered timer-ring pixels equal #000000",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#000000",
+        "MatchingRingPixels": 105,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-extreme-black-white-work.png"
+      },
+      "Utc": "2026-11-13T23:27:50.0130500Z"
+    },
+    {
+      "Name": "extreme-black-white break keeps the existing Taking an eye break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:50.0741155Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-custom-extreme-black-white-break.png",
+      "Utc": "2026-11-13T23:27:50.3061574Z"
+    },
+    {
+      "Name": "extreme-black-white Break countdown advances before ring pixel sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:50.8732029Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-extreme-black-white-break.png",
+      "Utc": "2026-11-13T23:27:52.3090153Z"
+    },
+    {
+      "Name": "extreme-black-white Break Mode rendered timer-ring pixels equal #FFFFFF",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#FFFFFF",
+        "MatchingRingPixels": 1470,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-extreme-black-white-break.png"
+      },
+      "Utc": "2026-11-13T23:27:52.6213175Z"
+    },
+    {
+      "Name": "extreme-black-white break returns to work",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:52.6474915Z"
+    },
+    {
+      "Name": "extreme-black-white Work countdown advances after Break completion",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:52.8684812Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-extreme-black-white-work-after-break.png",
+      "Utc": "2026-11-13T23:27:57.6233440Z"
+    },
+    {
+      "Name": "extreme-black-white Work Mode after break rendered timer-ring pixels equal #000000",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#000000",
+        "MatchingRingPixels": 87,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-extreme-black-white-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:27:57.8300840Z"
+    },
+    {
+      "Name": "Choose Work Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:27:57.9176004Z"
+    },
+    {
+      "Name": "purple-orange opens the actual native common colour dialog",
+      "Status": "PASS",
+      "Details": "Color",
+      "Utc": "2026-11-13T23:27:57.9716693Z"
+    },
+    {
+      "Name": "Native colour picker exposes required dialog control 719",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:57.9746222Z"
+    },
+    {
+      "Name": "Native colour picker exposes required dialog control 720",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:57.9747533Z"
+    },
+    {
+      "Name": "Native colour picker exposes required dialog control 721",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:57.9748022Z"
+    },
+    {
+      "Name": "Native colour picker exposes required dialog control 706",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:57.9748426Z"
+    },
+    {
+      "Name": "Native colour picker exposes required dialog control 707",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:57.9748834Z"
+    },
+    {
+      "Name": "Native colour picker exposes required dialog control 708",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:57.9749215Z"
+    },
+    {
+      "Name": "Native colour picker exposes required dialog control 1",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:57.9749577Z"
+    },
+    {
+      "Name": "Native colour picker exposes required dialog control 2",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:57.9749945Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\native-choose-color-dialog.png",
+      "Utc": "2026-11-13T23:27:58.2312239Z"
+    },
+    {
+      "Name": "purple-orange Work Mode colour change leaves the countdown running without resetting it",
+      "Status": "PASS",
+      "Details": {
+        "Before": 1148,
+        "After": 1128
+      },
+      "Utc": "2026-11-13T23:27:59.9260271Z"
+    },
+    {
+      "Name": "Work countdown advances while the native colour picker is open",
+      "Status": "PASS",
+      "Details": {
+        "Before": 1148,
+        "After": 1128
+      },
+      "Utc": "2026-11-13T23:27:59.9260983Z"
+    },
+    {
+      "Name": "purple-orange Work Mode RGB selection is saved as integer RGB",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:59.9546296Z"
+    },
+    {
+      "Name": "purple-orange Work Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:27:59.9696831Z"
+    },
+    {
+      "Name": "Choose Break Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:27:59.9761166Z"
+    },
+    {
+      "Name": "purple-orange Break Mode RGB selection is saved independently",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:00.1389395Z"
+    },
+    {
+      "Name": "purple-orange Break Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:00.1828518Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-custom-combo-purple-orange.png",
+      "Utc": "2026-11-13T23:28:00.4412518Z"
+    },
+    {
+      "Name": "purple-orange Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:01.4757682Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-purple-orange-work.png",
+      "Utc": "2026-11-13T23:28:06.2327653Z"
+    },
+    {
+      "Name": "purple-orange Work Mode rendered timer-ring pixels equal #8B5CF6",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8B5CF6",
+        "MatchingRingPixels": 105,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-purple-orange-work.png"
+      },
+      "Utc": "2026-11-13T23:28:06.4419303Z"
+    },
+    {
+      "Name": "purple-orange break keeps the existing Taking an eye break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:06.4831051Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-custom-purple-orange-break.png",
+      "Utc": "2026-11-13T23:28:06.7487271Z"
+    },
+    {
+      "Name": "purple-orange Break countdown advances before ring pixel sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:07.5203420Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-purple-orange-break.png",
+      "Utc": "2026-11-13T23:28:08.9878959Z"
+    },
+    {
+      "Name": "purple-orange Break Mode rendered timer-ring pixels equal #F97316",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#F97316",
+        "MatchingRingPixels": 1676,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-purple-orange-break.png"
+      },
+      "Utc": "2026-11-13T23:28:09.1979835Z"
+    },
+    {
+      "Name": "purple-orange break returns to work",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:09.2195666Z"
+    },
+    {
+      "Name": "purple-orange Work countdown advances after Break completion",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:09.5529335Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-purple-orange-work-after-break.png",
+      "Utc": "2026-11-13T23:28:14.2740437Z"
+    },
+    {
+      "Name": "purple-orange Work Mode after break rendered timer-ring pixels equal #8B5CF6",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8B5CF6",
+        "MatchingRingPixels": 90,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-purple-orange-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:28:14.4796684Z"
+    },
+    {
+      "Name": "Choose Work Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:28:14.5610139Z"
+    },
+    {
+      "Name": "blue-pink opens the actual native common colour dialog",
+      "Status": "PASS",
+      "Details": "Color",
+      "Utc": "2026-11-13T23:28:14.6379184Z"
+    },
+    {
+      "Name": "blue-pink Work Mode colour change leaves the countdown running without resetting it",
+      "Status": "PASS",
+      "Details": {
+        "Before": 1147,
+        "After": 1145
+      },
+      "Utc": "2026-11-13T23:28:14.7374123Z"
+    },
+    {
+      "Name": "blue-pink Work Mode RGB selection is saved as integer RGB",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:14.7592324Z"
+    },
+    {
+      "Name": "blue-pink Work Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:14.7742431Z"
+    },
+    {
+      "Name": "Choose Break Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:28:14.7809880Z"
+    },
+    {
+      "Name": "blue-pink Break Mode RGB selection is saved independently",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:14.9206655Z"
+    },
+    {
+      "Name": "blue-pink Break Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:14.9620155Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-custom-combo-blue-pink.png",
+      "Utc": "2026-11-13T23:28:15.2243759Z"
+    },
+    {
+      "Name": "blue-pink Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:16.2565545Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-blue-pink-work.png",
+      "Utc": "2026-11-13T23:28:21.0166112Z"
+    },
+    {
+      "Name": "blue-pink Work Mode rendered timer-ring pixels equal #3B82F6",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#3B82F6",
+        "MatchingRingPixels": 105,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-blue-pink-work.png"
+      },
+      "Utc": "2026-11-13T23:28:21.2253828Z"
+    },
+    {
+      "Name": "blue-pink break keeps the existing Taking an eye break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:21.2673642Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-custom-blue-pink-break.png",
+      "Utc": "2026-11-13T23:28:21.5174791Z"
+    },
+    {
+      "Name": "blue-pink Break countdown advances before ring pixel sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:22.3043280Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-blue-pink-break.png",
+      "Utc": "2026-11-13T23:28:23.7549640Z"
+    },
+    {
+      "Name": "blue-pink Break Mode rendered timer-ring pixels equal #EC4899",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#EC4899",
+        "MatchingRingPixels": 1648,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-blue-pink-break.png"
+      },
+      "Utc": "2026-11-13T23:28:23.9648956Z"
+    },
+    {
+      "Name": "blue-pink break returns to work",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:23.9902536Z"
+    },
+    {
+      "Name": "blue-pink Work countdown advances after Break completion",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:24.3273018Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-blue-pink-work-after-break.png",
+      "Utc": "2026-11-13T23:28:29.0858567Z"
+    },
+    {
+      "Name": "blue-pink Work Mode after break rendered timer-ring pixels equal #3B82F6",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#3B82F6",
+        "MatchingRingPixels": 89,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-blue-pink-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:28:29.2924280Z"
+    },
+    {
+      "Name": "Choose Work Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:28:29.3718774Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy opens the actual native common colour dialog",
+      "Status": "PASS",
+      "Details": "Color",
+      "Utc": "2026-11-13T23:28:29.4518170Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy Work Mode colour change leaves the countdown running without resetting it",
+      "Status": "PASS",
+      "Details": {
+        "Before": 1147,
+        "After": 1145
+      },
+      "Utc": "2026-11-13T23:28:29.5352227Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy Work Mode RGB selection is saved as integer RGB",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:29.5574138Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy Work Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:29.5734888Z"
+    },
+    {
+      "Name": "Choose Break Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:28:29.5806829Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy Break Mode RGB selection is saved independently",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:29.7186917Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy Break Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:29.7583097Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-custom-combo-bright-yellow-dark-navy.png",
+      "Utc": "2026-11-13T23:28:30.0050928Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:31.0404313Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-bright-yellow-dark-navy-work.png",
+      "Utc": "2026-11-13T23:28:35.7953555Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy Work Mode rendered timer-ring pixels equal #FFFF00",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#FFFF00",
+        "MatchingRingPixels": 105,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-bright-yellow-dark-navy-work.png"
+      },
+      "Utc": "2026-11-13T23:28:36.0005334Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy break keeps the existing Taking an eye break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:36.0519699Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-custom-bright-yellow-dark-navy-break.png",
+      "Utc": "2026-11-13T23:28:36.2946254Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy Break countdown advances before ring pixel sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:37.0820799Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-bright-yellow-dark-navy-break.png",
+      "Utc": "2026-11-13T23:28:38.5288967Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy Break Mode rendered timer-ring pixels equal #000080",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#000080",
+        "MatchingRingPixels": 1653,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-bright-yellow-dark-navy-break.png"
+      },
+      "Utc": "2026-11-13T23:28:38.7418122Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy break returns to work",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:38.7641456Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy Work countdown advances after Break completion",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:39.1080989Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-bright-yellow-dark-navy-work-after-break.png",
+      "Utc": "2026-11-13T23:28:43.8452640Z"
+    },
+    {
+      "Name": "bright-yellow-dark-navy Work Mode after break rendered timer-ring pixels equal #FFFF00",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#FFFF00",
+        "MatchingRingPixels": 87,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-bright-yellow-dark-navy-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:28:44.0619201Z"
+    },
+    {
+      "Name": "Choose Work Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:28:44.1467726Z"
+    },
+    {
+      "Name": "saturated-red-very-pale opens the actual native common colour dialog",
+      "Status": "PASS",
+      "Details": "Color",
+      "Utc": "2026-11-13T23:28:44.2084375Z"
+    },
+    {
+      "Name": "saturated-red-very-pale Work Mode colour change leaves the countdown running without resetting it",
+      "Status": "PASS",
+      "Details": {
+        "Before": 1147,
+        "After": 1145
+      },
+      "Utc": "2026-11-13T23:28:44.2983973Z"
+    },
+    {
+      "Name": "saturated-red-very-pale Work Mode RGB selection is saved as integer RGB",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:44.3222016Z"
+    },
+    {
+      "Name": "saturated-red-very-pale Work Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:44.3386481Z"
+    },
+    {
+      "Name": "Choose Break Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:28:44.3450647Z"
+    },
+    {
+      "Name": "saturated-red-very-pale Break Mode RGB selection is saved independently",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:44.4913360Z"
+    },
+    {
+      "Name": "saturated-red-very-pale Break Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:44.5325591Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-custom-combo-saturated-red-very-pale.png",
+      "Utc": "2026-11-13T23:28:44.7792578Z"
+    },
+    {
+      "Name": "saturated-red-very-pale Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:45.8138547Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-saturated-red-very-pale-work.png",
+      "Utc": "2026-11-13T23:28:50.5868722Z"
+    },
+    {
+      "Name": "saturated-red-very-pale Work Mode rendered timer-ring pixels equal #FF0000",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#FF0000",
+        "MatchingRingPixels": 104,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-saturated-red-very-pale-work.png"
+      },
+      "Utc": "2026-11-13T23:28:50.8531542Z"
+    },
+    {
+      "Name": "saturated-red-very-pale break keeps the existing Taking an eye break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:50.8964412Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-custom-saturated-red-very-pale-break.png",
+      "Utc": "2026-11-13T23:28:51.1270760Z"
+    },
+    {
+      "Name": "saturated-red-very-pale Break countdown advances before ring pixel sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:51.7917903Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-saturated-red-very-pale-break.png",
+      "Utc": "2026-11-13T23:28:53.2560548Z"
+    },
+    {
+      "Name": "saturated-red-very-pale Break Mode rendered timer-ring pixels equal #FFF7ED",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#FFF7ED",
+        "MatchingRingPixels": 1586,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-saturated-red-very-pale-break.png"
+      },
+      "Utc": "2026-11-13T23:28:53.4858806Z"
+    },
+    {
+      "Name": "saturated-red-very-pale break returns to work",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:53.5142069Z"
+    },
+    {
+      "Name": "saturated-red-very-pale Work countdown advances after Break completion",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:53.8530762Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-saturated-red-very-pale-work-after-break.png",
+      "Utc": "2026-11-13T23:28:58.5816559Z"
+    },
+    {
+      "Name": "saturated-red-very-pale Work Mode after break rendered timer-ring pixels equal #FF0000",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#FF0000",
+        "MatchingRingPixels": 88,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-saturated-red-very-pale-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:28:58.7878434Z"
+    },
+    {
+      "Name": "Choose Work Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:28:58.8709829Z"
+    },
+    {
+      "Name": "identical-work-break opens the actual native common colour dialog",
+      "Status": "PASS",
+      "Details": "Color",
+      "Utc": "2026-11-13T23:28:58.9237520Z"
+    },
+    {
+      "Name": "identical-work-break Work Mode colour change leaves the countdown running without resetting it",
+      "Status": "PASS",
+      "Details": {
+        "Before": 1147,
+        "After": 1146
+      },
+      "Utc": "2026-11-13T23:28:58.9972472Z"
+    },
+    {
+      "Name": "identical-work-break Work Mode RGB selection is saved as integer RGB",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:59.0186716Z"
+    },
+    {
+      "Name": "identical-work-break Work Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:59.0343824Z"
+    },
+    {
+      "Name": "Choose Break Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:28:59.0414000Z"
+    },
+    {
+      "Name": "identical-work-break Break Mode RGB selection is saved independently",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:59.1808415Z"
+    },
+    {
+      "Name": "identical-work-break Break Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:28:59.2211073Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-custom-combo-identical-work-break.png",
+      "Utc": "2026-11-13T23:28:59.4833200Z"
+    },
+    {
+      "Name": "identical-work-break Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:00.5163490Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-identical-work-break-work.png",
+      "Utc": "2026-11-13T23:29:05.2749278Z"
+    },
+    {
+      "Name": "identical-work-break Work Mode rendered timer-ring pixels equal #334155",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#334155",
+        "MatchingRingPixels": 104,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-identical-work-break-work.png"
+      },
+      "Utc": "2026-11-13T23:29:05.4808373Z"
+    },
+    {
+      "Name": "identical-work-break break keeps the existing Taking an eye break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:05.5217737Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-custom-identical-work-break-break.png",
+      "Utc": "2026-11-13T23:29:05.7299761Z"
+    },
+    {
+      "Name": "identical-work-break Break countdown advances before ring pixel sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:06.5062479Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-identical-work-break-break.png",
+      "Utc": "2026-11-13T23:29:07.9524084Z"
+    },
+    {
+      "Name": "identical-work-break Break Mode rendered timer-ring pixels equal #334155",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#334155",
+        "MatchingRingPixels": 1649,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-identical-work-break-break.png"
+      },
+      "Utc": "2026-11-13T23:29:08.1632860Z"
+    },
+    {
+      "Name": "identical-work-break break returns to work",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:08.1878848Z"
+    },
+    {
+      "Name": "identical-work-break Work countdown advances after Break completion",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:08.5422190Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-identical-work-break-work-after-break.png",
+      "Utc": "2026-11-13T23:29:13.2709195Z"
+    },
+    {
+      "Name": "identical-work-break Work Mode after break rendered timer-ring pixels equal #334155",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#334155",
+        "MatchingRingPixels": 90,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-identical-work-break-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:29:13.4817711Z"
+    },
+    {
+      "Name": "Choose Work Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:13.5609599Z"
+    },
+    {
+      "Name": "similar-work-break opens the actual native common colour dialog",
+      "Status": "PASS",
+      "Details": "Color",
+      "Utc": "2026-11-13T23:29:13.6342803Z"
+    },
+    {
+      "Name": "similar-work-break Work Mode colour change leaves the countdown running without resetting it",
+      "Status": "PASS",
+      "Details": {
+        "Before": 1147,
+        "After": 1145
+      },
+      "Utc": "2026-11-13T23:29:13.7173457Z"
+    },
+    {
+      "Name": "similar-work-break Work Mode RGB selection is saved as integer RGB",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:13.7396314Z"
+    },
+    {
+      "Name": "similar-work-break Work Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:13.7549823Z"
+    },
+    {
+      "Name": "Choose Break Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:13.7628918Z"
+    },
+    {
+      "Name": "similar-work-break Break Mode RGB selection is saved independently",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:13.9170788Z"
+    },
+    {
+      "Name": "similar-work-break Break Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:13.9628022Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-custom-combo-similar-work-break.png",
+      "Utc": "2026-11-13T23:29:14.2046196Z"
+    },
+    {
+      "Name": "similar-work-break Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:15.2385250Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-similar-work-break-work.png",
+      "Utc": "2026-11-13T23:29:19.9820526Z"
+    },
+    {
+      "Name": "similar-work-break Work Mode rendered timer-ring pixels equal #1E40AF",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#1E40AF",
+        "MatchingRingPixels": 104,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-similar-work-break-work.png"
+      },
+      "Utc": "2026-11-13T23:29:20.1920156Z"
+    },
+    {
+      "Name": "similar-work-break break keeps the existing Taking an eye break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:20.2309187Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-custom-similar-work-break-break.png",
+      "Utc": "2026-11-13T23:29:20.4662648Z"
+    },
+    {
+      "Name": "similar-work-break Break countdown advances before ring pixel sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:21.2539419Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-similar-work-break-break.png",
+      "Utc": "2026-11-13T23:29:22.7522340Z"
+    },
+    {
+      "Name": "similar-work-break Break Mode rendered timer-ring pixels equal #1D4ED8",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#1D4ED8",
+        "MatchingRingPixels": 1656,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-similar-work-break-break.png"
+      },
+      "Utc": "2026-11-13T23:29:22.9604127Z"
+    },
+    {
+      "Name": "similar-work-break break returns to work",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:22.9872806Z"
+    },
+    {
+      "Name": "similar-work-break Work countdown advances after Break completion",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:23.2198725Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-similar-work-break-work-after-break.png",
+      "Utc": "2026-11-13T23:29:27.9611969Z"
+    },
+    {
+      "Name": "similar-work-break Work Mode after break rendered timer-ring pixels equal #1E40AF",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#1E40AF",
+        "MatchingRingPixels": 89,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-similar-work-break-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:29:28.1699138Z"
+    },
+    {
+      "Name": "Choose Work Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:28.2498185Z"
+    },
+    {
+      "Name": "green-red opens the actual native common colour dialog",
+      "Status": "PASS",
+      "Details": "Color",
+      "Utc": "2026-11-13T23:29:28.3251701Z"
+    },
+    {
+      "Name": "Native ChooseColorW exposes Add to Custom Colors",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:28.3536579Z"
+    },
+    {
+      "Name": "green-red Work Mode colour change leaves the countdown running without resetting it",
+      "Status": "PASS",
+      "Details": {
+        "Before": 1148,
+        "After": 1146
+      },
+      "Utc": "2026-11-13T23:29:28.4250676Z"
+    },
+    {
+      "Name": "green-red Work Mode RGB selection is saved as integer RGB",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:28.4468359Z"
+    },
+    {
+      "Name": "green-red Work Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:28.4623799Z"
+    },
+    {
+      "Name": "Choose Break Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:28.4702607Z"
+    },
+    {
+      "Name": "green-red Break Mode RGB selection is saved independently",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:28.6083408Z"
+    },
+    {
+      "Name": "green-red Break Mode swatch updates immediately",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:28.6476308Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-custom-combo-green-red.png",
+      "Utc": "2026-11-13T23:29:28.9109353Z"
+    },
+    {
+      "Name": "green-red Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:29.9602757Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-green-red-work.png",
+      "Utc": "2026-11-13T23:29:34.6877420Z"
+    },
+    {
+      "Name": "green-red Work Mode rendered timer-ring pixels equal #22C55E",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#22C55E",
+        "MatchingRingPixels": 105,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-green-red-work.png"
+      },
+      "Utc": "2026-11-13T23:29:34.9116415Z"
+    },
+    {
+      "Name": "green-red break keeps the existing Taking an eye break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:34.9510849Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-custom-green-red-break.png",
+      "Utc": "2026-11-13T23:29:35.2020960Z"
+    },
+    {
+      "Name": "green-red Break countdown advances before ring pixel sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:35.9734607Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-green-red-break.png",
+      "Utc": "2026-11-13T23:29:37.4109693Z"
+    },
+    {
+      "Name": "green-red Break Mode rendered timer-ring pixels equal #EF4444",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#EF4444",
+        "MatchingRingPixels": 1669,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-green-red-break.png"
+      },
+      "Utc": "2026-11-13T23:29:37.6190653Z"
+    },
+    {
+      "Name": "green-red break returns to work",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:37.6415319Z"
+    },
+    {
+      "Name": "green-red Work countdown advances after Break completion",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:37.9837531Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-green-red-work-after-break.png",
+      "Utc": "2026-11-13T23:29:42.7117065Z"
+    },
+    {
+      "Name": "green-red Work Mode after break rendered timer-ring pixels equal #22C55E",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#22C55E",
+        "MatchingRingPixels": 90,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-green-red-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:29:42.9187650Z"
+    },
+    {
+      "Name": "Choose Work Mode colour has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:42.9991109Z"
+    },
+    {
+      "Name": "Countdown keeps running while a picker selection is pending",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:44.4621591Z"
+    },
+    {
+      "Name": "Cancel leaves the stored Work Mode colour unchanged",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:44.4631183Z"
+    },
+    {
+      "Name": "Cancel leaves the visible swatch unchanged",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:44.4998814Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-cancel-keeps-green.png",
+      "Utc": "2026-11-13T23:29:44.7530452Z"
+    },
+    {
+      "Name": "Cancelled Work Mode selection rendered timer-ring pixels equal #22C55E",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#22C55E",
+        "MatchingRingPixels": 148,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-cancel-keeps-green.png"
+      },
+      "Utc": "2026-11-13T23:29:44.9612135Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:44.9975306Z"
+    },
+    {
+      "Name": "Repeated picker OK action 1 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:45.1038958Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:45.1119772Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 2 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:45.2461936Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:45.2530523Z"
+    },
+    {
+      "Name": "Repeated picker OK action 3 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:45.3567586Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:45.3637896Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 4 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:45.5095757Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:45.5163853Z"
+    },
+    {
+      "Name": "Repeated picker OK action 5 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:45.6108631Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:45.6175769Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 6 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:45.7355621Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:45.7545307Z"
+    },
+    {
+      "Name": "Repeated picker OK action 7 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:45.8485375Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:45.8582198Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 8 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:45.9900426Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:45.9999670Z"
+    },
+    {
+      "Name": "Repeated picker OK action 9 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:46.1006597Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:46.1102800Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 10 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:46.2433524Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:46.2517110Z"
+    },
+    {
+      "Name": "Repeated picker OK action 11 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:46.3534124Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:46.3637572Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 12 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:46.5122182Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:46.5203541Z"
+    },
+    {
+      "Name": "Repeated picker OK action 13 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:46.6231611Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:46.6329630Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 14 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:46.7657608Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:46.7742509Z"
+    },
+    {
+      "Name": "Repeated picker OK action 15 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:46.8610512Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:46.8714659Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 16 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:46.9880162Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:47.0002327Z"
+    },
+    {
+      "Name": "Repeated picker OK action 17 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:47.0994503Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:47.1093608Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 18 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:47.2421118Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:47.2503347Z"
+    },
+    {
+      "Name": "Repeated picker OK action 19 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:47.3527628Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:47.3612785Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 20 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:47.4955479Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:47.5044009Z"
+    },
+    {
+      "Name": "Repeated picker OK action 21 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:47.6224992Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:47.6306501Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 22 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:47.7650785Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:47.7731739Z"
+    },
+    {
+      "Name": "Repeated picker OK action 23 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:47.8601591Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:47.8699833Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 24 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:48.0027681Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:48.0108637Z"
+    },
+    {
+      "Name": "Repeated picker OK action 25 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:48.0981673Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:48.1068238Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 26 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:48.2252023Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:48.2333439Z"
+    },
+    {
+      "Name": "Repeated picker OK action 27 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:48.3359365Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:48.3444396Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 28 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:48.4748629Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:48.4833919Z"
+    },
+    {
+      "Name": "Repeated picker OK action 29 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:48.5897311Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:48.5982722Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 30 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:48.7285698Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:48.7381265Z"
+    },
+    {
+      "Name": "Repeated picker OK action 31 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:48.8534948Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:48.8618967Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 32 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:48.9861110Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:48.9943200Z"
+    },
+    {
+      "Name": "Repeated picker OK action 33 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:49.0816051Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:49.0900430Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 34 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:49.2045335Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:49.2132501Z"
+    },
+    {
+      "Name": "Repeated picker OK action 35 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:49.3030188Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:49.3136820Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 36 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:49.4417879Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:49.4505714Z"
+    },
+    {
+      "Name": "Repeated picker OK action 37 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:49.5331201Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:49.5424105Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 38 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:49.6566323Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:49.6664338Z"
+    },
+    {
+      "Name": "Repeated picker OK action 39 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:49.7782563Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:49.7863077Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 40 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:49.9071061Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:49.9151639Z"
+    },
+    {
+      "Name": "Repeated picker OK action 41 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:50.0261251Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:50.0342340Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 42 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:50.1648602Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:50.1728411Z"
+    },
+    {
+      "Name": "Repeated picker OK action 43 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:50.2692595Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:50.2777301Z"
+    },
+    {
+      "Name": "Repeated picker Cancel action 44 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:50.3922374Z"
+    },
+    {
+      "Name": "Repeated Work Mode colour picker has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:29:50.4007244Z"
+    },
+    {
+      "Name": "Repeated picker OK action 45 preserves the current RGB",
+      "Status": "PASS",
+      "Details": "2278750",
+      "Utc": "2026-11-13T23:29:50.5072931Z"
+    },
+    {
+      "Name": "Repeated native picker has no sustained USER objects growth",
+      "Status": "PASS",
+      "Details": {
+        "Trend": {
+          "Resource": "USER objects",
+          "StartMedian": 163.0,
+          "EndMedian": 163.0,
+          "SlopePerInteraction": 0.0,
+          "Samples": 40,
+          "Minimum": 163.0,
+          "Maximum": 163.0
+        },
+        "AllowedMedianDrift": 2
+      },
+      "Utc": "2026-11-13T23:29:50.5487363Z"
+    },
+    {
+      "Name": "Repeated native picker has no sustained GDI objects growth",
+      "Status": "PASS",
+      "Details": {
+        "Trend": {
+          "Resource": "GDI objects",
+          "StartMedian": 58.0,
+          "EndMedian": 58.0,
+          "SlopePerInteraction": 0.0,
+          "Samples": 40,
+          "Minimum": 58.0,
+          "Maximum": 58.0
+        },
+        "AllowedMedianDrift": 2
+      },
+      "Utc": "2026-11-13T23:29:50.5488064Z"
+    },
+    {
+      "Name": "Repeated native picker has no sustained process handles growth",
+      "Status": "PASS",
+      "Details": {
+        "Trend": {
+          "Resource": "process handles",
+          "StartMedian": 237.0,
+          "EndMedian": 237.0,
+          "SlopePerInteraction": 0.0,
+          "Samples": 40,
+          "Minimum": 237.0,
+          "Maximum": 237.0
+        },
+        "AllowedMedianDrift": 2
+      },
+      "Utc": "2026-11-13T23:29:50.5488607Z"
+    },
+    {
+      "Name": "Repeated native picker has no sustained private bytes growth",
+      "Status": "PASS",
+      "Details": {
+        "Trend": {
+          "Resource": "private bytes",
+          "StartMedian": 3805184.0,
+          "EndMedian": 3805184.0,
+          "SlopePerInteraction": 23.05441,
+          "Samples": 40,
+          "Minimum": 3788800.0,
+          "Maximum": 3805184.0
+        },
+        "AllowedMedianDrift": 1048576
+      },
+      "Utc": "2026-11-13T23:29:50.5489071Z"
+    },
+    {
+      "Name": "Repeated native picker has no sustained working set bytes growth",
+      "Status": "PASS",
+      "Details": {
+        "Trend": {
+          "Resource": "working set bytes",
+          "StartMedian": 22962176.0,
+          "EndMedian": 22650880.0,
+          "SlopePerInteraction": -4949.39737,
+          "Samples": 40,
+          "Minimum": 22634496.0,
+          "Maximum": 22978560.0
+        },
+        "AllowedMedianDrift": 8388608
+      },
+      "Utc": "2026-11-13T23:29:50.5489535Z"
+    },
+    {
+      "Name": "Repeated native picker resource soak",
+      "Status": "INFO",
+      "Details": {
+        "WarmupDialogs": 5,
+        "MeasuredDialogs": 40,
+        "OkActions": 20,
+        "CancelActions": 20,
+        "Trends": [
+          {
+            "Resource": "USER objects",
+            "StartMedian": 163.0,
+            "EndMedian": 163.0,
+            "SlopePerInteraction": 0.0,
+            "Samples": 40,
+            "Minimum": 163.0,
+            "Maximum": 163.0
+          },
+          {
+            "Resource": "GDI objects",
+            "StartMedian": 58.0,
+            "EndMedian": 58.0,
+            "SlopePerInteraction": 0.0,
+            "Samples": 40,
+            "Minimum": 58.0,
+            "Maximum": 58.0
+          },
+          {
+            "Resource": "process handles",
+            "StartMedian": 237.0,
+            "EndMedian": 237.0,
+            "SlopePerInteraction": 0.0,
+            "Samples": 40,
+            "Minimum": 237.0,
+            "Maximum": 237.0
+          },
+          {
+            "Resource": "private bytes",
+            "StartMedian": 3805184.0,
+            "EndMedian": 3805184.0,
+            "SlopePerInteraction": 23.05441,
+            "Samples": 40,
+            "Minimum": 3788800.0,
+            "Maximum": 3805184.0
+          },
+          {
+            "Resource": "working set bytes",
+            "StartMedian": 22962176.0,
+            "EndMedian": 22650880.0,
+            "SlopePerInteraction": -4949.39737,
+            "Samples": 40,
+            "Minimum": 22634496.0,
+            "Maximum": 22978560.0
+          }
+        ]
+      },
+      "Utc": "2026-11-13T23:29:50.5493749Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 1 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.6189786Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 1 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.6194436Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 2 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.6775746Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 2 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.6778266Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 3 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.7393442Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 3 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.7396094Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 4 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.8059432Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 4 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.8062123Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 5 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.8759628Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 5 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.8762374Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 6 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.9425366Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 6 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:50.9428411Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 7 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.0040109Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 7 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.0042846Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 8 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.0654693Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 8 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.0657492Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 9 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.1296498Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 9 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.1299223Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 10 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.1928759Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 10 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.1931399Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 11 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.2537559Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 11 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.2540121Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 12 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.3144328Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 12 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.3147983Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 13 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.3742830Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 13 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.3745322Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 14 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.4390918Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 14 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.4393903Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 15 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.4978319Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 15 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.4980736Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 16 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.5601020Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 16 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.5603553Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 17 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.6246111Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 17 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.6248718Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 18 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.6855045Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 18 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.6857518Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 19 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.7472946Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 19 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.7475433Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 20 returned to Work Mode",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.8074023Z"
+    },
+    {
+      "Name": "Reminder window resource cycle 20 destroyed its window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.8077326Z"
+    },
+    {
+      "Name": "Repeated reminder windows have no sustained USER objects growth",
+      "Status": "PASS",
+      "Details": {
+        "Trend": {
+          "Resource": "USER objects",
+          "StartMedian": 164.0,
+          "EndMedian": 164.0,
+          "SlopePerInteraction": 0.0,
+          "Samples": 20,
+          "Minimum": 164.0,
+          "Maximum": 164.0
+        },
+        "AllowedMedianDrift": 2
+      },
+      "Utc": "2026-11-13T23:29:51.8124981Z"
+    },
+    {
+      "Name": "Repeated reminder windows have no sustained GDI objects growth",
+      "Status": "PASS",
+      "Details": {
+        "Trend": {
+          "Resource": "GDI objects",
+          "StartMedian": 59.0,
+          "EndMedian": 59.0,
+          "SlopePerInteraction": 0.0,
+          "Samples": 20,
+          "Minimum": 59.0,
+          "Maximum": 59.0
+        },
+        "AllowedMedianDrift": 2
+      },
+      "Utc": "2026-11-13T23:29:51.8125623Z"
+    },
+    {
+      "Name": "Repeated reminder windows have no sustained process handles growth",
+      "Status": "PASS",
+      "Details": {
+        "Trend": {
+          "Resource": "process handles",
+          "StartMedian": 237.0,
+          "EndMedian": 237.0,
+          "SlopePerInteraction": 0.0,
+          "Samples": 20,
+          "Minimum": 237.0,
+          "Maximum": 237.0
+        },
+        "AllowedMedianDrift": 2
+      },
+      "Utc": "2026-11-13T23:29:51.8126120Z"
+    },
+    {
+      "Name": "Repeated reminder windows have no sustained private bytes growth",
+      "Status": "PASS",
+      "Details": {
+        "Trend": {
+          "Resource": "private bytes",
+          "StartMedian": 3813376.0,
+          "EndMedian": 3809280.0,
+          "SlopePerInteraction": -110.86917,
+          "Samples": 20,
+          "Minimum": 3792896.0,
+          "Maximum": 3817472.0
+        },
+        "AllowedMedianDrift": 1048576
+      },
+      "Utc": "2026-11-13T23:29:51.8126575Z"
+    },
+    {
+      "Name": "Repeated reminder windows have no sustained working set bytes growth",
+      "Status": "PASS",
+      "Details": {
+        "Trend": {
+          "Resource": "working set bytes",
+          "StartMedian": 23998464.0,
+          "EndMedian": 22495232.0,
+          "SlopePerInteraction": -56016.64962,
+          "Samples": 20,
+          "Minimum": 22478848.0,
+          "Maximum": 23998464.0
+        },
+        "AllowedMedianDrift": 8388608
+      },
+      "Utc": "2026-11-13T23:29:51.8127030Z"
+    },
+    {
+      "Name": "Repeated reminder-window resource soak",
+      "Status": "INFO",
+      "Details": {
+        "MeasuredCycles": 20,
+        "ClosedWindows": 20,
+        "Trends": [
+          {
+            "Resource": "USER objects",
+            "StartMedian": 164.0,
+            "EndMedian": 164.0,
+            "SlopePerInteraction": 0.0,
+            "Samples": 20,
+            "Minimum": 164.0,
+            "Maximum": 164.0
+          },
+          {
+            "Resource": "GDI objects",
+            "StartMedian": 59.0,
+            "EndMedian": 59.0,
+            "SlopePerInteraction": 0.0,
+            "Samples": 20,
+            "Minimum": 59.0,
+            "Maximum": 59.0
+          },
+          {
+            "Resource": "process handles",
+            "StartMedian": 237.0,
+            "EndMedian": 237.0,
+            "SlopePerInteraction": 0.0,
+            "Samples": 20,
+            "Minimum": 237.0,
+            "Maximum": 237.0
+          },
+          {
+            "Resource": "private bytes",
+            "StartMedian": 3813376.0,
+            "EndMedian": 3809280.0,
+            "SlopePerInteraction": -110.86917,
+            "Samples": 20,
+            "Minimum": 3792896.0,
+            "Maximum": 3817472.0
+          },
+          {
+            "Resource": "working set bytes",
+            "StartMedian": 23998464.0,
+            "EndMedian": 22495232.0,
+            "SlopePerInteraction": -56016.64962,
+            "Samples": 20,
+            "Minimum": 22478848.0,
+            "Maximum": 23998464.0
+          }
+        ]
+      },
+      "Utc": "2026-11-13T23:29:51.8127344Z"
+    },
+    {
+      "Name": "Work interval text",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "180",
+        "Actual": "180"
+      },
+      "Utc": "2026-11-13T23:29:51.8497661Z"
+    },
+    {
+      "Name": "Work interval value is applied and persisted",
+      "Status": "PASS",
+      "Details": "workMinutes=180",
+      "Utc": "2026-11-13T23:29:51.8504100Z"
+    },
+    {
+      "Name": "Break duration text",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "300",
+        "Actual": "300"
+      },
+      "Utc": "2026-11-13T23:29:51.8629619Z"
+    },
+    {
+      "Name": "Break duration value is applied and persisted",
+      "Status": "PASS",
+      "Details": "breakSeconds=300",
+      "Utc": "2026-11-13T23:29:51.8633749Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 0,
+      "Utc": "2026-11-13T23:29:51.9220081Z"
+    },
+    {
+      "Name": "follow-windows preserves both custom colours",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:51.9372345Z"
+    },
+    {
+      "Name": "Follow Windows repaints on WM_THEMECHANGED",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:52.1099510Z"
+    },
+    {
+      "Name": "follow-windows Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:53.0132585Z"
+    },
+    {
+      "Name": "Status centered above timer at follow-windows work",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:29:57.5259394Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-follow-windows-work.png",
+      "Utc": "2026-11-13T23:29:57.7875836Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\history-follow-windows.png",
+      "Utc": "2026-11-13T23:29:58.0578990Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-follow-windows.png",
+      "Utc": "2026-11-13T23:29:58.3257561Z"
+    },
+    {
+      "Name": "follow-windows break state label",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:58.3818042Z"
+    },
+    {
+      "Name": "follow-windows break countdown has a distinct label",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:58.3842572Z"
+    },
+    {
+      "Name": "Status centered above timer at follow-windows break",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:29:58.3902684Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-follow-windows.png",
+      "Utc": "2026-11-13T23:29:58.6058483Z"
+    },
+    {
+      "Name": "follow-windows break duration visible",
+      "Status": "PASS",
+      "Details": "05:00",
+      "Utc": "2026-11-13T23:29:58.6082522Z"
+    },
+    {
+      "Name": "follow-windows Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:29:59.3931363Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-follow-windows-break.png",
+      "Utc": "2026-11-13T23:30:03.9602778Z"
+    },
+    {
+      "Name": "follow-windows returns to work after skip",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:03.9838424Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 1,
+      "Utc": "2026-11-13T23:30:04.0286156Z"
+    },
+    {
+      "Name": "light preserves both custom colours",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:04.0427147Z"
+    },
+    {
+      "Name": "light Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:05.0587548Z"
+    },
+    {
+      "Name": "Status centered above timer at light work",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:30:09.5712978Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-light-work.png",
+      "Utc": "2026-11-13T23:30:09.8316027Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\history-light.png",
+      "Utc": "2026-11-13T23:30:10.1163099Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-light.png",
+      "Utc": "2026-11-13T23:30:10.3854462Z"
+    },
+    {
+      "Name": "light break state label",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:10.4422924Z"
+    },
+    {
+      "Name": "light break countdown has a distinct label",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:10.4458386Z"
+    },
+    {
+      "Name": "Status centered above timer at light break",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:30:10.4555827Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-light.png",
+      "Utc": "2026-11-13T23:30:10.6818514Z"
+    },
+    {
+      "Name": "light break duration visible",
+      "Status": "PASS",
+      "Details": "05:00",
+      "Utc": "2026-11-13T23:30:10.6839120Z"
+    },
+    {
+      "Name": "light Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:11.4591158Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-light-break.png",
+      "Utc": "2026-11-13T23:30:16.0039725Z"
+    },
+    {
+      "Name": "light returns to work after skip",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:16.0321651Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 2,
+      "Utc": "2026-11-13T23:30:16.0769715Z"
+    },
+    {
+      "Name": "dark preserves both custom colours",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:16.0922206Z"
+    },
+    {
+      "Name": "dark Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:17.1152263Z"
+    },
+    {
+      "Name": "Status centered above timer at dark work",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:30:21.6227899Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-dark-work.png",
+      "Utc": "2026-11-13T23:30:21.8432149Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\history-dark.png",
+      "Utc": "2026-11-13T23:30:22.1109595Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-dark.png",
+      "Utc": "2026-11-13T23:30:22.3959599Z"
+    },
+    {
+      "Name": "dark break state label",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:22.4513574Z"
+    },
+    {
+      "Name": "dark break countdown has a distinct label",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:22.4537449Z"
+    },
+    {
+      "Name": "Status centered above timer at dark break",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:30:22.4600741Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-dark.png",
+      "Utc": "2026-11-13T23:30:22.6911063Z"
+    },
+    {
+      "Name": "dark break duration visible",
+      "Status": "PASS",
+      "Details": "05:00",
+      "Utc": "2026-11-13T23:30:22.6933060Z"
+    },
+    {
+      "Name": "dark Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:23.4802859Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-dark-break.png",
+      "Utc": "2026-11-13T23:30:28.0466691Z"
+    },
+    {
+      "Name": "dark returns to work after skip",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:28.0689800Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 3,
+      "Utc": "2026-11-13T23:30:28.1143909Z"
+    },
+    {
+      "Name": "high-contrast-dark preserves both custom colours",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:28.1291073Z"
+    },
+    {
+      "Name": "high-contrast-dark Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:29.2230156Z"
+    },
+    {
+      "Name": "Status centered above timer at high-contrast-dark work",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:30:33.7303284Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-high-contrast-dark-work.png",
+      "Utc": "2026-11-13T23:30:33.9657791Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-high-contrast-dark-work.png",
+      "Utc": "2026-11-13T23:30:34.2016431Z"
+    },
+    {
+      "Name": "High Contrast Dark overrides custom Work Mode colour rendered timer-ring pixels equal #FFFF00",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#FFFF00",
+        "MatchingRingPixels": 12,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-high-contrast-dark-work.png"
+      },
+      "Utc": "2026-11-13T23:30:34.4113779Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\history-high-contrast-dark.png",
+      "Utc": "2026-11-13T23:30:34.6934426Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-high-contrast-dark.png",
+      "Utc": "2026-11-13T23:30:34.9785540Z"
+    },
+    {
+      "Name": "high-contrast-dark break state label",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:35.0349781Z"
+    },
+    {
+      "Name": "high-contrast-dark break countdown has a distinct label",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:35.0376516Z"
+    },
+    {
+      "Name": "Status centered above timer at high-contrast-dark break",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:30:35.0427742Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-high-contrast-dark.png",
+      "Utc": "2026-11-13T23:30:35.2736455Z"
+    },
+    {
+      "Name": "high-contrast-dark break duration visible",
+      "Status": "PASS",
+      "Details": "05:00",
+      "Utc": "2026-11-13T23:30:35.2757264Z"
+    },
+    {
+      "Name": "high-contrast-dark Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:36.0434454Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-high-contrast-dark-break.png",
+      "Utc": "2026-11-13T23:30:40.5795035Z"
+    },
+    {
+      "Name": "High Contrast Dark overrides custom Break Mode colour rendered timer-ring pixels equal #00FFFF",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#00FFFF",
+        "MatchingRingPixels": 402,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-high-contrast-dark-break.png"
+      },
+      "Utc": "2026-11-13T23:30:40.7853038Z"
+    },
+    {
+      "Name": "high-contrast-dark returns to work after skip",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:40.8102775Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 4,
+      "Utc": "2026-11-13T23:30:40.8579924Z"
+    },
+    {
+      "Name": "high-contrast-light preserves both custom colours",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:40.8724586Z"
+    },
+    {
+      "Name": "high-contrast-light Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:41.8810384Z"
+    },
+    {
+      "Name": "Status centered above timer at high-contrast-light work",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:30:46.3867784Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-high-contrast-light-work.png",
+      "Utc": "2026-11-13T23:30:46.6102768Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-high-contrast-light-work.png",
+      "Utc": "2026-11-13T23:30:46.8452436Z"
+    },
+    {
+      "Name": "High Contrast Light overrides custom Work Mode colour rendered timer-ring pixels equal #0000B3",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#0000B3",
+        "MatchingRingPixels": 9,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-high-contrast-light-work.png"
+      },
+      "Utc": "2026-11-13T23:30:47.0561234Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\history-high-contrast-light.png",
+      "Utc": "2026-11-13T23:30:47.3184992Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-high-contrast-light.png",
+      "Utc": "2026-11-13T23:30:47.5739785Z"
+    },
+    {
+      "Name": "High-contrast checkbox receives keyboard focus",
+      "Status": "PASS",
+      "Details": {
+        "FocusHandle": 66234,
+        "ControlHandle": 66234
+      },
+      "Utc": "2026-11-13T23:30:47.5838200Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\settings-high-contrast-visible-focus.png",
+      "Utc": "2026-11-13T23:30:47.9523232Z"
+    },
+    {
+      "Name": "high-contrast-light break state label",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:48.0085232Z"
+    },
+    {
+      "Name": "high-contrast-light break countdown has a distinct label",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:48.0108710Z"
+    },
+    {
+      "Name": "Status centered above timer at high-contrast-light break",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:30:48.0174661Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-high-contrast-light.png",
+      "Utc": "2026-11-13T23:30:48.2321237Z"
+    },
+    {
+      "Name": "high-contrast-light break duration visible",
+      "Status": "PASS",
+      "Details": "05:00",
+      "Utc": "2026-11-13T23:30:48.2341712Z"
+    },
+    {
+      "Name": "high-contrast-light Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:49.0182029Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-high-contrast-light-break.png",
+      "Utc": "2026-11-13T23:30:53.5879554Z"
+    },
+    {
+      "Name": "High Contrast Light overrides custom Break Mode colour rendered timer-ring pixels equal #005A00",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#005A00",
+        "MatchingRingPixels": 404,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-high-contrast-light-break.png"
+      },
+      "Utc": "2026-11-13T23:30:53.7983739Z"
+    },
+    {
+      "Name": "high-contrast-light returns to work after skip",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:53.8252511Z"
+    },
+    {
+      "Name": "Actual Windows Forced Colors text, primary-button and focus colours meet contrast thresholds",
+      "Status": "PASS",
+      "Details": {
+        "WindowText": "#FFFFFF",
+        "WindowBackground": "#202020",
+        "WindowTextRatio": 16.29,
+        "ButtonText": "#263B50",
+        "ButtonBackground": "#8EE3F0",
+        "ButtonTextRatio": 7.89,
+        "Focus": "#8EE3F0",
+        "ButtonFace": "#202020",
+        "FocusRatio": 11.17
+      },
+      "Utc": "2026-11-13T23:30:55.8506927Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 0,
+      "Utc": "2026-11-13T23:30:55.8926431Z"
+    },
+    {
+      "Name": "Windows Forced Colors preserves saved custom colours under follow-windows",
+      "Status": "PASS",
+      "Details": {
+        "Work": "2278750",
+        "Break": "15680580",
+        "WorkOverride": "1",
+        "BreakOverride": "1"
+      },
+      "Utc": "2026-11-13T23:30:55.9073827Z"
+    },
+    {
+      "Name": "Windows Forced Colors follow-windows Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:30:56.9183688Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-follow-windows-work.png",
+      "Utc": "2026-11-13T23:31:01.6534592Z"
+    },
+    {
+      "Name": "Windows Forced Colors follow-windows Work Mode ring rendered timer-ring pixels equal #8EE3F0",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8EE3F0",
+        "MatchingRingPixels": 9,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-follow-windows-work.png"
+      },
+      "Utc": "2026-11-13T23:31:01.8643714Z"
+    },
+    {
+      "Name": "Windows Forced Colors follow-windows retains the named Break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:01.9071434Z"
+    },
+    {
+      "Name": "Windows Forced Colors follow-windows retains a distinct Break countdown caption",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:01.9113868Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-follow-windows-reminder.png",
+      "Utc": "2026-11-13T23:31:02.1325293Z"
+    },
+    {
+      "Name": "Windows Forced Colors follow-windows Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:02.9185264Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-follow-windows-break.png",
+      "Utc": "2026-11-13T23:31:07.4528962Z"
+    },
+    {
+      "Name": "Windows Forced Colors follow-windows Break Mode ring rendered timer-ring pixels equal #75E9FC",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#75E9FC",
+        "MatchingRingPixels": 405,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-follow-windows-break.png"
+      },
+      "Utc": "2026-11-13T23:31:07.6609841Z"
+    },
+    {
+      "Name": "Windows Forced Colors follow-windows returns to Work Mode after Break",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:07.6875571Z"
+    },
+    {
+      "Name": "Windows Forced Colors follow-windows Work after Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:07.9199819Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-follow-windows-work-after-break.png",
+      "Utc": "2026-11-13T23:31:12.6393088Z"
+    },
+    {
+      "Name": "Windows Forced Colors follow-windows restores Work Mode ring after Break rendered timer-ring pixels equal #8EE3F0",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8EE3F0",
+        "MatchingRingPixels": 6,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-follow-windows-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:31:12.8447448Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 1,
+      "Utc": "2026-11-13T23:31:12.8856698Z"
+    },
+    {
+      "Name": "Windows Forced Colors preserves saved custom colours under light",
+      "Status": "PASS",
+      "Details": {
+        "Work": "2278750",
+        "Break": "15680580",
+        "WorkOverride": "1",
+        "BreakOverride": "1"
+      },
+      "Utc": "2026-11-13T23:31:12.9005210Z"
+    },
+    {
+      "Name": "Windows Forced Colors light Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:13.9137384Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-light-work.png",
+      "Utc": "2026-11-13T23:31:18.6404837Z"
+    },
+    {
+      "Name": "Windows Forced Colors light Work Mode ring rendered timer-ring pixels equal #8EE3F0",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8EE3F0",
+        "MatchingRingPixels": 9,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-light-work.png"
+      },
+      "Utc": "2026-11-13T23:31:18.8807887Z"
+    },
+    {
+      "Name": "Windows Forced Colors light retains the named Break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:18.9204484Z"
+    },
+    {
+      "Name": "Windows Forced Colors light retains a distinct Break countdown caption",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:18.9247766Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-light-reminder.png",
+      "Utc": "2026-11-13T23:31:19.1310268Z"
+    },
+    {
+      "Name": "Windows Forced Colors light Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:20.0055236Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-light-break.png",
+      "Utc": "2026-11-13T23:31:24.5728049Z"
+    },
+    {
+      "Name": "Windows Forced Colors light Break Mode ring rendered timer-ring pixels equal #75E9FC",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#75E9FC",
+        "MatchingRingPixels": 402,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-light-break.png"
+      },
+      "Utc": "2026-11-13T23:31:24.7808631Z"
+    },
+    {
+      "Name": "Windows Forced Colors light returns to Work Mode after Break",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:24.8014466Z"
+    },
+    {
+      "Name": "Windows Forced Colors light Work after Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:24.9281407Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-light-work-after-break.png",
+      "Utc": "2026-11-13T23:31:29.6546982Z"
+    },
+    {
+      "Name": "Windows Forced Colors light restores Work Mode ring after Break rendered timer-ring pixels equal #8EE3F0",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8EE3F0",
+        "MatchingRingPixels": 6,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-light-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:31:29.8619967Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 2,
+      "Utc": "2026-11-13T23:31:29.9023897Z"
+    },
+    {
+      "Name": "Windows Forced Colors preserves saved custom colours under dark",
+      "Status": "PASS",
+      "Details": {
+        "Work": "2278750",
+        "Break": "15680580",
+        "WorkOverride": "1",
+        "BreakOverride": "1"
+      },
+      "Utc": "2026-11-13T23:31:29.9170399Z"
+    },
+    {
+      "Name": "Windows Forced Colors dark Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:30.9192183Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-dark-work.png",
+      "Utc": "2026-11-13T23:31:35.6401633Z"
+    },
+    {
+      "Name": "Windows Forced Colors dark Work Mode ring rendered timer-ring pixels equal #8EE3F0",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8EE3F0",
+        "MatchingRingPixels": 9,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-dark-work.png"
+      },
+      "Utc": "2026-11-13T23:31:35.8454546Z"
+    },
+    {
+      "Name": "Windows Forced Colors dark retains the named Break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:35.8859335Z"
+    },
+    {
+      "Name": "Windows Forced Colors dark retains a distinct Break countdown caption",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:35.8882626Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-dark-reminder.png",
+      "Utc": "2026-11-13T23:31:36.1213233Z"
+    },
+    {
+      "Name": "Windows Forced Colors dark Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:37.0118976Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-dark-break.png",
+      "Utc": "2026-11-13T23:31:41.5500905Z"
+    },
+    {
+      "Name": "Windows Forced Colors dark Break Mode ring rendered timer-ring pixels equal #75E9FC",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#75E9FC",
+        "MatchingRingPixels": 408,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-dark-break.png"
+      },
+      "Utc": "2026-11-13T23:31:41.7542895Z"
+    },
+    {
+      "Name": "Windows Forced Colors dark returns to Work Mode after Break",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:41.7778618Z"
+    },
+    {
+      "Name": "Windows Forced Colors dark Work after Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:42.0363917Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-dark-work-after-break.png",
+      "Utc": "2026-11-13T23:31:46.7473660Z"
+    },
+    {
+      "Name": "Windows Forced Colors dark restores Work Mode ring after Break rendered timer-ring pixels equal #8EE3F0",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8EE3F0",
+        "MatchingRingPixels": 6,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-dark-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:31:46.9540612Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 3,
+      "Utc": "2026-11-13T23:31:46.9958116Z"
+    },
+    {
+      "Name": "Windows Forced Colors preserves saved custom colours under high-contrast-dark",
+      "Status": "PASS",
+      "Details": {
+        "Work": "2278750",
+        "Break": "15680580",
+        "WorkOverride": "1",
+        "BreakOverride": "1"
+      },
+      "Utc": "2026-11-13T23:31:47.0103375Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-dark Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:48.0222370Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-dark-work.png",
+      "Utc": "2026-11-13T23:31:52.7478777Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-dark Work Mode ring rendered timer-ring pixels equal #8EE3F0",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8EE3F0",
+        "MatchingRingPixels": 9,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-dark-work.png"
+      },
+      "Utc": "2026-11-13T23:31:52.9552835Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-dark retains the named Break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:52.9952969Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-dark retains a distinct Break countdown caption",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:52.9975010Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-dark-reminder.png",
+      "Utc": "2026-11-13T23:31:53.2147088Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-dark Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:54.1108060Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-dark-break.png",
+      "Utc": "2026-11-13T23:31:58.6779428Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-dark Break Mode ring rendered timer-ring pixels equal #75E9FC",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#75E9FC",
+        "MatchingRingPixels": 407,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-dark-break.png"
+      },
+      "Utc": "2026-11-13T23:31:58.8856688Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-dark returns to Work Mode after Break",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:58.9074669Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-dark Work after Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:31:59.0334889Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-dark-work-after-break.png",
+      "Utc": "2026-11-13T23:32:03.7762627Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-dark restores Work Mode ring after Break rendered timer-ring pixels equal #8EE3F0",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8EE3F0",
+        "MatchingRingPixels": 6,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-dark-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:32:03.9810042Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 4,
+      "Utc": "2026-11-13T23:32:04.0219592Z"
+    },
+    {
+      "Name": "Windows Forced Colors preserves saved custom colours under high-contrast-light",
+      "Status": "PASS",
+      "Details": {
+        "Work": "2278750",
+        "Break": "15680580",
+        "WorkOverride": "1",
+        "BreakOverride": "1"
+      },
+      "Utc": "2026-11-13T23:32:04.0364220Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-light Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:05.0776597Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-light-work.png",
+      "Utc": "2026-11-13T23:32:09.8205225Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-light Work Mode ring rendered timer-ring pixels equal #8EE3F0",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8EE3F0",
+        "MatchingRingPixels": 9,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-light-work.png"
+      },
+      "Utc": "2026-11-13T23:32:10.0276612Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-light retains the named Break status",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:10.0661063Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-light retains a distinct Break countdown caption",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:10.0702278Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-light-reminder.png",
+      "Utc": "2026-11-13T23:32:10.2879657Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-light Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:11.0740669Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-light-break.png",
+      "Utc": "2026-11-13T23:32:15.6128274Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-light Break Mode ring rendered timer-ring pixels equal #75E9FC",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#75E9FC",
+        "MatchingRingPixels": 403,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-light-break.png"
+      },
+      "Utc": "2026-11-13T23:32:15.8197162Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-light returns to Work Mode after Break",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:15.8427009Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-light Work after Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:16.0749170Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-light-work-after-break.png",
+      "Utc": "2026-11-13T23:32:20.8228035Z"
+    },
+    {
+      "Name": "Windows Forced Colors high-contrast-light restores Work Mode ring after Break rendered timer-ring pixels equal #8EE3F0",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#8EE3F0",
+        "MatchingRingPixels": 6,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-high-contrast-light-work-after-break.png"
+      },
+      "Utc": "2026-11-13T23:32:21.0286479Z"
+    },
+    {
+      "Name": "Work colour picker remains keyboard-accessible under actual Windows Forced Colors",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:21.0646175Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-visible-keyboard-focus.png",
+      "Utc": "2026-11-13T23:32:21.3215376Z"
+    },
+    {
+      "Name": "Windows reports Forced Colors disabled before testing saved custom accents",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:23.3341691Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 2,
+      "Utc": "2026-11-13T23:32:23.3904715Z"
+    },
+    {
+      "Name": "Turning Windows High Contrast off restores saved custom colour preferences",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:23.4045201Z"
+    },
+    {
+      "Name": "Disabling Windows Forced Colors restored Work countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:24.4480653Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-disabled-restored-custom-work.png",
+      "Utc": "2026-11-13T23:32:29.1948003Z"
+    },
+    {
+      "Name": "Disabling Windows Forced Colors restores custom Work Mode accent rendered timer-ring pixels equal #22C55E",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#22C55E",
+        "MatchingRingPixels": 9,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-disabled-restored-custom-work.png"
+      },
+      "Utc": "2026-11-13T23:32:29.4000982Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-disabled-restored-custom-break-reminder.png",
+      "Utc": "2026-11-13T23:32:29.6733159Z"
+    },
+    {
+      "Name": "Disabling Windows Forced Colors restored Break countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:30.4613481Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-disabled-restored-custom-break.png",
+      "Utc": "2026-11-13T23:32:35.0294087Z"
+    },
+    {
+      "Name": "Disabling Windows Forced Colors restores custom Break Mode accent rendered timer-ring pixels equal #EF4444",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#EF4444",
+        "MatchingRingPixels": 403,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\system-forced-colors-disabled-restored-custom-break.png"
+      },
+      "Utc": "2026-11-13T23:32:35.2340345Z"
+    },
+    {
+      "Name": "Normal Work mode returns after system Forced Colors is disabled",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:35.2580163Z"
+    },
+    {
+      "Name": "Work interval text",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "1",
+        "Actual": "1"
+      },
+      "Utc": "2026-11-13T23:32:37.3387120Z"
+    },
+    {
+      "Name": "Work interval value is applied and persisted",
+      "Status": "PASS",
+      "Details": "workMinutes=1",
+      "Utc": "2026-11-13T23:32:37.3395458Z"
+    },
+    {
+      "Name": "Break duration text",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "300",
+        "Actual": "300"
+      },
+      "Utc": "2026-11-13T23:32:37.3522513Z"
+    },
+    {
+      "Name": "Break duration value is applied and persisted",
+      "Status": "PASS",
+      "Details": "breakSeconds=300",
+      "Utc": "2026-11-13T23:32:37.3527048Z"
+    },
+    {
+      "Name": "Accelerated test work interval resets to one minute",
+      "Status": "PASS",
+      "Details": 60,
+      "Utc": "2026-11-13T23:32:37.3755409Z"
+    },
+    {
+      "Name": "Accelerated work interval automatically starts a break",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:43.4749665Z"
+    },
+    {
+      "Name": "Automatic break countdown uses the configured five-minute duration",
+      "Status": "PASS",
+      "Details": "05:00",
+      "Utc": "2026-11-13T23:32:43.4787702Z"
+    },
+    {
+      "Name": "Snooze is visibly distinct from work and break",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:43.5053818Z"
+    },
+    {
+      "Name": "Status centered above timer at snoozed status",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:32:43.5115438Z"
+    },
+    {
+      "Name": "Pause state remains distinct",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:43.5238099Z"
+    },
+    {
+      "Name": "Status centered above timer at paused snooze status",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 512.0,
+        "RingCenter": 512.0,
+        "Difference": 0.0,
+        "WindowWidth": 804,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:32:43.5297180Z"
+    },
+    {
+      "Name": "Snoozed reminder returns after its accelerated delay",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:32:49.5886546Z"
+    },
+    {
+      "Name": "Work interval text",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "180",
+        "Actual": "180"
+      },
+      "Utc": "2026-11-13T23:32:49.6291338Z"
+    },
+    {
+      "Name": "Work interval value is applied and persisted",
+      "Status": "PASS",
+      "Details": "workMinutes=180",
+      "Utc": "2026-11-13T23:32:49.6297362Z"
+    },
+    {
+      "Name": "Break duration text",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "300",
+        "Actual": "300"
+      },
+      "Utc": "2026-11-13T23:32:49.6420192Z"
+    },
+    {
+      "Name": "Break duration value is applied and persisted",
+      "Status": "PASS",
+      "Details": "breakSeconds=300",
+      "Utc": "2026-11-13T23:32:49.6424403Z"
+    },
+    {
+      "Name": "Status centered above timer at 680 x 660 resize",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 359.5,
+        "RingCenter": 359.5,
+        "Difference": 0.0,
+        "WindowWidth": 664,
+        "RingDiameter": 233
+      },
+      "Utc": "2026-11-13T23:32:49.9252094Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-resize-680x660.png",
+      "Utc": "2026-11-13T23:32:50.1536327Z"
+    },
+    {
+      "Name": "Status centered above timer at 964 x 708 resize",
+      "Status": "PASS",
+      "Details": {
+        "Dpi": 96,
+        "TextScale": 1.0,
+        "ActualCenter": 502.0,
+        "RingCenter": 502.0,
+        "Difference": 0.0,
+        "WindowWidth": 948,
+        "RingDiameter": 272
+      },
+      "Utc": "2026-11-13T23:32:50.4145188Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-resize-964x708.png",
+      "Utc": "2026-11-13T23:32:50.6502363Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 2,
+      "Utc": "2026-11-13T23:32:50.6945271Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-dark-natural.png",
+      "Utc": "2026-11-13T23:32:50.9723593Z"
+    },
+    {
+      "Name": "Natural break completion returns timer to work",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:21.9753059Z"
+    },
+    {
+      "Name": "Natural break closes its reminder window",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:21.9755851Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-dark-work-after-break.png",
+      "Utc": "2026-11-13T23:33:22.2567787Z"
+    },
+    {
+      "Name": "same-version busy button disabled",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:22.3689518Z"
+    },
+    {
+      "Name": "same-version checking feedback",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:22.3691244Z"
+    },
+    {
+      "Name": "same-version timer continues during network request",
+      "Status": "PASS",
+      "Details": {
+        "Before": 10785,
+        "After": 10772
+      },
+      "Utc": "2026-11-13T23:33:24.4824155Z"
+    },
+    {
+      "Name": "same-version check completes",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:25.4106139Z"
+    },
+    {
+      "Name": "same-version status result",
+      "Status": "PASS",
+      "Details": "Eye Break Reminder is up to date.",
+      "Utc": "2026-11-13T23:33:25.4110785Z"
+    },
+    {
+      "Name": "same-version latest label",
+      "Status": "INFO",
+      "Details": "Latest stable version: 1.3.0",
+      "Utc": "2026-11-13T23:33:25.4113808Z"
+    },
+    {
+      "Name": "Same-version latest label",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:25.4196773Z"
+    },
+    {
+      "Name": "newer-version busy button disabled",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:25.4500154Z"
+    },
+    {
+      "Name": "newer-version checking feedback",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:25.4501697Z"
+    },
+    {
+      "Name": "newer-version check completes",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:27.0097188Z"
+    },
+    {
+      "Name": "newer-version status result",
+      "Status": "PASS",
+      "Details": "An update is available. Open the official release page to review its downloads.",
+      "Utc": "2026-11-13T23:33:27.0098783Z"
+    },
+    {
+      "Name": "newer-version latest label",
+      "Status": "INFO",
+      "Details": "Latest stable version: 1.4.0",
+      "Utc": "2026-11-13T23:33:27.0100022Z"
+    },
+    {
+      "Name": "Official release button enables for a newer version",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:27.0144758Z"
+    },
+    {
+      "Name": "older-version busy button disabled",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:27.0450383Z"
+    },
+    {
+      "Name": "older-version checking feedback",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:27.0451928Z"
+    },
+    {
+      "Name": "older-version check completes",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:28.6089678Z"
+    },
+    {
+      "Name": "older-version status result",
+      "Status": "PASS",
+      "Details": "The installed version is newer than the latest stable release.",
+      "Utc": "2026-11-13T23:33:28.6091330Z"
+    },
+    {
+      "Name": "older-version latest label",
+      "Status": "INFO",
+      "Details": "Latest stable version: 1.2.0",
+      "Utc": "2026-11-13T23:33:28.6092578Z"
+    },
+    {
+      "Name": "Release link stays disabled when installed version is newer",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:28.6136909Z"
+    },
+    {
+      "Name": "prerelease busy button disabled",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:28.6440810Z"
+    },
+    {
+      "Name": "prerelease checking feedback",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:28.6443326Z"
+    },
+    {
+      "Name": "prerelease check completes",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:30.2552148Z"
+    },
+    {
+      "Name": "prerelease status result",
+      "Status": "PASS",
+      "Details": "The response was not a published stable release.",
+      "Utc": "2026-11-13T23:33:30.2553733Z"
+    },
+    {
+      "Name": "prerelease latest label",
+      "Status": "INFO",
+      "Details": "Latest stable version: unavailable",
+      "Utc": "2026-11-13T23:33:30.2554979Z"
+    },
+    {
+      "Name": "private-or-not-found busy button disabled",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:30.2860008Z"
+    },
+    {
+      "Name": "private-or-not-found checking feedback",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:30.2861554Z"
+    },
+    {
+      "Name": "private-or-not-found check completes",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:31.9044564Z"
+    },
+    {
+      "Name": "private-or-not-found status result",
+      "Status": "PASS",
+      "Details": "No public stable release was found. Private repositories cannot be checked without authentication.",
+      "Utc": "2026-11-13T23:33:31.9046202Z"
+    },
+    {
+      "Name": "private-or-not-found latest label",
+      "Status": "INFO",
+      "Details": "Latest stable version: unavailable",
+      "Utc": "2026-11-13T23:33:31.9047461Z"
+    },
+    {
+      "Name": "rate-limit busy button disabled",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:31.9362411Z"
+    },
+    {
+      "Name": "rate-limit checking feedback",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:31.9363957Z"
+    },
+    {
+      "Name": "rate-limit check completes",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:33.5186258Z"
+    },
+    {
+      "Name": "rate-limit status result",
+      "Status": "PASS",
+      "Details": "GitHub's rate limit was reached. Try again later.",
+      "Utc": "2026-11-13T23:33:33.5187870Z"
+    },
+    {
+      "Name": "rate-limit latest label",
+      "Status": "INFO",
+      "Details": "Latest stable version: unavailable",
+      "Utc": "2026-11-13T23:33:33.5189127Z"
+    },
+    {
+      "Name": "offline busy button disabled",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:33.5497134Z"
+    },
+    {
+      "Name": "offline checking feedback",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:33.5499401Z"
+    },
+    {
+      "Name": "offline check completes",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:35.1477148Z"
+    },
+    {
+      "Name": "offline status result",
+      "Status": "PASS",
+      "Details": "Could not reach GitHub. Check your internet connection.",
+      "Utc": "2026-11-13T23:33:35.1478748Z"
+    },
+    {
+      "Name": "offline latest label",
+      "Status": "INFO",
+      "Details": "Latest stable version: unavailable",
+      "Utc": "2026-11-13T23:33:35.1480016Z"
+    },
+    {
+      "Name": "timeout busy button disabled",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:35.1793796Z"
+    },
+    {
+      "Name": "timeout checking feedback",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:35.1795371Z"
+    },
+    {
+      "Name": "timeout check completes",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:36.7301338Z"
+    },
+    {
+      "Name": "timeout status result",
+      "Status": "PASS",
+      "Details": "The update check timed out. Try again later.",
+      "Utc": "2026-11-13T23:33:36.7302943Z"
+    },
+    {
+      "Name": "timeout latest label",
+      "Status": "INFO",
+      "Details": "Latest stable version: unavailable",
+      "Utc": "2026-11-13T23:33:36.7304200Z"
+    },
+    {
+      "Name": "secure-connection busy button disabled",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:36.7604026Z"
+    },
+    {
+      "Name": "secure-connection checking feedback",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:36.7605559Z"
+    },
+    {
+      "Name": "secure-connection check completes",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:38.3284979Z"
+    },
+    {
+      "Name": "secure-connection status result",
+      "Status": "PASS",
+      "Details": "A secure connection to GitHub could not be verified.",
+      "Utc": "2026-11-13T23:33:38.3286583Z"
+    },
+    {
+      "Name": "secure-connection latest label",
+      "Status": "INFO",
+      "Details": "Latest stable version: unavailable",
+      "Utc": "2026-11-13T23:33:38.3287863Z"
+    },
+    {
+      "Name": "invalid-json busy button disabled",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:38.3593033Z"
+    },
+    {
+      "Name": "invalid-json checking feedback",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:38.3595066Z"
+    },
+    {
+      "Name": "invalid-json check completes",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:39.9579118Z"
+    },
+    {
+      "Name": "invalid-json status result",
+      "Status": "PASS",
+      "Details": "GitHub returned release information that could not be read.",
+      "Utc": "2026-11-13T23:33:39.9580694Z"
+    },
+    {
+      "Name": "invalid-json latest label",
+      "Status": "INFO",
+      "Details": "Latest stable version: unavailable",
+      "Utc": "2026-11-13T23:33:39.9581942Z"
+    },
+    {
+      "Name": "About reads installed version metadata",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:39.9732686Z"
+    },
+    {
+      "Name": "Live official GitHub release request completes or reports an error",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:40.1525729Z"
+    },
+    {
+      "Name": "Live update result does not remain busy",
+      "Status": "PASS",
+      "Details": "The installed version is newer than the latest stable release.",
+      "Utc": "2026-11-13T23:33:40.1529765Z"
+    },
+    {
+      "Name": "Public GitHub Releases API",
+      "Status": "INFO",
+      "Details": {
+        "Latest": "Latest stable version: 1.2.1",
+        "Status": "The installed version is newer than the latest stable release."
+      },
+      "Utc": "2026-11-13T23:33:40.1531708Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 4,
+      "Utc": "2026-11-13T23:33:40.1985295Z"
+    },
+    {
+      "Name": "Distinct break accent checkbox",
+      "Status": "PASS",
+      "Details": false,
+      "Utc": "2026-11-13T23:33:40.2744933Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-high-contrast-break-accent-off.png",
+      "Utc": "2026-11-13T23:33:40.5576599Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-high-contrast-break-accent-off.png",
+      "Utc": "2026-11-13T23:33:40.8022546Z"
+    },
+    {
+      "Name": "Distinct break accent checkbox",
+      "Status": "PASS",
+      "Details": true,
+      "Utc": "2026-11-13T23:33:40.8801953Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 2,
+      "Utc": "2026-11-13T23:33:40.9357324Z"
+    },
+    {
+      "Name": "Distinct break accent checkbox",
+      "Status": "PASS",
+      "Details": false,
+      "Utc": "2026-11-13T23:33:41.0096654Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-dark-break-accent-off.png",
+      "Utc": "2026-11-13T23:33:42.5980505Z"
+    },
+    {
+      "Name": "Distinct break accent disabled uses the Work Mode ring colour rendered timer-ring pixels equal #22C55E",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#22C55E",
+        "MatchingRingPixels": 84,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\timer-dark-break-accent-off.png"
+      },
+      "Utc": "2026-11-13T23:33:42.8066878Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\reminder-dark-break-accent-off.png",
+      "Utc": "2026-11-13T23:33:43.0312645Z"
+    },
+    {
+      "Name": "Distinct break accent checkbox",
+      "Status": "PASS",
+      "Details": true,
+      "Utc": "2026-11-13T23:33:43.1116479Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 4,
+      "Utc": "2026-11-13T23:33:43.1906988Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\about-update-checker.png",
+      "Utc": "2026-11-13T23:33:43.4676969Z"
+    },
+    {
+      "Name": "Selected theme persists across application restart",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:43.7354230Z"
+    },
+    {
+      "Name": "Custom Work Mode colour persists across application restart",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:43.7361162Z"
+    },
+    {
+      "Name": "Custom Break Mode colour persists across application restart",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:43.7368546Z"
+    },
+    {
+      "Name": "Both custom color swatches restore after application restart",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:43.7530674Z"
+    },
+    {
+      "Name": "Native picker custom-colour palette persists its added colour across restart",
+      "Status": "PASS",
+      "Details": {
+        "PaletteIndex": 0,
+        "Stored": "2278750"
+      },
+      "Utc": "2026-11-13T23:33:43.7540656Z"
+    },
+    {
+      "Name": "Reopen Work Mode colour picker after restart has the Win32 WS_TABSTOP keyboard style",
+      "Status": "PASS",
+      "Details": {
+        "Style": "0x50010000"
+      },
+      "Utc": "2026-11-13T23:33:43.7603056Z"
+    },
+    {
+      "Name": "Restarted native picker exposes the persisted custom swatch",
+      "Status": "PASS",
+      "Details": {
+        "ControlId": 721
+      },
+      "Utc": "2026-11-13T23:33:43.8170437Z"
+    },
+    {
+      "Name": "Persisted native custom-colour swatch selects the same RGB after restart",
+      "Status": "PASS",
+      "Details": [
+        34,
+        197,
+        94
+      ],
+      "Utc": "2026-11-13T23:33:43.8237411Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\theme-persistence-high-contrast-light.png",
+      "Utc": "2026-11-13T23:33:44.1339906Z"
+    },
+    {
+      "Name": "Reset clears only both custom accent overrides",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:44.1413493Z"
+    },
+    {
+      "Name": "Reset shows the accessible defaults for the active high-contrast theme",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:44.1656507Z"
+    },
+    {
+      "Name": "Reset preserves the selected theme",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:44.1720302Z"
+    },
+    {
+      "Name": "Reset does not modify saved timer state",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:44.1732535Z"
+    },
+    {
+      "Name": "Theme selection",
+      "Status": "PASS",
+      "Details": 2,
+      "Utc": "2026-11-13T23:33:44.2107858Z"
+    },
+    {
+      "Name": "Reset restores the original Dark theme accent colours",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:44.2710853Z"
+    },
+    {
+      "Name": "Reset to default Work Mode countdown advances before rendered ring sampling",
+      "Status": "PASS",
+      "Details": null,
+      "Utc": "2026-11-13T23:33:45.2934338Z"
+    },
+    {
+      "Name": "Screenshot",
+      "Status": "PASS",
+      "Details": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-reset-default-work.png",
+      "Utc": "2026-11-13T23:33:50.0306234Z"
+    },
+    {
+      "Name": "Reset restores rendered default Work Mode ring rendered timer-ring pixels equal #60A5FA",
+      "Status": "PASS",
+      "Details": {
+        "Expected": "#60A5FA",
+        "MatchingRingPixels": 12,
+        "RingDiameter": 264,
+        "Screenshot": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence\\custom-reset-default-work.png"
+      },
+      "Utc": "2026-11-13T23:33:50.2381509Z"
+    },
+    {
+      "Name": "GUI acceptance suite",
+      "Status": "PASS",
+      "Details": {
+        "Assertions": 519,
+        "EvidenceDirectory": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence",
+        "TestDataDirectory": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\test-data",
+        "Version": "1.3.0"
+      },
+      "Utc": "2026-11-13T23:33:50.2892628Z"
+    }
+  ],
+  "EvidenceDirectory": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\evidence",
+  "TestDataDirectory": "D:\\a\\EYE-BREAK-REMINDER\\EYE-BREAK-REMINDER\\build\\gui-test\\test-data"
+}
