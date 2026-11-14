@@ -1292,8 +1292,12 @@ function Test-InstalledSettingsControls {
   for($display=0;$display -lt $displayCount;$display++){Set-Combo $script:mainWindow 115 $display "Selected display $display";Require ((Read-SettingsMap $settingsPath)['selectedMonitor'].Length -gt 0) "Selected display $display persists a device identity"}
 
   Switch-Settings 4
+  $workPicker=Open-InstalledColorPicker 127 'Installed Work picker for exhaustive theme sweep';Set-InstalledPickerRgb $workPicker 139 92 246;Close-InstalledColorPicker $workPicker $true
+  $breakPicker=Open-InstalledColorPicker 128 'Installed Break picker for exhaustive theme sweep';Set-InstalledPickerRgb $breakPicker 249 115 22;Close-InstalledColorPicker $breakPicker $true
+  Assert-InstalledSetting 'customWorkAccent' '1' 'Work custom accent is enabled for theme-surface sweep';Assert-InstalledSetting 'workAccentColor' ([string][int]0x8B5CF6) 'Work custom RGB is saved before theme-surface sweep'
+  Assert-InstalledSetting 'customBreakAccent' '1' 'Break custom accent is enabled for theme-surface sweep';Assert-InstalledSetting 'breakAccentColor' ([string][int]0xF97316) 'Break custom RGB is saved before theme-surface sweep'
   foreach($theme in 0..4){
-    Set-Combo $script:mainWindow 106 $theme "Theme sweep $theme";Assert-InstalledSetting 'theme' ([string]$theme) "Theme $theme persists";Capture-ActiveWindow $script:mainWindow "settings-theme-$theme.png"|Out-Null
+    Set-Combo $script:mainWindow 106 $theme "Theme sweep $theme";Assert-InstalledSetting 'theme' ([string]$theme) "Theme $theme persists";Assert-InstalledSetting 'workAccentColor' ([string][int]0x8B5CF6) "Theme $theme preserves Work custom RGB";Assert-InstalledSetting 'breakAccentColor' ([string][int]0xF97316) "Theme $theme preserves Break custom RGB";Capture-ActiveWindow $script:mainWindow "settings-theme-$theme.png"|Out-Null
     Switch-Timer;Capture-ActiveWindow $script:mainWindow "theme-$theme-timer.png"|Out-Null
     Click-Control $script:mainWindow 11 "Theme $theme History navigation";Capture-ActiveWindow $script:mainWindow "theme-$theme-history.png"|Out-Null
     Switch-Timer;Click-Control $script:mainWindow 22 "Theme $theme reminder preview"
@@ -1304,6 +1308,15 @@ function Test-InstalledSettingsControls {
     Switch-Settings 4
   }
   foreach($value in @($false,$true)){Set-Check $script:mainWindow 124 $value 'Distinct Break accent';Assert-InstalledSetting 'breakModeColors' ([string][int]$value) "Distinct Break accent setting persists as $value"}
+  Set-Combo $script:mainWindow 106 2 'Normal Dark theme before accent pixel test';Switch-Timer;Click-Control $script:mainWindow 22 'Start distinct custom Break ring pixel test'
+  $accentBreakWait=[Diagnostics.Stopwatch]::StartNew();$accentBreakWindow=[IntPtr]::Zero;while($accentBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$accentBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
+  Require ($accentBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Custom-accent Break enters the named Break state';Wait-ForRingProgress 'Distinct custom Break accent';$accentBreakShot=Capture-PrintWindow $script:mainWindow 'settings-sweep-distinct-break-ring.png';if($accentBreakShot){Assert-InstalledTimerRingPixel $accentBreakShot '#F97316' 'Distinct Break mode uses its custom orange timer-ring pixels'}
+  Click-Control $accentBreakWindow 24 'Complete distinct custom Break pixel test';Require ((Get-Status)-like'*Running*') 'Work resumes after distinct custom Break pixel test'
+  Switch-Settings 4;Set-Check $script:mainWindow 124 $false 'Disable distinct Break colour for ring pixel test';Assert-InstalledSetting 'breakModeColors' '0' 'Distinct Break colour is disabled independently';Assert-InstalledSetting 'breakAccentColor' ([string][int]0xF97316) 'Disabling distinct Break colour preserves its custom preference';Switch-Timer;Click-Control $script:mainWindow 22 'Start shared Work-accent Break ring pixel test'
+  $sharedBreakWait=[Diagnostics.Stopwatch]::StartNew();$sharedBreakWindow=[IntPtr]::Zero;while($sharedBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$sharedBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
+  Require ($sharedBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Shared-accent Break enters the named Break state';Wait-ForRingProgress 'Shared Work accent during Break';$sharedBreakShot=Capture-PrintWindow $script:mainWindow 'settings-sweep-shared-break-ring.png';if($sharedBreakShot){Assert-InstalledTimerRingPixel $sharedBreakShot '#8B5CF6' 'Disabled distinct Break colours use the custom Work ring pixels'}
+  Click-Control $sharedBreakWindow 24 'Complete shared Work-accent Break pixel test';Require ((Get-Status)-like'*Running*') 'Work resumes after shared Work-accent Break pixel test'
+  Switch-Settings 4;Set-Check $script:mainWindow 124 $true 'Restore distinct Break colour setting after ring pixel test';Assert-InstalledSetting 'breakModeColors' '1' 'Distinct Break colour is restored after shared-accent test'
   foreach($entry in @(@(110,'autoStart','Start timer automatically'),@(111,'startup','Start with Windows'),@(112,'tray','Minimize to system tray'),@(113,'restore','Resume countdown on reopening'),@(114,'pauseLocked','Pause while workstation is locked'))){
     $id=[int]$entry[0];$key=[string]$entry[1];$name=[string]$entry[2]
     foreach($value in @($false,$true)){Set-Check $script:mainWindow $id $value $name;Assert-InstalledSetting $key ([string][int]$value) "$name persists as $value"}
