@@ -129,10 +129,38 @@ public static class EBR_PRE_NATIVE {
 }
 '@
 Add-Type -TypeDefinition $native -ErrorAction Stop
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+[StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+public struct EBR_WAVEOUTCAPS {
+  public ushort wMid, wPid, vDriverVersion;
+  [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string szPname;
+  public uint dwFormats;
+  public ushort wChannels, wReserved1;
+  public uint dwSupport;
+}
+public static class EBR_AUDIO_INVENTORY {
+  [DllImport("winmm.dll", ExactSpelling=true)] public static extern uint waveOutGetNumDevs();
+  [DllImport("winmm.dll", CharSet=CharSet.Unicode, ExactSpelling=true)] public static extern uint waveOutGetDevCapsW(UIntPtr deviceId, out EBR_WAVEOUTCAPS caps, uint size);
+}
+'@ -ErrorAction Stop
 Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
 Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
 Add-Type -AssemblyName System.Drawing -ErrorAction Stop
 Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+
+# Read-only inventory: this identifies whether the runner exposes a multimedia
+# playback device. It does not open the device or play audio.
+$audioDevices = [System.Collections.Generic.List[object]]::new()
+$audioDeviceCount = [EBR_AUDIO_INVENTORY]::waveOutGetNumDevs()
+for ($deviceIndex = 0; $deviceIndex -lt $audioDeviceCount; $deviceIndex++) {
+  $audioCaps = New-Object EBR_WAVEOUTCAPS
+  $audioResult = [EBR_AUDIO_INVENTORY]::waveOutGetDevCapsW([UIntPtr]$deviceIndex, [ref]$audioCaps, [uint32][Runtime.InteropServices.Marshal]::SizeOf([type][EBR_WAVEOUTCAPS]))
+  $audioDevices.Add([pscustomobject]@{Index=$deviceIndex;Name=$audioCaps.szPname;Channels=$audioCaps.wChannels;Formats=$audioCaps.dwFormats;Support=$audioCaps.dwSupport;ReturnCode=$audioResult})
+}
+$audioInventory = [pscustomobject]@{Api='winmm.waveOutGetNumDevs/waveOutGetDevCapsW';DeviceCount=[int]$audioDeviceCount;Devices=@($audioDevices);PlaybackAttempted=$false;LoopbackCaptureAttempted=$false;ObservedUtc=[DateTime]::UtcNow.ToString('o')}
+$audioInventory | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'windows-audio-endpoint-inventory.json') -Encoding UTF8
 
 function Add-Event([string]$Name, [string]$Status, $Details=$null) {
   $script:events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')})
