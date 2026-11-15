@@ -820,16 +820,6 @@ jobs:
           try { & python .\scripts\verify.py; if ($LASTEXITCODE -ne 0) { throw "Original source verifier failed with exit code $LASTEXITCODE." } }
           finally { Pop-Location }
 
-      - name: Smoke-test the original standalone and portable executables
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          & .\tests\windows_candidate_binary_smoke.ps1 `
-            -StandaloneExecutable '.\release\EyeBreakReminder.exe' `
-            -PortableArchive '.\release\EyeBreakReminder-Portable-x64.zip' `
-            -ExpectedProductVersion '1.3.0' `
-            -EvidenceDirectory '.\build\original-authoritative-smoke'
-
       - name: Retest the original candidate installer and installed application
         shell: pwsh
         run: |
@@ -847,6 +837,20 @@ jobs:
             -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
             -ExecutablePath '.\release\EyeBreakReminder.exe' `
             -EvidenceDirectory '.\build\original-authoritative-standard-user'
+
+      # Run standalone and portable smoke tests after the installed-application
+      # isolation checks. Launching either executable creates its user-data
+      # directory, which would otherwise make the installer harness's initial
+      # clean-profile prerequisite fail before it tests the original candidate.
+      - name: Smoke-test the original standalone and portable executables
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_candidate_binary_smoke.ps1 `
+            -StandaloneExecutable '.\release\EyeBreakReminder.exe' `
+            -PortableArchive '.\release\EyeBreakReminder-Portable-x64.zip' `
+            -ExpectedProductVersion '1.3.0' `
+            -EvidenceDirectory '.\build\original-authoritative-smoke'
 
       - name: Verify the preserved original candidate stayed byte-identical
         if: always()
