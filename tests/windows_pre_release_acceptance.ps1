@@ -1196,7 +1196,7 @@ function Test-OsAppearanceAndTextScale {
         Require ($saved['customWorkAccent'] -eq '1' -and $saved['workAccentColor'] -eq [string][int]0x8B5CF6 -and $saved['customBreakAccent'] -eq '1' -and $saved['breakAccentColor'] -eq [string][int]0xF97316) "Installed Windows Forced Colors preserves saved custom colours under $($themeNames[$theme])" ([pscustomobject]@{Work=$saved['workAccentColor'];Break=$saved['breakAccentColor']})
         $highlight=Get-InstalledSystemColorHex 13;Click-Control $script:mainWindow 21 "Reset installed Work timer for $($themeNames[$theme]) system contrast";Wait-ForRingProgress "Installed $($themeNames[$theme]) system Forced Colors Work"
         $workShot=Capture-PrintWindow $script:mainWindow "installed-system-forced-colors-$($themeNames[$theme])-work.png";if($workShot){Assert-InstalledTimerRingPixel $workShot $highlight "Installed Forced Colors $($themeNames[$theme]) Work ring"}
-        Click-Control $script:mainWindow 22 "Start installed Break under $($themeNames[$theme]) system contrast"
+        Invoke-InstalledBreakNow "Start installed Break under $($themeNames[$theme]) system contrast"
         $wait=[Diagnostics.Stopwatch]::StartNew();$forcedBreak=[IntPtr]::Zero;while($wait.Elapsed.TotalSeconds-lt8){$visibleBreaks=Get-BreakWindow $script:appPid;if($visibleBreaks.Count-eq1){$forcedBreak=$visibleBreaks[0];break};Start-Sleep -Milliseconds 100}
         Require ($forcedBreak-ne[IntPtr]::Zero-and(Wait-ForStatus 'Taking an eye break')-like'*Taking an eye break*') "Installed $($themeNames[$theme]) system Forced Colors keeps the named Break state"
         Require ([EBR_PRE_NATIVE]::Text((Get-Control $script:mainWindow 42 'System Forced Colors break countdown caption').Handle) -eq 'Break time remaining') "Installed $($themeNames[$theme]) system Forced Colors keeps a distinct Break countdown label"
@@ -1239,7 +1239,7 @@ function Test-OsAppearanceAndTextScale {
     Require ((Get-Combo $script:mainWindow 106 'Restored test theme') -eq 1) 'Appearance integration restores the Light theme test fixture'
     Switch-Timer;Click-Control $script:mainWindow 21 'Restore Work state after installed Windows appearance tests';Wait-ForRingProgress 'Installed Work after system Forced Colors'
     $workRestored=Capture-PrintWindow $script:mainWindow 'installed-custom-work-after-forced-colors.png';if($workRestored){Assert-InstalledTimerRingPixel $workRestored '#8B5CF6' 'Installed Work accent restored after system Forced Colors'}
-    Click-Control $script:mainWindow 22 'Verify installed Break accent restored after system Forced Colors';$restoredBreak=[IntPtr]::Zero;$restoredWait=[Diagnostics.Stopwatch]::StartNew();while($restoredWait.Elapsed.TotalSeconds-lt8){$visibleBreaks=Get-BreakWindow $script:appPid;if($visibleBreaks.Count-eq1){$restoredBreak=$visibleBreaks[0];break};Start-Sleep -Milliseconds 100};Require ($restoredBreak-ne[IntPtr]::Zero) 'Installed app opens Break after system Forced Colors is disabled'
+    Invoke-InstalledBreakNow 'Verify installed Break accent restored after system Forced Colors';$restoredBreak=[IntPtr]::Zero;$restoredWait=[Diagnostics.Stopwatch]::StartNew();while($restoredWait.Elapsed.TotalSeconds-lt8){$visibleBreaks=Get-BreakWindow $script:appPid;if($visibleBreaks.Count-eq1){$restoredBreak=$visibleBreaks[0];break};Start-Sleep -Milliseconds 100};Require ($restoredBreak-ne[IntPtr]::Zero) 'Installed app opens Break after system Forced Colors is disabled'
     Wait-ForRingProgress 'Installed Break after system Forced Colors is disabled'
     $breakRestored=Capture-PrintWindow $script:mainWindow 'installed-custom-break-after-forced-colors.png';if($breakRestored){Assert-InstalledTimerRingPixel $breakRestored '#F97316' 'Installed Break accent restored after system Forced Colors'}
     Click-Control $restoredBreak 24 'Finish installed restored Break accent check';Require ((Wait-ForStatus 'Running')-like'*Running*') 'Installed app returns to Work after system Forced Colors is disabled'
@@ -1346,6 +1346,35 @@ function Test-InstalledAlarmPreview([int]$SoundIndex) {
   $windows=@(foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){$children=@();foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$children+=,$text}};[pscustomobject]@{Handle=('0x{0:X}' -f $window.ToInt64());Class=[EBR_PRE_NATIVE]::ClassName($window);Title=[EBR_PRE_NATIVE]::Text($window);Visible=[EBR_PRE_NATIVE]::IsWindowVisible($window);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($window);Children=$children}})
   Require $false "Alarm preview reaches a started or unavailable-output state for sound $SoundIndex" ([pscustomobject]@{ElapsedMilliseconds=[int]$watch.Elapsed.TotalMilliseconds;ClickTaskStatus=$clickTask.Status.ToString();MainWindowResponds=$responsive;Windows=$windows})
 }
+function Invoke-InstalledBreakNow([string]$Name) {
+  $control=Get-Control $script:mainWindow 22 $Name
+  if(-not $control.Enabled){throw "$Name control is disabled."}
+  $clickTask=[EBR_PRE_NATIVE]::SendButtonClickAsync($control.Handle)
+  $watch=[Diagnostics.Stopwatch]::StartNew();$dialog=[IntPtr]::Zero;$breakWindow=[IntPtr]::Zero
+  while($watch.Elapsed.TotalSeconds -lt 8){
+    $dialog=Find-InstalledAudioUnavailableDialog
+    if($dialog -ne [IntPtr]::Zero){break}
+    $breaks=Get-BreakWindow $script:appPid
+    if($breaks.Count -eq 1){$breakWindow=$breaks[0];break}
+    Start-Sleep -Milliseconds 50
+  }
+  $audioUnavailable=$dialog-ne[IntPtr]::Zero
+  if($audioUnavailable){
+    Capture-ActiveWindow $dialog ("installed-manual-break-audio-unavailable-{0}.png" -f ($Name -replace '[^A-Za-z0-9]+','-').Trim('-'))|Out-Null
+    $ok=@([EBR_PRE_NATIVE]::Children($dialog)|Where-Object{[EBR_PRE_NATIVE]::ClassName($_)-eq'Button' -and [EBR_PRE_NATIVE]::IsWindowVisible($_) -and [EBR_PRE_NATIVE]::IsWindowEnabled($_) -and [EBR_PRE_NATIVE]::Text($_)-match '^\s*&?OK\s*$'})
+    Require ($ok.Count-eq1) "$Name unavailable-audio dialog exposes one enabled OK button" ([pscustomobject]@{ButtonCount=$ok.Count})
+    [void][EBR_PRE_NATIVE]::SendMessageW($ok[0],0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+    $closed=[Diagnostics.Stopwatch]::StartNew();while([EBR_PRE_NATIVE]::IsWindow($dialog)-and$closed.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 50}
+    Require (-not [EBR_PRE_NATIVE]::IsWindow($dialog)) "$Name unavailable-audio dialog closes"
+    Require ($clickTask.Wait(8000)) "$Name Win32 click returns after the unavailable-audio warning is dismissed" ([pscustomobject]@{TaskStatus=$clickTask.Status.ToString()})
+    $breakWait=[Diagnostics.Stopwatch]::StartNew();while($breakWait.Elapsed.TotalSeconds-lt8){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count-eq1){$breakWindow=$breaks[0];break};Start-Sleep -Milliseconds 50}
+  }
+  $mainResponds=[EBR_PRE_NATIVE]::AppResponds($script:mainWindow,1000)
+  Require ($breakWindow-ne[IntPtr]::Zero) "$Name opens the application-owned Break reminder" ([pscustomobject]@{ElapsedMilliseconds=[int]$watch.Elapsed.TotalMilliseconds;AudioUnavailable=$audioUnavailable;MainWindowResponds=$mainResponds;ClickTaskStatus=$clickTask.Status.ToString()})
+  Require ($clickTask.Wait(8000)) "$Name click returns after the Break reminder is shown" ([pscustomobject]@{TaskStatus=$clickTask.Status.ToString()})
+  Require ((Get-Status)-like'*Taking an eye break*') "$Name shows the expected eye-break status"
+  if($audioUnavailable){Pass "$Name safely opens the Break reminder after the unavailable-audio warning"}
+}
 function Invoke-InstalledYesConfirmation([int]$ControlId,[string]$Name,[string]$PromptPattern) {
   $control=Get-Control $script:mainWindow $ControlId $Name
   $clickTask=[EBR_PRE_NATIVE]::SendButtonClickAsync($control.Handle)
@@ -1419,7 +1448,7 @@ function Test-InstalledSettingsControls {
     Set-Combo $script:mainWindow 106 $theme "Theme sweep $theme";Assert-InstalledSetting 'theme' ([string]$theme) "Theme $theme persists";Assert-InstalledSetting 'customWorkAccent' '1' "Theme $theme preserves Work custom accent enablement";Assert-InstalledSetting 'workAccentColor' ([string][int]0x8B5CF6) "Theme $theme preserves Work custom RGB";Assert-InstalledSetting 'customBreakAccent' '1' "Theme $theme preserves Break custom accent enablement";Assert-InstalledSetting 'breakAccentColor' ([string][int]0xF97316) "Theme $theme preserves Break custom RGB";Capture-ActiveWindow $script:mainWindow "settings-theme-$theme.png"|Out-Null
     Switch-Timer;Capture-ActiveWindow $script:mainWindow "theme-$theme-timer.png"|Out-Null
     Click-Control $script:mainWindow 11 "Theme $theme History navigation";Capture-ActiveWindow $script:mainWindow "theme-$theme-history.png"|Out-Null
-    Switch-Timer;Click-Control $script:mainWindow 22 "Theme $theme reminder preview"
+    Switch-Timer;Invoke-InstalledBreakNow "Theme $theme reminder preview"
     $themeBreakWait=[Diagnostics.Stopwatch]::StartNew();$themeBreakWindow=[IntPtr]::Zero;while($themeBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$themeBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
     Require ($themeBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') "Theme $theme creates a named Break reminder"
     Capture-ActiveWindow $themeBreakWindow "theme-$theme-reminder.png"|Out-Null
@@ -1427,11 +1456,11 @@ function Test-InstalledSettingsControls {
     Switch-Settings 4
   }
   foreach($value in @($false,$true)){Set-Check $script:mainWindow 124 $value 'Distinct Break accent';Assert-InstalledSetting 'breakModeColors' ([string][int]$value) "Distinct Break accent setting persists as $value"}
-  Set-Combo $script:mainWindow 106 2 'Normal Dark theme before accent pixel test';Switch-Timer;Click-Control $script:mainWindow 22 'Start distinct custom Break ring pixel test'
+  Set-Combo $script:mainWindow 106 2 'Normal Dark theme before accent pixel test';Switch-Timer;Invoke-InstalledBreakNow 'Start distinct custom Break ring pixel test'
   $accentBreakWait=[Diagnostics.Stopwatch]::StartNew();$accentBreakWindow=[IntPtr]::Zero;while($accentBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$accentBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
   Require ($accentBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Custom-accent Break enters the named Break state';Wait-ForRingProgress 'Distinct custom Break accent';$accentBreakShot=Capture-PrintWindow $script:mainWindow 'settings-sweep-distinct-break-ring.png';if($accentBreakShot){Assert-InstalledTimerRingPixel $accentBreakShot '#F97316' 'Distinct Break mode uses its custom orange timer-ring pixels'}
   Click-Control $accentBreakWindow 24 'Complete distinct custom Break pixel test';Require ((Get-Status)-like'*Running*') 'Work resumes after distinct custom Break pixel test'
-  Switch-Settings 4;Set-Check $script:mainWindow 124 $false 'Disable distinct Break colour for ring pixel test';Assert-InstalledSetting 'breakModeColors' '0' 'Distinct Break colour is disabled independently';Assert-InstalledSetting 'breakAccentColor' ([string][int]0xF97316) 'Disabling distinct Break colour preserves its custom preference';Switch-Timer;Click-Control $script:mainWindow 22 'Start shared Work-accent Break ring pixel test'
+  Switch-Settings 4;Set-Check $script:mainWindow 124 $false 'Disable distinct Break colour for ring pixel test';Assert-InstalledSetting 'breakModeColors' '0' 'Distinct Break colour is disabled independently';Assert-InstalledSetting 'breakAccentColor' ([string][int]0xF97316) 'Disabling distinct Break colour preserves its custom preference';Switch-Timer;Invoke-InstalledBreakNow 'Start shared Work-accent Break ring pixel test'
   $sharedBreakWait=[Diagnostics.Stopwatch]::StartNew();$sharedBreakWindow=[IntPtr]::Zero;while($sharedBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$sharedBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
   Require ($sharedBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Shared-accent Break enters the named Break state';Wait-ForRingProgress 'Shared Work accent during Break';$sharedBreakShot=Capture-PrintWindow $script:mainWindow 'settings-sweep-shared-break-ring.png';if($sharedBreakShot){Assert-InstalledTimerRingPixel $sharedBreakShot '#8B5CF6' 'Disabled distinct Break colours use the custom Work ring pixels'}
   Click-Control $sharedBreakWindow 24 'Complete shared Work-accent Break pixel test';Require ((Get-Status)-like'*Running*') 'Work resumes after shared Work-accent Break pixel test'
@@ -1454,7 +1483,7 @@ function Test-InstalledSettingsControls {
 
   foreach($mode in 0..2){
     Switch-Settings 3;Set-Combo $script:mainWindow 104 $mode "Reminder presentation $mode for real window test";Switch-Timer
-    Click-Control $script:mainWindow 22 "Open reminder presentation $mode"
+    Invoke-InstalledBreakNow "Open reminder presentation $mode"
     $wait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
     while($wait.Elapsed.TotalSeconds -lt 8){$wins=Get-BreakWindow $script:appPid;if($wins.Count -eq 1){$breakWindow=$wins[0];break};Start-Sleep -Milliseconds 100}
     Require ($breakWindow -ne [IntPtr]::Zero) "Reminder presentation $mode creates one visible break window"
@@ -1535,7 +1564,7 @@ function Test-FreshInstallApp {
   [void][EBR_PRE_NATIVE]::SetWindowPos($script:mainWindow,[IntPtr]::Zero,80,60,820,720,0x0004 -bor 0x0010)
   Test-InstalledUpdateCheck
   Switch-Timer
-  Click-Control $script:mainWindow 22 'Manual break for installed history and reminder test'
+  Invoke-InstalledBreakNow 'Manual break for installed history and reminder test'
   $breakWait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
   while($breakWait.Elapsed.TotalSeconds -lt 10){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$breakWindow=$breaks[0];break};Start-Sleep -Milliseconds 100}
   Require ($breakWindow -ne [IntPtr]::Zero) 'Installed app opens the native eye-break reminder window'
@@ -1938,7 +1967,7 @@ function Test-UpgradeFromV11([string]$OldInstaller) {
   Switch-Settings 4
   Set-Check $script:mainWindow 111 $true 'v1.1 start with Windows'
   Switch-Timer
-  Click-Control $script:mainWindow 22 'v1.1 manual break for migration history'
+  Invoke-InstalledBreakNow 'v1.1 manual break for migration history'
   $breakWait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
   while($breakWait.Elapsed.TotalSeconds -lt 10){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$breakWindow=$breaks[0];break};Start-Sleep -Milliseconds 100}
   Require ($breakWindow -ne [IntPtr]::Zero) 'v1.1 creates a real manual break window before upgrade'
@@ -2001,7 +2030,7 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
   Set-Combo $script:mainWindow 106 1 'v1.2.1 Light theme'
   Set-Check $script:mainWindow 111 $true 'v1.2.1 start with Windows'
   Switch-Timer
-  Click-Control $script:mainWindow 22 'v1.2.1 manual break for upgrade history'
+  Invoke-InstalledBreakNow 'v1.2.1 manual break for upgrade history'
   $breakWait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
   while($breakWait.Elapsed.TotalSeconds -lt 10){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$breakWindow=$breaks[0];break};Start-Sleep -Milliseconds 100}
   Require ($breakWindow -ne [IntPtr]::Zero) 'v1.2.1 creates a real break window before upgrade'
@@ -2056,7 +2085,7 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
     Close-InstalledColorPicker $cancelPicker $false
     Require ((Get-Content -LiteralPath $settingsPath -Raw) -ceq $beforeCancel) 'Installed picker Cancel leaves stored preferences unchanged'
     Switch-Timer
-    Click-Control $script:mainWindow 22 'Start installed custom Break pixel check'
+    Invoke-InstalledBreakNow 'Start installed custom Break pixel check'
     $breakWait=[Diagnostics.Stopwatch]::StartNew();$customBreakWindow=[IntPtr]::Zero;while($breakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$customBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
     Require ($customBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Installed custom Break retains its existing named state'
     Wait-ForRingProgress 'Installed custom Break after the v1.2.1 upgrade'
@@ -2080,7 +2109,7 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
       Switch-Timer
       Wait-ForRingProgress 'Work ring after interrupted Break restart'
       $restartWorkShot=Capture-PrintWindow $script:mainWindow 'restart-during-break-restores-custom-work-ring.png';if($restartWorkShot){Assert-InstalledTimerRingPixel $restartWorkShot '#8B5CF6' 'Work accent after interrupted Break restart'}
-      Click-Control $script:mainWindow 22 'Start a new Break after interrupted Break restart'
+      Invoke-InstalledBreakNow 'Start a new Break after interrupted Break restart'
       $afterRestartBreakWait=[Diagnostics.Stopwatch]::StartNew();$afterRestartBreakWindow=[IntPtr]::Zero;while($afterRestartBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$afterRestartBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
       Require ($afterRestartBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'A fresh Break can start after interrupted Break recovery'
       Wait-ForRingProgress 'Break ring after interrupted Break recovery'
@@ -2133,7 +2162,7 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
       Require ((Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash -eq $resetHistoryBefore) 'Installed Reset leaves history unchanged'
       Wait-ForRingProgress 'Installed default Work ring after Reset'
       $resetWorkShot=Capture-PrintWindow $script:mainWindow 'installed-reset-default-work-ring.png';if($resetWorkShot){Assert-InstalledTimerRingPixel $resetWorkShot '#1D4ED8' 'Installed Reset Work ring default'}
-      Click-Control $script:mainWindow 22 'Start installed default Break ring check after Reset'
+      Invoke-InstalledBreakNow 'Start installed default Break ring check after Reset'
       $resetBreakWait=[Diagnostics.Stopwatch]::StartNew();$resetBreakWindow=[IntPtr]::Zero;while($resetBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$resetBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
       Require ($resetBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Installed default Break remains available after Reset'
       Wait-ForRingProgress 'Installed default Break ring after Reset'
