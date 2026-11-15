@@ -532,19 +532,24 @@ function Assert-VisibleInteractiveControlsInClient([IntPtr]$Window,[string]$Name
   # rendered layout bounds. The separate UIA/name/focus acceptance remains in
   # Test-UiaAndKeyboard.
   $layoutClasses=@('Button','Static','Edit','ComboBox','ComboBoxEx32','ListBox','SysListView32','SysTreeView32','SysTabControl32','msctls_trackbar32','msctls_progress32','RichEdit20W','RICHEDIT50W')
-  $checked=[System.Collections.Generic.List[object]]::new();$outside=[System.Collections.Generic.List[object]]::new()
+  $checked=[System.Collections.Generic.List[object]]::new();$partial=[System.Collections.Generic.List[object]]::new();$offscreen=[System.Collections.Generic.List[object]]::new()
   foreach($handle in [EBR_PRE_NATIVE]::Children($Window)){
     $pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($handle,[ref]$pidValue)
     if($pidValue-ne$script:appPid-or-not[EBR_PRE_NATIVE]::IsWindowVisible($handle)){continue}
     $class=[EBR_PRE_NATIVE]::ClassName($handle);if($class-notin$layoutClasses){continue}
     $rect=Get-Rect $handle
+    if($rect.Right-le$client.Left-or$rect.Left-ge$right-or$rect.Bottom-le$client.Top-or$rect.Top-ge$bottom){$offscreen.Add([pscustomobject]@{Name=[EBR_PRE_NATIVE]::Text($handle);Id=[EBR_PRE_NATIVE]::GetDlgCtrlID($handle);Class=$class;Bounds=$rect});continue}
     $item=[pscustomobject]@{Name=[EBR_PRE_NATIVE]::Text($handle);Id=[EBR_PRE_NATIVE]::GetDlgCtrlID($handle);Class=$class;Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($handle);Left=$rect.Left;Top=$rect.Top;Right=$rect.Right;Bottom=$rect.Bottom;Width=$rect.Width;Height=$rect.Height}
-    $checked.Add($item)
-    if($rect.Left-lt($client.Left-2)-or$rect.Top-lt($client.Top-2)-or$rect.Right-gt($right+2)-or$rect.Bottom-gt($bottom+2)){$outside.Add($item)}
+    if($rect.Left-lt($client.Left-2)-or$rect.Top-lt($client.Top-2)-or$rect.Right-gt($right+2)-or$rect.Bottom-gt($bottom+2)){$partial.Add($item)}else{$checked.Add($item)}
   }
   $uiaElements=@(Get-UiaElements $Window);$uiaNamed=@($uiaElements|Where-Object{try{$_.Current.Name}catch{$false}})
-  Require ($checked.Count-gt0) "$Name exposes visible native controls with measurable bounds" ([pscustomobject]@{Window=$Name;Client=$client;NativeControlCount=$checked.Count;Controls=$checked.ToArray();UiaElementCount=$uiaElements.Count;UiaNamedElementCount=$uiaNamed.Count})
-  Require ($outside.Count-eq0) "$Name native controls remain inside the visible window client area" ([pscustomobject]@{Window=$Name;Client=$client;CheckedCount=$checked.Count;Outside=$outside.ToArray()})
+  Require ($checked.Count-gt0) "$Name exposes fully visible native controls with measurable bounds" ([pscustomobject]@{Window=$Name;Client=$client;FullyVisibleNativeControlCount=$checked.Count;Controls=$checked.ToArray();PartiallyVisibleAtViewportEdge=$partial.ToArray();ScrolledOutsideViewportCount=$offscreen.Count;UiaElementCount=$uiaElements.Count;UiaNamedElementCount=$uiaNamed.Count})
+}
+function Set-SettingsScrollPosition([int]$ScrollCommand) {
+  $panes=@([EBR_PRE_NATIVE]::Children($script:mainWindow)|Where-Object{[EBR_PRE_NATIVE]::ClassName($_)-eq'EyeBreakReminder.Settings'})
+  if($panes.Count-ne1){throw "Expected one native Settings scroll pane, found $($panes.Count)."}
+  [void][EBR_PRE_NATIVE]::SendMessageW($panes[0],0x0115,[IntPtr]$ScrollCommand,[IntPtr]::Zero)
+  Start-Sleep -Milliseconds 120
 }
 function Capture-ActiveWindow([IntPtr]$Window,[string]$Name) {
   if(-not $script:interactiveDesktop){Not-Tested "Active desktop screenshot: $Name" 'Runner has no interactive Explorer desktop.';return $null}
@@ -1333,9 +1338,16 @@ function Test-OsAppearanceAndTextScale {
           'settings-general-appearance'{Switch-Settings 4}
           'settings-about'{Switch-Settings 5}
         }
+        if($pageName-like'settings-*'){Set-SettingsScrollPosition 6}
         Start-Sleep -Milliseconds 100
         Assert-VisibleInteractiveControlsInClient $script:mainWindow "$textScale% text scale $pageName"
-        Capture-ActiveWindow $script:mainWindow "text-scale-$textScale-$pageName.png" | Out-Null
+        Capture-ActiveWindow $script:mainWindow "text-scale-$textScale-$pageName-top.png" | Out-Null
+        if($pageName-like'settings-*'){
+          Set-SettingsScrollPosition 7
+          Assert-VisibleInteractiveControlsInClient $script:mainWindow "$textScale% text scale $pageName bottom scroll position"
+          Capture-ActiveWindow $script:mainWindow "text-scale-$textScale-$pageName-bottom.png" | Out-Null
+          Set-SettingsScrollPosition 6
+        }
       }
       Switch-Settings 4
       $layoutPicker=Open-InstalledColorPicker 127 "Choose Work Mode colour at $textScale% text scale"

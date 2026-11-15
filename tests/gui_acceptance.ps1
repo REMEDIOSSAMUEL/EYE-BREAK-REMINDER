@@ -178,6 +178,15 @@ function Set-AppFocus([IntPtr]$Handle) {
   finally {[void][EBR_GUI_NATIVE]::AttachThreadInput($testThread,$targetThread,$false)}
   if($actual -ne $Handle){throw 'The requested isolated app control did not receive keyboard focus.'}
 }
+function Get-AppFocusedControl([IntPtr]$Root) {
+  $rootPid=[uint32]0;$targetThread=[EBR_GUI_NATIVE]::GetWindowThreadProcessId($Root,[ref]$rootPid);$testThread=[EBR_GUI_NATIVE]::GetCurrentThreadId()
+  if($rootPid -ne $script:testPid){throw 'Refusing to inspect keyboard focus outside the isolated test app.'}
+  $attached=[EBR_GUI_NATIVE]::AttachThreadInput($testThread,$targetThread,$true)
+  if(-not $attached){throw 'Could not attach keyboard input to inspect focus in the isolated test app.'}
+  try {$actual=[EBR_GUI_NATIVE]::GetFocus()}
+  finally {[void][EBR_GUI_NATIVE]::AttachThreadInput($testThread,$targetThread,$false)}
+  return $actual
+}
 function Set-Edit([IntPtr]$Root,[int]$Id,[string]$Value,[string]$Name) {
   $control = Get-Control $Root $Id $Name
   if ($control.Class -ne 'Edit' -or -not $control.Enabled) { throw "$Name is not an enabled Edit control." }
@@ -814,7 +823,8 @@ try {
     Assert-That ($selectedTabPixel-ceq$expectedSelectedFill) "$($themeNames[$theme]) selected Appearance tab uses a tint of its active Work accent" ([pscustomobject]@{ExpectedFill=$expectedSelectedFill;Accent=$selectedAccent;TintPercent=22;Actual=$selectedTabPixel;ControlId=134;Screenshot=$selectedShot})
     $workPicker=Get-Control $script:mainWindow 127 'Work colour picker for keyboard focus and hover matrix'
     Set-AppFocus $workPicker.Handle
-    Assert-That ([EBR_GUI_NATIVE]::GetFocus()-eq$workPicker.Handle) "$($themeNames[$theme]) Work picker receives keyboard focus"
+    $actualFocus=Get-AppFocusedControl $script:mainWindow
+    Assert-That ($actualFocus-eq$workPicker.Handle) "$($themeNames[$theme]) Work picker receives keyboard focus" ([pscustomobject]@{ActualHandle=$actualFocus.ToInt64();ExpectedHandle=$workPicker.Handle.ToInt64();FocusReadOnTargetThread=$true})
     [void][EBR_GUI_NATIVE]::SendMessageW($script:mainWindow,0x0127,[IntPtr]::new(0x00010002),[IntPtr]::Zero)
     [void][EBR_GUI_NATIVE]::InvalidateRect($workPicker.Handle,[IntPtr]::Zero,$true);[void][EBR_GUI_NATIVE]::UpdateWindow($workPicker.Handle)
     $focusShot=Save-Screenshot $script:mainWindow "ui-state-$($themeNames[$theme])-work-picker-focus.png"
