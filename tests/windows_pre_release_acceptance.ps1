@@ -1346,7 +1346,7 @@ function Test-InstalledAlarmPreview([int]$SoundIndex) {
   $windows=@(foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){$children=@();foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$children+=,$text}};[pscustomobject]@{Handle=('0x{0:X}' -f $window.ToInt64());Class=[EBR_PRE_NATIVE]::ClassName($window);Title=[EBR_PRE_NATIVE]::Text($window);Visible=[EBR_PRE_NATIVE]::IsWindowVisible($window);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($window);Children=$children}})
   Require $false "Alarm preview reaches a started or unavailable-output state for sound $SoundIndex" ([pscustomobject]@{ElapsedMilliseconds=[int]$watch.Elapsed.TotalMilliseconds;ClickTaskStatus=$clickTask.Status.ToString();MainWindowResponds=$responsive;Windows=$windows})
 }
-function Invoke-InstalledBreakNow([string]$Name) {
+function Invoke-InstalledBreakNow([string]$Name,[bool]$VerifyStatus=$true) {
   $control=Get-Control $script:mainWindow 22 $Name
   if(-not $control.Enabled){throw "$Name control is disabled."}
   $clickTask=[EBR_PRE_NATIVE]::SendButtonClickAsync($control.Handle)
@@ -1372,7 +1372,7 @@ function Invoke-InstalledBreakNow([string]$Name) {
   $mainResponds=[EBR_PRE_NATIVE]::AppResponds($script:mainWindow,1000)
   Require ($breakWindow-ne[IntPtr]::Zero) "$Name opens the application-owned Break reminder" ([pscustomobject]@{ElapsedMilliseconds=[int]$watch.Elapsed.TotalMilliseconds;AudioUnavailable=$audioUnavailable;MainWindowResponds=$mainResponds;ClickTaskStatus=$clickTask.Status.ToString()})
   Require ($clickTask.Wait(8000)) "$Name click returns after the Break reminder is shown" ([pscustomobject]@{TaskStatus=$clickTask.Status.ToString()})
-  Require ((Get-Status)-like'*Taking an eye break*') "$Name shows the expected eye-break status"
+  if($VerifyStatus){Require ((Get-Status)-like'*Taking an eye break*') "$Name shows the expected eye-break status"}
   if($audioUnavailable){Pass "$Name safely opens the Break reminder after the unavailable-audio warning"}
 }
 function Invoke-InstalledYesConfirmation([int]$ControlId,[string]$Name,[string]$PromptPattern) {
@@ -1967,7 +1967,9 @@ function Test-UpgradeFromV11([string]$OldInstaller) {
   Switch-Settings 4
   Set-Check $script:mainWindow 111 $true 'v1.1 start with Windows'
   Switch-Timer
-  Invoke-InstalledBreakNow 'v1.1 manual break for migration history'
+  # This legacy installation only seeds a history row; its status wording is not
+  # the v1.3 candidate behavior under test here.
+  Invoke-InstalledBreakNow 'v1.1 manual break for migration history' $false
   $breakWait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
   while($breakWait.Elapsed.TotalSeconds -lt 10){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$breakWindow=$breaks[0];break};Start-Sleep -Milliseconds 100}
   Require ($breakWindow -ne [IntPtr]::Zero) 'v1.1 creates a real manual break window before upgrade'
