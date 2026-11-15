@@ -245,7 +245,7 @@ jobs:
         with:
           name: EyeBreakReminder-v1.3.0-VERIFIED-RELEASE-CANDIDATE
           repository: ${{ github.repository }}
-          run-id: 43636383253
+          run-id: 43686267237
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: build/prior-resource-evidence/candidate
 
@@ -255,9 +255,9 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: eye-break-reminder-v1.3.0-final-pre-release-evidence-43636383253
+          name: eye-break-reminder-v1.3.0-final-pre-release-evidence-43686267237
           repository: ${{ github.repository }}
-          run-id: 43636383253
+          run-id: 43686267237
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: build/prior-resource-evidence/evidence
 
@@ -287,14 +287,14 @@ jobs:
             $currentOS = Get-CimInstance Win32_OperatingSystem
             $sameEnvironment = $soak.Environment.OS -eq $currentOS.Caption -and $soak.Environment.OSVersion -eq [Environment]::OSVersion.VersionString -and $soak.Environment.OSArchitecture -eq 'X64' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted'
             $sameIdentity = $priorHash -eq $currentHash -and $soak.SHA256 -eq $currentHash -and $manifestMatch -and $manifestMatch.Matches[0].Groups[1].Value -eq $priorHash
-            $validSoak = $seal.RunId -eq '43636383253' -and $seal.Version -eq '1.3.0' -and [int]$seal.Tests.ResourceCycles -ge 110 -and $soak.Version -eq '1.3.0' -and $soak.ExpectedBehavior -eq 'NoGrowth' -and [int]$soak.CompletedCycles -ge 110 -and [int]$soak.MetricSamples -ge 1000 -and [int]$soak.Fail -eq 0 -and [int]$soak.NotTested -eq 0 -and $combined -and [int]$combined.Details.PickerTotal -ge 100 -and [int]$combined.Details.PickerOk -ge 50 -and [int]$combined.Details.PickerCancel -ge 50
+            $validSoak = $seal.RunId -eq '43686267237' -and $seal.Version -eq '1.3.0' -and [int]$seal.Tests.ResourceCycles -ge 110 -and $soak.Version -eq '1.3.0' -and $soak.ExpectedBehavior -eq 'NoGrowth' -and [int]$soak.CompletedCycles -ge 110 -and [int]$soak.MetricSamples -ge 1000 -and [int]$soak.Fail -eq 0 -and [int]$soak.NotTested -eq 0 -and $combined -and [int]$combined.Details.PickerTotal -ge 100 -and [int]$combined.Details.PickerOk -ge 50 -and [int]$combined.Details.PickerCancel -ge 50
             if ($sameIdentity -and $sameEnvironment -and $validSoak) {
               New-Item -ItemType Directory -Force -Path $evidence | Out-Null
               Get-ChildItem -LiteralPath $priorSoakRoot -Force | Copy-Item -Destination $evidence -Recurse -Force
-              $reuse = [pscustomobject]@{Status='PASS';EvidenceReused=$true;SourceRunId='43636383253';SourceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43636383253';SourceCommit=$seal.SourceCommit;SourceWindowsEnvironment=$soak.Environment;CurrentWindowsEnvironment=[pscustomobject]@{OS=$currentOS.Caption;OSVersion=[Environment]::OSVersion.VersionString;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()};SameWindowsEnvironment=$sameEnvironment;SourceExecutableSHA256=$priorHash;CurrentExecutableSHA256=$currentHash;ByteIdenticalProductionExecutable=$true;ResourceCycles=[int]$soak.CompletedCycles;PickerOperations=[int]$combined.Details.PickerTotal;PickerOk=[int]$combined.Details.PickerOk;PickerCancel=[int]$combined.Details.PickerCancel;ResourceSamples=[int]$soak.MetricSamples;Reason='The current candidate contains the byte-identical x64 production executable that passed the prior production resource soak on the same Windows environment; the current build reruns GUI, installed-app and exact-candidate acceptance.';VerifiedUtc=[DateTime]::UtcNow.ToString('o')}
+              $reuse = [pscustomobject]@{Status='PASS';EvidenceReused=$true;SourceRunId='43686267237';SourceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43686267237';SourceCommit=$seal.SourceCommit;SourceWindowsEnvironment=$soak.Environment;CurrentWindowsEnvironment=[pscustomobject]@{OS=$currentOS.Caption;OSVersion=[Environment]::OSVersion.VersionString;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()};SameWindowsEnvironment=$sameEnvironment;SourceExecutableSHA256=$priorHash;CurrentExecutableSHA256=$currentHash;ByteIdenticalProductionExecutable=$true;ResourceCycles=[int]$soak.CompletedCycles;PickerOperations=[int]$combined.Details.PickerTotal;PickerOk=[int]$combined.Details.PickerOk;PickerCancel=[int]$combined.Details.PickerCancel;ResourceSamples=[int]$soak.MetricSamples;Reason='The current candidate contains the byte-identical x64 production executable that passed the 110-cycle resource soak in run 43686267237 on the same Windows environment; the current build reruns GUI, installed-app and exact-candidate acceptance.';VerifiedUtc=[DateTime]::UtcNow.ToString('o')}
               $reuse | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $evidence 'resource-soak-reuse.json') -Encoding utf8
               $reused = $true
-              $reuseReason = "Reused verified no-growth soak from run 43636383253 for byte-identical production EXE $currentHash."
+              $reuseReason = "Reused verified no-growth soak from run 43686267237 for byte-identical production EXE $currentHash."
             } else {
               $reuseReason = "Prior evidence was available but failed identity/environment/completeness checks (binary identity=$sameIdentity, same environment=$sameEnvironment, soak completeness=$validSoak); running the full soak."
             }
@@ -557,11 +557,15 @@ jobs:
           [pscustomobject]@{RunId=$env:GITHUB_RUN_ID;SourceCommit=$env:GITHUB_SHA;OS=$os.Caption;OSVersion=$os.Version;OSArchitecture=$arch;ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();ApplicationArchitecture='x64';PEMachine=('0x{0:X4}' -f $machine);ExecutionMode='Windows x64 emulation on genuine Windows 11 ARM64; not native Windows 11 x64';ExecutableSHA256=$standaloneHash;InstallerSHA256=(Get-FileHash 'release/EyeBreakReminder-Setup-x64.exe' -Algorithm SHA256).Hash.ToLowerInvariant();PortableSHA256=(Get-FileHash 'release/EyeBreakReminder-Portable-x64.zip' -Algorithm SHA256).Hash.ToLowerInvariant();SourceSHA256=(Get-FileHash 'release/EyeBreakReminder-Source.zip' -Algorithm SHA256).Hash.ToLowerInvariant();ManifestSHA256=(Get-FileHash 'release/EyeBreakReminder-SHA256.txt' -Algorithm SHA256).Hash.ToLowerInvariant();InstallerProductVersion=$installerVersion} |
             ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'windows-11-arm64-candidate-identity.json' -Encoding utf8
 
-      - name: Run installed-candidate integration acceptance on Windows 11 ARM64
+      - name: Verify ARM64 installer guard and x64 application emulation
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & .\tests\windows_pre_release_acceptance.ps1 -EvidenceDirectory (Join-Path (Get-Location) 'build/pre-release-evidence')
+          & .\tests\windows_arm64_emulation_acceptance.ps1 `
+            -InstallerPath (Join-Path (Get-Location) 'release/EyeBreakReminder-Setup-x64.exe') `
+            -StandaloneExecutable (Join-Path (Get-Location) 'release/EyeBreakReminder.exe') `
+            -PortableArchive (Join-Path (Get-Location) 'release/EyeBreakReminder-Portable-x64.zip') `
+            -EvidenceDirectory (Join-Path (Get-Location) 'build/pre-release-evidence')
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Windows 11 ARM64 emulation evidence
