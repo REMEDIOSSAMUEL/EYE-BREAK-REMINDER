@@ -277,9 +277,18 @@ public:
   else if(wcscmp(name,UPDOWN_CLASSW)==0)SetWindowTheme(h,dark?L"DarkMode_Explorer":nullptr,nullptr);
  }
  // Number fields draw their own 1 px frame and centre the text vertically; the native client edge is light and top-aligned.
+ // Disabled native Edit controls fall back to COLOR_GRAYTEXT on Windows, so their saved values need a themed client paint.
+ static bool disabledScheduleTimeField(HWND h){const int id=GetDlgCtrlID(h);return !IsWindowEnabled(h)&&id>=PERIOD_BASE&&id<PERIOD_END;}
+ static void paintDisabledScheduleTime(HWND h,HDC dc){
+  auto&a=*app;RECT client{};GetClientRect(h,&client);FillRect(dc,&client,a.surfaceBrush);int saved=SaveDC(dc);
+  SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));SetBkMode(dc,TRANSPARENT);SetTextColor(dc,a.colors.secondary);
+  wchar_t value[32]{};GetWindowTextW(h,value,int(std::size(value)));DrawTextW(dc,value,-1,&client,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);RestoreDC(dc,saved);
+ }
  static LRESULT CALLBACK editProc(HWND h,UINT msg,WPARAM w,LPARAM l,UINT_PTR,DWORD_PTR){
   auto&a=*app;
   switch(msg){
+   case WM_PAINT:if(disabledScheduleTimeField(h)){PAINTSTRUCT paint{};HDC dc=BeginPaint(h,&paint);paintDisabledScheduleTime(h,dc);EndPaint(h,&paint);return 0;}break;
+   case WM_PRINTCLIENT:if(disabledScheduleTimeField(h)){paintDisabledScheduleTime(h,reinterpret_cast<HDC>(w));return 0;}break;
    case WM_NCCALCSIZE:if(w){auto*params=reinterpret_cast<NCCALCSIZE_PARAMS*>(l);RECT&r=params->rgrc[0];int border=std::max(1,a.px(1));
      HDC dc=GetDC(h);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));TEXTMETRICW tm{};GetTextMetricsW(dc,&tm);SelectObject(dc,previous);ReleaseDC(h,dc);
      int vertical=std::max(border,int((r.bottom-r.top-tm.tmHeight)/2));r.left+=border;r.right-=border;r.top+=vertical;r.bottom-=vertical;return 0;}break;
