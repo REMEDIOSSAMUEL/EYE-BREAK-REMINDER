@@ -1413,7 +1413,10 @@ function Set-InstalledVolume([int]$Value) {
 }
 function Send-InstalledShortcut([byte[]]$Modifiers,[byte]$Key) {
   [void][EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow)
-  foreach($modifier in $Modifiers){[EBR_PRE_NATIVE]::Key($modifier,$false)}
+  $foregroundWait=[Diagnostics.Stopwatch]::StartNew();$foregroundPid=[uint32]0
+  do {$foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid);if($foregroundPid-eq$script:appPid){break};Start-Sleep -Milliseconds 25} while($foregroundWait.Elapsed.TotalSeconds-lt2)
+  if($foregroundPid-ne$script:appPid){throw "The installed app did not own the foreground for shortcut input (foreground PID $foregroundPid, app PID $script:appPid)."}
+  foreach($modifier in $Modifiers){[EBR_PRE_NATIVE]::Key($modifier,$false);Start-Sleep -Milliseconds 40}
   Send-VirtualKey $Key
   for($i=$Modifiers.Length-1;$i -ge 0;$i--){[EBR_PRE_NATIVE]::Key($Modifiers[$i],$true)}
   Start-Sleep -Milliseconds 200
@@ -1517,6 +1520,7 @@ function Test-InstalledSettingsControls {
   Send-InstalledShortcut ([byte[]]@(0x11,0x10)) 0x42
   $wait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
   while($wait.Elapsed.TotalSeconds -lt 8){$wins=Get-BreakWindow $script:appPid;if($wins.Count -eq 1){$breakWindow=$wins[0];break};Start-Sleep -Milliseconds 100}
+  if($breakWindow-eq[IntPtr]::Zero){$foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid);Capture-ActiveWindow $script:mainWindow 'installed-ctrl-shift-b-main-after-timeout.png'|Out-Null;if($foreground-ne$script:mainWindow){Capture-ActiveWindow $foreground 'installed-ctrl-shift-b-foreground-after-timeout.png'|Out-Null};$hotkeyWindows=@(foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){$children=@();foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$children+=,$text}};[pscustomobject]@{Handle=('0x{0:X}' -f $window.ToInt64());Class=[EBR_PRE_NATIVE]::ClassName($window);Title=[EBR_PRE_NATIVE]::Text($window);Visible=[EBR_PRE_NATIVE]::IsWindowVisible($window);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($window);Children=$children}});Require $false 'Ctrl+Shift+B opens a manual Break from Settings' ([pscustomobject]@{BreakWindowCount=@(Get-BreakWindow $script:appPid).Count;Status=Get-Status;Foreground=('0x{0:X}' -f $foreground.ToInt64());ForegroundPid=$foregroundPid;AppPid=$script:appPid;MainWindowResponds=[EBR_PRE_NATIVE]::AppResponds($script:mainWindow,1000);Windows=$hotkeyWindows})}
   Require ($breakWindow -ne [IntPtr]::Zero) 'Ctrl+Shift+B opens a manual Break from Settings'
   Click-Control $breakWindow 24 'Complete keyboard shortcut Break';Require ((Get-Status)-like '*Running*') 'Keyboard shortcut Break returns to Work'
 
