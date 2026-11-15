@@ -201,7 +201,17 @@ function Get-StaticControlByText([IntPtr]$Root,[string]$ExpectedText,[string]$Na
 function Click-Control([IntPtr]$Root, [int]$Id, [string]$Name) {
   $control=Get-Control $Root $Id $Name
   if(-not $control.Enabled){throw "$Name control is disabled."}
-  [void][EBR_PRE_NATIVE]::SendMessageW($control.Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+  # A synchronous BM_CLICK can pin this acceptance process indefinitely if
+  # the application blocks while handling the command (for example, in a
+  # Windows multimedia driver call). Bound the input and record whether the
+  # application window remains responsive so a UI hang becomes diagnosable.
+  $clickResult=[IntPtr]::Zero
+  $sent=[EBR_PRE_NATIVE]::SendMessageTimeoutW($control.Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero,[uint32]2,[uint32]5000,[ref]$clickResult)
+  if($sent-eq[IntPtr]::Zero){
+    $responsive=[EBR_PRE_NATIVE]::AppResponds($Root,500)
+    $lastError=[Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    throw "$Name button click did not return within 5000 ms (rootWindowResponds=$responsive;win32Error=$lastError)."
+  }
 }
 function Find-ScheduleReplacementDialog {
   foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){
