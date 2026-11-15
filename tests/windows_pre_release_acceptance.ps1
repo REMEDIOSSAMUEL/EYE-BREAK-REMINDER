@@ -214,8 +214,13 @@ function Click-Control([IntPtr]$Root, [int]$Id, [string]$Name) {
   }
 }
 function Find-ScheduleReplacementDialog {
+  $foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0
+  if($foreground-ne[IntPtr]::Zero-and$foreground-ne$script:mainWindow){[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid);if($foregroundPid-eq$script:appPid-and[EBR_PRE_NATIVE]::IsWindowVisible($foreground)){$foregroundText=@([EBR_PRE_NATIVE]::Text($foreground));foreach($child in [EBR_PRE_NATIVE]::Children($foreground)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$foregroundText+=,$text}};if(($foregroundText-join' ')-match'Replace the weekly hours\?'){return $foreground};try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($foreground);if($root){$names=@();$elements=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($element in $elements){try{$name=$element.Current.Name;if($name){$names+=,$name}}catch{}};if(($names-join' ')-match'Replace the weekly hours\?'){return $foreground}}}catch{}}}
   foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){
     if(-not [EBR_PRE_NATIVE]::IsWindowVisible($window)){continue}
+    # A modal TaskDialog can appear in the main window's UIA descendant tree.
+    # Do not return the main window as though it were the dialog itself.
+    if($window -eq $script:mainWindow -or [EBR_PRE_NATIVE]::ClassName($window) -eq 'EyeBreakReminder.Native'){continue}
     $windowText=@([EBR_PRE_NATIVE]::Text($window))
     foreach($child in [EBR_PRE_NATIVE]::Children($window)){$windowText+=,[EBR_PRE_NATIVE]::Text($child)}
     $texts=$windowText -join ' '
@@ -1272,8 +1277,13 @@ function Start-And-CheckApp([string]$ExpectedVersion) {
   return $true
 }
 function Find-InstalledConfirmation([string]$Pattern) {
+  $foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0
+  if($foreground-ne[IntPtr]::Zero-and$foreground-ne$script:mainWindow){[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid);if($foregroundPid-eq$script:appPid-and[EBR_PRE_NATIVE]::IsWindowVisible($foreground)){$foregroundText=@([EBR_PRE_NATIVE]::Text($foreground));foreach($child in [EBR_PRE_NATIVE]::Children($foreground)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$foregroundText+=,$text}};if(($foregroundText-join' ')-match$Pattern){return $foreground};try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($foreground);if($root){$names=@();$elements=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($element in $elements){try{$name=$element.Current.Name;if($name){$names+=,$name}}catch{}};if(($names-join' ')-match$Pattern){return $foreground}}}catch{}}}
   foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){
     if(-not [EBR_PRE_NATIVE]::IsWindowVisible($window)){continue}
+    # TaskDialog UIA descendants can be surfaced beneath the disabled main
+    # window, so confirmation handles must be a separate top-level window.
+    if($window -eq $script:mainWindow -or [EBR_PRE_NATIVE]::ClassName($window) -eq 'EyeBreakReminder.Native'){continue}
     $texts=@([EBR_PRE_NATIVE]::Text($window))
     foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$texts+=,$text}}
     if(($texts -join ' ') -match $Pattern){return $window}
