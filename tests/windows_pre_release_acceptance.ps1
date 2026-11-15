@@ -1284,6 +1284,51 @@ function Find-InstalledConfirmation([string]$Pattern) {
   }
   return [IntPtr]::Zero
 }
+function Find-InstalledAudioUnavailableDialog {
+  foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){
+    if(-not [EBR_PRE_NATIVE]::IsWindowVisible($window)){continue}
+    $texts=@([EBR_PRE_NATIVE]::Text($window))
+    foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$texts+=,$text}}
+    if(($texts -join ' ') -match 'The alarm couldn.t play\. Check your Windows audio output\.') { return $window }
+  }
+  return [IntPtr]::Zero
+}
+function Test-InstalledAlarmPreview([int]$SoundIndex) {
+  $preview=Get-Control $script:mainWindow 116 "Preview alarm sound $SoundIndex"
+  $stop=Get-Control $script:mainWindow 117 "Stop preview alarm sound $SoundIndex"
+  Require (-not $stop.Enabled) "Stop preview begins disabled for alarm sound $SoundIndex"
+  $clickTask=[EBR_PRE_NATIVE]::SendButtonClickAsync($preview.Handle)
+  $watch=[Diagnostics.Stopwatch]::StartNew();$dialog=[IntPtr]::Zero;$previewStarted=$false
+  while($watch.Elapsed.TotalSeconds -lt 8){
+    $dialog=Find-InstalledAudioUnavailableDialog
+    if($dialog -ne [IntPtr]::Zero){break}
+    if([EBR_PRE_NATIVE]::IsWindowEnabled($stop.Handle)){$previewStarted=$true;break}
+    Start-Sleep -Milliseconds 50
+  }
+  if($dialog -ne [IntPtr]::Zero){
+    Capture-ActiveWindow $dialog "installed-audio-unavailable-$SoundIndex.png"|Out-Null
+    $ok=@([EBR_PRE_NATIVE]::Children($dialog)|Where-Object{[EBR_PRE_NATIVE]::ClassName($_)-eq'Button' -and [EBR_PRE_NATIVE]::IsWindowVisible($_) -and [EBR_PRE_NATIVE]::IsWindowEnabled($_) -and [EBR_PRE_NATIVE]::Text($_)-match '^\s*&?OK\s*$'})
+    if($ok.Count -eq 1){[void][EBR_PRE_NATIVE]::SendMessageW($ok[0],0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)}else{[void][EBR_PRE_NATIVE]::PostMessageW($dialog,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)}
+    $closed=[Diagnostics.Stopwatch]::StartNew();while([EBR_PRE_NATIVE]::IsWindow($dialog)-and$closed.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 50}
+    Require (-not [EBR_PRE_NATIVE]::IsWindow($dialog)) "Unavailable-audio dialog closes for alarm sound $SoundIndex" ([pscustomobject]@{ButtonCount=$ok.Count})
+    Require ($clickTask.Wait(5000)) "Alarm preview click returns after unavailable-audio dialog closes for sound $SoundIndex" ([pscustomobject]@{TaskStatus=$clickTask.Status.ToString()})
+    Require ([EBR_PRE_NATIVE]::AppResponds($script:mainWindow,1000)) "Settings remains responsive after unavailable-audio dialog for sound $SoundIndex"
+    Require (-not [EBR_PRE_NATIVE]::IsWindowEnabled($stop.Handle)) "Stop preview stays disabled when Windows has no usable audio output for sound $SoundIndex"
+    Pass "Preview alarm sound $SoundIndex reports unavailable output without blocking Settings" ([pscustomobject]@{AcousticOutput='Not measured; no verified loopback capture endpoint'})
+    return 'unavailable'
+  }
+  if($previewStarted){
+    Require ($clickTask.Wait(5000)) "Alarm preview click returns after starting sound $SoundIndex" ([pscustomobject]@{TaskStatus=$clickTask.Status.ToString()})
+    Click-Control $script:mainWindow 117 "Stop preview alarm sound $SoundIndex"
+    $stopWatch=[Diagnostics.Stopwatch]::StartNew();while([EBR_PRE_NATIVE]::IsWindowEnabled($stop.Handle)-and$stopWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 50}
+    Require (-not [EBR_PRE_NATIVE]::IsWindowEnabled($stop.Handle)) "Stop control silences the preview for alarm sound $SoundIndex"
+    Pass "Preview and Stop controls respond for alarm sound $SoundIndex" ([pscustomobject]@{AcousticOutput='Not measured; no verified loopback capture endpoint'})
+    return 'started'
+  }
+  $responsive=[EBR_PRE_NATIVE]::AppResponds($script:mainWindow,1000)
+  $windows=@(foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){$children=@();foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$children+=,$text}};[pscustomobject]@{Handle=('0x{0:X}' -f $window.ToInt64());Class=[EBR_PRE_NATIVE]::ClassName($window);Title=[EBR_PRE_NATIVE]::Text($window);Visible=[EBR_PRE_NATIVE]::IsWindowVisible($window);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($window);Children=$children}})
+  Require $false "Alarm preview reaches a started or unavailable-output state for sound $SoundIndex" ([pscustomobject]@{ElapsedMilliseconds=[int]$watch.Elapsed.TotalMilliseconds;ClickTaskStatus=$clickTask.Status.ToString();MainWindowResponds=$responsive;Windows=$windows})
+}
 function Invoke-InstalledYesConfirmation([int]$ControlId,[string]$Name,[string]$PromptPattern) {
   $control=Get-Control $script:mainWindow $ControlId $Name
   $clickTask=[EBR_PRE_NATIVE]::SendButtonClickAsync($control.Handle)
@@ -1326,13 +1371,15 @@ function Test-InstalledSettingsControls {
   $initial=Read-SettingsMap $settingsPath
   Test-InstalledReducedMotion
   Switch-Settings 2
+  $audioPreviewResults=[System.Collections.Generic.List[string]]::new()
   foreach($sound in 0..4){Set-Combo $script:mainWindow 102 $sound "Alarm sound $sound";Assert-InstalledSetting 'sound' ([string]$sound) "Alarm sound $sound persists"}
   foreach($volume in @(0,100,55)){Set-InstalledVolume $volume}
   Set-Check $script:mainWindow 107 $true 'Repeat alarm enabled';Assert-InstalledSetting 'repeat' '1' 'Repeat alarm setting persists enabled'
   Set-Check $script:mainWindow 107 $false 'Repeat alarm disabled';Assert-InstalledSetting 'repeat' '0' 'Repeat alarm setting persists disabled'
   Set-Check $script:mainWindow 32 $false 'Alarm disabled in settings sweep';Assert-InstalledSetting 'alarm' '0' 'Alarm disabled setting persists'
   Set-Check $script:mainWindow 32 $true 'Alarm enabled in settings sweep';Assert-InstalledSetting 'alarm' '1' 'Alarm enabled setting persists'
-  foreach($sound in 0..4){Set-Combo $script:mainWindow 102 $sound "Preview alarm sound $sound";Click-Control $script:mainWindow 116 "Preview alarm sound $sound";Start-Sleep -Milliseconds 150;Click-Control $script:mainWindow 117 "Stop preview alarm sound $sound";Pass "Preview and Stop controls respond for alarm sound $sound" ([pscustomobject]@{SoundIndex=$sound;AcousticOutput='Not measured; no verified capture endpoint'})}
+  foreach($sound in 0..4){Set-Combo $script:mainWindow 102 $sound "Preview alarm sound $sound";$audioPreviewResults.Add((Test-InstalledAlarmPreview $sound))}
+  if($audioPreviewResults.Contains('unavailable')){Not-Tested 'Acoustic playback output and sound fidelity' 'Windows reported no usable output endpoint during the installed-app preview; preview error handling was exercised, but loopback capture or physical output was unavailable.'}else{Not-Tested 'Acoustic playback output and sound fidelity' 'The preview controls started and stopped each sound, but the hosted runner has no verified loopback capture endpoint; audible output and fidelity were not measured.'}
 
   Switch-Settings 3
   foreach($entry in @(@(108,'notifications','Windows notifications'),@(109,'snooze','Allow snooze'))){
