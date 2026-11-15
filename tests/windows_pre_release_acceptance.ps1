@@ -390,6 +390,16 @@ function Read-SettingsMap([string]$Path) {
   }
   return ,$values
 }
+function Wait-ForSettingsMap([string]$Path,[hashtable]$Expected,[int]$TimeoutSeconds=3) {
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  do {
+    $observed=Read-SettingsMap $Path;$settingsMatch=$true
+    foreach($key in $Expected.Keys){if(-not $observed.ContainsKey($key)-or[string]$observed[$key]-cne[string]$Expected[$key]){$settingsMatch=$false;break}}
+    if($settingsMatch){return ,$observed}
+    Start-Sleep -Milliseconds 50
+  } while($watch.Elapsed.TotalSeconds-lt$TimeoutSeconds)
+  return ,$observed
+}
 function Get-AppMainWindow([int]$ProcessId,[int]$TimeoutSeconds=20) {
   $watch=[Diagnostics.Stopwatch]::StartNew()
   while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){
@@ -2072,16 +2082,18 @@ function Test-UpgradeFromV121([string]$OldInstaller) {
     $addPalette=[EBR_PRE_NATIVE]::GetDlgItem($workPicker,712);Require ($addPalette-ne[IntPtr]::Zero) 'Installed native picker exposes Add to Custom Colors'
     [void][EBR_PRE_NATIVE]::SendMessageW($addPalette,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
     Close-InstalledColorPicker $workPicker $true
-    $afterWork=Read-SettingsMap $settingsPath
-    Require ($afterWork['customWorkAccent'] -eq '1' -and $afterWork['workAccentColor'] -eq [string][int]0x8B5CF6 -and $afterWork['customBreakAccent'] -eq '0') 'Installed Work picker saves a custom RGB independently'
+    $afterWork=Wait-ForSettingsMap $settingsPath @{customWorkAccent='1';workAccentColor=[string][int]0x8B5CF6;customBreakAccent='0'}
+    Require ($afterWork['customWorkAccent'] -eq '1' -and $afterWork['workAccentColor'] -eq [string][int]0x8B5CF6 -and $afterWork['customBreakAccent'] -eq '0') 'Installed Work picker saves a custom RGB independently' $afterWork
     Switch-Timer;Click-Control $script:mainWindow 21 'Reset installed Work ring before pixel capture';Wait-ForRingProgress 'Installed Work accent after the v1.2.1 upgrade'
     $installedWorkShot=Capture-ActiveWindow $script:mainWindow 'installed-upgrade-custom-work-ring.png';if($installedWorkShot){Assert-InstalledTimerRingPixel $installedWorkShot '#8B5CF6' 'Installed Work accent after the v1.2.1 upgrade'}
     Switch-Settings 4
     $breakPicker=Open-InstalledColorPicker 128 'Installed Break Mode colour picker'
     Set-InstalledPickerRgb $breakPicker 249 115 22
+    Capture-ActiveWindow $breakPicker 'installed-upgrade-break-picker-before-ok.png'|Out-Null
     Close-InstalledColorPicker $breakPicker $true
-    $afterBreak=Read-SettingsMap $settingsPath
-    Require ($afterBreak['customWorkAccent'] -eq '1' -and $afterBreak['workAccentColor'] -eq [string][int]0x8B5CF6 -and $afterBreak['customBreakAccent'] -eq '1' -and $afterBreak['breakAccentColor'] -eq [string][int]0xF97316) 'Installed Break picker saves its colour independently of Work'
+    $afterBreak=Wait-ForSettingsMap $settingsPath @{customWorkAccent='1';workAccentColor=[string][int]0x8B5CF6;customBreakAccent='1';breakAccentColor=[string][int]0xF97316}
+    Capture-ActiveWindow $script:mainWindow 'installed-upgrade-after-break-picker.png'|Out-Null
+    Require ($afterBreak['customWorkAccent'] -eq '1' -and $afterBreak['workAccentColor'] -eq [string][int]0x8B5CF6 -and $afterBreak['customBreakAccent'] -eq '1' -and $afterBreak['breakAccentColor'] -eq [string][int]0xF97316) 'Installed Break picker saves its colour independently of Work' $afterBreak
     $beforeCancel=Get-Content -LiteralPath $settingsPath -Raw
     $cancelPicker=Open-InstalledColorPicker 127 'Installed Work Mode picker Cancel regression'
     Set-InstalledPickerRgb $cancelPicker 255 255 255
