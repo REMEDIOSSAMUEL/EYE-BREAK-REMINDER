@@ -19,8 +19,8 @@ if($Child){
     try{$tops=[System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition);foreach($top in $tops){try{if($top.Current.ProcessId-eq$ProcessId){return $top}}catch{}}}catch{}
     return $null
   }
-  function Invoke-StandardUserWizard([string]$Path,[string]$Kind){
-    try{$started=Start-Process -FilePath $Path -PassThru}catch{return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="Could not launch the interactive wizard: $($_.Exception.Message)"}}
+  function Invoke-StandardUserWizard([string]$Path,[string]$Kind,[Diagnostics.Process]$ExistingProcess=$null){
+    try{$started=if($ExistingProcess){$ExistingProcess}else{Start-Process -FilePath $Path -PassThru}}catch{return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="Could not launch the interactive wizard: $($_.Exception.Message)"}}
     $watch=[Diagnostics.Stopwatch]::StartNew();$root=$null;$lastSignature='';$pageNames=[System.Collections.Generic.List[string]]::new();$finishCheckbox=$null
     try{Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop;Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop;Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop}catch{Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue;return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="UI Automation or keyboard assemblies are unavailable: $($_.Exception.Message)"}}
     while($watch.Elapsed.TotalSeconds-lt180){
@@ -47,6 +47,76 @@ if($Child){
     }
     Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue
     [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason='Wizard did not expose a controllable finish page within three minutes.';Pages=$pageNames.ToArray()}
+  }
+  function Invoke-SettingsAppsUninstall([string]$UninstallerPath){
+    Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop;Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop;Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop;Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+    $settingsProcess=$null;$settingsRoot=$null;$names=[System.Collections.Generic.List[string]]::new();$screenshot=$null
+    try{
+    try{$settingsProcess=Start-Process -FilePath 'ms-settings:appsfeatures' -PassThru}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Windows Settings Apps page could not be opened: $($_.Exception.Message)"}}
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    while($watch.Elapsed.TotalSeconds-lt35-and-not$settingsRoot){
+      try{
+        $tops=[System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)
+        foreach($top in $tops){
+          try{$elements=@($top.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition));$currentNames=@(foreach($element in $elements){try{if($element.Current.Name){[string]$element.Current.Name}}catch{}});if(($currentNames-join'|')-match'(?i)Installed apps|Apps & features|App & features'){$settingsRoot=$top;$names.AddRange([string[]]$currentNames);break}}catch{}
+        }
+      }catch{}
+      if(-not$settingsRoot){Start-Sleep -Milliseconds 250}
+    }
+    if(-not$settingsRoot){return [pscustomobject]@{Status='NOT TESTED';Reason='The disposable Windows session did not expose the Installed apps page through UI Automation.';SettingsProcessId=$(if($settingsProcess){$settingsProcess.Id}else{$null})}}
+    try{
+      $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
+      if($bounds.Width-gt0-and$bounds.Height-gt0){$bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[System.Drawing.Graphics]::FromImage($bitmap);try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$screenshot=Join-Path $EvidenceDirectory 'standard-user-settings-apps-before-uninstall.png';$bitmap.Save($screenshot,[System.Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()}}
+    }catch{}
+    $search=$null
+    foreach($element in @($settingsRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))){try{if($element.Current.ControlType-eq[System.Windows.Automation.ControlType]::Edit-and$element.Current.Name-match'(?i)search apps|search this list'){$search=$element;break}}catch{}}
+    if(-not$search){return [pscustomobject]@{Status='NOT TESTED';Reason='Installed apps page has no accessible app-search field.';VisibleNames=@($names|Select-Object -Unique|Select-Object -First 80);Screenshot=$screenshot}}
+    try{$value=$search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern);$value.SetValue('Eye Break Reminder')}catch{try{$search.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('^a');[System.Windows.Forms.SendKeys]::SendWait('Eye Break Reminder')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="The Installed apps search field could not be set: $($_.Exception.Message)";Screenshot=$screenshot}}}
+    $watch=[Diagnostics.Stopwatch]::StartNew();$appEntry=$null
+    while($watch.Elapsed.TotalSeconds-lt20-and-not$appEntry){
+      try{foreach($element in @($settingsRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))){try{if($element.Current.Name-match'(?i)^Eye Break Reminder$'-and$element.Current.ControlType-ne[System.Windows.Automation.ControlType]::Button){$appEntry=$element;break}}catch{}}}catch{}
+      if(-not$appEntry){Start-Sleep -Milliseconds 200}
+    }
+    if(-not$appEntry){return [pscustomobject]@{Status='NOT TESTED';Reason='The standard-user installation did not appear in the Settings > Installed apps search results.';VisibleNames=@($names|Select-Object -Unique|Select-Object -First 80);Screenshot=$screenshot}}
+    $menuButton=$null;$scope=$appEntry
+    for($depth=0;$depth-lt7-and-not$menuButton;$depth++){
+      try{$controls=@($scope.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition));$menuButton=@($controls|Where-Object{try{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$_.Current.IsEnabled-and$_.Current.Name-match'(?i)more options|more actions|options for'}catch{$false}}|Select-Object -First 1|ForEach-Object{$_})|Select-Object -First 1}catch{}
+      if(-not$menuButton){try{$scope=[System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($scope)}catch{$scope=$null};if(-not$scope-or$scope-eq[System.Windows.Automation.AutomationElement]::RootElement){break}}
+    }
+    if(-not$menuButton){return [pscustomobject]@{Status='NOT TESTED';Reason='The Eye Break Reminder entry exposes no accessible row-specific options button.';Screenshot=$screenshot}}
+    try{$menuButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$menuButton.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not open the Eye Break Reminder row menu: $($_.Exception.Message)";Screenshot=$screenshot}}}
+    $uninstallChoice=$null;$watch=[Diagnostics.Stopwatch]::StartNew()
+    while($watch.Elapsed.TotalSeconds-lt10-and-not$uninstallChoice){
+      foreach($element in @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))){try{if($element.Current.Name-match'(?i)^Uninstall$'-and$element.Current.IsEnabled-and$element.Current.ControlType-in@([System.Windows.Automation.ControlType]::Button,[System.Windows.Automation.ControlType]::MenuItem)){$uninstallChoice=$element;break}}catch{}}
+      if(-not$uninstallChoice){Start-Sleep -Milliseconds 100}
+    }
+    if(-not$uninstallChoice){return [pscustomobject]@{Status='NOT TESTED';Reason='The app row menu exposed no Uninstall action.';Screenshot=$screenshot}}
+    $menuChoiceRuntime='';try{$menuChoiceRuntime=$uninstallChoice.GetRuntimeId()-join'.'}catch{}
+    try{$uninstallChoice.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$uninstallChoice.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not activate Settings > Apps > Uninstall: $($_.Exception.Message)";Screenshot=$screenshot}}}
+    $uninstallProcess=$null;$confirmClicks=0;$watch=[Diagnostics.Stopwatch]::StartNew()
+    while($watch.Elapsed.TotalSeconds-lt35-and-not$uninstallProcess){
+      $uninstallProcess=@(Get-Process -Name Uninstall -ErrorAction SilentlyContinue|Where-Object{try{[IO.Path]::GetFullPath($_.Path)-ieq[IO.Path]::GetFullPath($UninstallerPath)}catch{$false}}|Select-Object -First 1)
+      if($uninstallProcess.Count){$uninstallProcess=$uninstallProcess[0];break}
+      if($confirmClicks-eq0-and$watch.Elapsed.TotalSeconds-ge2-and$menuChoiceRuntime){
+        $uiNames=[System.Collections.Generic.List[string]]::new();$confirm=$null
+        foreach($element in [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)){
+          try{$elementName=[string]$element.Current.Name;if($elementName){$uiNames.Add($elementName)};$runtime=$element.GetRuntimeId()-join'.';if($runtime-cne$menuChoiceRuntime-and$elementName-match'(?i)^Uninstall$'-and$element.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$element.Current.IsEnabled-and-not$element.Current.IsOffscreen){$confirm=$element;break}}catch{}
+        }
+        $confirmationVisible=($uiNames.ToArray()-join'|')-match'(?i)are you sure|this app.*uninstall|uninstall.*Eye Break Reminder|Eye Break Reminder.*uninstall'
+        if($confirm-and$confirmationVisible){try{$confirm.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();$confirmClicks=1}catch{}}
+      }
+      Start-Sleep -Milliseconds 200
+    }
+    if(-not$uninstallProcess){return [pscustomobject]@{Status='NOT TESTED';Reason='Settings launched no visible per-user NSIS uninstaller within 35 seconds.';Screenshot=$screenshot;ConfirmationClicks=$confirmClicks}}
+    $wizard=Invoke-StandardUserWizard $UninstallerPath 'Settings Apps interactive uninstall wizard' $uninstallProcess
+    if($wizard.Status-ne'PASS'){return [pscustomobject]@{Status=$wizard.Status;Reason=$wizard.Reason;Wizard=$wizard;Screenshot=$screenshot}}
+    $installDir=Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder';$uninstallKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder';$appKey='HKCU:\Software\EyeBreakReminder'
+    if((Test-Path -LiteralPath $installDir)-or(Test-Path -LiteralPath $uninstallKey)-or(Test-Path -LiteralPath $appKey)){return [pscustomobject]@{Status='FAIL';Reason='Settings uninstall completed its wizard but left the per-user app, install directory, or HKCU registrations.';Wizard=$wizard;Screenshot=$screenshot}}
+    [pscustomobject]@{Status='PASS';ExitCode=$wizard.ExitCode;Wizard=$wizard;InstallationRemoved=$true;HKCURegistrationsRemoved=$true;Screenshot=$screenshot;ConfirmationClicks=$confirmClicks}
+    }finally{
+      if($settingsRoot){try{$settingsRoot.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()}catch{}}
+      if($settingsProcess){try{$settingsProcess.Refresh();if(-not$settingsProcess.HasExited-and$settingsProcess.MainWindowTitle-match'(?i)Settings'){[void]$settingsProcess.CloseMainWindow()}}catch{}}
+    }
   }
   try{
     $identity=[Security.Principal.WindowsIdentity]::GetCurrent();$principal=[Security.Principal.WindowsPrincipal]::new($identity)
@@ -83,6 +153,16 @@ if($Child){
     if(-not$appProcess-or$appProcess.HasExited-or$appProcess.MainWindowHandle-eq[IntPtr]::Zero){throw 'The standard user could not launch a visible application window.'}
     $events.Add([pscustomobject]@{Name='Installed candidate launches with a visible window under the standard account';Status='PASS';Pid=$appProcess.Id;Title=$windowTitle;MainWindowHandle=('0x{0:X}'-f$appProcess.MainWindowHandle.ToInt64())})
     Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue;$appProcess=$null
+    $settingsUninstall=Invoke-SettingsAppsUninstall $uninstaller
+    $events.Add([pscustomobject]@{Name='Windows Settings > Apps uninstalls the standard-user candidate';Status=$settingsUninstall.Status;Details=$settingsUninstall;TokenAdministrator=$false})
+    Get-Process -Name SystemSettings -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId}|ForEach-Object{[void]$_.CloseMainWindow()}
+    if($settingsUninstall.Status-eq'FAIL'){throw $settingsUninstall.Reason}
+    if($settingsUninstall.Status-eq'PASS'){
+      $settingsReinstall=Start-Process -FilePath $installer -ArgumentList '/S' -PassThru
+      if(-not$settingsReinstall.WaitForExit(120000)-or$settingsReinstall.ExitCode-ne0){throw 'Silent reinstall failed after Windows Settings > Apps uninstall.'}
+      if(-not(Test-Path -LiteralPath $installed)-or(Test-Path -LiteralPath $uninstallKey)-or-not(Test-Path -LiteralPath $appKey)){throw 'The standard-user install did not recover its expected file and registrations after the Settings uninstall.'}
+      $events.Add([pscustomobject]@{Name='Per-user silent reinstall succeeds after Windows Settings > Apps removal';Status='PASS';ExitCode=$settingsReinstall.ExitCode;InstalledHash=(Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()})
+    }
     $wizardUninstall=Invoke-StandardUserWizard $uninstaller 'standard-user interactive uninstall wizard'
     $events.Add([pscustomobject]@{Name='Standard-user interactive uninstaller wizard';Status=$wizardUninstall.Status;Details=$wizardUninstall;TokenAdministrator=$false})
     if($wizardUninstall.Status-eq'PASS'){if($wizardUninstall.FinishCheckbox-ne'Off'){$events.Add([pscustomobject]@{Name='Standard-user uninstaller finish-page Run checkbox state';Status='NOT TESTED';Details="Finish-page checkbox state: $($wizardUninstall.FinishCheckbox)."})}else{$events.Add([pscustomobject]@{Name='Standard-user uninstaller finish-page Run checkbox is unchecked';Status='PASS';State=$wizardUninstall.FinishCheckbox})}}
@@ -143,7 +223,7 @@ try{
     $child=Start-Process -FilePath $pwsh -Credential $credential -LoadUserProfile -ArgumentList $arguments -PassThru
     $testStarted=$true
     $credential=$null;try{$securePassword.Dispose()}catch{};$securePassword=$null
-    if(-not$child.WaitForExit(240000)){Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue;throw 'Standard-user test process exceeded the four-minute limit.'}
+    if(-not$child.WaitForExit(900000)){Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue;throw 'Standard-user test process exceeded the fifteen-minute limit.'}
     if(Test-Path -LiteralPath $childResult){$result=Get-Content -LiteralPath $childResult -Raw|ConvertFrom-Json}else{$result=$null}
     if($child.ExitCode-eq0-and$result-and$result.Status-eq'PASS'){$status='PASS'}else{$status='FAIL';$reason=if($result){$result.Failure}else{"Standard-user child returned exit code $($child.ExitCode) without a passing evidence file."}}
   }catch{
@@ -173,7 +253,8 @@ try{
 }
 $accountRemoved=(-not[bool](Get-LocalUser -Name $userName -ErrorAction SilentlyContinue));$stageRemoved=(-not(Test-Path -LiteralPath $stageRoot))
 if(-not$accountRemoved){$cleanupErrors.Add('Disposable standard-user account still exists after cleanup.')};if(-not$stageRemoved){$cleanupErrors.Add('Temporary candidate staging directory still exists after cleanup.')}
-$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};SettingsAppsUninstall='NOT TESTED';SettingsAppsUninstallReason='The disposable standard-user test invokes NSIS directly; Windows Settings > Apps removal was not automated.';CompletedUtc=[DateTime]::UtcNow.ToString('o')}
+$settingsEvent=if($result){@($result.Events|Where-Object{$_.Name-eq'Windows Settings > Apps uninstalls the standard-user candidate'}|Select-Object -First 1)}else{@()}
+$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};SettingsAppsUninstall=if($settingsEvent.Count){$settingsEvent[0].Status}else{'NOT TESTED'};SettingsAppsUninstallReason=if($settingsEvent.Count){$settingsEvent[0].Details.Reason}else{'The Settings Apps probe did not produce a result.'};CompletedUtc=[DateTime]::UtcNow.ToString('o')}
 if($cleanupErrors.Count-gt0){$resultObject.Status='FAIL';$resultObject.Failure=($cleanupErrors.ToArray()-join '; ')}
 Save-StandardUserResult $finalResult $resultObject
 $resultObject|ConvertTo-Json -Depth 8

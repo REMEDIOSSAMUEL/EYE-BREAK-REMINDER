@@ -605,3 +605,132 @@ jobs:
             build/pre-release-evidence/**
           if-no-files-found: warn
           retention-days: 90
+
+  windows-downloaded-candidate-x64-retest:
+    name: Downloaded exact-candidate Windows x64 acceptance
+    needs: windows-pre-release
+    if: ${{ needs.windows-pre-release.result == 'success' }}
+    runs-on: windows-2025
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the tested branch and acceptance scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the sealed candidate files from this run
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.3.0-VERIFIED-RELEASE-CANDIDATE
+          path: release
+
+      - name: Download the candidate seal and exact-binary soak evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.3.0-final-pre-release-evidence-${{ github.run_id }}
+          path: build/primary-candidate-evidence
+
+      - name: Verify the downloaded candidate, preserve a read-only copy, and validate packages
+        id: candidate_identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expectedNames = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $candidateFiles = @(Get-ChildItem -LiteralPath 'release' -Force)
+          $actualNames = @($candidateFiles | Sort-Object Name | Select-Object -ExpandProperty Name)
+          if ($candidateFiles.Count -ne 5 -or @($candidateFiles | Where-Object PSIsContainer).Count -ne 0 -or ($actualNames -join "`n") -cne (($expectedNames | Sort-Object) -join "`n")) { throw "Downloaded candidate file set is invalid: $($actualNames -join ', ')." }
+          $sealPath = Get-ChildItem -LiteralPath 'build/primary-candidate-evidence' -Recurse -Filter 'authoritative-release-candidate.json' | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $sealPath) { throw 'The primary run did not retain its authoritative candidate seal.' }
+          $seal = Get-Content -LiteralPath $sealPath -Raw | ConvertFrom-Json
+          if ($seal.RunId -ne $env:GITHUB_RUN_ID -or $seal.SourceCommit -cne $env:GITHUB_SHA -or $seal.Version -ne '1.3.0') { throw 'Downloaded seal does not match this successful candidate run, source commit, and version.' }
+          if ($seal.ArtifactFiles.Count -ne 5) { throw 'Candidate seal does not contain all five artifact identities.' }
+          $manifest = @(Get-Content -LiteralPath 'release/EyeBreakReminder-SHA256.txt')
+          if ($manifest.Count -ne 4) { throw 'Candidate manifest must list exactly four payloads.' }
+          $hashes = @{}
+          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip')) {
+            $line = @($manifest | Where-Object { $_ -match ('^([0-9a-f]{64})  ' + [regex]::Escape($name) + '$') })
+            if ($line.Count -ne 1) { throw "Manifest entry missing or duplicated: $name" }
+            $match = [regex]::Match($line[0], '^([0-9a-f]{64})  ' + [regex]::Escape($name) + '$')
+            $actual = (Get-FileHash -LiteralPath (Join-Path 'release' $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if (-not $match.Success -or $actual -cne $match.Groups[1].Value) { throw "Downloaded candidate hash mismatch for ${name}: $actual" }
+            $hashes[$name] = $actual
+          }
+          $hashes['EyeBreakReminder-SHA256.txt'] = (Get-FileHash -LiteralPath 'release/EyeBreakReminder-SHA256.txt' -Algorithm SHA256).Hash.ToLowerInvariant()
+          foreach ($item in $seal.ArtifactFiles) {
+            if ($item.SHA256 -cne $hashes[$item.Name] -or [long]$item.Bytes -ne [long](Get-Item -LiteralPath (Join-Path 'release' $item.Name)).Length) { throw "Seal identity mismatch for $($item.Name)." }
+          }
+          $exe = Get-Item -LiteralPath 'release/EyeBreakReminder.exe';$setup = Get-Item -LiteralPath 'release/EyeBreakReminder-Setup-x64.exe'
+          if ($exe.VersionInfo.ProductVersion -notmatch '^1\.3\.0(\.0)?$' -or $setup.VersionInfo.ProductVersion -notmatch '^1\.3\.0(\.0)?$') { throw 'Downloaded candidate version metadata is not 1.3.0.' }
+          $soakPath = Get-ChildItem -LiteralPath 'build/primary-candidate-evidence' -Recurse -Filter 'soak-summary.json' | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $soakPath) { throw 'Primary candidate run did not provide exact-binary resource-soak evidence.' }
+          $soak = Get-Content -LiteralPath $soakPath -Raw | ConvertFrom-Json
+          if ($soak.SHA256 -cne $hashes['EyeBreakReminder.exe'] -or [int]$soak.CompletedCycles -lt 110 -or [int]$soak.Fail -gt 0 -or [int]$soak.NotTested -gt 0) { throw 'Downloaded candidate is not the exact production executable that passed the 110-cycle soak.' }
+          New-Item -ItemType Directory -Force -Path 'build/downloaded-candidate-preserved' | Out-Null
+          Get-ChildItem -LiteralPath 'release' -File | Copy-Item -Destination 'build/downloaded-candidate-preserved' -Force
+          $preserved = @($expectedNames | ForEach-Object { [pscustomobject]@{Name=$_;SHA256=(Get-FileHash -LiteralPath (Join-Path 'build/downloaded-candidate-preserved' $_) -Algorithm SHA256).Hash.ToLowerInvariant()} })
+          $identity = [pscustomobject]@{RunId=$seal.RunId;SourceCommit=$seal.SourceCommit;CandidateFiles=$preserved;ExecutableVersion=$exe.VersionInfo.ProductVersion;InstallerVersion=$setup.VersionInfo.ProductVersion;ResourceCycles=[int]$soak.CompletedCycles;ResourceSoakSHA256=$soak.SHA256;ExecutionEnvironment=(Get-CimInstance Win32_OperatingSystem).Caption;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();VerifiedBeforeTests=$true}
+          $identity | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'build/downloaded-candidate-identity.json' -Encoding UTF8
+          & python scripts/verify.py
+          if ($LASTEXITCODE -ne 0) { throw "Downloaded candidate package/source verification failed with exit code $LASTEXITCODE." }
+
+      - name: Smoke test the downloaded standalone and portable executables
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_candidate_binary_smoke.ps1 `
+            -StandaloneExecutable '.\release\EyeBreakReminder.exe' `
+            -PortableArchive '.\release\EyeBreakReminder-Portable-x64.zip' `
+            -ExpectedProductVersion '1.3.0' `
+            -EvidenceDirectory '.\build\downloaded-candidate-smoke'
+
+      - name: Retest the downloaded candidate installer and installed application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_pre_release_acceptance.ps1 `
+            -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -EvidenceDirectory '.\build\pre-release-evidence' `
+            -ExpectedProductVersion '1.3.0'
+
+      - name: Retest downloaded-candidate standard-user install and removal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_standard_user_acceptance.ps1 `
+            -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -ExecutablePath '.\release\EyeBreakReminder.exe' `
+            -EvidenceDirectory '.\build\exact-candidate-retest'
+
+      - name: Confirm candidate bytes stayed untouched during the downloaded-artifact retest
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identityPath = 'build/downloaded-candidate-identity.json'
+          if (-not (Test-Path -LiteralPath $identityPath)) { Write-Error 'Downloaded candidate identity evidence is missing.'; exit 1 }
+          $identity = Get-Content -LiteralPath $identityPath -Raw | ConvertFrom-Json
+          foreach ($item in $identity.CandidateFiles) {
+            $testedHash = (Get-FileHash -LiteralPath (Join-Path 'release' $item.Name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            $preservedHash = (Get-FileHash -LiteralPath (Join-Path 'build/downloaded-candidate-preserved' $item.Name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($testedHash -cne $item.SHA256 -or $preservedHash -cne $item.SHA256) { throw "Candidate payload $($item.Name) changed during the downloaded-artifact retest." }
+          }
+          New-Item -ItemType Directory -Force -Path 'build/exact-candidate-retest' | Out-Null
+          [pscustomobject]@{Status='PASS';RunId=$identity.RunId;SourceCommit=$identity.SourceCommit;CandidateFilesUnchanged=$true;CandidateSHA256=$identity.CandidateFiles;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} |
+            ConvertTo-Json -Depth 6 | Set-Content 'build/exact-candidate-retest/untouched-candidate-verification.json' -Encoding UTF8
+
+      - name: Upload downloaded exact-candidate retest evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.3.0-downloaded-candidate-retest-${{ github.run_id }}
+          path: |
+            build/downloaded-candidate-identity.json
+            build/downloaded-candidate-preserved/**
+            build/downloaded-candidate-smoke/**
+            build/exact-candidate-retest/**
+            build/pre-release-evidence/**
+          if-no-files-found: warn
+          retention-days: 90

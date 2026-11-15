@@ -80,6 +80,7 @@ public static class EBR_GUI_NATIVE {
     finally { Marshal.FreeHGlobal(text); }
   }
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool SetCursorPos(int x,int y);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetForegroundWindow();
@@ -507,6 +508,42 @@ function Assert-StatusAlignment([string]$Name) {
   $difference=[Math]::Abs($actual-$expected)
   Assert-That ($difference -le 1.0) "Status centered above timer at $Name" ([pscustomobject]@{Dpi=$dpi;TextScale=$textScale;ActualCenter=$actual;RingCenter=$expected;Difference=$difference;WindowWidth=$client.Width;RingDiameter=$diameter})
 }
+function Get-ScreenshotPixel([string]$ScreenshotPath,[IntPtr]$Window,[int]$ScreenX,[int]$ScreenY) {
+  $bounds=Get-Rect $Window;$x=$ScreenX-$bounds.Left;$y=$ScreenY-$bounds.Top;$bitmap=[Drawing.Bitmap]::new($ScreenshotPath)
+  try{if($x-lt0-or$y-lt0-or$x-ge$bitmap.Width-or$y-ge$bitmap.Height){throw "Requested pixel ($ScreenX,$ScreenY) is outside the captured window."};$pixel=$bitmap.GetPixel($x,$y);return ('#{0:X2}{1:X2}{2:X2}'-f$pixel.R,$pixel.G,$pixel.B)}finally{$bitmap.Dispose()}
+}
+function Get-RenderedControlTextContrast([string]$ScreenshotPath,[IntPtr]$Window,$ControlRect,[string]$Background) {
+  $windowRect=Get-Rect $Window;$bitmap=[Drawing.Bitmap]::new($ScreenshotPath);$pixels=@{}
+  try{
+    $left=$ControlRect.Left-$windowRect.Left+8;$right=$ControlRect.Right-$windowRect.Left-24;$top=$ControlRect.Top-$windowRect.Top+4;$bottom=$ControlRect.Bottom-$windowRect.Top-4
+    for($y=$top;$y-le$bottom;$y++){for($x=$left;$x-le$right;$x++){$pixel=$bitmap.GetPixel($x,$y);$color=('#{0:X2}{1:X2}{2:X2}'-f$pixel.R,$pixel.G,$pixel.B);if($color-ceq$Background){continue};if(-not$pixels.ContainsKey($color)){$pixels[$color]=0};$pixels[$color]++}}
+  }finally{$bitmap.Dispose()}
+  $readableColors=@(foreach($entry in $pixels.GetEnumerator()){$ratio=Get-ContrastRatio $entry.Key $Background;if($ratio-ge1.2){[pscustomobject]@{Color=$entry.Key;Pixels=[int]$entry.Value;Contrast=$ratio}}})
+  $candidate=@($readableColors|Sort-Object -Property Pixels -Descending|Select-Object -First 1)
+  if(-not$candidate.Count){return [pscustomobject]@{RenderedTextColor=$null;Background=$Background;ContrastRatio=0;SampledNonBackgroundColors=$pixels.Count;CorePixelCount=0}}
+  [pscustomobject]@{RenderedTextColor=$candidate[0].Color;Background=$Background;ContrastRatio=[Math]::Round($candidate[0].Contrast,2);SampledNonBackgroundColors=$pixels.Count;CorePixelCount=$candidate[0].Pixels}
+}
+function Get-FocusContrastEvidence([string]$BeforePath,[string]$AfterPath,[IntPtr]$Window,$ControlRect,[string]$Background) {
+  $windowRect=Get-Rect $Window;$before=[Drawing.Bitmap]::new($BeforePath);$after=[Drawing.Bitmap]::new($AfterPath);$changed=0;$readable=0;$maxRatio=0.0
+  try{
+    $left=$ControlRect.Left-$windowRect.Left+4;$right=$ControlRect.Right-$windowRect.Left-5;$top=$ControlRect.Top-$windowRect.Top+4;$bottom=$ControlRect.Bottom-$windowRect.Top-5
+    $points=[System.Collections.Generic.List[object]]::new()
+    for($x=$left;$x-le$right;$x++){$points.Add(@($x,$top));$points.Add(@($x,$bottom))}
+    for($y=$top+1;$y-lt$bottom;$y++){$points.Add(@($left,$y));$points.Add(@($right,$y))}
+    foreach($point in $points){$old=$before.GetPixel([int]$point[0],[int]$point[1]);$new=$after.GetPixel([int]$point[0],[int]$point[1]);if($old.ToArgb()-eq$new.ToArgb()){continue};$changed++;$color=('#{0:X2}{1:X2}{2:X2}'-f$new.R,$new.G,$new.B);$ratio=Get-ContrastRatio $color $Background;if($ratio-gt$maxRatio){$maxRatio=$ratio};if($ratio-ge3.0){$readable++}}
+  }finally{$before.Dispose();$after.Dispose()}
+  [pscustomobject]@{ChangedFocusBorderPixels=$changed;PixelsAtLeast3To1=$readable;MaxFocusPixelContrast=[Math]::Round($maxRatio,2);Background=$Background}
+}
+function Get-ThemePalette([int]$Theme) {
+  if($Theme-eq0){$light=$true;try{$light=[int](Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction Stop)-ne0}catch{};$Theme=if($light){1}else{2}}
+  switch($Theme){
+    1 {return [pscustomobject]@{Surface='#FFFFFF';Hover='#EBF0F7';Foreground='#181E2A';Secondary='#4C5767'}}
+    2 {return [pscustomobject]@{Surface='#272C35';Hover='#333B48';Foreground='#EFF3F9';Secondary='#BCC7D6'}}
+    3 {return [pscustomobject]@{Surface='#000000';Hover='#202020';Foreground='#FFFFFF';Secondary='#E5E5E5'}}
+    4 {return [pscustomobject]@{Surface='#FFFFFF';Hover='#E6E6E6';Foreground='#000000';Secondary='#202020'}}
+    default {throw "Unknown appearance theme $Theme."}
+  }
+}
 function Write-UpdateFixture([int]$Status,[string]$Body,[string]$Failure='none',[int]$DelayMilliseconds=0) {
   $content="status=$Status`r`nfailure=$Failure`r`ndelay_ms=$DelayMilliseconds`r`n`r`n$Body"
   [IO.File]::WriteAllText($fixturePath,$content,[Text.UTF8Encoding]::new($false))
@@ -761,7 +798,33 @@ try {
     Click-Control $script:mainWindow 11 'History navigation'
     Save-Screenshot $script:mainWindow ("history-{0}.png" -f $themeNames[$theme]) | Out-Null
     Switch-Settings 4
-    Save-Screenshot $script:mainWindow ("settings-{0}.png" -f $themeNames[$theme]) | Out-Null
+    $selectedShot=Save-Screenshot $script:mainWindow ("settings-{0}.png" -f $themeNames[$theme])
+    $selectedTab=Get-Control $script:mainWindow 134 'Selected Appearance section tab'
+    $selectedTabX=[int](($selectedTab.Rect.Left+$selectedTab.Rect.Right)/2);$selectedTabY=$selectedTab.Rect.Bottom-2
+    $selectedTabPixel=Get-ScreenshotPixel $selectedShot $script:mainWindow $selectedTabX $selectedTabY
+    $selectedAccent=@('#22C55E','#22C55E','#22C55E','#FFFF00','#0000B3')[$theme]
+    Assert-That ($selectedTabPixel-ceq$selectedAccent) "$($themeNames[$theme]) selected Appearance tab uses its active Work accent" ([pscustomobject]@{Expected=$selectedAccent;Actual=$selectedTabPixel;ControlId=134;Screenshot=$selectedShot})
+    $palette=Get-ThemePalette $theme
+    $workPicker=Get-Control $script:mainWindow 127 'Work colour picker for keyboard focus and hover matrix'
+    Set-AppFocus $workPicker.Handle
+    Assert-That ([EBR_GUI_NATIVE]::GetFocus()-eq$workPicker.Handle) "$($themeNames[$theme]) Work picker receives keyboard focus"
+    [void][EBR_GUI_NATIVE]::SendMessageW($script:mainWindow,0x0127,[IntPtr]::new(0x00010002),[IntPtr]::Zero)
+    [void][EBR_GUI_NATIVE]::InvalidateRect($workPicker.Handle,[IntPtr]::Zero,$true);[void][EBR_GUI_NATIVE]::UpdateWindow($workPicker.Handle)
+    $focusShot=Save-Screenshot $script:mainWindow "ui-state-$($themeNames[$theme])-work-picker-focus.png"
+    $focusEvidence=Get-FocusContrastEvidence $selectedShot $focusShot $script:mainWindow $workPicker.Rect $palette.Surface
+    Assert-That ($focusEvidence.ChangedFocusBorderPixels-ge2-and$focusEvidence.PixelsAtLeast3To1-ge2) "$($themeNames[$theme]) visible keyboard focus outline contrasts at least 3:1" $focusEvidence
+    [void][EBR_GUI_NATIVE]::SetCursorPos(0,0);Start-Sleep -Milliseconds 120
+    $idleShot=Save-Screenshot $script:mainWindow "ui-state-$($themeNames[$theme])-work-picker-idle.png"
+    $sampleX=$workPicker.Rect.Left+18;$sampleY=[int](($workPicker.Rect.Top+$workPicker.Rect.Bottom)/2)
+    $idlePixel=Get-ScreenshotPixel $idleShot $script:mainWindow $sampleX $sampleY
+    Assert-That ($idlePixel-ceq$palette.Surface) "$($themeNames[$theme]) button idle fill matches its rendered theme surface" ([pscustomobject]@{Expected=$palette.Surface;Actual=$idlePixel;SampleX=$sampleX;SampleY=$sampleY})
+    [void][EBR_GUI_NATIVE]::SetCursorPos([int](($workPicker.Rect.Left+$workPicker.Rect.Right)/2),$sampleY);Start-Sleep -Milliseconds 120
+    $hoverShot=Save-Screenshot $script:mainWindow "ui-state-$($themeNames[$theme])-work-picker-hover.png"
+    $hoverPixel=Get-ScreenshotPixel $hoverShot $script:mainWindow $sampleX $sampleY
+    $hoverContrast=Get-ContrastRatio $palette.Foreground $hoverPixel
+    Assert-That ($hoverPixel-ceq$palette.Hover) "$($themeNames[$theme]) actual pointer hover fill matches the theme hover color" ([pscustomobject]@{Expected=$palette.Hover;Actual=$hoverPixel;Screenshot=$hoverShot})
+    Assert-That ($hoverContrast-ge4.5) "$($themeNames[$theme]) hovered Work picker text contrast is at least 4.5:1" ([pscustomobject]@{Foreground=$palette.Foreground;RenderedBackground=$hoverPixel;ContrastRatio=[Math]::Round($hoverContrast,2)})
+    [void][EBR_GUI_NATIVE]::SetCursorPos(0,0)
     if ($theme -eq 4) {
       $focusControl=Get-Control $script:mainWindow 124 'Distinct break accent checkbox'
       $targetPid=[uint32]0;$targetThread=[EBR_GUI_NATIVE]::GetWindowThreadProcessId($focusControl.Handle,[ref]$targetPid);$testThread=[EBR_GUI_NATIVE]::GetCurrentThreadId()
@@ -793,6 +856,35 @@ try {
     if($theme -eq 4){Assert-TimerRingPixel (Join-Path $EvidenceDirectory ("timer-{0}-break.png" -f $themeNames[$theme])) '#005A00' 'High Contrast Light overrides custom Break Mode colour'}
     Click-Control $breakWindow 24 'Skip eye break'
     Assert-That ((Wait-Status 'Running') -like '*Running*') "$($themeNames[$theme]) returns to work after skip"
+    Click-Control $script:mainWindow 20 "$($themeNames[$theme]) pause state matrix"
+    Assert-That ((Wait-Status 'Paused')-like'*Paused*') "$($themeNames[$theme]) paused state remains named"
+    Assert-StatusAlignment "$($themeNames[$theme]) paused state matrix"
+    Save-Screenshot $script:mainWindow "ui-state-$($themeNames[$theme])-paused.png"|Out-Null
+    Click-Control $script:mainWindow 20 "$($themeNames[$theme]) resume state matrix"
+    Assert-That ((Wait-Status 'Running')-like'*Running*') "$($themeNames[$theme]) resumes from pause"
+    Switch-Settings 1
+    Set-Check $script:mainWindow 120 $false "$($themeNames[$theme]) disable schedule before held-state fixture"
+    foreach($dayId in 280..286){Set-Check $script:mainWindow $dayId $false "$($themeNames[$theme]) clear schedule day $dayId"}
+    $scheduleTime=Get-Control $script:mainWindow 300 "$($themeNames[$theme]) disabled Monday start time"
+    Assert-That (-not $scheduleTime.Enabled) "$($themeNames[$theme]) inactive schedule input is disabled" ([pscustomobject]@{ControlId=300;Text=$scheduleTime.Text;Bounds=$scheduleTime.Rect})
+    $disabledShot=Save-Screenshot $script:mainWindow "ui-state-$($themeNames[$theme])-disabled-schedule-input.png"
+    $disabledBg=Get-ScreenshotPixel $disabledShot $script:mainWindow ($scheduleTime.Rect.Right-8) ([int](($scheduleTime.Rect.Top+$scheduleTime.Rect.Bottom)/2))
+    $disabledTextEvidence=Get-RenderedControlTextContrast $disabledShot $script:mainWindow $scheduleTime.Rect $disabledBg
+    Assert-That ($disabledTextEvidence.CorePixelCount-ge3-and$disabledTextEvidence.ContrastRatio-ge3.0) "$($themeNames[$theme]) rendered disabled schedule text contrasts at least 3:1" ([pscustomobject]@{ExpectedSurface=$palette.Surface;MeasuredSurface=$disabledBg;Rendered=$disabledTextEvidence;Screenshot=$disabledShot})
+    Set-Check $script:mainWindow 120 $true "$($themeNames[$theme]) enable empty schedule hold"
+    Switch-Timer
+    Assert-That ((Wait-Status 'Outside scheduled hours')-like'*Outside scheduled hours*') "$($themeNames[$theme]) schedule enters the held state"
+    Assert-StatusAlignment "$($themeNames[$theme]) scheduled hold state matrix"
+    Save-Screenshot $script:mainWindow "ui-state-$($themeNames[$theme])-scheduled-hold.png"|Out-Null
+    Switch-Settings 1;Set-Check $script:mainWindow 120 $false "$($themeNames[$theme]) restore schedule disabled";Switch-Timer
+    Assert-That ((Wait-Status 'Running')-like'*Running*') "$($themeNames[$theme]) returns to Running after schedule fixture"
+    Click-Control $script:mainWindow 22 "$($themeNames[$theme]) snooze state matrix Break";$snoozeWindow=Wait-BreakWindow
+    Click-Control $snoozeWindow 25 "$($themeNames[$theme]) snooze state matrix action"
+    Assert-That ((Wait-Status 'Snoozed')-like'*Snoozed*') "$($themeNames[$theme]) snoozed state remains named"
+    Assert-StatusAlignment "$($themeNames[$theme]) snoozed state matrix"
+    Save-Screenshot $script:mainWindow "ui-state-$($themeNames[$theme])-snoozed.png"|Out-Null
+    Click-Control $script:mainWindow 21 "$($themeNames[$theme]) clear snooze state fixture"
+    Assert-That ((Wait-Status 'Running')-like'*Running*') "$($themeNames[$theme]) Reset clears its snooze fixture"
   }
 
   Test-SystemHighContrast
@@ -879,32 +971,17 @@ try {
   Assert-That ($liveStatus -notlike '*Checking*') 'Live update result does not remain busy' $liveStatus
   Add-Result 'Public GitHub Releases API' 'INFO' ([pscustomobject]@{Latest=[EBR_GUI_NATIVE]::Text($script:updateLatestHandle);Status=$liveStatus})
 
-  Set-Theme 4
-  Switch-Settings 4
-  Set-Check $script:mainWindow 124 $false 'Distinct break accent'
-  Switch-Timer
-  Click-Control $script:mainWindow 22 'High contrast break with optional accent disabled'
-  $breakWindow=Wait-BreakWindow
-  Save-Screenshot $script:mainWindow 'timer-high-contrast-break-accent-off.png' | Out-Null
-  Save-Screenshot $breakWindow 'reminder-high-contrast-break-accent-off.png' | Out-Null
-  Click-Control $breakWindow 24 'End high contrast visual check'
-  Switch-Settings 4
-  Set-Check $script:mainWindow 124 $true 'Distinct break accent'
-  Switch-Timer
-  Set-Theme 2
-  Switch-Settings 4
-  Set-Check $script:mainWindow 124 $false 'Distinct break accent'
-  Switch-Timer
-  Click-Control $script:mainWindow 22 'Dark break with optional accent disabled'
-  $breakWindow=Wait-BreakWindow
-  Start-Sleep -Milliseconds 1300
-  $disabledAccentShot=Save-Screenshot $script:mainWindow 'timer-dark-break-accent-off.png'
-  Assert-TimerRingPixel $disabledAccentShot '#22C55E' 'Distinct break accent disabled uses the Work Mode ring colour'
-  Save-Screenshot $breakWindow 'reminder-dark-break-accent-off.png' | Out-Null
-  Click-Control $breakWindow 24 'End dark accent preference check'
-  Switch-Settings 4
-  Set-Check $script:mainWindow 124 $true 'Distinct break accent'
-  Switch-Timer
+  $sharedAccentExpected=@('#22C55E','#22C55E','#22C55E','#00FFFF','#005A00')
+  foreach($theme in 0..4){
+    Set-Theme $theme;Switch-Settings 4;Set-Check $script:mainWindow 124 $false "$($themeNames[$theme]) distinct Break accent disabled";Switch-Timer
+    Click-Control $script:mainWindow 22 "$($themeNames[$theme]) shared Work accent during Break";$breakWindow=Wait-BreakWindow
+    Assert-That ((Wait-Status 'Taking an eye break')-like'*Taking an eye break*') "$($themeNames[$theme]) shared-accent Break status remains clear"
+    Wait-RingProgress "$($themeNames[$theme]) shared-accent Break";$sharedShot=Save-Screenshot $script:mainWindow "timer-$($themeNames[$theme])-break-accent-off.png" -PreserveForeground
+    Assert-TimerRingPixel $sharedShot $sharedAccentExpected[$theme] "$($themeNames[$theme]) Break ring respects disabled distinct accent and theme contrast"
+    Save-Screenshot $breakWindow "reminder-$($themeNames[$theme])-break-accent-off.png" -PreserveForeground|Out-Null
+    Click-Control $breakWindow 24 "$($themeNames[$theme]) finish shared-accent Break";Assert-That ((Wait-Status 'Running')-like'*Running*') "$($themeNames[$theme]) shared-accent Break returns to Work"
+    Switch-Settings 4;Set-Check $script:mainWindow 124 $true "$($themeNames[$theme]) restore distinct Break accent";Switch-Timer
+  }
   Switch-Settings 5
   Set-Theme 4
   Switch-Settings 5

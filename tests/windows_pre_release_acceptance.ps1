@@ -46,6 +46,7 @@ $script:osOriginal = @{}
 $script:highContrastOriginal = $null
 $script:transcriptStarted = $false
 $script:uninstallerDiagnostics = [System.Collections.Generic.List[object]]::new()
+$script:retainedUiProcessHandles = @{}
 $fatal = $false
 
 $native = @'
@@ -63,6 +64,10 @@ public static class EBR_PRE_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] public static extern bool EnumChildWindows(IntPtr parent, EnumCallback callback, IntPtr data);
   [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr OpenProcess(uint access,bool inherit,int processId);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetExitCodeProcess(IntPtr process,out uint exitCode);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern uint WaitForSingleObject(IntPtr handle,uint milliseconds);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool CloseHandle(IntPtr handle);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool AttachThreadInput(uint attach, uint attachTo, bool attachState);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SetFocus(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetFocus();
@@ -739,6 +744,19 @@ function Get-AvailableProcessExitCode($Process) {
   try{$value=$Process.ExitCode;if($null -ne $value){return [int]$value}}catch{}
   return $null
 }
+function Get-RetainedUiProcessExitCode([int]$ProcessId) {
+  if(-not $script:retainedUiProcessHandles.ContainsKey($ProcessId)){return $null}
+  $handle=[IntPtr]$script:retainedUiProcessHandles[$ProcessId]
+  try{
+    if([EBR_PRE_NATIVE]::WaitForSingleObject($handle,30000) -ne 0){return $null}
+    $exitCode=[uint32]0
+    if([EBR_PRE_NATIVE]::GetExitCodeProcess($handle,[ref]$exitCode)){return [long]$exitCode}
+    return $null
+  } finally {
+    [void][EBR_PRE_NATIVE]::CloseHandle($handle)
+    [void]$script:retainedUiProcessHandles.Remove($ProcessId)
+  }
+}
 function Get-DesktopWindowSnapshot([int[]]$RelevantProcessIds=@()) {
   @([EBR_PRE_NATIVE]::TopWindows() | ForEach-Object {
     $h=$_;$pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($h,[ref]$pidValue)
@@ -852,6 +870,15 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
     Require $false "$Kind wizard shows a visible native window" ([pscustomobject]@{Pid=$process.Id;Exited=$process.HasExited;ExitCode=$(if($process.HasExited){$process.ExitCode}else{$null});ProcessFamily=$familyIds;VisibleWindows=$visibleWindows})
   }
   $windowPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($window,[ref]$windowPid);$uiWindowProcessId=[int]$windowPid
+  $uiNativeHandleError=$null
+  if($isUninstaller -and $uiWindowProcessId -gt 0){
+    # Retain a kernel process handle while the real NSIS UI is alive. The
+    # Process object returned by a later PID lookup can lose access to the
+    # exit code once the short-lived child has already disappeared.
+    $uiHandle=[EBR_PRE_NATIVE]::OpenProcess(0x00101000,$false,$uiWindowProcessId)
+    if($uiHandle -ne [IntPtr]::Zero){$script:retainedUiProcessHandles[$uiWindowProcessId]=$uiHandle}
+    else{$uiNativeHandleError=[Runtime.InteropServices.Marshal]::GetLastWin32Error()}
+  }
   if($windowPid -ne 0 -and $windowPid -ne $process.Id){try{$process=Get-Process -Id $windowPid -ErrorAction Stop}catch{}}
   $buttonsSeen=[System.Collections.Generic.List[string]]::new()
   $watch=[Diagnostics.Stopwatch]::StartNew();$stage=0;$lastCapturedStage=-1
@@ -875,6 +902,8 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
       if($isUninstaller){
         if(-not $launchProcess.HasExited){[void]$launchProcess.WaitForExit(30000)}
         $uiExitCode=Get-AvailableProcessExitCode $process
+        $nativeUiExitCode=Get-RetainedUiProcessExitCode $uiWindowProcessId
+        if($null -ne $nativeUiExitCode){$uiExitCode=$nativeUiExitCode}
         $parentExitCode=Get-AvailableProcessExitCode $launchProcess
         $processTreeAfter=[System.Collections.Generic.List[object]]::new();$completionSamples=[System.Collections.Generic.List[object]]::new();$completionWatch=[Diagnostics.Stopwatch]::StartNew();$afterState=Get-UninstallStateSnapshot
         while($completionWatch.Elapsed.TotalSeconds -lt 20){
@@ -887,7 +916,7 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
         $endTime=[DateTime]::Now;$afterState=Get-UninstallStateSnapshot;$finalIds=@($processTreeAfter | ForEach-Object {$_.ProcessId});if($finalIds -notcontains $launchProcess.Id){$finalIds=@($launchProcess.Id)+$finalIds};$finalWindows=Get-DesktopWindowSnapshot $finalIds;$eventEvidence=Get-UninstallerEventLogEvidence $launchTime $endTime
         try{$shot=Capture-DesktopScreenshot ("{0}-desktop-after-wizard.png" -f $Kind);if($shot){$desktopScreenshots.Add($shot)}}catch{$desktopScreenshots.Add("after-wizard capture error: $($_.Exception.Message)")}
         $uiProcessName=$null;$uiProcessPath=$null;try{$uiProcessName=$process.ProcessName;$uiProcessPath=$process.Path}catch{}
-        $diagnostic=[pscustomobject]@{Kind=$Kind;Path=$Path;Arguments='';Started=$launchTime.ToString('o');Ended=$endTime.ToString('o');DurationSeconds=[Math]::Round(($endTime-$launchTime).TotalSeconds,2);LaunchPid=$launchProcess.Id;LaunchProcessExited=$launchProcess.HasExited;LaunchProcessExitCode=$parentExitCode;UiWindowProcessId=$uiWindowProcessId;UiProcessName=$uiProcessName;UiProcessPath=$uiProcessPath;UiProcessExited=$process.HasExited;UiProcessExitCode=$uiExitCode;WizardVisible=$true;WizardButtons=$buttonsSeen.ToArray();Before=$beforeState;After=$afterState;InitialProcesses=$initialProcesses;InitialWindows=$initialWindows;CompletionSamples=$completionSamples.ToArray();Processes=$processTreeAfter;FinalWindows=$finalWindows;DesktopScreenshots=$desktopScreenshots.ToArray();EventLogs=$eventEvidence}
+        $diagnostic=[pscustomobject]@{Kind=$Kind;Path=$Path;Arguments='';Started=$launchTime.ToString('o');Ended=$endTime.ToString('o');DurationSeconds=[Math]::Round(($endTime-$launchTime).TotalSeconds,2);LaunchPid=$launchProcess.Id;LaunchProcessExited=$launchProcess.HasExited;LaunchProcessExitCode=$parentExitCode;UiWindowProcessId=$uiWindowProcessId;UiProcessName=$uiProcessName;UiProcessPath=$uiProcessPath;UiProcessExited=$process.HasExited;UiProcessExitCode=$uiExitCode;UiProcessExitCodeCaptureMethod=$(if($null -ne $nativeUiExitCode){'retained native process handle'}elseif($null -ne $uiExitCode){'System.Diagnostics.Process handle'}else{'unavailable'});UiNativeHandleError=$uiNativeHandleError;WizardVisible=$true;WizardButtons=$buttonsSeen.ToArray();Before=$beforeState;After=$afterState;InitialProcesses=$initialProcesses;InitialWindows=$initialWindows;CompletionSamples=$completionSamples.ToArray();Processes=$processTreeAfter;FinalWindows=$finalWindows;DesktopScreenshots=$desktopScreenshots.ToArray();EventLogs=$eventEvidence}
         Save-UninstallerDiagnostic $diagnostic
         if($process.HasExited){Pass "$Kind wizard UI process exits after Finish" ([pscustomobject]@{Pid=$uiWindowProcessId;ProcessName=$uiProcessName})}else{Add-Event "$Kind wizard UI process exits after Finish" 'FAIL' ([pscustomobject]@{Pid=$uiWindowProcessId;ProcessName=$uiProcessName})}
         if($null -eq $uiExitCode){Not-Tested "$Kind wizard UI process exit code" 'The exited UI-process handle did not expose an exit code; the parent and post-uninstall state are recorded separately.'}elseif($uiExitCode -eq 0){Pass "$Kind wizard UI process exits with code 0" ([pscustomobject]@{Pid=$uiWindowProcessId;ExitCode=$uiExitCode})}else{Add-Event "$Kind wizard UI process exits with code 0" 'FAIL' ([pscustomobject]@{Pid=$uiWindowProcessId;ExitCode=$uiExitCode})}
@@ -1250,48 +1279,50 @@ function Test-OsAppearanceAndTextScale {
     $beforeRect=(Get-Control $script:mainWindow 22 'Take a break button').Rect
     $scaleValue=Get-SavedRegistryValue $accessibilityKey 'TextScaleFactor'
     if(-not (Test-Path -LiteralPath $accessibilityKey)){New-Item -Path $accessibilityKey -Force | Out-Null}
-    Set-DwordRegistryValue $accessibilityKey 'TextScaleFactor' 150
-    [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')
-    [void][EBR_PRE_NATIVE]::SendMessageW($script:mainWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero)
-    Start-Sleep -Milliseconds 350
-    $afterRect=(Get-Control $script:mainWindow 22 'Take a break button').Rect
-    Require ($afterRect.Height -gt $beforeRect.Height) 'Installed app responds to a 150% Windows TextScaleFactor preference' ([pscustomobject]@{BeforeButtonHeight=$beforeRect.Height;AfterButtonHeight=$afterRect.Height;RegistryValue=150})
-    Assert-StatusCentered '150% Windows text scale'
-    Capture-ActiveWindow $script:mainWindow 'text-scale-150-active.png' | Out-Null
-    foreach($pageName in @('timer','history','settings-intervals','settings-schedule','settings-alarm','settings-reminders','settings-general-appearance','settings-about')){
-      switch($pageName){
-        'timer'{Switch-Timer}
-        'history'{[void][EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow);Click-Control $script:mainWindow 11 'History at 150% text scale'}
-        'settings-intervals'{Switch-Settings 0}
-        'settings-schedule'{Switch-Settings 1}
-        'settings-alarm'{Switch-Settings 2}
-        'settings-reminders'{Switch-Settings 3}
-        'settings-general-appearance'{Switch-Settings 4}
-        'settings-about'{Switch-Settings 5}
+    foreach($textScale in @(125,150,200)){
+      Set-DwordRegistryValue $accessibilityKey 'TextScaleFactor' $textScale
+      [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')
+      [void][EBR_PRE_NATIVE]::SendMessageW($script:mainWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero)
+      Start-Sleep -Milliseconds 350
+      $afterRect=(Get-Control $script:mainWindow 22 "Take a break button at $textScale% text scale").Rect
+      Require ($afterRect.Height -gt $beforeRect.Height) "Installed app responds to $textScale% Windows TextScaleFactor" ([pscustomobject]@{BeforeButtonHeight=$beforeRect.Height;AfterButtonHeight=$afterRect.Height;RegistryValue=$textScale})
+      Assert-StatusCentered "$textScale% Windows text scale"
+      Capture-ActiveWindow $script:mainWindow "text-scale-$textScale-active.png" | Out-Null
+      foreach($pageName in @('timer','history','settings-intervals','settings-schedule','settings-alarm','settings-reminders','settings-general-appearance','settings-about')){
+        switch($pageName){
+          'timer'{Switch-Timer}
+          'history'{[void][EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow);Click-Control $script:mainWindow 11 "History at $textScale% text scale"}
+          'settings-intervals'{Switch-Settings 0}
+          'settings-schedule'{Switch-Settings 1}
+          'settings-alarm'{Switch-Settings 2}
+          'settings-reminders'{Switch-Settings 3}
+          'settings-general-appearance'{Switch-Settings 4}
+          'settings-about'{Switch-Settings 5}
+        }
+        Start-Sleep -Milliseconds 100
+        Assert-VisibleInteractiveControlsInClient $script:mainWindow "$textScale% text scale $pageName"
+        Capture-ActiveWindow $script:mainWindow "text-scale-$textScale-$pageName.png" | Out-Null
       }
-      Start-Sleep -Milliseconds 100
-      Assert-VisibleInteractiveControlsInClient $script:mainWindow "150% text scale $pageName"
-      Capture-ActiveWindow $script:mainWindow "text-scale-150-$pageName.png" | Out-Null
+      Switch-Settings 4
+      $layoutPicker=Open-InstalledColorPicker 127 "Choose Work Mode colour at $textScale% text scale"
+      $pickerBounds=Get-Rect $layoutPicker;$screenWidth=[EBR_PRE_NATIVE]::GetSystemMetrics(0);$screenHeight=[EBR_PRE_NATIVE]::GetSystemMetrics(1)
+      Require ($pickerBounds.Left-ge0-and$pickerBounds.Top-ge0-and$pickerBounds.Right-le$screenWidth-and$pickerBounds.Bottom-le$screenHeight) "Native ChooseColorW dialog remains within the display at $textScale% text scale" ([pscustomobject]@{Bounds=$pickerBounds;DisplayWidth=$screenWidth;DisplayHeight=$screenHeight})
+      Assert-VisibleInteractiveControlsInClient $layoutPicker "$textScale% text scale native ChooseColorW dialog"
+      Capture-ActiveWindow $layoutPicker "text-scale-$textScale-native-color-picker.png" | Out-Null
+      Close-InstalledColorPicker $layoutPicker $false
+      Switch-Timer;Invoke-InstalledBreakNow "Open production reminder at $textScale% text scale"
+      $layoutBreak=Get-BreakWindow $script:appPid|Select-Object -First 1
+      Require ($layoutBreak-ne[IntPtr]::Zero) "Installed reminder opens at $textScale% text scale"
+      $breakBounds=Get-Rect $layoutBreak
+      Require ($breakBounds.Left-ge0-and$breakBounds.Top-ge0-and$breakBounds.Right-le$screenWidth-and$breakBounds.Bottom-le$screenHeight) "Break reminder remains within the display at $textScale% text scale" ([pscustomobject]@{Bounds=$breakBounds;DisplayWidth=$screenWidth;DisplayHeight=$screenHeight})
+      Assert-VisibleInteractiveControlsInClient $layoutBreak "$textScale% text scale Break reminder"
+      Capture-ActiveWindow $layoutBreak "text-scale-$textScale-break-reminder.png" | Out-Null
+      Click-Control $layoutBreak 23 "Acknowledge $textScale% text scale Break reminder"
+      Require ((Wait-ForStatus 'Running')-like'*Running*') "Installed app returns to Work after the $textScale% text scale reminder"
     }
-    Switch-Settings 4
-    $layoutPicker=Open-InstalledColorPicker 127 'Choose Work Mode colour at 150% text scale'
-    $pickerBounds=Get-Rect $layoutPicker;$screenWidth=[EBR_PRE_NATIVE]::GetSystemMetrics(0);$screenHeight=[EBR_PRE_NATIVE]::GetSystemMetrics(1)
-    Require ($pickerBounds.Left-ge0-and$pickerBounds.Top-ge0-and$pickerBounds.Right-le$screenWidth-and$pickerBounds.Bottom-le$screenHeight) 'Native ChooseColorW dialog remains within the display at 150% text scale' ([pscustomobject]@{Bounds=$pickerBounds;DisplayWidth=$screenWidth;DisplayHeight=$screenHeight})
-    Assert-VisibleInteractiveControlsInClient $layoutPicker '150% text scale native ChooseColorW dialog'
-    Capture-ActiveWindow $layoutPicker 'text-scale-150-native-color-picker.png' | Out-Null
-    Close-InstalledColorPicker $layoutPicker $false
-    Switch-Timer;Invoke-InstalledBreakNow 'Open production reminder at 150% text scale'
-    $layoutBreak=Get-BreakWindow $script:appPid|Select-Object -First 1
-    Require ($layoutBreak-ne[IntPtr]::Zero) 'Installed reminder opens at 150% text scale'
-    $breakBounds=Get-Rect $layoutBreak
-    Require ($breakBounds.Left-ge0-and$breakBounds.Top-ge0-and$breakBounds.Right-le$screenWidth-and$breakBounds.Bottom-le$screenHeight) 'Break reminder remains within the display at 150% text scale' ([pscustomobject]@{Bounds=$breakBounds;DisplayWidth=$screenWidth;DisplayHeight=$screenHeight})
-    Assert-VisibleInteractiveControlsInClient $layoutBreak '150% text scale Break reminder'
-    Capture-ActiveWindow $layoutBreak 'text-scale-150-break-reminder.png' | Out-Null
-    Click-Control $layoutBreak 23 'Acknowledge 150% text scale Break reminder'
-    Require ((Wait-ForStatus 'Running')-like'*Running*') 'Installed app returns to Work after the 150% text scale reminder'
     Restore-RegistryValue $accessibilityKey 'TextScaleFactor' $scaleValue
     [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')
-    Pass 'Windows text-scale preference restored after the test'
+    Pass 'Windows text-scale preference restored after testing 125%, 150% and 200%' ([pscustomobject]@{TestedLevels=@(125,150,200);Restored=$scaleValue})
   } finally {
     if($script:highContrastOriginal -ne $null){[void][EBR_PRE_NATIVE]::SetHighContrast($script:highContrastOriginal);[void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')}
     foreach($key in $script:osOriginal.Keys){$parts=$key.Split('|',2);Restore-RegistryValue $parts[0] $parts[1] $script:osOriginal[$key]}
@@ -2360,6 +2391,10 @@ try {
   if($script:failCount -eq 0){Add-Event 'Windows pre-release acceptance runner' 'FAIL' $_.Exception.Message}
   Write-Error $_
 } finally {
+  foreach($entry in @($script:retainedUiProcessHandles.GetEnumerator())){
+    try{[void][EBR_PRE_NATIVE]::CloseHandle([IntPtr]$entry.Value)}catch{}
+    [void]$script:retainedUiProcessHandles.Remove([int]$entry.Key)
+  }
   try { Stop-InstalledApp } catch { Add-Event 'Installed test process cleanup' 'FAIL' $_.Exception.Message }
   if($script:highContrastOriginal -ne $null){[void][EBR_PRE_NATIVE]::SetHighContrast($script:highContrastOriginal)}
   foreach($key in $script:osOriginal.Keys){$parts=$key.Split('|',2);try{Restore-RegistryValue $parts[0] $parts[1] $script:osOriginal[$key]}catch{Add-Event 'Windows appearance preference restoration' 'FAIL' $_.Exception.Message}}
