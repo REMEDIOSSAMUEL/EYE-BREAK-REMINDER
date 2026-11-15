@@ -1518,9 +1518,22 @@ function Test-InstalledSettingsControls {
   $settingsButton=Get-Control $script:mainWindow 130 'Settings section after Ctrl+comma'
   Require ([EBR_PRE_NATIVE]::IsWindowVisible($settingsButton.Handle)) 'Ctrl+comma opens Settings'
   Send-InstalledShortcut ([byte[]]@(0x11,0x10)) 0x42
-  $wait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero
-  while($wait.Elapsed.TotalSeconds -lt 8){$wins=Get-BreakWindow $script:appPid;if($wins.Count -eq 1){$breakWindow=$wins[0];break};Start-Sleep -Milliseconds 100}
-  if($breakWindow-eq[IntPtr]::Zero){$foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid);Capture-ActiveWindow $script:mainWindow 'installed-ctrl-shift-b-main-after-timeout.png'|Out-Null;if($foreground-ne$script:mainWindow){Capture-ActiveWindow $foreground 'installed-ctrl-shift-b-foreground-after-timeout.png'|Out-Null};$hotkeyWindows=@(foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){$children=@();foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$children+=,$text}};[pscustomobject]@{Handle=('0x{0:X}' -f $window.ToInt64());Class=[EBR_PRE_NATIVE]::ClassName($window);Title=[EBR_PRE_NATIVE]::Text($window);Visible=[EBR_PRE_NATIVE]::IsWindowVisible($window);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($window);Children=$children}});Require $false 'Ctrl+Shift+B opens a manual Break from Settings' ([pscustomobject]@{BreakWindowCount=@(Get-BreakWindow $script:appPid).Count;Status=Get-Status;Foreground=('0x{0:X}' -f $foreground.ToInt64());ForegroundPid=$foregroundPid;AppPid=$script:appPid;MainWindowResponds=[EBR_PRE_NATIVE]::AppResponds($script:mainWindow,1000);Windows=$hotkeyWindows})}
+  $wait=[Diagnostics.Stopwatch]::StartNew();$breakWindow=[IntPtr]::Zero;$audioDialogSeen=$false
+  while($wait.Elapsed.TotalSeconds -lt 8){
+    $wins=Get-BreakWindow $script:appPid
+    if($wins.Count -eq 1){$breakWindow=$wins[0];break}
+    $audioDialog=Find-InstalledAudioUnavailableDialog
+    if($audioDialog-ne[IntPtr]::Zero){
+      $audioDialogSeen=$true;Capture-ActiveWindow $audioDialog 'installed-shortcut-audio-unavailable.png'|Out-Null
+      $ok=@([EBR_PRE_NATIVE]::Children($audioDialog)|Where-Object{[EBR_PRE_NATIVE]::ClassName($_)-eq'Button' -and [EBR_PRE_NATIVE]::IsWindowVisible($_) -and [EBR_PRE_NATIVE]::IsWindowEnabled($_) -and [EBR_PRE_NATIVE]::Text($_)-match '^\s*&?OK\s*$'})
+      if($ok.Count -eq 1){[void][EBR_PRE_NATIVE]::SendMessageW($ok[0],0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)}else{[void][EBR_PRE_NATIVE]::PostMessageW($audioDialog,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)}
+      $closed=[Diagnostics.Stopwatch]::StartNew();while([EBR_PRE_NATIVE]::IsWindow($audioDialog)-and$closed.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 50}
+      Require (-not [EBR_PRE_NATIVE]::IsWindow($audioDialog)) 'Keyboard Break test dismisses only the known unavailable-audio alert' ([pscustomobject]@{ButtonCount=$ok.Count})
+      Pass 'Manual Break shortcut reports unavailable audio on this runner; acoustic output is not tested' ([pscustomobject]@{DialogDismissed=$true;AcousticOutput='Not measured; no verified loopback capture endpoint'})
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  if($breakWindow-eq[IntPtr]::Zero){$foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid);Capture-ActiveWindow $script:mainWindow 'installed-ctrl-shift-b-main-after-timeout.png'|Out-Null;if($foreground-ne$script:mainWindow){Capture-ActiveWindow $foreground 'installed-ctrl-shift-b-foreground-after-timeout.png'|Out-Null};$hotkeyWindows=@(foreach($window in [EBR_PRE_NATIVE]::TopWindowsForProcess($script:appPid)){$children=@();foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$children+=,$text}};[pscustomobject]@{Handle=('0x{0:X}' -f $window.ToInt64());Class=[EBR_PRE_NATIVE]::ClassName($window);Title=[EBR_PRE_NATIVE]::Text($window);Visible=[EBR_PRE_NATIVE]::IsWindowVisible($window);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($window);Children=$children}});Require $false 'Ctrl+Shift+B opens a manual Break from Settings' ([pscustomobject]@{BreakWindowCount=@(Get-BreakWindow $script:appPid).Count;AudioUnavailableDialogSeen=$audioDialogSeen;Status=Get-Status;Foreground=('0x{0:X}' -f $foreground.ToInt64());ForegroundPid=$foregroundPid;AppPid=$script:appPid;MainWindowResponds=[EBR_PRE_NATIVE]::AppResponds($script:mainWindow,1000);Windows=$hotkeyWindows})}
   Require ($breakWindow -ne [IntPtr]::Zero) 'Ctrl+Shift+B opens a manual Break from Settings'
   Click-Control $breakWindow 24 'Complete keyboard shortcut Break';Require ((Get-Status)-like '*Running*') 'Keyboard shortcut Break returns to Work'
 
