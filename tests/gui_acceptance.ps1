@@ -77,12 +77,14 @@ public static class EBR_GUI_NATIVE {
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint RegisterWindowMessageW(string name);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool SystemParametersInfoW(uint action,uint parameter,ref EBR_GUI_HIGHCONTRAST value,uint flags);
-  [DllImport("user32.dll", EntryPoint="SystemParametersInfoW", SetLastError=true)] private static extern bool SystemParametersInfoAnimationW(uint action,uint parameter,ref int value,uint flags);
+  [DllImport("user32.dll", EntryPoint="SystemParametersInfoW", SetLastError=true)] private static extern bool SystemParametersInfoGetAnimationW(uint action,uint parameter,ref int value,uint flags);
+  [DllImport("user32.dll", EntryPoint="SystemParametersInfoW", SetLastError=true)] private static extern bool SystemParametersInfoSetAnimationW(uint action,uint parameter,IntPtr value,uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern uint GetSysColor(int index);
   public static bool GetHighContrast(out uint flags){EBR_GUI_HIGHCONTRAST value=new EBR_GUI_HIGHCONTRAST();value.cbSize=(uint)Marshal.SizeOf(typeof(EBR_GUI_HIGHCONTRAST));bool ok=SystemParametersInfoW(0x0042,value.cbSize,ref value,0);flags=value.dwFlags;return ok;}
   public static bool SetHighContrast(uint flags){EBR_GUI_HIGHCONTRAST value=new EBR_GUI_HIGHCONTRAST();value.cbSize=(uint)Marshal.SizeOf(typeof(EBR_GUI_HIGHCONTRAST));value.dwFlags=flags;return SystemParametersInfoW(0x0043,value.cbSize,ref value,2);}
-  public static bool GetClientAreaAnimation(out bool enabled){int value=0;bool ok=SystemParametersInfoAnimationW(0x1042,0,ref value,0);enabled=value!=0;return ok;}
-  public static bool SetClientAreaAnimation(bool enabled){int value=enabled?1:0;return SystemParametersInfoAnimationW(0x1043,0,ref value,2);}
+  public static bool GetClientAreaAnimation(out bool enabled){int value=0;bool ok=SystemParametersInfoGetAnimationW(0x1042,0,ref value,0);enabled=value!=0;return ok;}
+  // SPI_SETCLIENTAREAANIMATION encodes BOOL in pvParam itself; it is not a BOOL* like SPI_GETCLIENTAREAANIMATION.
+  public static bool SetClientAreaAnimation(bool enabled){IntPtr value=enabled?new IntPtr(1):IntPtr.Zero;return SystemParametersInfoSetAnimationW(0x1043,0,value,2);}
   [DllImport("user32.dll")] public static extern void keybd_event(byte virtualKey,byte scanCode,uint flags,UIntPtr extraInfo);
   public static string Text(IntPtr hwnd) { int n=SendMessageW(hwnd,0x000E,IntPtr.Zero,IntPtr.Zero).ToInt32();IntPtr b=Marshal.AllocHGlobal(Math.Max(2,n+2)*2);try{SendMessageW(hwnd,0x000D,new IntPtr(Math.Max(2,n+2)),b);return Marshal.PtrToStringUni(b)??"";}finally{Marshal.FreeHGlobal(b);} }
   public static string ClassName(IntPtr hwnd) { StringBuilder b=new StringBuilder(256); GetClassNameW(hwnd,b,b.Capacity); return b.ToString(); }

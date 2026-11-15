@@ -100,7 +100,8 @@ public static class EBR_PRE_NATIVE {
   [DllImport("oleacc.dll", PreserveSig=true)] private static extern int AccessibleObjectFromWindow(IntPtr hwnd, int objectId, ref Guid iid, out IntPtr accessible);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SystemParametersInfoW(uint action, uint parameter, ref EBR_PRE_HIGHCONTRAST value, uint flags);
-  [DllImport("user32.dll", EntryPoint="SystemParametersInfoW", SetLastError=true)] private static extern bool SystemParametersInfoAnimationW(uint action, uint parameter, ref int value, uint flags);
+  [DllImport("user32.dll", EntryPoint="SystemParametersInfoW", SetLastError=true)] private static extern bool SystemParametersInfoGetAnimationW(uint action, uint parameter, ref int value, uint flags);
+  [DllImport("user32.dll", EntryPoint="SystemParametersInfoW", SetLastError=true)] private static extern bool SystemParametersInfoSetAnimationW(uint action, uint parameter, IntPtr value, uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SystemParametersInfoSimpleW(uint action, uint parameter, IntPtr value, uint flags);
   [DllImport("shell32.dll", SetLastError=true)] public static extern int Shell_NotifyIconGetRect(ref EBR_PRE_NOTIFYICONIDENTIFIER id, out EBR_PRE_RECT rect);
   public static string Text(IntPtr hwnd) { int n=GetWindowTextLengthW(hwnd);StringBuilder b=new StringBuilder(Math.Max(2,n+2));GetWindowTextW(hwnd,b,b.Capacity);return b.ToString(); }
@@ -114,8 +115,9 @@ public static class EBR_PRE_NATIVE {
   public static bool GetTrayRect(IntPtr hwnd,uint uid,out EBR_PRE_RECT rect){EBR_PRE_NOTIFYICONIDENTIFIER id=new EBR_PRE_NOTIFYICONIDENTIFIER();id.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_NOTIFYICONIDENTIFIER));id.hWnd=hwnd;id.uID=uid;id.guidItem=Guid.Empty;return Shell_NotifyIconGetRect(ref id,out rect)==0;}
   public static bool GetHighContrast(out uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));bool ok=SystemParametersInfoW(0x0042,h.cbSize,ref h,0);flags=h.dwFlags;return ok;}
   public static bool SetHighContrast(uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));h.dwFlags=flags;return SystemParametersInfoW(0x0043,h.cbSize,ref h,2);}
-  public static bool GetClientAreaAnimation(out bool enabled){int value=0;bool ok=SystemParametersInfoAnimationW(0x1042,0,ref value,0);enabled=value!=0;return ok;}
-  public static bool SetClientAreaAnimation(bool enabled){int value=enabled?1:0;return SystemParametersInfoAnimationW(0x1043,0,ref value,2);}
+  public static bool GetClientAreaAnimation(out bool enabled){int value=0;bool ok=SystemParametersInfoGetAnimationW(0x1042,0,ref value,0);enabled=value!=0;return ok;}
+  // SPI_SETCLIENTAREAANIMATION encodes BOOL in pvParam itself; it is not a BOOL* like SPI_GETCLIENTAREAANIMATION.
+  public static bool SetClientAreaAnimation(bool enabled){IntPtr value=enabled?new IntPtr(1):IntPtr.Zero;return SystemParametersInfoSetAnimationW(0x1043,0,value,2);}
   public static bool BroadcastSetting(IntPtr hwnd,string name){IntPtr text=Marshal.StringToHGlobalUni(name);try{IntPtr result;return SendMessageTimeoutW(hwnd,0x001A,IntPtr.Zero,text,2,1500,out result)!=IntPtr.Zero;}finally{Marshal.FreeHGlobal(text);}}
   public static uint ClientPixel(IntPtr hwnd,int x,int y){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)return 0;try{return GetPixel(dc,x,y);}finally{ReleaseDC(hwnd,dc);}}
   public static object AccessibleWindow(IntPtr hwnd,int objectId){Guid iid=new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");IntPtr accessible;int hr=AccessibleObjectFromWindow(hwnd,objectId,ref iid,out accessible);if(hr<0||accessible==IntPtr.Zero)return null;try{return Marshal.GetObjectForIUnknown(accessible);}finally{Marshal.Release(accessible);}}
