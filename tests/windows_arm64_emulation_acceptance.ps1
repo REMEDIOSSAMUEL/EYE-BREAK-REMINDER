@@ -29,7 +29,7 @@ $appDataExistedBefore=Test-Path -LiteralPath $appDataPath
 $uninstallKeyExistedBefore=Test-Path -LiteralPath $uninstallKey
 function Add-Event([string]$Name,[string]$Status,$Details=$null){
   $script:events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')})
-  Write-Output "[$Status] $Name"
+  Write-Host "[$Status] $Name"
 }
 function Require([bool]$Condition,[string]$Name,$Details=$null){
   if($Condition){Add-Event $Name 'PASS' $Details;return}
@@ -93,6 +93,7 @@ function Save-DesktopScreenshot([string]$Path){
 }
 $ownedProcesses=[System.Collections.Generic.List[Diagnostics.Process]]::new()
 $portableTemp=$null
+$cleanupFailure=$null
 function Invoke-ExpectedNativeX64Guard([string]$Path,[string]$Label,[string]$TitlePattern,[string]$MessagePattern,[string]$ScreenshotName){
   $process=Start-Process -FilePath $Path -WorkingDirectory (Split-Path -Parent $Path) -PassThru
   $script:ownedProcesses.Add($process)
@@ -204,7 +205,13 @@ try{
     $tempRoot=[IO.Path]::GetFullPath($env:TEMP).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
     $resolvedTemp=[IO.Path]::GetFullPath($portableTemp)
     if(-not $resolvedTemp.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)){throw "Refusing recursive cleanup outside the runner temporary directory: $resolvedTemp"}
-    Remove-Item -LiteralPath $resolvedTemp -Recurse -Force
+    $removed=$false
+    for($attempt=1;$attempt -le 40 -and -not $removed;$attempt++){
+      try{Remove-Item -LiteralPath $resolvedTemp -Recurse -Force -ErrorAction Stop;$removed=$true}
+      catch{if($attempt -lt 40){Start-Sleep -Milliseconds 250}else{$cleanupFailure="Portable test directory remained locked after 10 seconds: $resolvedTemp; $($_.Exception.Message)"}}
+    }
+    if($removed){Add-Event 'Portable application test files are removed' 'PASS' ([pscustomobject]@{Path=$resolvedTemp;Attempts=$attempt-1})}
+    else{Add-Event 'Portable application test files are removed' 'FAIL' ([pscustomobject]@{Path=$resolvedTemp;Message=$cleanupFailure})}
   }
   if(-not $appDataExistedBefore -and (Test-Path -LiteralPath $appDataPath)){
     $localRoot=[IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
@@ -217,4 +224,5 @@ try{
   $results|ConvertTo-Json -Depth 9|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'windows-arm64-emulation-results.json') -Encoding UTF8
 }
 if($failure){throw "Windows 11 ARM64 acceptance failed: $failure"}
+if($cleanupFailure){throw "Windows 11 ARM64 acceptance cleanup failed: $cleanupFailure"}
 Write-Output "Windows 11 ARM64 acceptance: PASS=$($results.Pass) FAIL=$($results.Fail) NOT TESTED=$($results.NotTested) NOT APPLICABLE=$($results.NotApplicable) BLOCKED=$($results.Blocked)"
