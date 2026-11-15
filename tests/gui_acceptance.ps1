@@ -560,11 +560,13 @@ function Run-UpdateOverlapBarrier {
   $sendResult=[EBR_GUI_NATIVE]::SendMessageTimeoutTextW($script:updateStatusHandle,0x000D,[IntPtr]512,$text,0x0002,1000,[ref]$messageResult)
   Assert-That ($sendResult -ne [IntPtr]::Zero -and $text.ToString() -like '*Checking*') 'UI responds to a bounded native text request while HTTP work is pending' ([pscustomobject]@{Response=$text.ToString();MessageResult=$messageResult.ToInt64()})
   Save-Screenshot $script:mainWindow 'update-overlap-request-pending.png' | Out-Null
+  Switch-Timer
   $watch=[Diagnostics.Stopwatch]::StartNew();$during=$before
   while($watch.Elapsed.TotalSeconds -lt 15 -and $during -ge $before){$during=Get-TimerSeconds;if($during -ge $before){[Threading.Thread]::Sleep(25)}}
   Assert-That ($during -lt $before) 'Countdown advances while the controlled update response remains unresolved' ([pscustomobject]@{Before=$before;During=$during;ElapsedMilliseconds=$watch.ElapsedMilliseconds})
   Assert-That (-not $script:updateBarrierRelease.WaitOne(0)) 'HTTP response remains pending at the observed timer tick'
   $script:updateBarrierRelease.Set()
+  Switch-Settings 5
   $watch=[Diagnostics.Stopwatch]::StartNew();$enabled=$false
   while($watch.Elapsed.TotalSeconds -lt 15){try{$enabled=(Get-Control $script:mainWindow 160 'Check for Updates').Enabled}catch{};if($enabled){break};[Threading.Thread]::Sleep(50)}
   Assert-That $enabled 'Update result returns and re-enables the control after the barrier is released'
