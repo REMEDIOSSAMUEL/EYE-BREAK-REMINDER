@@ -195,7 +195,7 @@ if($Child){
 $finalResult=Join-Path $EvidenceDirectory 'standard-user-results.json';$runId=if($env:GITHUB_RUN_ID){$env:GITHUB_RUN_ID}else{[guid]::NewGuid().ToString('N').Substring(0,10)}
 $userName=('EbrStd'+$runId);if($userName.Length-gt20){$userName=$userName.Substring(0,20)}
 $stageRoot=[IO.Path]::GetFullPath((Join-Path $env:RUNNER_TEMP "eye-break-reminder-standard-user-$runId"))
-$evidenceRoot=[IO.Path]::GetFullPath($EvidenceDirectory);$userCreated=$false;$testStarted=$false;$status='BLOCKED';$reason='';$result=$null;$cleanupErrors=[System.Collections.Generic.List[string]]::new();$childResult=Join-Path $stageRoot 'standard-user-child-results.json'
+$evidenceRoot=[IO.Path]::GetFullPath($EvidenceDirectory);$userCreated=$false;$testStarted=$false;$status='BLOCKED';$reason='';$result=$null;$childExitCode=$null;$cleanupActions=[System.Collections.Generic.List[string]]::new();$cleanupErrors=[System.Collections.Generic.List[string]]::new();$childResult=Join-Path $stageRoot 'standard-user-child-results.json'
 [void][IO.Directory]::CreateDirectory($evidenceRoot)
 try{
   try{
@@ -222,12 +222,16 @@ try{
     $pwsh=Join-Path $PSHOME 'pwsh.exe';$childScript=Join-Path $stageRoot 'windows_standard_user_acceptance.ps1'
     $arguments="-NoProfile -ExecutionPolicy Bypass -File `"$childScript`" -Child -InstallerPath `"$(Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe')`" -ExecutablePath `"$(Join-Path $stageRoot 'EyeBreakReminder.exe')`" -EvidenceDirectory `"$stageEvidence`" -ChildResultPath `"$childResult`""
     $credential=[pscredential]::new($principal,$securePassword)
-    $child=Start-Process -FilePath $pwsh -Credential $credential -LoadUserProfile -ArgumentList $arguments -PassThru
+    $childStdout=Join-Path $stageRoot 'standard-user-child.stdout.log';$childStderr=Join-Path $stageRoot 'standard-user-child.stderr.log'
+    $child=Start-Process -FilePath $pwsh -Credential $credential -LoadUserProfile -ArgumentList $arguments -RedirectStandardOutput $childStdout -RedirectStandardError $childStderr -PassThru
     $testStarted=$true
     $credential=$null;try{$securePassword.Dispose()}catch{};$securePassword=$null
     if(-not$child.WaitForExit(900000)){Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue;throw 'Standard-user test process exceeded the fifteen-minute limit.'}
+    $childExitCode=$child.ExitCode;$child.Dispose()
+    foreach($capture in @(@($childResult,'standard-user-child-results.json'),@($childStdout,'standard-user-child.stdout.log'),@($childStderr,'standard-user-child.stderr.log'))){if(Test-Path -LiteralPath $capture[0]){Copy-Item -LiteralPath $capture[0] -Destination (Join-Path $evidenceRoot $capture[1]) -Force}}
     if(Test-Path -LiteralPath $childResult){$result=Get-Content -LiteralPath $childResult -Raw|ConvertFrom-Json}else{$result=$null}
-    if($child.ExitCode-eq0-and$result-and$result.Status-eq'PASS'){$status='PASS'}else{$status='FAIL';$reason=if($result){$result.Failure}else{"Standard-user child returned exit code $($child.ExitCode) without a passing evidence file."}}
+    $childOutput=if(Test-Path -LiteralPath $childStdout){(Get-Content -LiteralPath $childStdout -Tail 60)-join"`n"}else{''};$childError=if(Test-Path -LiteralPath $childStderr){(Get-Content -LiteralPath $childStderr -Tail 60)-join"`n"}else{''}
+    if($childExitCode-eq0-and$result-and$result.Status-eq'PASS'){$status='PASS'}else{$status='FAIL';$reason=if($result){$result.Failure}else{"Standard-user child returned exit code $childExitCode without a passing evidence file. stdout: $childOutput stderr: $childError"}}
   }catch{
     if($testStarted){$status='FAIL';$reason=$_.Exception.Message}else{$status='BLOCKED';$reason="The hosted runner could not safely provision or launch the isolated standard-user test: $($_.Exception.Message)"}
   }
@@ -244,7 +248,18 @@ try{
       $localUser=Get-LocalUser -Name $userName -ErrorAction SilentlyContinue
       if($localUser){
         $profile=Get-CimInstance Win32_UserProfile -ErrorAction Stop|Where-Object{$_.SID-eq$localUser.SID.Value-and-not$_.Special}|Select-Object -First 1
-        if($profile-and$profile.Loaded){$cleanupErrors.Add("Temporary profile is still loaded: $($profile.LocalPath)")}
+        $profileWatch=[Diagnostics.Stopwatch]::StartNew()
+        while($profile-and$profile.Loaded-and$profileWatch.Elapsed.TotalSeconds-lt12){Start-Sleep -Milliseconds 500;$profile=Get-CimInstance Win32_UserProfile -ErrorAction Stop|Where-Object{$_.SID-eq$localUser.SID.Value-and-not$_.Special}|Select-Object -First 1}
+        if($profile-and$profile.Loaded){
+          $stopped=[System.Collections.Generic.List[string]]::new()
+          foreach($process in Get-CimInstance Win32_Process -ErrorAction Stop){
+            try{$owner=Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop;if($owner.ReturnValue-eq0-and$owner.Sid-eq$localUser.SID.Value){Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue;$stopped.Add("$($process.Name)#$($process.ProcessId)")}}catch{}
+          }
+          if($stopped.Count){$cleanupActions.Add("Stopped remaining processes owned by the disposable account after its child test exited: $($stopped -join ', ')")}
+          $profileWatch.Restart()
+          while($profile-and$profile.Loaded-and$profileWatch.Elapsed.TotalSeconds-lt12){Start-Sleep -Milliseconds 500;$profile=Get-CimInstance Win32_UserProfile -ErrorAction Stop|Where-Object{$_.SID-eq$localUser.SID.Value-and-not$_.Special}|Select-Object -First 1}
+        }
+        if($profile-and$profile.Loaded){$cleanupErrors.Add("Temporary profile is still loaded after waiting and stopping disposable-user processes: $($profile.LocalPath)")}
         Remove-LocalUser -Name $userName -ErrorAction Stop
         if($profile){
           $resolvedProfile=[IO.Path]::GetFullPath($profile.LocalPath);$usersRoot=[IO.Path]::GetFullPath((Join-Path $env:SystemDrive 'Users'))
@@ -264,8 +279,8 @@ $accountRemoved=(-not[bool](Get-LocalUser -Name $userName -ErrorAction SilentlyC
 if(-not$accountRemoved){$cleanupErrors.Add('Disposable standard-user account still exists after cleanup.')};if(-not$stageRemoved){$cleanupErrors.Add('Temporary candidate staging directory still exists after cleanup.')}
 $settingsEvent=if($result){@($result.Events|Where-Object{$_.Name-eq'Windows Settings > Apps uninstalls the standard-user candidate'}|Select-Object -First 1)}else{@()}
 $settingsScreenshotDirectory=Join-Path $evidenceRoot 'standard-user-screenshots'
-$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};SettingsAppsUninstall=if($settingsEvent.Count){$settingsEvent[0].Status}else{'NOT TESTED'};SettingsAppsUninstallReason=if($settingsEvent.Count){$settingsEvent[0].Details.Reason}else{'The Settings Apps probe did not produce a result.'};SettingsScreenshots=@(Get-ChildItem -LiteralPath $settingsScreenshotDirectory -Filter '*.png' -File -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Name);CompletedUtc=[DateTime]::UtcNow.ToString('o')}
-if($cleanupErrors.Count-gt0){$resultObject.Status='FAIL';$resultObject.Failure=($cleanupErrors.ToArray()-join '; ')}
+$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;ChildExitCode=$childExitCode;ChildResultCaptured=[bool]$result;CleanupActions=$cleanupActions.ToArray();CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};SettingsAppsUninstall=if($settingsEvent.Count){$settingsEvent[0].Status}else{'NOT TESTED'};SettingsAppsUninstallReason=if($settingsEvent.Count){$settingsEvent[0].Details.Reason}else{'The Settings Apps probe did not produce a result.'};SettingsScreenshots=@(Get-ChildItem -LiteralPath $settingsScreenshotDirectory -Filter '*.png' -File -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Name);CompletedUtc=[DateTime]::UtcNow.ToString('o')}
+if($cleanupErrors.Count-gt0){$resultObject.Status='FAIL';$failureParts=@($reason)+@($cleanupErrors.ToArray())|Where-Object{$_};$resultObject.Failure=$failureParts -join '; '}
 Save-StandardUserResult $finalResult $resultObject
 $resultObject|ConvertTo-Json -Depth 8
 if($resultObject.Status-eq'FAIL'){exit 1}

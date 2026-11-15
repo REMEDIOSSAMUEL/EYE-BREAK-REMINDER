@@ -109,6 +109,7 @@ public static class EBR_PRE_NATIVE {
   [DllImport("user32.dll", EntryPoint="SystemParametersInfoW", SetLastError=true)] private static extern bool SystemParametersInfoSetAnimationW(uint action, uint parameter, IntPtr value, uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SystemParametersInfoSimpleW(uint action, uint parameter, IntPtr value, uint flags);
   [DllImport("shell32.dll", SetLastError=true)] public static extern int Shell_NotifyIconGetRect(ref EBR_PRE_NOTIFYICONIDENTIFIER id, out EBR_PRE_RECT rect);
+  [DllImport("shell32.dll", PreserveSig=true)] public static extern int SHQueryUserNotificationState(out int state);
   public static string Text(IntPtr hwnd) { int n=GetWindowTextLengthW(hwnd);StringBuilder b=new StringBuilder(Math.Max(2,n+2));GetWindowTextW(hwnd,b,b.Capacity);return b.ToString(); }
   public static string ClassName(IntPtr hwnd) { StringBuilder b=new StringBuilder(256);GetClassNameW(hwnd,b,b.Capacity);return b.ToString(); }
   public static IntPtr[] TopWindowsForProcess(int pid) { List<IntPtr> r=new List<IntPtr>();EnumCallback cb=delegate(IntPtr h,IntPtr ignored){uint actual;GetWindowThreadProcessId(h,out actual);if(actual==(uint)pid)r.Add(h);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return r.ToArray(); }
@@ -173,6 +174,11 @@ function Add-Event([string]$Name, [string]$Status, $Details=$null) {
 }
 function Pass([string]$Name, $Details=$null) { Add-Event $Name 'PASS' $Details }
 function Not-Tested([string]$Name, [string]$Reason) { Add-Event $Name 'NOT TESTED' $Reason }
+function Get-ShellNotificationEligibility {
+  $state=[int]0;$hresult=[EBR_PRE_NATIVE]::SHQueryUserNotificationState([ref]$state)
+  $stateNames=@{1='QUNS_NOT_PRESENT';2='QUNS_BUSY';3='QUNS_RUNNING_D3D_FULL_SCREEN';4='QUNS_PRESENTATION_MODE';5='QUNS_ACCEPTS_NOTIFICATIONS';6='QUNS_QUIET_TIME';7='QUNS_APP'}
+  [pscustomobject]@{HResult=('0x{0:X8}' -f $hresult);StateCode=$state;StateName=$stateNames[$state];AcceptsNotifications=($hresult-eq0-and$state-eq5)}
+}
 function Require([bool]$Condition, [string]$Name, $Details=$null) {
   if (-not $Condition) { Add-Event $Name 'FAIL' $Details; throw "Acceptance failed: $Name ($Details)" }
   Pass $Name $Details
@@ -2059,6 +2065,8 @@ function Test-ShellTrayAndNaturalNotification {
   Require ((Wait-ForStatus 'Running')-like'*Running*') 'Installed Work timer resumes when the temporary schedule fixture is disabled'
   Switch-Settings 3
   Set-Check $script:mainWindow 108 $true 'Windows notifications enabled'
+  $notificationEligibility=Get-ShellNotificationEligibility
+  Add-Event 'Windows Shell notification eligibility before hidden-app reminder' 'INFO' $notificationEligibility
   Switch-Timer
   Click-Control $script:mainWindow 21 'Reset real one-minute notification timer'
   [void][EBR_PRE_NATIVE]::PostMessageW($script:mainWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
@@ -2075,7 +2083,10 @@ function Test-ShellTrayAndNaturalNotification {
     $shellNames=@($desktopElements | ForEach-Object {try{$_.Current.Name}catch{''}} | Where-Object {$_ -match 'Time to rest your eyes|Look 20 feet'})
   } catch {}
   if($shellNames.Count -gt 0){Pass 'Windows Shell reminder notification surface observed in the desktop UIA tree' $shellNames}
-  else{Not-Tested 'Windows Shell notification surface acceptance/dismissal' 'The real hidden-app timer reached break mode and the reminder window appeared, but no separate Shell balloon/toast surface was observed. The in-app reminder is not counted as a toast.'}
+  else{
+    $shellReason=if($notificationEligibility.HResult-ne'0x00000000'){'The real reminder appeared but the Shell notification-eligibility API failed; no separate balloon was visible, so Windows suppression versus Shell delivery failure remains undetermined.'}elseif(-not$notificationEligibility.AcceptsNotifications){"The real in-app reminder appeared, while Windows reported $($notificationEligibility.StateName) ($($notificationEligibility.StateCode)); the Shell may suppress the requested legacy balloon in this state."}else{'The real in-app reminder appeared and Windows reported QUNS_ACCEPTS_NOTIFICATIONS, but no separate Shell balloon was visible. The application Shell_NotifyIcon return value and per-app Shell policy were not observable, so this does not establish an application failure.'}
+    Not-Tested 'Windows Shell notification surface acceptance/dismissal' "$shellReason Modern toast is not implemented and is not counted."
+  }
   $trayWindow=[EBR_PRE_NATIVE]::FindWindowW('Shell_TrayWnd',$null);$focusBefore=[EBR_PRE_NATIVE]::GetForegroundWindow();$focusObserved=$false;$focusAfter=[IntPtr]::Zero
   if($trayWindow-ne[IntPtr]::Zero){[void][EBR_PRE_NATIVE]::SetForegroundWindow($trayWindow);Start-Sleep -Milliseconds 300;$focusAfter=[EBR_PRE_NATIVE]::GetForegroundWindow();$focusObserved=($focusAfter-eq$trayWindow-and$focusAfter-ne$focusBefore)}
   if($focusObserved){

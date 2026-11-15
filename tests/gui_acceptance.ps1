@@ -832,7 +832,8 @@ try {
     Assert-That ($focusEvidence.ChangedFocusBorderPixels-ge2-and$focusEvidence.PixelsAtLeast3To1-ge2) "$($themeNames[$theme]) visible keyboard focus outline contrasts at least 3:1" $focusEvidence
     [void][EBR_GUI_NATIVE]::SetCursorPos(0,0);Start-Sleep -Milliseconds 120
     $idleShot=Save-Screenshot $script:mainWindow "ui-state-$($themeNames[$theme])-work-picker-idle.png"
-    $sampleX=$workPicker.Rect.Left+18;$sampleY=[int](($workPicker.Rect.Top+$workPicker.Rect.Bottom)/2)
+    # Keep the sample inside the fill, clear of the centred caption and focus border.
+    $sampleX=$workPicker.Rect.Left+8;$sampleY=[int](($workPicker.Rect.Top+$workPicker.Rect.Bottom)/2)
     $idlePixel=Get-ScreenshotPixel $idleShot $script:mainWindow $sampleX $sampleY
     Assert-That ($idlePixel-ceq$palette.Surface) "$($themeNames[$theme]) button idle fill matches its rendered theme surface" ([pscustomobject]@{Expected=$palette.Surface;Actual=$idlePixel;SampleX=$sampleX;SampleY=$sampleY})
     [void][EBR_GUI_NATIVE]::SetCursorPos([int](($workPicker.Rect.Left+$workPicker.Rect.Right)/2),$sampleY);Start-Sleep -Milliseconds 120
