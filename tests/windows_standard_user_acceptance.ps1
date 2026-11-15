@@ -223,11 +223,11 @@ try{
     $arguments="-NoProfile -ExecutionPolicy Bypass -File `"$childScript`" -Child -InstallerPath `"$(Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe')`" -ExecutablePath `"$(Join-Path $stageRoot 'EyeBreakReminder.exe')`" -EvidenceDirectory `"$stageEvidence`" -ChildResultPath `"$childResult`""
     $credential=[pscredential]::new($principal,$securePassword)
     $childStdout=Join-Path $stageRoot 'standard-user-child.stdout.log';$childStderr=Join-Path $stageRoot 'standard-user-child.stderr.log'
-    $child=Start-Process -FilePath $pwsh -Credential $credential -LoadUserProfile -ArgumentList $arguments -RedirectStandardOutput $childStdout -RedirectStandardError $childStderr -PassThru
+    $childProcess=Start-Process -FilePath $pwsh -Credential $credential -LoadUserProfile -ArgumentList $arguments -RedirectStandardOutput $childStdout -RedirectStandardError $childStderr -PassThru
     $testStarted=$true
     $credential=$null;try{$securePassword.Dispose()}catch{};$securePassword=$null
-    if(-not$child.WaitForExit(900000)){Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue;throw 'Standard-user test process exceeded the fifteen-minute limit.'}
-    $childExitCode=$child.ExitCode;$child.Dispose()
+    if(-not$childProcess.WaitForExit(900000)){Stop-Process -Id $childProcess.Id -Force -ErrorAction SilentlyContinue;throw 'Standard-user test process exceeded the fifteen-minute limit.'}
+    $childExitCode=$childProcess.ExitCode;$childProcess.Dispose()
     foreach($capture in @(@($childResult,'standard-user-child-results.json'),@($childStdout,'standard-user-child.stdout.log'),@($childStderr,'standard-user-child.stderr.log'))){if(Test-Path -LiteralPath $capture[0]){Copy-Item -LiteralPath $capture[0] -Destination (Join-Path $evidenceRoot $capture[1]) -Force}}
     if(Test-Path -LiteralPath $childResult){$result=Get-Content -LiteralPath $childResult -Raw|ConvertFrom-Json}else{$result=$null}
     $childOutput=if(Test-Path -LiteralPath $childStdout){(Get-Content -LiteralPath $childStdout -Tail 60)-join"`n"}else{''};$childError=if(Test-Path -LiteralPath $childStderr){(Get-Content -LiteralPath $childStderr -Tail 60)-join"`n"}else{''}
@@ -283,4 +283,4 @@ $resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason
 if($cleanupErrors.Count-gt0){$resultObject.Status='FAIL';$failureParts=@($reason)+@($cleanupErrors.ToArray())|Where-Object{$_};$resultObject.Failure=$failureParts -join '; '}
 Save-StandardUserResult $finalResult $resultObject
 $resultObject|ConvertTo-Json -Depth 8
-if($resultObject.Status-eq'FAIL'){exit 1}
+if($resultObject.Status-in@('FAIL','BLOCKED')){exit 1}
