@@ -895,7 +895,10 @@ function Invoke-Wizard([string]$Path,[string]$Kind) {
         foreach($runCheck in $nativeRunChecks){if([EBR_PRE_NATIVE]::SendMessageW($runCheck,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32() -eq 1){[void][EBR_PRE_NATIVE]::SendMessageW($runCheck,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)}}
         $remainingChecked=@($nativeRunChecks | Where-Object {[EBR_PRE_NATIVE]::SendMessageW($_,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32() -eq 1})
         Require ($remainingChecked.Count -eq 0) "$Kind finish-page run checkbox is cleared before test cleanup" $remainingChecked.Count
-      } else {Not-Tested "$Kind finish-page run checkbox state" 'The visible NSIS finish page exposed no matching Run checkbox.'}
+      } else {
+        if($isUninstaller){Add-Event "$Kind finish-page Run checkbox" 'NOT APPLICABLE' 'installer/setup.nsi defines MUI_FINISHPAGE_RUN for install pages; the uninstaller uses MUI_UNPAGE_FINISH and has no Run checkbox.'}
+        else{Not-Tested "$Kind finish-page run checkbox state" 'The visible installer finish page exposed no matching Run checkbox.'}
+      }
       Capture-ActiveWindow $window ("{0}-wizard-finish.png" -f $Kind) | Out-Null
       Invoke-WizardButton $window $finish
       [void]$process.WaitForExit(30000)

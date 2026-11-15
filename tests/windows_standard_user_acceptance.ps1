@@ -78,21 +78,23 @@ if($Child){
       if(-not$appEntry){Start-Sleep -Milliseconds 200}
     }
     if(-not$appEntry){return [pscustomobject]@{Status='NOT TESTED';Reason='The standard-user installation did not appear in the Settings > Installed apps search results.';VisibleNames=@($names|Select-Object -Unique|Select-Object -First 80);Screenshot=$screenshot}}
+    $entryScreenshot=$null
+    try{$bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen;$bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[System.Drawing.Graphics]::FromImage($bitmap);try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$entryScreenshot=Join-Path $EvidenceDirectory 'standard-user-settings-apps-eye-break-reminder-found.png';$bitmap.Save($entryScreenshot,[System.Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()}}catch{}
     $menuButton=$null;$scope=$appEntry
     for($depth=0;$depth-lt7-and-not$menuButton;$depth++){
       try{$controls=@($scope.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition));$menuButton=@($controls|Where-Object{try{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$_.Current.IsEnabled-and$_.Current.Name-match'(?i)more options|more actions|options for'}catch{$false}}|Select-Object -First 1|ForEach-Object{$_})|Select-Object -First 1}catch{}
       if(-not$menuButton){try{$scope=[System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($scope)}catch{$scope=$null};if(-not$scope-or$scope-eq[System.Windows.Automation.AutomationElement]::RootElement){break}}
     }
-    if(-not$menuButton){return [pscustomobject]@{Status='NOT TESTED';Reason='The Eye Break Reminder entry exposes no accessible row-specific options button.';Screenshot=$screenshot}}
+    if(-not$menuButton){return [pscustomobject]@{Status='NOT TESTED';Reason='The Eye Break Reminder entry exposes no accessible row-specific options button.';Screenshots=@($screenshot,$entryScreenshot)}}
     try{$menuButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$menuButton.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not open the Eye Break Reminder row menu: $($_.Exception.Message)";Screenshot=$screenshot}}}
     $uninstallChoice=$null;$watch=[Diagnostics.Stopwatch]::StartNew()
     while($watch.Elapsed.TotalSeconds-lt10-and-not$uninstallChoice){
       foreach($element in @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))){try{if($element.Current.Name-match'(?i)^Uninstall$'-and$element.Current.IsEnabled-and$element.Current.ControlType-in@([System.Windows.Automation.ControlType]::Button,[System.Windows.Automation.ControlType]::MenuItem)){$uninstallChoice=$element;break}}catch{}}
       if(-not$uninstallChoice){Start-Sleep -Milliseconds 100}
     }
-    if(-not$uninstallChoice){return [pscustomobject]@{Status='NOT TESTED';Reason='The app row menu exposed no Uninstall action.';Screenshot=$screenshot}}
+    if(-not$uninstallChoice){return [pscustomobject]@{Status='NOT TESTED';Reason='The app row menu exposed no Uninstall action.';Screenshots=@($screenshot,$entryScreenshot)}}
     $menuChoiceRuntime='';try{$menuChoiceRuntime=$uninstallChoice.GetRuntimeId()-join'.'}catch{}
-    try{$uninstallChoice.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$uninstallChoice.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not activate Settings > Apps > Uninstall: $($_.Exception.Message)";Screenshot=$screenshot}}}
+    try{$uninstallChoice.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$uninstallChoice.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not activate Settings > Apps > Uninstall: $($_.Exception.Message)";Screenshots=@($screenshot,$entryScreenshot)}}}
     $uninstallProcess=$null;$confirmClicks=0;$watch=[Diagnostics.Stopwatch]::StartNew()
     while($watch.Elapsed.TotalSeconds-lt35-and-not$uninstallProcess){
       $uninstallProcess=@(Get-Process -Name Uninstall -ErrorAction SilentlyContinue|Where-Object{try{[IO.Path]::GetFullPath($_.Path)-ieq[IO.Path]::GetFullPath($UninstallerPath)}catch{$false}}|Select-Object -First 1)
@@ -107,12 +109,12 @@ if($Child){
       }
       Start-Sleep -Milliseconds 200
     }
-    if(-not$uninstallProcess){return [pscustomobject]@{Status='NOT TESTED';Reason='Settings launched no visible per-user NSIS uninstaller within 35 seconds.';Screenshot=$screenshot;ConfirmationClicks=$confirmClicks}}
+    if(-not$uninstallProcess){return [pscustomobject]@{Status='NOT TESTED';Reason='Settings launched no visible per-user NSIS uninstaller within 35 seconds.';Screenshots=@($screenshot,$entryScreenshot);ConfirmationClicks=$confirmClicks}}
     $wizard=Invoke-StandardUserWizard $UninstallerPath 'Settings Apps interactive uninstall wizard' $uninstallProcess
-    if($wizard.Status-ne'PASS'){return [pscustomobject]@{Status=$wizard.Status;Reason=$wizard.Reason;Wizard=$wizard;Screenshot=$screenshot}}
+    if($wizard.Status-ne'PASS'){return [pscustomobject]@{Status=$wizard.Status;Reason=$wizard.Reason;Wizard=$wizard;Screenshots=@($screenshot,$entryScreenshot)}}
     $installDir=Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder';$uninstallKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder';$appKey='HKCU:\Software\EyeBreakReminder'
     if((Test-Path -LiteralPath $installDir)-or(Test-Path -LiteralPath $uninstallKey)-or(Test-Path -LiteralPath $appKey)){return [pscustomobject]@{Status='FAIL';Reason='Settings uninstall completed its wizard but left the per-user app, install directory, or HKCU registrations.';Wizard=$wizard;Screenshot=$screenshot}}
-    [pscustomobject]@{Status='PASS';ExitCode=$wizard.ExitCode;Wizard=$wizard;InstallationRemoved=$true;HKCURegistrationsRemoved=$true;Screenshot=$screenshot;ConfirmationClicks=$confirmClicks}
+    [pscustomobject]@{Status='PASS';ExitCode=$wizard.ExitCode;Wizard=$wizard;InstallationRemoved=$true;HKCURegistrationsRemoved=$true;Screenshots=@($screenshot,$entryScreenshot);ConfirmationClicks=$confirmClicks}
     }finally{
       if($settingsRoot){try{$settingsRoot.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()}catch{}}
       if($settingsProcess){try{$settingsProcess.Refresh();if(-not$settingsProcess.HasExited-and$settingsProcess.MainWindowTitle-match'(?i)Settings'){[void]$settingsProcess.CloseMainWindow()}}catch{}}
@@ -165,7 +167,7 @@ if($Child){
     }
     $wizardUninstall=Invoke-StandardUserWizard $uninstaller 'standard-user interactive uninstall wizard'
     $events.Add([pscustomobject]@{Name='Standard-user interactive uninstaller wizard';Status=$wizardUninstall.Status;Details=$wizardUninstall;TokenAdministrator=$false})
-    if($wizardUninstall.Status-eq'PASS'){if($wizardUninstall.FinishCheckbox-ne'Off'){$events.Add([pscustomobject]@{Name='Standard-user uninstaller finish-page Run checkbox state';Status='NOT TESTED';Details="Finish-page checkbox state: $($wizardUninstall.FinishCheckbox)."})}else{$events.Add([pscustomobject]@{Name='Standard-user uninstaller finish-page Run checkbox is unchecked';Status='PASS';State=$wizardUninstall.FinishCheckbox})}}
+    if($wizardUninstall.Status-eq'PASS'){if($wizardUninstall.FinishCheckbox-eq'Off'){$events.Add([pscustomobject]@{Name='Standard-user uninstaller finish-page Run checkbox is unchecked';Status='PASS';State=$wizardUninstall.FinishCheckbox})}else{$events.Add([pscustomobject]@{Name='Standard-user uninstaller finish-page Run checkbox';Status='NOT APPLICABLE';Details='The uninstaller uses MUI_UNPAGE_FINISH; setup.nsi defines the Run checkbox only for install finish pages.'})}}
     if($wizardUninstall.Status-eq'FAIL'){throw $wizardUninstall.Reason}
     if($wizardUninstall.Status-ne'PASS'){
       $uninstall=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
