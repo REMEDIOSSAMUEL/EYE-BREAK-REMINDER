@@ -1299,7 +1299,14 @@ function Find-InstalledAudioUnavailableDialog {
     if(-not [EBR_PRE_NATIVE]::IsWindowVisible($window)){continue}
     $texts=@([EBR_PRE_NATIVE]::Text($window))
     foreach($child in [EBR_PRE_NATIVE]::Children($window)){$text=[EBR_PRE_NATIVE]::Text($child);if($text){$texts+=,$text}}
-    if(($texts -join ' ') -match 'The alarm couldn.t play\. Check your Windows audio output\.') { return $window }
+    $pattern='The alarm couldn.t play\. Check your Windows audio output\.'
+    if(($texts -join ' ') -match $pattern) { return $window }
+    # TaskDialog content on Windows Server 2025 is exposed to UIA even when
+    # GetWindowText only sees its OK button. Restrict this fallback to a
+    # separate native common-dialog window so a blocked main app is not walked.
+    if([EBR_PRE_NATIVE]::ClassName($window) -eq '#32770'){
+      try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($window);if($root){$names=@();$elements=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($element in $elements){try{$name=$element.Current.Name;if($name){$names+=,$name}}catch{}};if(($names -join ' ') -match $pattern){return $window}}}catch{}
+    }
   }
   return [IntPtr]::Zero
 }
