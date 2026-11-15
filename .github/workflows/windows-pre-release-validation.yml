@@ -11,6 +11,8 @@ on:
       - docs/evidence/v1.3.0-final-pre-release/**
       - docs/evidence/v1.3.0-exhaustive-final/**
       - .github/workflows/windows-pre-release-validation.yml
+      - .github/workflows/windows-11-arm64-candidate-validation.yml
+      - tests/windows_arm64_emulation_acceptance.ps1
   workflow_dispatch:
 
 permissions:
