@@ -53,7 +53,7 @@ public static class EBR_ARM64_ACCEPTANCE_Native {
   [DllImport("user32.dll", SetLastError=true)] private static extern int GetDlgCtrlID(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool IsWindowEnabled(IntPtr hwnd);
-  [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr GetForegroundWindowNative();
+  [DllImport("user32.dll", EntryPoint="GetForegroundWindow", SetLastError=true)] private static extern IntPtr GetForegroundWindowNative();
   [DllImport("user32.dll", SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd, out EBR_ARM64_RECT rect);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageW", SetLastError=true)] public static extern IntPtr SendMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
