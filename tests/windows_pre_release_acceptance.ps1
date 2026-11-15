@@ -1540,7 +1540,7 @@ function Test-InstalledSettingsControls {
   Click-Control $script:mainWindow 11 'History navigation for settings sweep'
   foreach($value in @($false,$true)){Set-Check $script:mainWindow 30 $value 'Save history on this device';Assert-InstalledSetting 'history' ([string][int]$value) "History-save preference persists as $value"}
   $historyBefore=if(Test-Path -LiteralPath $historyPath){(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash}else{''}
-  Require ($historyBefore) 'Settings sweep has a history file before Reset All'
+  Require (-not [string]::IsNullOrWhiteSpace($historyBefore)) 'Settings sweep has a history file before Reset All'
   Switch-Settings 5
   Invoke-InstalledYesConfirmation 118 'Reset all settings' 'Reset all settings\?'
   $reset=Read-SettingsMap $settingsPath
