@@ -432,6 +432,10 @@ function Test-InstalledReducedMotion {
   if(-not [EBR_PRE_NATIVE]::GetClientAreaAnimation([ref]$original)){Not-Tested 'Installed production candidate reduced-motion preference' 'SPI_GETCLIENTAREAANIMATION was unavailable on this isolated runner.';return}
   $changed=$false
   try{
+    # Timer status control 41 exists only on the Timer page. Capture the timer
+    # before switching to Settings, then return to Timer for the comparison.
+    Switch-Timer
+    $beforeStatus=Get-Status
     Switch-Settings 4;Start-Sleep -Milliseconds 650
     $panes=@([EBR_PRE_NATIVE]::Children($script:mainWindow)|Where-Object{[EBR_PRE_NATIVE]::ClassName($_)-eq'EyeBreakReminder.Settings'})
     if($panes.Count-ne 1){Not-Tested 'Installed production candidate reduced-motion response' "Expected one Settings scroll pane, found $($panes.Count).";return}
@@ -440,7 +444,6 @@ function Test-InstalledReducedMotion {
     if(-not [EBR_PRE_NATIVE]::SetClientAreaAnimation($false)){Not-Tested 'Installed production candidate reduced-motion preference' 'SPI_SETCLIENTAREAANIMATION(FALSE) was unavailable on this isolated runner.';return}
     $changed=$true;$observed=$true
     if(-not [EBR_PRE_NATIVE]::GetClientAreaAnimation([ref]$observed)-or$observed){Not-Tested 'Installed production candidate reduced-motion preference' 'The isolated runner did not expose the requested disabled client-area animation state.';return}
-    $beforeStatus=Get-Status
     [void][EBR_PRE_NATIVE]::SendMessageW($pane,0x0115,[IntPtr]6,[IntPtr]::Zero);Start-Sleep -Milliseconds 350
     $rect=New-Object EBR_PRE_RECT;[void][EBR_PRE_NATIVE]::GetWindowRect($target,[ref]$rect);$topDisabled=$rect.Top
     [void][EBR_PRE_NATIVE]::SendMessageW($pane,0x0115,[IntPtr]7,[IntPtr]::Zero)
@@ -457,6 +460,7 @@ function Test-InstalledReducedMotion {
     $rect=New-Object EBR_PRE_RECT;[void][EBR_PRE_NATIVE]::GetWindowRect($target,[ref]$rect);$enabledIntermediate=$rect.Top;Start-Sleep -Milliseconds 650
     $rect=New-Object EBR_PRE_RECT;[void][EBR_PRE_NATIVE]::GetWindowRect($target,[ref]$rect);$enabledSettled=$rect.Top
     Require ([Math]::Abs($enabledImmediate-$enabledSettled)-gt 25-and[Math]::Abs($enabledSettled-$disabledSettled)-le 3) 'Installed production candidate animates Settings scrolling only when Windows client-area animations are enabled' ([pscustomobject]@{ControlId=127;WindowsAnimationEnabled=$observed;TopY=$topEnabled;ImmediateY=$enabledImmediate;IntermediateY=$enabledIntermediate;SettledY=$enabledSettled;ReducedMotionSettledY=$disabledSettled})
+    Switch-Timer
     Require ((Get-Status)-eq$beforeStatus) 'Installed production candidate preserves timer state during Windows reduced-motion setting changes' ([pscustomobject]@{Before=$beforeStatus;After=(Get-Status)})
   }finally{
     if($changed){
