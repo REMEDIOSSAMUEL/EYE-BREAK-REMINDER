@@ -528,20 +528,23 @@ function Get-UiaElements([IntPtr]$Window) {
 }
 function Assert-VisibleInteractiveControlsInClient([IntPtr]$Window,[string]$Name) {
   $client=Get-ClientGeometry $Window;$right=$client.Left+$client.Width;$bottom=$client.Top+$client.Height
-  $interactive=@('Button','CheckBox','ComboBox','DataGrid','DataItem','Edit','Hyperlink','List','ListItem','RadioButton','Slider','Tab','TabItem')
+  # This application is a native Win32 UI. Measure its child HWNDs for actual
+  # rendered layout bounds. The separate UIA/name/focus acceptance remains in
+  # Test-UiaAndKeyboard.
+  $layoutClasses=@('Button','Static','Edit','ComboBox','ComboBoxEx32','ListBox','SysListView32','SysTreeView32','SysTabControl32','msctls_trackbar32','msctls_progress32','RichEdit20W','RICHEDIT50W')
   $checked=[System.Collections.Generic.List[object]]::new();$outside=[System.Collections.Generic.List[object]]::new()
-  foreach($element in (Get-UiaElements $Window)){
-    try{
-      $current=$element.Current;$type=$current.ControlType.ProgrammaticName -replace '^ControlType\.',''
-      if(($type -notin $interactive) -or $current.IsOffscreen){continue}
-      $rect=$current.BoundingRectangle;if($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0){continue}
-      $item=[pscustomobject]@{Name=$current.Name;Type=$type;Left=[Math]::Round($rect.Left,1);Top=[Math]::Round($rect.Top,1);Right=[Math]::Round($rect.Right,1);Bottom=[Math]::Round($rect.Bottom,1)}
-      $checked.Add($item)
-      if($rect.Left -lt ($client.Left-2) -or $rect.Top -lt ($client.Top-2) -or $rect.Right -gt ($right+2) -or $rect.Bottom -gt ($bottom+2)){$outside.Add($item)}
-    }catch{}
+  foreach($handle in [EBR_PRE_NATIVE]::Children($Window)){
+    $pidValue=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($handle,[ref]$pidValue)
+    if($pidValue-ne$script:appPid-or-not[EBR_PRE_NATIVE]::IsWindowVisible($handle)){continue}
+    $class=[EBR_PRE_NATIVE]::ClassName($handle);if($class-notin$layoutClasses){continue}
+    $rect=Get-Rect $handle
+    $item=[pscustomobject]@{Name=[EBR_PRE_NATIVE]::Text($handle);Id=[EBR_PRE_NATIVE]::GetDlgCtrlID($handle);Class=$class;Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($handle);Left=$rect.Left;Top=$rect.Top;Right=$rect.Right;Bottom=$rect.Bottom;Width=$rect.Width;Height=$rect.Height}
+    $checked.Add($item)
+    if($rect.Left-lt($client.Left-2)-or$rect.Top-lt($client.Top-2)-or$rect.Right-gt($right+2)-or$rect.Bottom-gt($bottom+2)){$outside.Add($item)}
   }
-  Require ($checked.Count-gt0) "$Name exposes visible interactive UI Automation controls" $checked.Count
-  Require ($outside.Count-eq0) "$Name interactive controls remain inside the visible window client area" ([pscustomobject]@{Window=$Name;Client=$client;CheckedCount=$checked.Count;Outside=$outside.ToArray()})
+  $uiaElements=@(Get-UiaElements $Window);$uiaNamed=@($uiaElements|Where-Object{try{$_.Current.Name}catch{$false}})
+  Require ($checked.Count-gt0) "$Name exposes visible native controls with measurable bounds" ([pscustomobject]@{Window=$Name;Client=$client;NativeControlCount=$checked.Count;Controls=$checked.ToArray();UiaElementCount=$uiaElements.Count;UiaNamedElementCount=$uiaNamed.Count})
+  Require ($outside.Count-eq0) "$Name native controls remain inside the visible window client area" ([pscustomobject]@{Window=$Name;Client=$client;CheckedCount=$checked.Count;Outside=$outside.ToArray()})
 }
 function Capture-ActiveWindow([IntPtr]$Window,[string]$Name) {
   if(-not $script:interactiveDesktop){Not-Tested "Active desktop screenshot: $Name" 'Runner has no interactive Explorer desktop.';return $null}

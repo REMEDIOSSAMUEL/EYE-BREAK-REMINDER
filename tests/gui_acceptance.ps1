@@ -544,6 +544,12 @@ function Get-ThemePalette([int]$Theme) {
     default {throw "Unknown appearance theme $Theme."}
   }
 }
+function Get-MixedColorHex([string]$Base,[string]$Tint,[int]$TintPercent) {
+  $baseColor=[Drawing.ColorTranslator]::FromHtml($Base);$tintColor=[Drawing.ColorTranslator]::FromHtml($Tint)
+  $mix={param([int]$b,[int]$t)[int][Math]::Floor(($b*(100-$TintPercent)+$t*$TintPercent)/100)}
+  $r=&$mix $baseColor.R $tintColor.R;$g=&$mix $baseColor.G $tintColor.G;$b=&$mix $baseColor.B $tintColor.B
+  return ('#{0:X2}{1:X2}{2:X2}' -f $r,$g,$b)
+}
 function Write-UpdateFixture([int]$Status,[string]$Body,[string]$Failure='none',[int]$DelayMilliseconds=0) {
   $content="status=$Status`r`nfailure=$Failure`r`ndelay_ms=$DelayMilliseconds`r`n`r`n$Body"
   [IO.File]::WriteAllText($fixturePath,$content,[Text.UTF8Encoding]::new($false))
@@ -803,8 +809,9 @@ try {
     $selectedTabX=[int](($selectedTab.Rect.Left+$selectedTab.Rect.Right)/2);$selectedTabY=$selectedTab.Rect.Bottom-2
     $selectedTabPixel=Get-ScreenshotPixel $selectedShot $script:mainWindow $selectedTabX $selectedTabY
     $selectedAccent=@('#22C55E','#22C55E','#22C55E','#FFFF00','#0000B3')[$theme]
-    Assert-That ($selectedTabPixel-ceq$selectedAccent) "$($themeNames[$theme]) selected Appearance tab uses its active Work accent" ([pscustomobject]@{Expected=$selectedAccent;Actual=$selectedTabPixel;ControlId=134;Screenshot=$selectedShot})
     $palette=Get-ThemePalette $theme
+    $expectedSelectedFill=Get-MixedColorHex $palette.Surface $selectedAccent 22
+    Assert-That ($selectedTabPixel-ceq$expectedSelectedFill) "$($themeNames[$theme]) selected Appearance tab uses a tint of its active Work accent" ([pscustomobject]@{ExpectedFill=$expectedSelectedFill;Accent=$selectedAccent;TintPercent=22;Actual=$selectedTabPixel;ControlId=134;Screenshot=$selectedShot})
     $workPicker=Get-Control $script:mainWindow 127 'Work colour picker for keyboard focus and hover matrix'
     Set-AppFocus $workPicker.Handle
     Assert-That ([EBR_GUI_NATIVE]::GetFocus()-eq$workPicker.Handle) "$($themeNames[$theme]) Work picker receives keyboard focus"
