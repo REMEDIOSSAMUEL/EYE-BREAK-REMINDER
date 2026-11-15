@@ -43,7 +43,7 @@
       "interactiveExplorer": true,
       "monitorCount": 1
     },
-    "localHostInventory": "Windows 10 Pro 26H2 build 26300; personal host excluded from acceptance, reboot, lock, sleep, audio, and system theme changes.",
+    "localHostInventory": "Windows 11 Pro x64 26H2 build 26300; native host inventoried but excluded from candidate acceptance, reboot, lock, sleep, audio playback, and system theme changes because it is the user's personal machine and no isolated VM or sandbox was available.",
     "nativeWindows11x64Available": false,
     "blocker": "No disposable VM/Sandbox/hypervisor/self-hosted runner was available; current hosted run is Windows Server 2025, and GitHub-hosted labels do not provide consumer Windows 11 x64.",
     "hostedRunnerImages": "https://github.com/actions/runner-images/blob/main/README.md#available-images"
