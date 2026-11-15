@@ -493,6 +493,23 @@ function Get-UiaElements([IntPtr]$Window) {
   if(-not $root){return @()}
   @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object { try { $_.Current.ProcessId -eq $script:appPid } catch { $false } })
 }
+function Assert-VisibleInteractiveControlsInClient([IntPtr]$Window,[string]$Name) {
+  $client=Get-ClientGeometry $Window;$right=$client.Left+$client.Width;$bottom=$client.Top+$client.Height
+  $interactive=@('Button','CheckBox','ComboBox','DataGrid','DataItem','Edit','Hyperlink','List','ListItem','RadioButton','Slider','Tab','TabItem')
+  $checked=[System.Collections.Generic.List[object]]::new();$outside=[System.Collections.Generic.List[object]]::new()
+  foreach($element in (Get-UiaElements $Window)){
+    try{
+      $current=$element.Current;$type=$current.ControlType.ProgrammaticName -replace '^ControlType\.',''
+      if(($type -notin $interactive) -or $current.IsOffscreen){continue}
+      $rect=$current.BoundingRectangle;if($rect.IsEmpty -or $rect.Width -le 0 -or $rect.Height -le 0){continue}
+      $item=[pscustomobject]@{Name=$current.Name;Type=$type;Left=[Math]::Round($rect.Left,1);Top=[Math]::Round($rect.Top,1);Right=[Math]::Round($rect.Right,1);Bottom=[Math]::Round($rect.Bottom,1)}
+      $checked.Add($item)
+      if($rect.Left -lt ($client.Left-2) -or $rect.Top -lt ($client.Top-2) -or $rect.Right -gt ($right+2) -or $rect.Bottom -gt ($bottom+2)){$outside.Add($item)}
+    }catch{}
+  }
+  Require ($checked.Count-gt0) "$Name exposes visible interactive UI Automation controls" $checked.Count
+  Require ($outside.Count-eq0) "$Name interactive controls remain inside the visible window client area" ([pscustomobject]@{Window=$Name;Client=$client;CheckedCount=$checked.Count;Outside=$outside.ToArray()})
+}
 function Capture-ActiveWindow([IntPtr]$Window,[string]$Name) {
   if(-not $script:interactiveDesktop){Not-Tested "Active desktop screenshot: $Name" 'Runner has no interactive Explorer desktop.';return $null}
   [void][EBR_PRE_NATIVE]::SetForegroundWindow($Window)
@@ -1241,6 +1258,37 @@ function Test-OsAppearanceAndTextScale {
     Require ($afterRect.Height -gt $beforeRect.Height) 'Installed app responds to a 150% Windows TextScaleFactor preference' ([pscustomobject]@{BeforeButtonHeight=$beforeRect.Height;AfterButtonHeight=$afterRect.Height;RegistryValue=150})
     Assert-StatusCentered '150% Windows text scale'
     Capture-ActiveWindow $script:mainWindow 'text-scale-150-active.png' | Out-Null
+    foreach($pageName in @('timer','history','settings-intervals','settings-schedule','settings-alarm','settings-reminders','settings-general-appearance','settings-about')){
+      switch($pageName){
+        'timer'{Switch-Timer}
+        'history'{[void][EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow);Click-Control $script:mainWindow 11 'History at 150% text scale'}
+        'settings-intervals'{Switch-Settings 0}
+        'settings-schedule'{Switch-Settings 1}
+        'settings-alarm'{Switch-Settings 2}
+        'settings-reminders'{Switch-Settings 3}
+        'settings-general-appearance'{Switch-Settings 4}
+        'settings-about'{Switch-Settings 5}
+      }
+      Start-Sleep -Milliseconds 100
+      Assert-VisibleInteractiveControlsInClient $script:mainWindow "150% text scale $pageName"
+      Capture-ActiveWindow $script:mainWindow "text-scale-150-$pageName.png" | Out-Null
+    }
+    Switch-Settings 4
+    $layoutPicker=Open-InstalledColorPicker 127 'Choose Work Mode colour at 150% text scale'
+    $pickerBounds=Get-Rect $layoutPicker;$screenWidth=[EBR_PRE_NATIVE]::GetSystemMetrics(0);$screenHeight=[EBR_PRE_NATIVE]::GetSystemMetrics(1)
+    Require ($pickerBounds.Left-ge0-and$pickerBounds.Top-ge0-and$pickerBounds.Right-le$screenWidth-and$pickerBounds.Bottom-le$screenHeight) 'Native ChooseColorW dialog remains within the display at 150% text scale' ([pscustomobject]@{Bounds=$pickerBounds;DisplayWidth=$screenWidth;DisplayHeight=$screenHeight})
+    Assert-VisibleInteractiveControlsInClient $layoutPicker '150% text scale native ChooseColorW dialog'
+    Capture-ActiveWindow $layoutPicker 'text-scale-150-native-color-picker.png' | Out-Null
+    Close-InstalledColorPicker $layoutPicker $false
+    Switch-Timer;Invoke-InstalledBreakNow 'Open production reminder at 150% text scale'
+    $layoutBreak=Get-BreakWindow $script:appPid|Select-Object -First 1
+    Require ($layoutBreak-ne[IntPtr]::Zero) 'Installed reminder opens at 150% text scale'
+    $breakBounds=Get-Rect $layoutBreak
+    Require ($breakBounds.Left-ge0-and$breakBounds.Top-ge0-and$breakBounds.Right-le$screenWidth-and$breakBounds.Bottom-le$screenHeight) 'Break reminder remains within the display at 150% text scale' ([pscustomobject]@{Bounds=$breakBounds;DisplayWidth=$screenWidth;DisplayHeight=$screenHeight})
+    Assert-VisibleInteractiveControlsInClient $layoutBreak '150% text scale Break reminder'
+    Capture-ActiveWindow $layoutBreak 'text-scale-150-break-reminder.png' | Out-Null
+    Click-Control $layoutBreak 23 'Acknowledge 150% text scale Break reminder'
+    Require ((Wait-ForStatus 'Running')-like'*Running*') 'Installed app returns to Work after the 150% text scale reminder'
     Restore-RegistryValue $accessibilityKey 'TextScaleFactor' $scaleValue
     [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')
     Pass 'Windows text-scale preference restored after the test'
@@ -1940,6 +1988,8 @@ function Test-ShellTrayAndNaturalNotification {
   $dueWatch=[Diagnostics.Stopwatch]::StartNew();$naturalBreak=[IntPtr]::Zero
   while($dueWatch.Elapsed.TotalSeconds -lt 80){$breaks=Get-BreakWindow $script:appPid;if($breaks.Count -eq 1){$naturalBreak=$breaks[0];break};Start-Sleep -Milliseconds 200}
   Require ($naturalBreak -ne [IntPtr]::Zero) 'Installed one-minute work timer reaches its real scheduled break after hide-to-tray' ([pscustomobject]@{WaitSeconds=[Math]::Round($dueWatch.Elapsed.TotalSeconds,1)})
+  $notificationDesktopBefore=Capture-DesktopScreenshot 'installed-natural-reminder-shell-notification-desktop.png'
+  if($notificationDesktopBefore){Pass 'Full desktop screenshot taken during the actual hidden-app reminder' $notificationDesktopBefore}else{Not-Tested 'Full desktop screenshot during the actual hidden-app reminder' 'No interactive desktop capture was available.'}
   Capture-ActiveWindow $naturalBreak 'installed-natural-reminder-after-hidden-work.png' | Out-Null
   $shellNames=@()
   try {
@@ -1949,6 +1999,15 @@ function Test-ShellTrayAndNaturalNotification {
   } catch {}
   if($shellNames.Count -gt 0){Pass 'Windows Shell reminder notification surface observed in the desktop UIA tree' $shellNames}
   else{Not-Tested 'Windows Shell notification surface acceptance/dismissal' 'The real hidden-app timer reached break mode and the reminder window appeared, but no separate Shell balloon/toast surface was observed. The in-app reminder is not counted as a toast.'}
+  $trayWindow=[EBR_PRE_NATIVE]::FindWindowW('Shell_TrayWnd',$null);$focusBefore=[EBR_PRE_NATIVE]::GetForegroundWindow();$focusObserved=$false;$focusAfter=[IntPtr]::Zero
+  if($trayWindow-ne[IntPtr]::Zero){[void][EBR_PRE_NATIVE]::SetForegroundWindow($trayWindow);Start-Sleep -Milliseconds 300;$focusAfter=[EBR_PRE_NATIVE]::GetForegroundWindow();$focusObserved=($focusAfter-eq$trayWindow-and$focusAfter-ne$focusBefore)}
+  if($focusObserved){
+    $breaksAfterFocus=@(Get-BreakWindow $script:appPid)
+    Require ($breaksAfterFocus.Count-eq1-and[EBR_PRE_NATIVE]::IsWindowVisible($naturalBreak)) 'Reminder remains visible and unique after a real desktop focus change' ([pscustomobject]@{ForegroundBefore=('0x{0:X}'-f$focusBefore.ToInt64());ForegroundAfter=('0x{0:X}'-f$focusAfter.ToInt64());TrayWindow=('0x{0:X}'-f$trayWindow.ToInt64());BreakWindowCount=$breaksAfterFocus.Count})
+    Require ((Get-Process -Id $script:appPid -ErrorAction Stop).HasExited-eq$false) 'Installed application remains responsive and alive after the reminder focus change'
+    $notificationDesktopAfter=Capture-DesktopScreenshot 'installed-natural-reminder-after-focus-change.png';if($notificationDesktopAfter){Pass 'Desktop screenshot captured after the reminder focus change' $notificationDesktopAfter}
+    [void][EBR_PRE_NATIVE]::SetForegroundWindow($naturalBreak)
+  }else{Not-Tested 'Reminder after real desktop focus change' ([pscustomobject]@{Reason='The runner did not transfer foreground ownership to the taskbar window.';ForegroundBefore=('0x{0:X}'-f$focusBefore.ToInt64());ForegroundAfter=if($focusAfter-eq[IntPtr]::Zero){$null}else{('0x{0:X}'-f$focusAfter.ToInt64())};TrayWindow=if($trayWindow-eq[IntPtr]::Zero){$null}else{('0x{0:X}'-f$trayWindow.ToInt64())}})}
   Click-Control $naturalBreak 25 'Snooze one minute in the installed application'
   Invoke-TrayCommand 'Open Eye Break Reminder'
   Require ((Wait-ForStatus 'Snoozed') -like '*Snoozed*') 'Installed app clearly reports Snoozed after a real break reminder is snoozed'

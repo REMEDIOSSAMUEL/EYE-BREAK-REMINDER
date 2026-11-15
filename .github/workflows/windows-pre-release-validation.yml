@@ -241,9 +241,27 @@ jobs:
             -EvidenceDirectory '.\build\pre-release-evidence' `
             -ExpectedProductVersion '1.3.0'
 
+      - name: Run disposable standard-user install and uninstall acceptance
+        id: standard_user_acceptance
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidencePath = 'build/pre-release-evidence/standard-user-results.json'
+          if ($env:GUI_DESKTOP_AVAILABLE -eq 'true' -and '${{ steps.installed_acceptance.outcome }}' -eq 'success') {
+            & .\tests\windows_standard_user_acceptance.ps1 `
+              -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
+              -ExecutablePath '.\release\EyeBreakReminder.exe' `
+              -EvidenceDirectory '.\build\pre-release-evidence'
+          } else {
+            New-Item -ItemType Directory -Force -Path 'build/pre-release-evidence' | Out-Null
+            [pscustomobject]@{Status='NOT TESTED';Account=$null;Failure='A successful interactive desktop and installed-candidate acceptance are required before the disposable standard-user install test.';CleanupErrors=@();AccountRemoved=$true;StageRemoved=$true;CandidateSHA256=(Get-FileHash -LiteralPath '.\release\EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant();Events=@();SettingsAppsUninstall='NOT TESTED';SettingsAppsUninstallReason='Windows Settings > Apps removal was not automated.';CompletedUtc=[DateTime]::UtcNow.ToString('o')} |
+              ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+          }
+
       - name: Download the previous exact candidate for resource-soak identity comparison
         id: prior_candidate
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' && steps.standard_user_acceptance.outcome == 'success' }}
         continue-on-error: true
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -255,7 +273,7 @@ jobs:
 
       - name: Download the previous exact-binary resource-soak evidence
         id: prior_resource_evidence
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' && steps.standard_user_acceptance.outcome == 'success' }}
         continue-on-error: true
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -267,7 +285,7 @@ jobs:
 
       - name: Verify exact-binary resource evidence or run the 110-cycle reminder and 100-dialog soak
         id: resource_soak
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' && steps.standard_user_acceptance.outcome == 'success' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -331,7 +349,7 @@ jobs:
           } | ConvertTo-Json -Depth 4 | Set-Content 'build/pre-release-evidence/resource-soak/not-tested.json' -Encoding UTF8
 
       - name: Record the long resource soak as blocked by failed acceptance prerequisites
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (steps.gui_acceptance.outcome != 'success' || steps.installed_acceptance.outcome != 'success') }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (steps.gui_acceptance.outcome != 'success' || steps.installed_acceptance.outcome != 'success' || steps.standard_user_acceptance.outcome != 'success') }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -339,9 +357,10 @@ jobs:
           [pscustomobject]@{
             Version = '1.3.0'
             Status = 'NOT TESTED'
-            Reason = 'The GUI or installed-app acceptance prerequisite failed. The long soak is gated to a candidate that passes those prerequisite checks.'
+            Reason = 'The GUI, installed-app or standard-user acceptance prerequisite failed. The long soak is gated to a candidate that passes those prerequisite checks.'
             GUIAcceptance = '${{ steps.gui_acceptance.outcome }}'
             InstalledAcceptance = '${{ steps.installed_acceptance.outcome }}'
+            StandardUserAcceptance = '${{ steps.standard_user_acceptance.outcome }}'
             RequestedReminderCycles = 110
             RequestedPickerOperations = 100
             CompletedUtc = [DateTime]::UtcNow.ToString('o')
@@ -349,7 +368,7 @@ jobs:
 
       - name: Launch the exact standalone and portable candidate executables
         id: candidate_smoke
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' && steps.resource_soak.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' && steps.standard_user_acceptance.outcome == 'success' && steps.resource_soak.outcome == 'success' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -360,15 +379,15 @@ jobs:
             -ExpectedProductVersion '1.3.0'
 
       - name: Require complete exact-candidate runtime acceptance before retaining a release candidate
-        if: ${{ always() && steps.build.outcome == 'success' && (steps.runner_probe.outcome != 'success' || env.GUI_DESKTOP_AVAILABLE != 'true' || steps.gui_acceptance.outcome != 'success' || steps.installed_acceptance.outcome != 'success' || steps.resource_soak.outcome != 'success' || steps.candidate_smoke.outcome != 'success') }}
+        if: ${{ always() && steps.build.outcome == 'success' && (steps.runner_probe.outcome != 'success' || env.GUI_DESKTOP_AVAILABLE != 'true' || steps.gui_acceptance.outcome != 'success' || steps.installed_acceptance.outcome != 'success' || steps.standard_user_acceptance.outcome != 'success' || steps.resource_soak.outcome != 'success' || steps.candidate_smoke.outcome != 'success') }}
         shell: pwsh
         run: |
-          Write-Error "The complete interactive Windows acceptance set did not pass. No authoritative release-candidate artifact will be uploaded. Runner probe=${{ steps.runner_probe.outcome }}, desktop=$env:GUI_DESKTOP_AVAILABLE, GUI=${{ steps.gui_acceptance.outcome }}, installer/upgrade=${{ steps.installed_acceptance.outcome }}, soak=${{ steps.resource_soak.outcome }}, standalone/portable=${{ steps.candidate_smoke.outcome }}."
+          Write-Error "The complete interactive Windows acceptance set did not pass. No authoritative release-candidate artifact will be uploaded. Runner probe=${{ steps.runner_probe.outcome }}, desktop=$env:GUI_DESKTOP_AVAILABLE, GUI=${{ steps.gui_acceptance.outcome }}, installer/upgrade=${{ steps.installed_acceptance.outcome }}, standard user=${{ steps.standard_user_acceptance.outcome }}, soak=${{ steps.resource_soak.outcome }}, standalone/portable=${{ steps.candidate_smoke.outcome }}."
           exit 1
 
       - name: Seal and verify the tested release-candidate files
         id: seal_candidate
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' && steps.resource_soak.outcome == 'success' && steps.candidate_smoke.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.runner_probe.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.gui_acceptance.outcome == 'success' && steps.installed_acceptance.outcome == 'success' && steps.standard_user_acceptance.outcome == 'success' && steps.resource_soak.outcome == 'success' && steps.candidate_smoke.outcome == 'success' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -433,6 +452,10 @@ jobs:
           if ($installed.SourceCommit -cne $env:GITHUB_SHA) { throw 'Installed acceptance evidence belongs to a different source commit.' }
           $installerHash = (Get-FileHash -LiteralPath 'release/EyeBreakReminder-Setup-x64.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($installed.CandidateExecutableSHA256 -cne $appHash -or $installed.CandidateInstallerSHA256 -cne $installerHash) { throw 'Installed acceptance is not bound to the exact sealed production executable and installer.' }
+          $standardUser = Get-Content -LiteralPath 'build/pre-release-evidence/standard-user-results.json' -Raw | ConvertFrom-Json
+          if ($standardUser.Status -notin @('PASS','BLOCKED','NOT TESTED')) { throw "Standard-user acceptance has unexpected status '$($standardUser.Status)' or a recorded failure." }
+          if ($standardUser.CandidateSHA256 -cne $appHash) { throw 'Standard-user evidence is not bound to the exact sealed production executable.' }
+          if ($standardUser.Status -eq 'PASS' -and (-not $standardUser.AccountRemoved -or -not $standardUser.StageRemoved)) { throw 'The disposable standard-user account or candidate staging directory was not removed after its passing acceptance test.' }
           $payload = @($installed.Events | Where-Object { $_.Name -eq 'v1.2.1 upgrade installs the exact verified v1.3.0 packaged executable' -and $_.Status -eq 'PASS' })
           $breakRestart = @($installed.Events | Where-Object { $_.Name -eq 'Installed candidate restarts from the Start Menu after an interrupted Break' -and $_.Status -eq 'PASS' })
           $pickerChecks = @($installed.Events | Where-Object { $_.Status -eq 'PASS' -and $_.Name -in @('Installed application opens the native ChooseColorW dialog','Installed Work picker saves a custom RGB independently','Installed Break picker saves its colour independently of Work','Installed picker Cancel leaves stored preferences unchanged','Installed custom Work and Break colours persist after application restart') })
@@ -455,11 +478,11 @@ jobs:
             Application='Eye Break Reminder';Version='1.3.0';SourceCommit=$env:GITHUB_SHA
             RunId=$env:GITHUB_RUN_ID;RunAttempt=$env:GITHUB_RUN_ATTEMPT;RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
             ArtifactFiles=@($before | ForEach-Object { [pscustomobject]@{Name=[IO.Path]::GetFileName($_.Path);Bytes=[long]$_.Bytes;SHA256=[string]$_.SHA256} })
-            Tests=[pscustomobject]@{CoreRuns=@($coreRuns);PackageAssertions=[int]$packageReport.binary_and_package_assertions_passed;GuiAssertions=[int]$gui.Assertions;GuiTestExecutableSHA256=$gui.ExecutableSHA256;ProductionExecutableSHA256=$appHash;InstallerSHA256=$installerHash;InstalledPass=[int]$installed.Pass;InstalledFail=[int]$installed.Fail;InstalledNotTested=[int]$installed.NotTested;ProductionPickerChecks=$pickerChecks.Count;ProductionResetChecks=$resetChecks.Count;ProductionForcedColorsThemes=$forcedThemeChecks.Count;ProductionForcedWorkRings=$forcedWorkRings.Count;ProductionForcedBreakRings=$forcedBreakRings.Count;ForcedColors='PASS';InstallerPayloadIdentity='PASS';RestartDuringBreak='PASS';ResourceCycles=[int]$soak.CompletedCycles;PickerOperations=[int]$pickerDetails.PickerTotal;PickerOk=[int]$pickerDetails.PickerOk;PickerCancel=[int]$pickerDetails.PickerCancel;ResourceSamples=[int]$soak.MetricSamples;ResourceEvidenceReused=[bool]$reuseInfo.EvidenceReused;ResourceEvidenceRunId=[string]$reuseInfo.SourceRunId;StandalonePortableSmokeChecks=[int]$smoke.Passed}
+            Tests=[pscustomobject]@{CoreRuns=@($coreRuns);PackageAssertions=[int]$packageReport.binary_and_package_assertions_passed;GuiAssertions=[int]$gui.Assertions;GuiTestExecutableSHA256=$gui.ExecutableSHA256;ProductionExecutableSHA256=$appHash;InstallerSHA256=$installerHash;InstalledPass=[int]$installed.Pass;InstalledFail=[int]$installed.Fail;InstalledNotTested=[int]$installed.NotTested;StandardUserStatus=[string]$standardUser.Status;StandardUserEvents=@($standardUser.Events);SettingsAppsUninstall=[string]$standardUser.SettingsAppsUninstall;SettingsAppsUninstallReason=[string]$standardUser.SettingsAppsUninstallReason;ProductionPickerChecks=$pickerChecks.Count;ProductionResetChecks=$resetChecks.Count;ProductionForcedColorsThemes=$forcedThemeChecks.Count;ProductionForcedWorkRings=$forcedWorkRings.Count;ProductionForcedBreakRings=$forcedBreakRings.Count;ForcedColors='PASS';InstallerPayloadIdentity='PASS';RestartDuringBreak='PASS';ResourceCycles=[int]$soak.CompletedCycles;PickerOperations=[int]$pickerDetails.PickerTotal;PickerOk=[int]$pickerDetails.PickerOk;PickerCancel=[int]$pickerDetails.PickerCancel;ResourceSamples=[int]$soak.MetricSamples;ResourceEvidenceReused=[bool]$reuseInfo.EvidenceReused;ResourceEvidenceRunId=[string]$reuseInfo.SourceRunId;StandalonePortableSmokeChecks=[int]$smoke.Passed}
             Signing='UNSIGNED';CandidateSealUtc=[DateTime]::UtcNow.ToString('o')
           }
           $candidate | ConvertTo-Json -Depth 10 | Set-Content 'build/pre-release-evidence/authoritative-release-candidate.json' -Encoding UTF8
-          $summary = "Sealed v1.3.0 candidate at $env:GITHUB_SHA; all five pretest identities are unchanged; GUI=$($gui.Assertions), installed PASS=$($installed.Pass), soak=$($soak.CompletedCycles) cycles/$($soak.MetricSamples) samples."
+          $summary = "Sealed v1.3.0 candidate at $env:GITHUB_SHA; all five pretest identities are unchanged; GUI=$($gui.Assertions), installed PASS=$($installed.Pass), standard-user=$($standardUser.Status), soak=$($soak.CompletedCycles) cycles/$($soak.MetricSamples) samples."
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
       - name: Upload the exact verified v1.3.0 release-candidate files
