@@ -232,6 +232,13 @@ try{
     if($testStarted){$status='FAIL';$reason=$_.Exception.Message}else{$status='BLOCKED';$reason="The hosted runner could not safely provision or launch the isolated standard-user test: $($_.Exception.Message)"}
   }
 }finally{
+  $stagedEvidence=Join-Path $stageRoot 'evidence'
+  if(Test-Path -LiteralPath $stagedEvidence){
+    try{
+      $screenshots=@(Get-ChildItem -LiteralPath $stagedEvidence -Filter '*.png' -File)
+      if($screenshots.Count){$settingsScreenshotDirectory=Join-Path $evidenceRoot 'standard-user-screenshots';[void][IO.Directory]::CreateDirectory($settingsScreenshotDirectory);foreach($screenshot in $screenshots){Copy-Item -LiteralPath $screenshot.FullName -Destination (Join-Path $settingsScreenshotDirectory $screenshot.Name) -Force}}
+    }catch{$cleanupErrors.Add("Could not retain standard-user screenshots: $($_.Exception.Message)")}
+  }
   if($userCreated){
     try{
       $localUser=Get-LocalUser -Name $userName -ErrorAction SilentlyContinue
@@ -256,7 +263,8 @@ try{
 $accountRemoved=(-not[bool](Get-LocalUser -Name $userName -ErrorAction SilentlyContinue));$stageRemoved=(-not(Test-Path -LiteralPath $stageRoot))
 if(-not$accountRemoved){$cleanupErrors.Add('Disposable standard-user account still exists after cleanup.')};if(-not$stageRemoved){$cleanupErrors.Add('Temporary candidate staging directory still exists after cleanup.')}
 $settingsEvent=if($result){@($result.Events|Where-Object{$_.Name-eq'Windows Settings > Apps uninstalls the standard-user candidate'}|Select-Object -First 1)}else{@()}
-$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};SettingsAppsUninstall=if($settingsEvent.Count){$settingsEvent[0].Status}else{'NOT TESTED'};SettingsAppsUninstallReason=if($settingsEvent.Count){$settingsEvent[0].Details.Reason}else{'The Settings Apps probe did not produce a result.'};CompletedUtc=[DateTime]::UtcNow.ToString('o')}
+$settingsScreenshotDirectory=Join-Path $evidenceRoot 'standard-user-screenshots'
+$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};SettingsAppsUninstall=if($settingsEvent.Count){$settingsEvent[0].Status}else{'NOT TESTED'};SettingsAppsUninstallReason=if($settingsEvent.Count){$settingsEvent[0].Details.Reason}else{'The Settings Apps probe did not produce a result.'};SettingsScreenshots=@(Get-ChildItem -LiteralPath $settingsScreenshotDirectory -Filter '*.png' -File -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Name);CompletedUtc=[DateTime]::UtcNow.ToString('o')}
 if($cleanupErrors.Count-gt0){$resultObject.Status='FAIL';$resultObject.Failure=($cleanupErrors.ToArray()-join '; ')}
 Save-StandardUserResult $finalResult $resultObject
 $resultObject|ConvertTo-Json -Depth 8
