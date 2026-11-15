@@ -24,7 +24,7 @@ def in_source(relative):
  # immutable artifact instead of copying stale run identities into the archive.
  if relative.as_posix().startswith(('docs/evidence/v1.3.0-final-pre-release/','docs/evidence/v1.3.0-exhaustive-final/')):return False
  # Verification reports record this archive's digest, so exclude them to avoid a self-referential source ZIP hash.
- if relative in {Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md'),Path('docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.3.0_EXHAUSTIVE_FINAL_TEST_REPORT.md'),Path('docs/V1.3.0_COMPLETION_PROGRESS.md'),Path('docs/evidence/v1.3.0-exhaustive-final/acceptance-matrix.json')}:return False
+ if relative in {Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md'),Path('docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.3.0_EXHAUSTIVE_FINAL_TEST_REPORT.md'),Path('docs/V1.3.0_COMPLETION_PROGRESS.md'),Path('docs/V1.3.0_AUTONOMOUS_COMPLETION_PROGRESS.md'),Path('docs/V1.3.0_FINAL_COMPLETION_AUDIT.md'),Path('docs/evidence/v1.3.0-exhaustive-final/acceptance-matrix.json')}:return False
  return relative!=Path('tests/core-tests') and relative.suffix.lower() not in EXCLUDED_SUFFIXES
 with zipfile.ZipFile(release/'EyeBreakReminder-Source.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9) as archive:
  for path in sorted(root.rglob('*')):

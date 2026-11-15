@@ -17,6 +17,16 @@ if ([IO.Path]::GetFullPath($EvidenceDirectory) -ine $expectedEvidence) { throw "
 $EvidenceDirectory=$expectedEvidence
 $dataDirectory = Join-Path (Split-Path -Parent $exePath) 'test-data'
 $fixturePath = Join-Path (Split-Path -Parent $exePath) 'test-update-response.txt'
+$script:updateBarrierStartedName="Local\EyeBreakReminder.GuiTest.UpdateStarted.$PID"
+$script:updateBarrierReleaseName="Local\EyeBreakReminder.GuiTest.UpdateRelease.$PID"
+$script:oldUpdateBarrierStarted=[Environment]::GetEnvironmentVariable('EBR_GUI_TEST_UPDATE_STARTED','Process')
+$script:oldUpdateBarrierRelease=[Environment]::GetEnvironmentVariable('EBR_GUI_TEST_UPDATE_RELEASE','Process')
+$script:updateBarrierStartedCreated=$false
+$script:updateBarrierReleaseCreated=$false
+$script:updateBarrierStarted=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,$script:updateBarrierStartedName,[ref]$script:updateBarrierStartedCreated)
+$script:updateBarrierRelease=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,$script:updateBarrierReleaseName,[ref]$script:updateBarrierReleaseCreated)
+[Environment]::SetEnvironmentVariable('EBR_GUI_TEST_UPDATE_STARTED',$script:updateBarrierStartedName,'Process')
+[Environment]::SetEnvironmentVariable('EBR_GUI_TEST_UPDATE_RELEASE',$script:updateBarrierReleaseName,'Process')
 [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
 $script:testPid = 0
 $script:mainWindow = [IntPtr]::Zero
@@ -60,6 +70,7 @@ public static class EBR_GUI_NATIVE {
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern int GetClassNameW(IntPtr hwnd, StringBuilder name, int maxCount);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetParent(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll", EntryPoint="SendMessageTimeoutW", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr SendMessageTimeoutTextW(IntPtr hwnd,uint message,IntPtr wParam,[Out] StringBuilder text,uint flags,uint timeout,out IntPtr result);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool InvalidateRect(IntPtr hwnd, IntPtr rect, bool erase);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool UpdateWindow(IntPtr hwnd);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool SetWindowTextW(IntPtr hwnd, string text);
@@ -527,6 +538,44 @@ function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Fai
   $latest=[EBR_GUI_NATIVE]::Text($script:updateLatestHandle)
   Add-Result "$Name latest label" 'INFO' $latest
 }
+function Run-UpdateOverlapBarrier {
+  Switch-Timer
+  Click-Control $script:mainWindow 21 'Reset timer before deterministic update overlap'
+  Assert-That ((Wait-Status 'Running') -like '*Running*') 'Timer is running before the update overlap barrier'
+  $before=Get-TimerSeconds
+  Assert-That ($before -gt 0) 'Countdown has a positive value before the update overlap barrier' $before
+  Switch-Settings 5
+  Initialize-UpdateHandles
+  $script:updateBarrierStarted.Reset();$script:updateBarrierRelease.Reset()
+  $body=([ordered]@{tag_name="v$expectedVersion";html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v$expectedVersion";draft=$false;prerelease=$false}|ConvertTo-Json -Compress)
+  $fixture="status=200`r`nfailure=none`r`nbarrier=1`r`n`r`n$body"
+  [IO.File]::WriteAllText($fixturePath,$fixture,[Text.UTF8Encoding]::new($false))
+  Click-Control $script:mainWindow 160 'Begin deterministic update overlap barrier'
+  $requestStarted=$script:updateBarrierStarted.WaitOne([TimeSpan]::FromSeconds(10))
+  Assert-That $requestStarted 'Update worker reached the deliberately unresolved response barrier'
+  $button=Get-Control $script:mainWindow 160 'Check for Updates'
+  Assert-That (-not $button.Enabled) 'Update action remains busy while the response barrier is held'
+  Assert-That (-not $script:updateBarrierRelease.WaitOne(0)) 'Controlled response is still unresolved before timer sampling'
+  $text=[Text.StringBuilder]::new(512);$messageResult=[IntPtr]::Zero
+  $sendResult=[EBR_GUI_NATIVE]::SendMessageTimeoutTextW($script:updateStatusHandle,0x000D,[IntPtr]512,$text,0x0002,1000,[ref]$messageResult)
+  Assert-That ($sendResult -ne [IntPtr]::Zero -and $text.ToString() -like '*Checking*') 'UI responds to a bounded native text request while HTTP work is pending' ([pscustomobject]@{Response=$text.ToString();MessageResult=$messageResult.ToInt64()})
+  Save-Screenshot $script:mainWindow 'update-overlap-request-pending.png' | Out-Null
+  $watch=[Diagnostics.Stopwatch]::StartNew();$during=$before
+  while($watch.Elapsed.TotalSeconds -lt 15 -and $during -ge $before){$during=Get-TimerSeconds;if($during -ge $before){[Threading.Thread]::Sleep(25)}}
+  Assert-That ($during -lt $before) 'Countdown advances while the controlled update response remains unresolved' ([pscustomobject]@{Before=$before;During=$during;ElapsedMilliseconds=$watch.ElapsedMilliseconds})
+  Assert-That (-not $script:updateBarrierRelease.WaitOne(0)) 'HTTP response remains pending at the observed timer tick'
+  $script:updateBarrierRelease.Set()
+  $watch=[Diagnostics.Stopwatch]::StartNew();$enabled=$false
+  while($watch.Elapsed.TotalSeconds -lt 15){try{$enabled=(Get-Control $script:mainWindow 160 'Check for Updates').Enabled}catch{};if($enabled){break};[Threading.Thread]::Sleep(50)}
+  Assert-That $enabled 'Update result returns and re-enables the control after the barrier is released'
+  $latest=[EBR_GUI_NATIVE]::Text($script:updateLatestHandle);$status=[EBR_GUI_NATIVE]::Text($script:updateStatusHandle)
+  Assert-That ($latest -eq "Latest stable version: $expectedVersion" -and $status -like '*up to date*') 'Controlled update response is applied to the UI' ([pscustomobject]@{Latest=$latest;Status=$status})
+  Switch-Timer
+  $after=Get-TimerSeconds
+  Assert-That ($after -le $during -and $after -gt 0) 'Countdown remains consistent after the response is released' ([pscustomobject]@{During=$during;After=$after})
+  Save-Screenshot $script:mainWindow 'update-overlap-result-released.png' | Out-Null
+  Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
+}
 function Close-TestProcess {
   if (-not $script:testPid) { return }
   $process=Get-Process -Id $script:testPid -ErrorAction SilentlyContinue
@@ -814,6 +863,7 @@ try {
   Run-UpdateFixture 'timeout' 0 '' 'timeout' 'timed out'
   Run-UpdateFixture 'secure-connection' 0 '' 'tls' 'secure connection'
   Run-UpdateFixture 'invalid-json' 200 'not json' 'none' 'could not be read'
+  Run-UpdateOverlapBarrier
 
   Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
   Switch-Settings 5
@@ -899,8 +949,13 @@ catch {
   throw
 }
 finally {
+  try{$script:updateBarrierRelease.Set()}catch{}
   Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
   try { Close-TestProcess } catch { Add-Result 'test-app cleanup' 'FAIL' $_.Exception.Message }
+  [Environment]::SetEnvironmentVariable('EBR_GUI_TEST_UPDATE_STARTED',$script:oldUpdateBarrierStarted,'Process')
+  [Environment]::SetEnvironmentVariable('EBR_GUI_TEST_UPDATE_RELEASE',$script:oldUpdateBarrierRelease,'Process')
+  if($script:updateBarrierStarted){$script:updateBarrierStarted.Dispose()}
+  if($script:updateBarrierRelease){$script:updateBarrierRelease.Dispose()}
   if($script:pickerResourceSamples.Count){$script:pickerResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'picker-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
   if($script:breakResourceSamples.Count){$script:breakResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'reminder-window-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
   $os=Get-CimInstance Win32_OperatingSystem

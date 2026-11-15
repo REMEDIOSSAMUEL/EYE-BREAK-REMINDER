@@ -8,6 +8,8 @@ on:
       - docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md
       - docs/V1.3.0_EXHAUSTIVE_FINAL_TEST_REPORT.md
       - docs/V1.3.0_COMPLETION_PROGRESS.md
+      - docs/V1.3.0_AUTONOMOUS_COMPLETION_PROGRESS.md
+      - docs/V1.3.0_FINAL_COMPLETION_AUDIT.md
       - docs/evidence/v1.3.0-final-pre-release/**
       - docs/evidence/v1.3.0-exhaustive-final/**
       - .github/workflows/windows-pre-release-validation.yml

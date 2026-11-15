@@ -360,6 +360,21 @@ public:
   if(code==ERROR_WINHTTP_NAME_NOT_RESOLVED||code==ERROR_WINHTTP_CANNOT_CONNECT||code==ERROR_WINHTTP_CONNECTION_ERROR)return updates::Failure::Offline;
   return updates::Failure::Other;
  }
+#ifdef EYEBREAK_TEST_BUILD
+ static bool waitForUpdateTestBarrier(){
+  wchar_t startedName[256]{},releaseName[256]{};
+  const DWORD startedLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_UPDATE_STARTED",startedName,DWORD(std::size(startedName)));
+  const DWORD releaseLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_UPDATE_RELEASE",releaseName,DWORD(std::size(releaseName)));
+  if(!startedLength||startedLength>=std::size(startedName)||!releaseLength||releaseLength>=std::size(releaseName))return false;
+  HANDLE started=OpenEventW(EVENT_MODIFY_STATE,FALSE,startedName);
+  HANDLE release=OpenEventW(SYNCHRONIZE,FALSE,releaseName);
+  if(!started||!release){if(started)CloseHandle(started);if(release)CloseHandle(release);return false;}
+  const bool signalled=SetEvent(started)!=FALSE;
+  const DWORD result=signalled?WaitForSingleObject(release,30000):WAIT_FAILED;
+  CloseHandle(started);CloseHandle(release);
+  return result==WAIT_OBJECT_0;
+ }
+#endif
  static updates::HttpResponse latestReleaseResponse(){
 #ifdef EYEBREAK_TEST_BUILD
   std::wstring fixturePath=executable();const auto slash=fixturePath.find_last_of(L"\\/");if(slash!=std::wstring::npos)fixturePath.resize(slash+1);fixturePath+=L"test-update-response.txt";
@@ -373,6 +388,7 @@ public:
     if(key=="status")response.status=std::clamp(std::atoi(value.c_str()),0,999);
     else if(key=="failure"){if(value=="offline")response.failure=updates::Failure::Offline;else if(value=="timeout")response.failure=updates::Failure::Timeout;else if(value=="tls")response.failure=updates::Failure::SecureConnection;else if(value=="other")response.failure=updates::Failure::Other;}
     else if(key=="error")response.errorCode=std::strtoul(value.c_str(),nullptr,10);
+    else if(key=="barrier"&&value=="1"){if(!waitForUpdateTestBarrier()){response.failure=updates::Failure::Timeout;response.errorCode=WAIT_TIMEOUT;return response;}}
     else if(key=="delay_ms")Sleep(std::min<DWORD>(30000,DWORD(std::strtoul(value.c_str(),nullptr,10))));
    }
    response.body=fixture.substr(bodyStart);return response;
