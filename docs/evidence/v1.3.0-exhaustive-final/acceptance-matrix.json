@@ -82,16 +82,16 @@
     "GAP-013"
   ],
   "caseStatusTotals": {
-    "PASS": 49,
-    "NOT TESTED": 33,
+    "PASS": 60,
+    "NOT TESTED": 8,
     "NOT APPLICABLE": 1,
-    "BLOCKED": 10,
-    "TOTAL_CASES": 93
+    "BLOCKED": 7,
+    "TOTAL_CASES": 76
   },
   "releaseAssessment": {
     "confirmedProductDefect": "None in the recorded exact-candidate evidence. Two supplemental ARM harness failures were diagnosed as harness API binding and cleanup timing issues, then the same candidate passed the corrected retest.",
-    "exhaustiveVerification": "Incomplete: NOT TESTED and BLOCKED cases remain, including consumer Windows 11 x64, genuine reboot, Narrator speech, real audio, lock/sleep, and multi-monitor.",
-    "recommendation": "Do not claim exhaustive verification or publish as exhaustively tested. The retained candidate passed the recorded Windows Server 2025 x64 validation and exact-candidate ARM64 x64-emulation supplement; material environment and interaction coverage remains outstanding."
+    "exhaustiveVerification": "Incomplete: NOT TESTED and BLOCKED cases remain, including native Windows 11 x64, genuine reboot, Narrator speech, acoustic output, actual lock/sleep, multi-monitor topology, and exhaustive control-state/theme/DPI sweeps.",
+    "recommendation": "Do not claim exhaustive verification or publish as exhaustively tested. Many previously mislabeled UI rows were reconciled to direct passing events in run 43698996008; material OS, audio, display and accessibility coverage remains."
   },
   "cases": [
     {
@@ -632,19 +632,23 @@
     {
       "testId": "SET-004",
       "category": "Settings",
-      "description": "Alarm sounds, volume, repeat, preview and stop",
-      "expected": "All five sounds and controls produce correct endpoint playback.",
-      "actual": "No endpoint playback or loopback capture was verified.",
+      "description": "Alarm sound controls, preview and no-output handling",
+      "expected": "Exercise all five sound choices, volume levels, repeat toggle, preview/stop state and behavior when no audio endpoint is available.",
+      "actual": "PASS: all five sounds were selected; volume 0, 55 and 100 and repeat on/off persisted. Preview controls opened the expected Windows no-output warning, stayed responsive, and Stop remained disabled because no usable endpoint was present. Acoustic output is separately NOT TESTED.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Requires isolated Windows endpoint and preferably WASAPI loopback.",
+      "status": "PASS",
+      "limitation": "Actual audible/loopback output remains unverified; see GAP-004.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -675,38 +679,45 @@
       "testId": "SET-006",
       "category": "Settings",
       "description": "Normal, compact and fullscreen reminder modes",
-      "expected": "Each selected mode shows the expected reminder presentation.",
-      "actual": "Normal reminder was exercised; compact/fullscreen modes were not each driven end-to-end.",
+      "expected": "Open an actual Break window in each presentation mode; verify geometry, status, acknowledgement and return to Work.",
+      "actual": "PASS: normal and compact geometry were measured; fullscreen covered the runner primary display. Each mode displayed the named Break state and returned to Work after acknowledgement.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Requires installed UI cases for every presentation mode.",
+      "status": "PASS",
+      "limitation": "Only the runner primary display was available; multi-monitor topology is BLOCKED separately.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
     {
       "testId": "SET-007",
       "category": "Settings",
-      "description": "Preferred and selected display",
-      "expected": "Window placement works across selected monitor and display changes.",
-      "actual": "Preference persistence was covered; real multi-monitor placement was not.",
+      "description": "Preferred monitor mode and selected display controls",
+      "expected": "Exercise available selection values and verify the selected display identity persists.",
+      "actual": "PASS: all three preferred-monitor modes persisted; the available primary display selection persisted its device identity.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Only one monitor was exposed; see GAP-012.",
+      "status": "PASS",
+      "limitation": "Multi-monitor placement, disconnect/reconnect and mixed-DPI topology remain BLOCKED in WIN-008.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -735,19 +746,23 @@
     {
       "testId": "SET-009",
       "category": "Settings",
-      "description": "History save toggle and Clear History UI",
-      "expected": "UI toggle and clear action change history only.",
-      "actual": "History creation/view/persistence passed; direct clear/disable UI action was not recorded.",
+      "description": "History-save toggle and Clear History UI",
+      "expected": "Toggle history saving, then clear disposable test history and confirm storage and visible rows are empty.",
+      "actual": "PASS: history saving toggled off/on and persisted; Clear History confirmation was operated and both file rows and visible list became empty.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "disposable runner profile"
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Needs a dedicated installed UI test.",
+      "status": "PASS",
+      "limitation": "No user history was accessed.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -936,19 +951,23 @@
     {
       "testId": "SET-018",
       "category": "Settings",
-      "description": "All documented keyboard shortcuts and OS reduced-motion setting",
-      "expected": "Shortcuts work and app reacts to actual Windows reduced motion preference.",
-      "actual": "Scroll model and keyboard focus tests exist; shortcuts and OS reduced-motion integration were not directly recorded.",
+      "description": "Documented keyboard shortcuts and OS reduced-motion response",
+      "expected": "Exercise Ctrl+R, Ctrl+comma, Ctrl+Shift+B and the actual Windows client-area animation setting; verify timer continuity and restoration.",
+      "actual": "PASS: all three shortcuts performed their documented actions. Windows client-area animation was toggled; Settings jumped when disabled and animated when enabled, timer state was preserved, and the original OS setting was restored.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Needs interactive shortcut and actual OS animation preference test.",
+      "status": "PASS",
+      "limitation": "Narrator speech is a separate NOT TESTED case (ACCESS-003).",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -1015,7 +1034,10 @@
       "status": "NOT TESTED",
       "limitation": "UIA metadata PASS is not actual Narrator speech.",
       "priorNotTestedId": "GAP-001",
-      "countedAssertionCount": null
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-001"
+      ]
     },
     {
       "testId": "ACCESS-004",
@@ -1044,18 +1066,22 @@
       "testId": "ACCESS-005",
       "category": "Accessibility",
       "description": "Actual Windows reduced-motion preference",
-      "expected": "Application responds to OS reduced-motion change.",
-      "actual": "Only scroll model algorithm was tested; no OS preference change was observed.",
+      "expected": "Toggle the Windows client-area animation preference and verify the app responds and restores original preference.",
+      "actual": "PASS: with Windows animation disabled, Settings scrolling jumped; when enabled, it animated. The timer state was preserved and the original Windows preference was restored.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Requires interactive Windows preference test.",
+      "status": "PASS",
+      "limitation": "Covers the tested client-area animation setting; it does not claim a broader OS motion policy than that API exposes.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -1124,7 +1150,10 @@
       "status": "NOT TESTED",
       "limitation": "Modern toast is not implemented and is not claimed.",
       "priorNotTestedId": "GAP-003",
-      "countedAssertionCount": null
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-003"
+      ]
     },
     {
       "testId": "WIN-003",
@@ -1202,7 +1231,10 @@
       "status": "BLOCKED",
       "limitation": "Needs interactive isolated VM.",
       "priorNotTestedId": "GAP-010",
-      "countedAssertionCount": null
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-010"
+      ]
     },
     {
       "testId": "WIN-007",
@@ -1223,7 +1255,10 @@
       "status": "BLOCKED",
       "limitation": "Needs isolated VM with real suspend/resume.",
       "priorNotTestedId": "GAP-011",
-      "countedAssertionCount": null
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-011"
+      ]
     },
     {
       "testId": "WIN-008",
@@ -1244,7 +1279,10 @@
       "status": "BLOCKED",
       "limitation": "Needs real/virtual second display and topology changes.",
       "priorNotTestedId": "GAP-012",
-      "countedAssertionCount": null
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-012"
+      ]
     },
     {
       "testId": "WIN-009",
@@ -1331,7 +1369,11 @@
       "status": "BLOCKED",
       "limitation": "Needs isolated audio-capable Windows desktop.",
       "priorNotTestedId": "GAP-004",
-      "countedAssertionCount": null
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-004",
+        "GAP-013"
+      ]
     },
     {
       "testId": "INSTALL-001",
@@ -1467,7 +1509,13 @@
       "status": "NOT TESTED",
       "limitation": "Parent completion and installed-state cleanup were separately observed.",
       "priorNotTestedId": "GAP-005/GAP-006/GAP-007/GAP-008",
-      "countedAssertionCount": null
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-005",
+        "GAP-006",
+        "GAP-007",
+        "GAP-008"
+      ]
     },
     {
       "testId": "INSTALL-007",
@@ -1536,170 +1584,26 @@
       "countedAssertionCount": null
     },
     {
-      "testId": "GAP-001",
-      "category": "Prior untested observation",
-      "description": "Narrator/screen-reader speech output",
-      "expected": "Actual speech engine output is intelligible and controls are announced.",
-      "actual": "UIA inspected only; no speech engine started/captured.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "pre-release-evidence/windows-pre-release-results.json"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Requires Narrator-capable interactive desktop and speech capture.",
-      "priorNotTestedId": "GAP-001",
-      "countedAssertionCount": null
-    },
-    {
       "testId": "GAP-002",
       "category": "Prior untested observation",
-      "description": "Close-to-tray instruction text via GetWindowText",
-      "expected": "Native dialog instruction text can be read through requested API.",
-      "actual": "Dialog screenshot and enabled OK captured; instruction text not exposed through GetWindowText.",
+      "description": "Close-to-tray explanatory text via native/UI Automation controls",
+      "expected": "Verify the visible dialog and its accessible instruction text using native controls or UI Automation.",
+      "actual": "PASS: the close-to-tray explanation was shown and captured; its instruction text was exposed through native controls/UI Automation, and the enabled OK button dismissed it.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-        "pre-release-evidence/windows-pre-release-results.json"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
       ],
-      "status": "NOT TESTED",
-      "limitation": "The UI itself was visible; only this text API observability remains.",
+      "status": "PASS",
+      "limitation": "This resolves prior NOT TESTED observation GAP-002.",
       "priorNotTestedId": "GAP-002",
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-003",
-      "category": "Prior untested observation",
-      "description": "Separate Shell notification surface",
-      "expected": "Observe Shell balloon acceptance/dismissal separate from app window.",
-      "actual": "No distinct Shell surface observed.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-        "pre-release-evidence/windows-pre-release-results.json"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Legacy notification may be suppressed by Windows. Modern Toast is N/A.",
-      "priorNotTestedId": "GAP-003",
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-004",
-      "category": "Prior untested observation",
-      "description": "Production audio playback",
-      "expected": "Verify actual endpoint output during alarm.",
-      "actual": "No audio endpoint was verified; alarm sounds disabled in unattended soak.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-        "pre-release-evidence/windows-pre-release-results.json"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Need virtual/physical endpoint loopback.",
-      "priorNotTestedId": "GAP-004",
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-005",
-      "category": "Prior untested observation",
-      "description": "Candidate uninstall finish-page Run checkbox",
-      "expected": "Read exact final page checkbox state.",
-      "actual": "No matching Run checkbox exposed on observed finish page.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-        "pre-release-evidence/windows-pre-release-results.json"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "No evidence needed if installer design omits this checkbox; it was not observed.",
-      "priorNotTestedId": "GAP-005",
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-006",
-      "category": "Prior untested observation",
-      "description": "Candidate uninstaller UI child exit code",
-      "expected": "Observe child process exit code.",
-      "actual": "UI child handle had no reliable exit code; parent and removal state passed.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-        "pre-release-evidence/windows-pre-release-results.json"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Parent completion was separately checked.",
-      "priorNotTestedId": "GAP-006",
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-007",
-      "category": "Prior untested observation",
-      "description": "v1.1 comparison uninstall Run checkbox",
-      "expected": "Read exact legacy finish-page checkbox state.",
-      "actual": "No matching checkbox exposed.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-        "pre-release-evidence/windows-pre-release-results.json"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Comparison-only UI detail.",
-      "priorNotTestedId": "GAP-007",
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-008",
-      "category": "Prior untested observation",
-      "description": "v1.1 comparison uninstaller UI child exit code",
-      "expected": "Observe child UI process exit code.",
-      "actual": "UI child handle had no reliable exit code; parent and removal state passed.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-        "pre-release-evidence/windows-pre-release-results.json"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Comparison-only process observation.",
-      "priorNotTestedId": "GAP-008",
       "countedAssertionCount": null
     },
     {
@@ -1707,224 +1611,24 @@
       "category": "Prior untested observation",
       "description": "Real displayed tick during live HTTP response",
       "expected": "A displayed countdown tick occurs while a real production request remains in-flight.",
-      "actual": "Request ended before next displayed tick; delayed fixture path passed, but exact real overlap did not.",
+      "actual": "One candidate acceptance event logged 60→59 while the update button remained disabled. A separate explicit live-request probe observed the displayed tick after 1.11 seconds and recorded that the response had already completed. The disabled button proves the UI completion callback had not re-enabled it, not that the HTTPS socket was still in flight; exact real overlap is therefore unproven.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "available": true,
+        "reason": "Hosted Windows Server 2025 x64 candidate acceptance ran the exact installed candidate. It did not use a controlled slow real HTTPS endpoint or direct in-flight socket instrumentation."
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
         "pre-release-evidence/windows-pre-release-results.json"
       ],
       "status": "NOT TESTED",
-      "limitation": "Need controlled slow real HTTPS request.",
+      "limitation": "Use an authorized controlled slow HTTPS route or network instrumentation that proves the real candidate request remains in flight at the exact displayed tick; do not infer socket state from the disabled button alone.",
       "priorNotTestedId": "GAP-009",
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-010",
-      "category": "Prior untested observation",
-      "description": "Physical Windows lock/unlock",
-      "expected": "Lock and unlock actual isolated Windows user session.",
-      "actual": "Not run; personal system not modified and hosted runner could become inaccessible.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-        "pre-release-evidence/windows-pre-release-results.json"
-      ],
-      "status": "BLOCKED",
-      "limitation": "Needs isolated interactive VM.",
-      "priorNotTestedId": "GAP-010",
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-011",
-      "category": "Prior untested observation",
-      "description": "Physical Windows sleep/resume",
-      "expected": "Perform real system suspend and resume.",
-      "actual": "Not run; no safe power-capable VM/wake path.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-        "pre-release-evidence/windows-pre-release-results.json"
-      ],
-      "status": "BLOCKED",
-      "limitation": "Needs isolated VM supporting power transitions.",
-      "priorNotTestedId": "GAP-011",
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-012",
-      "category": "Prior untested observation",
-      "description": "Multiple monitor configuration/restoration",
-      "expected": "Change real display topology and verify window recovery.",
-      "actual": "Not run; one-monitor runner only.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-        "pre-release-evidence/windows-pre-release-results.json"
-      ],
-      "status": "BLOCKED",
-      "limitation": "Needs second display.",
-      "priorNotTestedId": "GAP-012",
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-013",
-      "category": "Prior untested observation",
-      "description": "Physical speaker output hardware check",
-      "expected": "Verify sound reaches physical speakers.",
-      "actual": "No verified physical speakers.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-        "pre-release-evidence/windows-pre-release-results.json"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Duplicate hardware limit of GAP-004; physical audibility not claimed.",
-      "priorNotTestedId": "GAP-013",
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-014",
-      "category": "New requested observation",
-      "description": "Windows reduced-motion preference",
-      "expected": "Observe app response to actual reduced-motion OS preference.",
-      "actual": "Not run; only deterministic scroll model tested.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Needs interactive Windows preference test.",
-      "priorNotTestedId": null,
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-015",
-      "category": "New requested observation",
-      "description": "Compact/fullscreen reminder modes and selected monitor UI",
-      "expected": "Exercise each presentation option and selected display UI.",
-      "actual": "Only normal reminder and one monitor were available in recorded acceptance.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Needs isolated multi-display interactive suite.",
-      "priorNotTestedId": null,
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-016",
-      "category": "New requested observation",
-      "description": "Clear History and history-save UI controls",
-      "expected": "Directly exercise clear/disable UI semantics.",
-      "actual": "History data and persistence passed, but these two direct controls were not separately driven.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Needs installed UI tests.",
-      "priorNotTestedId": null,
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-017",
-      "category": "New requested observation",
-      "description": "Alarm sound/volume/repeat/preview UI controls",
-      "expected": "Drive each sound, volume, repeat, preview and stop.",
-      "actual": "Sound endpoint and these interactions were not recorded.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Needs audio-capable UI test.",
-      "priorNotTestedId": null,
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-018",
-      "category": "New requested observation",
-      "description": "Keyboard shortcut bindings",
-      "expected": "Invoke Ctrl+R, Ctrl+Shift+B and Ctrl+comma with keyboard.",
-      "actual": "Keyboard focus tested; these documented shortcuts were not directly exercised.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Needs installed keyboard test.",
-      "priorNotTestedId": null,
-      "countedAssertionCount": null
-    },
-    {
-      "testId": "GAP-019",
-      "category": "New requested observation",
-      "description": "Standard-user install and Settings > Apps removal",
-      "expected": "Exercise separate user/UAC and Windows Settings uninstall.",
-      "actual": "Not recorded.",
-      "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
-      },
-      "binarySha256": null,
-      "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
-      ],
-      "status": "NOT TESTED",
-      "limitation": "Needs disposable standard-user desktop.",
-      "priorNotTestedId": null,
-      "countedAssertionCount": null
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-009"
+      ]
     },
     {
       "testId": "ACCESS-007",
@@ -1949,18 +1653,22 @@
       "testId": "SETTING-019",
       "category": "Settings",
       "description": "Reset all settings UI action",
-      "expected": "Confirm dialog resets global settings, clears startup registration, resets timer preferences, preserves history as documented.",
-      "actual": "Core tests cover default/reset model; exact installed Reset all settings button flow and confirmation were not directly driven.",
+      "expected": "Confirm Reset All restores documented preferences, removes startup registration, preserves history bytes, and leaves a running default timer.",
+      "actual": "PASS: confirmation was operated; defaults were restored, history bytes remained unchanged, startup registration was removed, and the default Work timer ran.",
       "environment": {
-        "available": false,
-        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "disposable runner profile"
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Needs installed candidate UI test; confirm history and timer semantics.",
+      "status": "PASS",
+      "limitation": "History created by this test only.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -1968,56 +1676,68 @@
       "testId": "SETTING-020",
       "category": "Behavior",
       "description": "Start timer automatically on launch UI preference",
-      "expected": "Toggle auto-start preference and verify behavior on app launch/restart.",
-      "actual": "Core fixture confirms autoStart=false recovery semantics; direct installed checkbox interaction and launch behavior were not recorded.",
+      "expected": "Toggle automatic timer start and verify behavior after real application relaunch with restore both enabled and disabled.",
+      "actual": "PASS: disabled + restore enabled resumed saved running state; disabled + restore disabled opened paused; enabled launched a running Work timer.",
       "environment": {
-        "available": false,
-        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "disposable runner profile"
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Needs installed candidate UI/relaunch scenario; distinct from Windows startup registration.",
+      "status": "PASS",
+      "limitation": "Windows sign-in startup after a genuine reboot remains BLOCKED in WIN-005.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
     {
       "testId": "THEME-001",
       "category": "Appearance",
-      "description": "Full theme-by-surface interaction matrix",
-      "expected": "For all five themes inspect Timer, Settings, History, reminder, dialogs, hover, focus, selected and disabled states.",
-      "actual": "Each theme and key timer/ring/Forced Colors states were exercised, but the entire page/control/state cross-product was not observed.",
+      "description": "All five themes across core UI surfaces",
+      "expected": "Exercise Dark, Light, High Contrast Dark, High Contrast Light and Follow Windows across Settings, Timer, History and the application-owned Break reminder; verify state text and Work return.",
+      "actual": "PASS: all five themes persisted custom Work/Break colors and were shown on Settings, Timer, History and Break reminder surfaces. Break labels remained named, and acknowledgement returned to Work. Forced Colors ring pixels are covered in ACCESS-004.",
       "environment": {
-        "available": false,
-        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Requires additional theme-by-page UI captures/inspection on interactive Windows.",
+      "status": "PASS",
+      "limitation": "Disabled/hover/selected/focus contrast across every control and dialog is not exhaustively swept; see WIN-014.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
     {
       "testId": "TIMER-009",
       "category": "Timer",
-      "description": "Restart while snoozed, schedule-held and hidden in tray",
-      "expected": "Restart each state and verify documented recovery, no duplicate reminder or history change.",
-      "actual": "Work, paused, active Break and schedule checkpoint semantics have coverage; exact app process restart while snoozed/held/hidden was not separately executed.",
+      "description": "Restart while paused, snoozed, schedule-held and hidden in tray",
+      "expected": "Exit the installed process from tray while paused, snoozed or outside schedule, restart it, and verify restored state, history and no duplicate reminder.",
+      "actual": "PASS: paused, schedule-held and snoozed states were each restarted after hiding the app in tray. Countdown/state and preferences restored; no duplicate reminder/process or false history record was created.",
       "environment": {
-        "available": false,
-        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "disposable runner profile"
       },
-      "binarySha256": null,
+      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Needs isolated installed candidate scenarios for each persisted runtime state.",
+      "status": "PASS",
+      "limitation": "Work and active Break restart are covered by TIMER-007; genuine Windows reboot remains BLOCKED in WIN-005.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -2115,5 +1835,92 @@
       "Portable app visible in an unobstructed desktop screenshot"
     ],
     "blockedCase": "Native Windows 11 x64 acceptance remains blocked; this ARM64 runner only provides x64 emulation."
-  }
+  },
+  "resolvedPriorNotTestedIds": [
+    "GAP-002"
+  ],
+  "priorNotTestedIdsUnresolved": [
+    "GAP-001",
+    "GAP-003",
+    "GAP-004",
+    "GAP-005",
+    "GAP-006",
+    "GAP-007",
+    "GAP-008",
+    "GAP-009",
+    "GAP-010",
+    "GAP-011",
+    "GAP-012",
+    "GAP-013"
+  ],
+  "priorNotTestedResolution": [
+    {
+      "priorId": "GAP-001",
+      "currentCase": "ACCESS-003",
+      "status": "NOT TESTED"
+    },
+    {
+      "priorId": "GAP-002",
+      "currentCase": "GAP-002",
+      "status": "PASS",
+      "note": "Close-to-tray explanation text was found through native/UI Automation controls and dismissed."
+    },
+    {
+      "priorId": "GAP-003",
+      "currentCase": "WIN-002",
+      "status": "NOT TESTED"
+    },
+    {
+      "priorId": "GAP-004",
+      "currentCase": "WIN-012",
+      "status": "BLOCKED",
+      "note": "No verified audio endpoint/WASAPI capture was available; the sound UI and no-output error path passed."
+    },
+    {
+      "priorId": "GAP-005",
+      "currentCase": "INSTALL-006",
+      "status": "NOT TESTED"
+    },
+    {
+      "priorId": "GAP-006",
+      "currentCase": "INSTALL-006",
+      "status": "NOT TESTED"
+    },
+    {
+      "priorId": "GAP-007",
+      "currentCase": "INSTALL-006",
+      "status": "NOT TESTED"
+    },
+    {
+      "priorId": "GAP-008",
+      "currentCase": "INSTALL-006",
+      "status": "NOT TESTED"
+    },
+    {
+      "priorId": "GAP-009",
+      "currentCase": "GAP-009",
+      "status": "NOT TESTED"
+    },
+    {
+      "priorId": "GAP-010",
+      "currentCase": "WIN-006",
+      "status": "BLOCKED"
+    },
+    {
+      "priorId": "GAP-011",
+      "currentCase": "WIN-007",
+      "status": "BLOCKED"
+    },
+    {
+      "priorId": "GAP-012",
+      "currentCase": "WIN-008",
+      "status": "BLOCKED"
+    },
+    {
+      "priorId": "GAP-013",
+      "currentCase": "WIN-012",
+      "status": "BLOCKED",
+      "note": "Physical speaker audibility is untested; no verified endpoint was available."
+    }
+  ]
 }
