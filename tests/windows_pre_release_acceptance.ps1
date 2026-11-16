@@ -1496,7 +1496,8 @@ function Test-NarratorNavigation {
     $focusTrace.Add($updateFocus)
     $timerNav=Get-Control $script:mainWindow 10 'Narrator Timer before reminder';$focusTrace.Add((Click-NarratorControl $script:mainWindow $timerNav.Handle 'Timer before reminder'))
     $startBreak=Get-Control $script:mainWindow 22 'Narrator reminder navigation';$focusTrace.Add((Click-NarratorControl $script:mainWindow $startBreak.Handle 'Take a break'))
-    $breakWindows=Get-BreakWindow $script:appPid
+    $breakWatch=[Diagnostics.Stopwatch]::StartNew();$breakWindows=@()
+    while($breakWatch.Elapsed.TotalSeconds-lt8){$breakWindows=Get-BreakWindow $script:appPid;if($breakWindows.Count-gt0){break};Start-Sleep -Milliseconds 100}
     if($breakWindows.Count-ne1){throw "Expected one application-owned reminder while Narrator was active; observed $($breakWindows.Count)."}
     $breakWindow=$breakWindows[0]
     $breakControls=@(Get-AccessibilitySurfaceSummary $breakWindow)
@@ -2754,10 +2755,19 @@ try {
     Require ($focusedMenu-ne[IntPtr]::Zero) 'Candidate tray menu opens after Narrator navigation and modal cleanup' (Get-TrayContextSnapshot)
     $focusedItems=Get-TrayMenuItems $focusedMenu
     $focusedNames=@(Get-TrayMenuNames $focusedItems)
-    if($focusedItems.Source-ne'HitTest'){Require (@('Pause timer','Resume timer','Exit'|Where-Object{$focusedNames-contains$_}).Count-eq3) 'Candidate tray menu exposes Pause, Resume, and Exit after Narrator navigation' $focusedNames}
+    if($focusedItems.Source-ne'HitTest'){
+      Require ($focusedNames-contains'Pause timer'-and$focusedNames-contains'Exit'-and-not($focusedNames-contains'Resume timer')) 'Running candidate tray menu exposes Pause and Exit but not Resume after Narrator navigation' $focusedNames
+    }
     Invoke-TrayCommand 'Pause timer' $focusedMenu
     Require ((Wait-ForStatus 'Paused')-like'*Paused*') 'Candidate tray Pause command works after Narrator navigation' (Get-Status)
-    Invoke-TrayCommand 'Resume timer'
+    $pausedMenu=Open-TrayContextMenu
+    Require ($pausedMenu-ne[IntPtr]::Zero) 'Candidate tray menu reopens while the timer is paused' (Get-TrayContextSnapshot)
+    $pausedItems=Get-TrayMenuItems $pausedMenu
+    $pausedNames=@(Get-TrayMenuNames $pausedItems)
+    if($pausedItems.Source-ne'HitTest'){
+      Require ($pausedNames-contains'Resume timer'-and$pausedNames-contains'Exit'-and-not($pausedNames-contains'Pause timer')) 'Paused candidate tray menu exposes Resume and Exit but not Pause' $pausedNames
+    }
+    Invoke-TrayCommand 'Resume timer' $pausedMenu
     Require ((Wait-ForStatus 'Running')-like'*Running*') 'Candidate tray Resume command works after Narrator navigation' (Get-Status)
     Invoke-TrayCommand 'Exit'
     $focusedProcess=Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
