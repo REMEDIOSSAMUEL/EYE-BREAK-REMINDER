@@ -1,0 +1,32 @@
+name: Windows v1.3.0 published update-check acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  published-update-check:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Check out release verification source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Launch public binaries and verify the live update checker
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tests/windows_published_update_check_acceptance.ps1 -EvidencePath 'build/published-update-check-acceptance.json'
+
+      - name: Upload focused public binary acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.3.0-published-update-check-acceptance
+          path: build/published-update-check-acceptance.json
+          if-no-files-found: warn
+          retention-days: 30
