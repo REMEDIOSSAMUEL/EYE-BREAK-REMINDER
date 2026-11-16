@@ -34,12 +34,14 @@ public static class EBR_DISPLAY_NATIVE {
  [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="EnumDisplaySettingsW",ExactSpelling=true,SetLastError=true)] public static extern bool EnumDisplaySettingsW(string deviceName,int mode,ref EBR_DISPLAY_DEVMODE devMode);
  [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="ChangeDisplaySettingsExW",ExactSpelling=true,SetLastError=true)] public static extern int ChangeDisplaySettingsExW(string deviceName,ref EBR_DISPLAY_DEVMODE devMode,IntPtr hwnd,uint flags,IntPtr lParam);
  [DllImport("user32.dll",SetLastError=true)] private static extern bool EnumWindows(EnumProc callback,IntPtr data);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="EnumChildWindows",ExactSpelling=true,SetLastError=true)] private static extern bool EnumChildWindows(IntPtr parent,EnumProc callback,IntPtr data);
  [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="GetClassNameW",ExactSpelling=true,SetLastError=true)] private static extern int GetClassNameW(IntPtr hwnd,StringBuilder text,int max);
  [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="GetWindowTextW",ExactSpelling=true,SetLastError=true)] private static extern int GetWindowTextW(IntPtr hwnd,StringBuilder text,int max);
  [DllImport("user32.dll",SetLastError=true)] private static extern bool GetWindowRect(IntPtr hwnd,out EBR_DISPLAY_RECT rect);
  [DllImport("user32.dll",SetLastError=true)] private static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint processId);
  [DllImport("user32.dll",SetLastError=true)] private static extern bool IsWindowVisible(IntPtr hwnd);
  [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr GetDlgItem(IntPtr hwnd,int id);
+ [DllImport("user32.dll",SetLastError=true)] private static extern int GetDlgCtrlID(IntPtr hwnd);
  [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr SendMessageW(IntPtr hwnd,uint message,IntPtr wParam,IntPtr lParam);
  [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr SendMessageTimeoutW(IntPtr hwnd,uint message,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out IntPtr result);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
@@ -49,6 +51,8 @@ public static class EBR_DISPLAY_NATIVE {
  public static EBR_DISPLAY_RECT Bounds(IntPtr hwnd){EBR_DISPLAY_RECT r=new EBR_DISPLAY_RECT();if(hwnd!=IntPtr.Zero)GetWindowRect(hwnd,out r);return r;}
  public static bool Visible(IntPtr hwnd){return hwnd!=IntPtr.Zero&&IsWindowVisible(hwnd);}
  public static IntPtr Child(IntPtr hwnd,int id){return hwnd==IntPtr.Zero?IntPtr.Zero:GetDlgItem(hwnd,id);}
+ public static int ControlId(IntPtr hwnd){return hwnd==IntPtr.Zero?-1:GetDlgCtrlID(hwnd);}
+ public static IntPtr FindChildByText(IntPtr parent,string expected){IntPtr found=IntPtr.Zero;EnumProc cb=delegate(IntPtr h,IntPtr ignored){if(String.Equals(ClassName(h),"Button",StringComparison.OrdinalIgnoreCase)&&String.Equals(Text(h),expected,StringComparison.OrdinalIgnoreCase)){found=h;return false;}return true;};EnumChildWindows(parent,cb,IntPtr.Zero);GC.KeepAlive(cb);return found;}
  public static bool Click(IntPtr hwnd){if(hwnd==IntPtr.Zero)return false;IntPtr result;return SendMessageTimeoutW(hwnd,0x00F5,IntPtr.Zero,IntPtr.Zero,2,2000,out result)!=IntPtr.Zero;}
  public static bool Responsive(IntPtr hwnd){if(hwnd==IntPtr.Zero)return false;IntPtr result;return SendMessageTimeoutW(hwnd,0,IntPtr.Zero,IntPtr.Zero,2,1500,out result)!=IntPtr.Zero;}
  public static IntPtr FindProcessWindow(int pid,string className){IntPtr found=IntPtr.Zero;EnumProc cb=delegate(IntPtr h,IntPtr ignored){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&String.Equals(ClassName(h),className,StringComparison.Ordinal)){found=h;return false;}return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return found;}
@@ -83,7 +87,7 @@ function Test-Mode([uint32]$Width,[uint32]$Height) {
 function Format-Mode($Mode){[pscustomobject]@{Width=[uint32]$Mode.dmPelsWidth;Height=[uint32]$Mode.dmPelsHeight;BitsPerPel=[uint32]$Mode.dmBitsPerPel;Frequency=[uint32]$Mode.dmDisplayFrequency}}
 function Test-InVirtualScreen($Rect,$VirtualScreen){return ($Rect.Left-ge$VirtualScreen.Left-and$Rect.Top-ge$VirtualScreen.Top-and$Rect.Right-le($VirtualScreen.Left+$VirtualScreen.Width)-and$Rect.Bottom-le($VirtualScreen.Top+$VirtualScreen.Height))}
 
-$script:app=$null;$script:displayDevice=$null;$originalMode=$null;$displayChanged=$false;$result=[ordered]@{Application='Eye Break Reminder';Test='Real Windows display-resolution change while a Break reminder is visible';Status='NOT TESTED';CandidateSHA256=$null;ExpectedSHA256=$ExpectedSha256.ToLowerInvariant();CandidateRunId=$env:CANDIDATE_RUN_ID;CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;Environment=$null;InitialMode=$null;ChangedMode=$null;RestoredMode=$null;InitialScreenshot=$null;ChangedScreenshot=$null;RestoredScreenshot=$null;BeforeChange=$null;AfterChange=$null;AfterRestore=$null;Reason='';Failure='';CompletedUtc=$null}
+$script:app=$null;$script:displayDevice=$null;$originalMode=$null;$displayChanged=$false;$result=[ordered]@{Application='Eye Break Reminder';Test='Real Windows display-resolution change while a Break reminder is visible';Status='NOT TESTED';CandidateSHA256=$null;ExpectedSHA256=$ExpectedSha256.ToLowerInvariant();CandidateRunId=$env:CANDIDATE_RUN_ID;CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;Environment=$null;InitialMode=$null;ChangedMode=$null;RestoredMode=$null;TakeBreakControl=$null;InitialScreenshot=$null;ChangedScreenshot=$null;RestoredScreenshot=$null;BeforeChange=$null;AfterChange=$null;AfterRestore=$null;Reason='';Failure='';CompletedUtc=$null}
 try {
   $exe=(Resolve-Path -LiteralPath $ExecutablePath).Path;$hash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant();$result.CandidateSHA256=$hash
   if($hash-cne$ExpectedSha256.ToLowerInvariant()){throw "Candidate executable hash mismatch: expected $ExpectedSha256; found $hash."}
@@ -106,7 +110,12 @@ try {
   if($main-eq[IntPtr]::Zero){throw 'Exact-candidate standalone executable did not expose its main native window.'}
   if(-not[EBR_DISPLAY_NATIVE]::Responsive($main)){throw 'The exact-candidate main window did not answer a Win32 responsiveness probe.'}
   $result.InitialScreenshot=Save-Screenshot 'display-change-before.png';if($result.InitialScreenshot-notmatch'\.png$'){$result.Reason="Could not capture the hosted desktop before display reconfiguration: $($result.InitialScreenshot)";return};$result.BeforeChange=Get-DisplaySnapshot
-  $breakButton=[EBR_DISPLAY_NATIVE]::Child($main,22);if(-not[EBR_DISPLAY_NATIVE]::Click($breakButton)){throw 'Could not activate the real Take a Break button before changing display mode.'}
+  $breakButton=[EBR_DISPLAY_NATIVE]::Child($main,22);$buttonLookup='control ID 22';if($breakButton-eq[IntPtr]::Zero){$breakButton=[EBR_DISPLAY_NATIVE]::FindChildByText($main,'Take a break now');$buttonLookup='visible button caption fallback'}
+  if($breakButton-eq[IntPtr]::Zero){throw 'The visible Take a break now button was not found by its expected control ID or caption.'}
+  $result.TakeBreakControl=[pscustomobject]@{Lookup=$buttonLookup;ControlId=[EBR_DISPLAY_NATIVE]::ControlId($breakButton);Caption=[EBR_DISPLAY_NATIVE]::Text($breakButton);Visible=[EBR_DISPLAY_NATIVE]::Visible($breakButton);Bounds=[EBR_DISPLAY_NATIVE]::Bounds($breakButton)}
+  if(-not$result.TakeBreakControl.Visible){throw 'The Take a break now control was not visible before it was activated.'}
+  [void][EBR_DISPLAY_NATIVE]::SetForegroundWindow($main);Start-Sleep -Milliseconds 200
+  if(-not[EBR_DISPLAY_NATIVE]::Click($breakButton)){throw "Could not activate the real Take a Break button via $buttonLookup."}
   $watch.Restart();$break=[IntPtr]::Zero
   while($watch.Elapsed.TotalSeconds-lt15-and$break-eq[IntPtr]::Zero){$break=[EBR_DISPLAY_NATIVE]::FindProcessWindow($script:app.Id,'EyeBreakReminder.Break');if($break-eq[IntPtr]::Zero){Start-Sleep -Milliseconds 100}}
   if($break-eq[IntPtr]::Zero){throw 'A real Break reminder did not appear before the display change.'}
