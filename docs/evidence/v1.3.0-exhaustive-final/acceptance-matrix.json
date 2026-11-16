@@ -186,7 +186,7 @@
       "category": "Provenance",
       "description": "Source ZIP content",
       "expected": "Source archive matches approved source snapshot and excludes private/generated content.",
-      "actual": "100 Source ZIP entries matched the candidate packaging policy and source snapshot at commit a447a5f; the independent audit found no personal paths or secrets.",
+      "actual": "100 Source ZIP entries matched the candidate packaging policy and source snapshot at commit b39f014; the independent audit found no personal paths or secrets.",
       "environment": {
         "name": "Prior local source archive audit",
         "scope": "129 ZIP entries compared byte-for-byte with approved source commit; no app execution"
@@ -338,7 +338,7 @@
       "category": "Build",
       "description": "Exact production EXE resource soak",
       "expected": "No sustained USER/GDI/handle growth over extended operations.",
-      "actual": "110 reminder cycles, 100 picker ops (50 OK/50 Cancel), 2,191 samples, 263 PASS.",
+      "actual": "110 reminder cycles, 100 picker ops (50 OK/50 Cancel), 2,190 samples, 263 PASS.",
       "environment": {
         "name": "GitHub-hosted Windows Server 2025 Datacenter",
         "version": "10.0.26100",
@@ -1179,10 +1179,10 @@
       "category": "Windows integration",
       "description": "Native Windows 11 x64 desktop",
       "expected": "Run exact candidate on consumer Windows 11 x64, not Server or ARM emulation.",
-      "actual": "No authorised disposable Windows 11 x64 VM/Sandbox/self-hosted runner found; personal Windows 10 Pro host excluded.",
+      "actual": "The personal host is Windows 11 Pro x64, but is excluded from disruptive acceptance testing. Windows Sandbox is not installed/usable; VMware, VirtualBox, Hyper-V PowerShell VMs, existing disposable VMs, and authorized self-hosted runners were not available. The optional-feature query required elevation, so no feature state was changed or inferred.",
       "environment": {
         "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "reason": "The personal Windows 11 Pro x64 host was not used for disruptive testing. WindowsSandbox.exe, VMware vmrun, VirtualBox VBoxManage, Hyper-V Get-VM, existing disposable VMs, and registered self-hosted runners were unavailable. GitHub-hosted choices available to this repository provide Server x64 and Windows 11 ARM64, not native Windows 11 x64. Reading optional-feature state required elevation; no feature was enabled."
       },
       "binarySha256": null,
       "evidence": [
@@ -1522,18 +1522,19 @@
       "category": "Installer",
       "description": "Standard-user account/UAC and Settings > Apps uninstall",
       "expected": "Verify standard user flows and Windows Settings uninstall entry point.",
-      "actual": "A disposable non-administrator Windows user installed the exact candidate into its LocalAppData path without elevation, completed the interactive wizard with Run unchecked, received HKCU registration, launched the app, and completed interactive plus silent uninstall. Settings > Apps removal for that secondary user remains NOT TESTED: Settings routed to runneradmin's shell instead of the disposable user's session; no unrelated app was selected or changed.",
+      "actual": "The exact-candidate standard-user workflow passed 10 events, with 0 FAIL, 1 NOT APPLICABLE, and 1 NOT TESTED. A non-administrator user installed to LocalAppData without elevation, completed the wizard with Run unchecked, received HKCU registration, launched the app, and completed interactive and silent uninstall. The targeted retry used both Explorer URI and direct SystemSettings.exe activation. The retained screenshot shows the Apps > Installed apps page running as runneradmin; the disposable standard-user page was not exposed through UI Automation. No unrelated app was selected or changed.",
       "environment": {
         "available": true,
-        "reason": "A disposable standard account was available on the isolated Windows Server runner. The Settings shell activation context for that secondary account was not available."
+        "reason": "A disposable standard account was available on the isolated Windows Server runner. In both the initial and targeted rerun, Windows opened Installed apps as runneradmin; direct SystemSettings.exe activation forwarded to the same interactive shell. The runner did not provide a separately logged-on standard-user Settings shell."
       },
       "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43897712563/artifacts/14240990310"
       ],
       "status": "NOT TESTED",
-      "limitation": "The specific Windows Settings > Apps uninstall path still needs a Settings shell launched in the disposable standard-user session.",
+      "limitation": "The runner's active Windows shell is runneradmin. The disposable standard-user session has a standard token but no separate interactive shell; both URI activation and direct SystemSettings.exe forwarded to runneradmin. A Windows environment with a separately logged-on standard user is required to exercise Settings > Apps removal safely.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -1542,7 +1543,7 @@
       "category": "Resource stability",
       "description": "Candidate long combined soak",
       "expected": "No sustained resource increase proportional to interaction cycles.",
-      "actual": "110 cycles, 100 picker operations, 2,191 time-series samples; USER 164→164 (range 164–165), GDI 58→59 (57–61), handles 238→238 (237–240); no sustained USER/GDI/handle growth.",
+      "actual": "110 cycles, 100 picker operations, 2,190 time-series samples; USER 164→164 (range 164–165), GDI 58→59 (57–59), handles 238→238 (237–240); private bytes 3.44–4.40 MB and working set 14.01–23.51 MB. No sustained USER/GDI/handle growth.",
       "environment": {
         "name": "GitHub-hosted Windows Server 2025 Datacenter",
         "version": "10.0.26100",
@@ -1814,7 +1815,11 @@
     "displayResolutionChangeRunUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43893520574",
     "displayResolutionChangeEvidenceArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43893520574/artifacts/14238735337",
     "displayResolutionChangeResult": "PASS: exact executable remained visible and responsive with one Break reminder at 1152x864; runner display restored to 1024x768.",
-    "displayResolutionChangeRetentionDeadline": "2027-02-14T15:10:26Z"
+    "displayResolutionChangeRetentionDeadline": "2027-02-14T15:10:26Z",
+    "standardUserProbeRunUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43897712563",
+    "standardUserProbeEvidenceArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43897712563/artifacts/14240990310",
+    "standardUserProbeRetentionDeadline": "2027-02-14T15:34:03Z",
+    "standardUserProbeWorkflowResult": "Workflow PASS: 10 standard-user events PASS, 0 FAIL, 1 NOT APPLICABLE, 1 NOT TESTED. Settings > Installed apps opened as runneradmin after both URI and direct SystemSettings.exe routes, so the standard-user Settings removal subcase remains NOT TESTED."
   },
   "supplementalAcceptance": {
     "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638",
