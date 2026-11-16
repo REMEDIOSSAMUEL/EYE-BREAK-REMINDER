@@ -145,6 +145,33 @@ public static class EBR_AUDIO_INVENTORY {
   [DllImport("winmm.dll", ExactSpelling=true)] public static extern uint waveOutGetNumDevs();
   [DllImport("winmm.dll", CharSet=CharSet.Unicode, ExactSpelling=true)] public static extern uint waveOutGetDevCapsW(UIntPtr deviceId, out EBR_WAVEOUTCAPS caps, uint size);
 }
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+public class EBR_MMDeviceEnumeratorComObject {}
+[ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface EBR_IMMDeviceEnumerator {
+  [PreserveSig] int EnumAudioEndpoints(int dataFlow, uint stateMask, [MarshalAs(UnmanagedType.Interface)] out EBR_IMMDeviceCollection devices);
+}
+[ComImport, Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface EBR_IMMDeviceCollection {
+  [PreserveSig] int GetCount(out uint count);
+}
+public static class EBR_WASAPI_INVENTORY {
+  public static int ActiveRenderEndpointCount() {
+    object raw = null; EBR_IMMDeviceCollection devices = null;
+    try {
+      raw = Activator.CreateInstance(typeof(EBR_MMDeviceEnumeratorComObject));
+      EBR_IMMDeviceEnumerator enumerator = (EBR_IMMDeviceEnumerator)raw;
+      int result = enumerator.EnumAudioEndpoints(0, 1, out devices); // eRender, DEVICE_STATE_ACTIVE
+      if (result < 0) Marshal.ThrowExceptionForHR(result);
+      uint count = 0; result = devices.GetCount(out count);
+      if (result < 0) Marshal.ThrowExceptionForHR(result);
+      return checked((int)count);
+    } finally {
+      if (devices != null && Marshal.IsComObject(devices)) Marshal.ReleaseComObject(devices);
+      if (raw != null && Marshal.IsComObject(raw)) Marshal.ReleaseComObject(raw);
+    }
+  }
+}
 '@ -ErrorAction Stop
 Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
 Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
@@ -160,7 +187,9 @@ for ($deviceIndex = 0; $deviceIndex -lt $audioDeviceCount; $deviceIndex++) {
   $audioResult = [EBR_AUDIO_INVENTORY]::waveOutGetDevCapsW([UIntPtr]$deviceIndex, [ref]$audioCaps, [uint32][Runtime.InteropServices.Marshal]::SizeOf([type][EBR_WAVEOUTCAPS]))
   $audioDevices.Add([pscustomobject]@{Index=$deviceIndex;Name=$audioCaps.szPname;Channels=$audioCaps.wChannels;Formats=$audioCaps.dwFormats;Support=$audioCaps.dwSupport;ReturnCode=$audioResult})
 }
-$audioInventory = [pscustomobject]@{Api='winmm.waveOutGetNumDevs/waveOutGetDevCapsW';DeviceCount=[int]$audioDeviceCount;Devices=@($audioDevices);PlaybackAttempted=$false;LoopbackCaptureAttempted=$false;ObservedUtc=[DateTime]::UtcNow.ToString('o')}
+$wasapiEndpointCount=$null;$wasapiInventoryError=''
+try{$wasapiEndpointCount=[EBR_WASAPI_INVENTORY]::ActiveRenderEndpointCount()}catch{$wasapiInventoryError=$_.Exception.Message}
+$audioInventory = [pscustomobject]@{WinMMApi='waveOutGetNumDevs/waveOutGetDevCapsW';WinMMDeviceCount=[int]$audioDeviceCount;WinMMDevices=@($audioDevices);WasapiApi='IMMDeviceEnumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)';WasapiActiveRenderEndpointCount=$wasapiEndpointCount;WasapiInventoryError=$wasapiInventoryError;PlaybackAttempted=$false;LoopbackCaptureAttempted=$false;ObservedUtc=[DateTime]::UtcNow.ToString('o')}
 $audioInventory | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'windows-audio-endpoint-inventory.json') -Encoding UTF8
 
 function Add-Event([string]$Name, [string]$Status, $Details=$null) {
@@ -1312,7 +1341,7 @@ function Test-NarratorNavigation {
   }
   if($navigationError){Not-Tested 'Narrator keyboard and accessible-surface navigation' $navigationError}
   else{Pass 'Windows Narrator was active during Timer, Appearance, RGB/palette, History, update and reminder navigation' ([pscustomobject]@{NarratorPid=$narratorProcess.Id;Surfaces=$surfaces.ToArray();KeyboardFocusTrace=$focusTrace.ToArray();SpeechClaimed=$false})}
-  $speechReason=if($audioDeviceCount-eq0){'The Windows inventory reports zero WinMM playback endpoints; no WASAPI loopback endpoint was available to capture Narrator output.'}else{'A playback device was inventoried, but this run had no verified WASAPI loopback capture path; actual speech output is not claimed.'}
+  $speechReason=if($null-ne$wasapiEndpointCount-and$wasapiEndpointCount-eq0){'WASAPI reports zero active render endpoints; no loopback endpoint was available to capture Narrator output.'}elseif($wasapiInventoryError){"WASAPI endpoint inventory failed: $wasapiInventoryError; actual speech output is not claimed."}else{"WASAPI reports $wasapiEndpointCount active render endpoint(s), but this run has no verified loopback capture; actual speech output is not claimed."}
   Not-Tested 'Actual Narrator speech capture' $speechReason
 }
 function Test-OsAppearanceAndTextScale {
