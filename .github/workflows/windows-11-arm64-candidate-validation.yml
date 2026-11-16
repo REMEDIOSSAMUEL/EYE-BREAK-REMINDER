@@ -8,19 +8,21 @@ on:
         required: true
         type: string
       probe_mode:
-        description: Run exact-candidate emulation acceptance or only inventory runner audio endpoints
+        description: Run emulation acceptance, inventory audio endpoints, or only run the Windows x64 display probe
         required: true
         type: choice
         default: acceptance
         options:
           - acceptance
           - audio-inventory
+          - display-only
 
 permissions:
   contents: read
 
 jobs:
   arm64-candidate-emulation:
+    if: ${{ inputs.probe_mode != 'display-only' }}
     runs-on: windows-11-arm
     timeout-minutes: 30
     permissions:
@@ -108,7 +110,8 @@ jobs:
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Test standard-user install, Windows Settings uninstall, and UAC behavior
-        if: ${{ inputs.probe_mode == 'acceptance' }}
+        # The per-user x64 installer intentionally refuses Windows ARM64. Its standard-user/UAC path is verified on the x64 Windows Server candidate job.
+        if: ${{ inputs.probe_mode == 'acceptance' && runner.arch == 'X64' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -147,7 +150,7 @@ jobs:
 
   windows-server-display-change:
     name: Exact-candidate display-resolution change on Windows x64
-    if: ${{ inputs.probe_mode == 'acceptance' }}
+    if: ${{ inputs.probe_mode == 'acceptance' || inputs.probe_mode == 'display-only' }}
     runs-on: windows-2025
     timeout-minutes: 20
     permissions:

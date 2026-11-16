@@ -72,29 +72,31 @@ function Save-Screenshot([string]$Name) {
 }
 function Get-Mode {
   $mode=[EBR_DISPLAY_NATIVE]::NewMode()
-  if(-not [EBR_DISPLAY_NATIVE]::EnumDisplaySettingsW($null,-1,[ref]$mode)){throw 'Windows could not report the current display mode.'}
+  if([string]::IsNullOrWhiteSpace($script:displayDevice)){throw 'Windows did not expose a primary display device name.'}
+  if(-not [EBR_DISPLAY_NATIVE]::EnumDisplaySettingsW($script:displayDevice,-1,[ref]$mode)){$errorCode=[Runtime.InteropServices.Marshal]::GetLastWin32Error();throw "Windows could not report the current mode for $($script:displayDevice) (Win32 error $errorCode)."}
   return $mode
 }
 function Test-Mode([uint32]$Width,[uint32]$Height) {
   $mode=[EBR_DISPLAY_NATIVE]::NewMode();$mode.dmFields=0x00080000 -bor 0x00100000;$mode.dmPelsWidth=$Width;$mode.dmPelsHeight=$Height
-  return [EBR_DISPLAY_NATIVE]::ChangeDisplaySettingsExW($null,[ref]$mode,[IntPtr]::Zero,2,[IntPtr]::Zero)
+  return [EBR_DISPLAY_NATIVE]::ChangeDisplaySettingsExW($script:displayDevice,[ref]$mode,[IntPtr]::Zero,2,[IntPtr]::Zero)
 }
 function Format-Mode($Mode){[pscustomobject]@{Width=[uint32]$Mode.dmPelsWidth;Height=[uint32]$Mode.dmPelsHeight;BitsPerPel=[uint32]$Mode.dmBitsPerPel;Frequency=[uint32]$Mode.dmDisplayFrequency}}
 function Test-InVirtualScreen($Rect,$VirtualScreen){return ($Rect.Left-ge$VirtualScreen.Left-and$Rect.Top-ge$VirtualScreen.Top-and$Rect.Right-le($VirtualScreen.Left+$VirtualScreen.Width)-and$Rect.Bottom-le($VirtualScreen.Top+$VirtualScreen.Height))}
 
-$script:app=$null;$originalMode=$null;$displayChanged=$false;$result=[ordered]@{Application='Eye Break Reminder';Test='Real Windows display-resolution change while a Break reminder is visible';Status='NOT TESTED';CandidateSHA256=$null;ExpectedSHA256=$ExpectedSha256.ToLowerInvariant();CandidateRunId=$env:CANDIDATE_RUN_ID;CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;Environment=$null;InitialMode=$null;ChangedMode=$null;RestoredMode=$null;InitialScreenshot=$null;ChangedScreenshot=$null;RestoredScreenshot=$null;BeforeChange=$null;AfterChange=$null;AfterRestore=$null;Reason='';Failure='';CompletedUtc=$null}
+$script:app=$null;$script:displayDevice=$null;$originalMode=$null;$displayChanged=$false;$result=[ordered]@{Application='Eye Break Reminder';Test='Real Windows display-resolution change while a Break reminder is visible';Status='NOT TESTED';CandidateSHA256=$null;ExpectedSHA256=$ExpectedSha256.ToLowerInvariant();CandidateRunId=$env:CANDIDATE_RUN_ID;CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;Environment=$null;InitialMode=$null;ChangedMode=$null;RestoredMode=$null;InitialScreenshot=$null;ChangedScreenshot=$null;RestoredScreenshot=$null;BeforeChange=$null;AfterChange=$null;AfterRestore=$null;Reason='';Failure='';CompletedUtc=$null}
 try {
   $exe=(Resolve-Path -LiteralPath $ExecutablePath).Path;$hash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant();$result.CandidateSHA256=$hash
   if($hash-cne$ExpectedSha256.ToLowerInvariant()){throw "Candidate executable hash mismatch: expected $ExpectedSha256; found $hash."}
+  $primaryScreen=[System.Windows.Forms.Screen]::PrimaryScreen;if($null-eq$primaryScreen){throw 'Windows did not expose a primary screen for display-mode testing.'};$script:displayDevice=$primaryScreen.DeviceName
   $version=(Get-Item -LiteralPath $exe).VersionInfo.ProductVersion;if($version-notmatch'^1\.3\.0(\.0)?$'){throw "Expected application version 1.3.0; found $version."}
   $os=Get-CimInstance Win32_OperatingSystem;$architecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();$explorerProcess=Get-Process -Name explorer -ErrorAction SilentlyContinue|Select-Object -First 1;$explorer=if($explorerProcess){[EBR_DISPLAY_NATIVE]::FindProcessWindow($explorerProcess.Id,'Shell_TrayWnd')}else{[IntPtr]::Zero}
-  $result.Environment=[pscustomobject]@{OS=$os.Caption;OSVersion=$os.Version;OSArchitecture=$architecture;ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();Interactive=[Environment]::UserInteractive;ExplorerDesktop=($explorer-ne[IntPtr]::Zero);MonitorCount=[System.Windows.Forms.Screen]::AllScreens.Count;ProductVersion=$version;CandidateRunId=$env:CANDIDATE_RUN_ID;CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT}
+  $result.Environment=[pscustomobject]@{OS=$os.Caption;OSVersion=$os.Version;OSArchitecture=$architecture;ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();Interactive=[Environment]::UserInteractive;ExplorerDesktop=($explorer-ne[IntPtr]::Zero);MonitorCount=[System.Windows.Forms.Screen]::AllScreens.Count;PrimaryDisplayDevice=$script:displayDevice;ProductVersion=$version;CandidateRunId=$env:CANDIDATE_RUN_ID;CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT}
   if($os.Caption-notmatch'Windows Server 2025'-or$architecture-ne'X64'){throw "Expected isolated Windows Server 2025 x64, found $($os.Caption) / $architecture."}
   if(-not$result.Environment.ExplorerDesktop){$result.Reason='The hosted runner did not expose an interactive Explorer desktop.';return}
   $running=@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue);if($running.Count){throw 'An Eye Break Reminder process already exists on the disposable runner.'}
   $originalMode=Get-Mode;$result.InitialMode=Format-Mode $originalMode
   $modes=[Collections.Generic.List[object]]::new()
-  for($i=0;$i-lt256;$i++){$mode=[EBR_DISPLAY_NATIVE]::NewMode();if(-not[EBR_DISPLAY_NATIVE]::EnumDisplaySettingsW($null,$i,[ref]$mode)){break};$modes.Add((Format-Mode $mode))}
+  for($i=0;$i-lt256;$i++){$mode=[EBR_DISPLAY_NATIVE]::NewMode();if(-not[EBR_DISPLAY_NATIVE]::EnumDisplaySettingsW($script:displayDevice,$i,[ref]$mode)){break};$modes.Add((Format-Mode $mode))}
   $alternatives=@($modes|Where-Object{($_.Width-ne$result.InitialMode.Width-or$_.Height-ne$result.InitialMode.Height)-and$_.Width-ge1024-and$_.Height-ge600}|Sort-Object @{Expression={if($_.Height-ge$result.InitialMode.Height){0}else{1}}},@{Expression={if($_.Height-ge$result.InitialMode.Height){[math]::Abs(($_.Width*$_.Height)-($result.InitialMode.Width*$result.InitialMode.Height))}else{-[double]($_.Width*$_.Height)}}})
   $selected=$null;foreach($mode in $alternatives){if((Test-Mode $mode.Width $mode.Height)-eq0){$selected=$mode;break}}
   if(-not$selected){$result.Reason='The isolated Windows display driver exposed no different supported resolution that passed CDS_TEST; no display setting was changed.';return}
@@ -112,7 +114,7 @@ try {
   if(-not$result.BeforeChange.BreakWindow.Visible){throw 'Break reminder was not visible before the display change.'}
   if($result.BeforeChange.BreakWindow.Actions.Count-ne5-or@($result.BeforeChange.BreakWindow.Actions|Where-Object{-not$_.Visible}).Count-gt0){throw 'The visible Break reminder did not expose all five visible action controls before the display change.'}
   $changedMode=[EBR_DISPLAY_NATIVE]::NewMode();$changedMode.dmFields=0x00080000 -bor 0x00100000;$changedMode.dmPelsWidth=$selected.Width;$changedMode.dmPelsHeight=$selected.Height
-  $changeResult=[EBR_DISPLAY_NATIVE]::ChangeDisplaySettingsExW($null,[ref]$changedMode,[IntPtr]::Zero,0,[IntPtr]::Zero)
+  $changeResult=[EBR_DISPLAY_NATIVE]::ChangeDisplaySettingsExW($script:displayDevice,[ref]$changedMode,[IntPtr]::Zero,0,[IntPtr]::Zero)
   if($changeResult-ne0){$result.Reason="Windows rejected the supported display mode with DISP_CHANGE code $changeResult; the candidate UI was left unchanged.";return}
   $displayChanged=$true;$result.ChangedMode=[pscustomobject]@{Width=$selected.Width;Height=$selected.Height;BitsPerPel=$selected.BitsPerPel;Frequency=$selected.Frequency;DispChangeCode=$changeResult}
   Start-Sleep -Seconds 2
@@ -133,7 +135,7 @@ try {
   $result.MultiMonitorStatus=if($result.AfterChange.MonitorCount-gt1){'NOT TESTED: this probe did not move the app between displays or change topology.'}else{'BLOCKED: only one display was exposed by the isolated runner.'}
 }catch{$result.Status='FAIL';$result.Failure=$_.Exception.Message}
 finally {
-  if($displayChanged-and$null-ne$originalMode){try{$restore=[EBR_DISPLAY_NATIVE]::ChangeDisplaySettingsExW($null,[ref]$originalMode,[IntPtr]::Zero,0,[IntPtr]::Zero);if($restore-ne0){$result.Status='FAIL';$result.Failure="Could not restore original display mode; DISP_CHANGE code $restore. $($result.Failure)"}else{Start-Sleep -Milliseconds 500;$result.RestoredMode=Format-Mode (Get-Mode);$result.RestoredScreenshot=Save-Screenshot 'display-change-restored.png';if($result.RestoredMode.Width-ne$result.InitialMode.Width-or$result.RestoredMode.Height-ne$result.InitialMode.Height){$result.Status='FAIL';$result.Failure='Windows reported a different resolution after restoring the original display mode.'}}}catch{$result.Status='FAIL';$result.Failure="Could not verify display-mode restoration: $($_.Exception.Message)"}}
+  if($displayChanged-and$null-ne$originalMode){try{$restore=[EBR_DISPLAY_NATIVE]::ChangeDisplaySettingsExW($script:displayDevice,[ref]$originalMode,[IntPtr]::Zero,0,[IntPtr]::Zero);if($restore-ne0){$result.Status='FAIL';$result.Failure="Could not restore original display mode; DISP_CHANGE code $restore. $($result.Failure)"}else{Start-Sleep -Milliseconds 500;$result.RestoredMode=Format-Mode (Get-Mode);$result.RestoredScreenshot=Save-Screenshot 'display-change-restored.png';if($result.RestoredMode.Width-ne$result.InitialMode.Width-or$result.RestoredMode.Height-ne$result.InitialMode.Height){$result.Status='FAIL';$result.Failure='Windows reported a different resolution after restoring the original display mode.'}}}catch{$result.Status='FAIL';$result.Failure="Could not verify display-mode restoration: $($_.Exception.Message)"}}
   if($script:app){try{if(-not$script:app.HasExited){Stop-Process -Id $script:app.Id -Force -ErrorAction Stop};$script:app.WaitForExit(5000)}catch{if($result.Status-ne'FAIL'){$result.Status='FAIL'};$result.Failure="Could not stop the owned candidate test process: $($_.Exception.Message) $($result.Failure)"}}
   $result.CompletedUtc=[DateTime]::UtcNow.ToString('o');$result|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'windows-display-change-results.json') -Encoding UTF8
 }
