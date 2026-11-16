@@ -579,7 +579,7 @@ public:
   std::vector<Control*> items;
   for(auto&c:controls)if(c.page==2){bool inSection=c.section==settingsSection;ShowWindow(c.handle,inSection?SW_SHOW:SW_HIDE);if(c.buddySpin)ShowWindow(c.buddySpin,inSection?SW_SHOW:SW_HIDE);if(inSection)items.push_back(&c);}
   std::vector<geometry::FormItem> form;
-  for(auto*item:items){geometry::FormItem f;f.kind=item->kind;std::wstring text=windowText(item->handle);bool accentSwatch=item->id==WORK_ACCENT_SWATCH||item->id==BREAK_ACCENT_SWATCH;f.textWidth=measureWidth(item->handle,text,accentSwatch?normalFont:nullptr);
+  for(auto*item:items){geometry::FormItem f;f.kind=item->kind;std::wstring text=windowText(item->handle);bool accentSwatch=item->id==WORK_ACCENT_SWATCH||item->id==BREAK_ACCENT_SWATCH;f.textWidth=measureWidth(accentSwatch?settingsPane:item->handle,text,accentSwatch?normalFont:nullptr);
    f.textHeight=[this,handle=item->handle,text](int width){return measureHeight(handle,text,width);};f.sameRow=item->sameRow;f.indent=item->indent;f.spin=item->buddySpin!=nullptr;f.keep=item->keep;
    // Inline rows: time fields fit "00:00" plus their margins and frame, buttons fit their caption, labels their text.
    if(f.kind==Kind::Inline){wchar_t cls[16]{};GetClassNameW(item->handle,cls,16);if(_wcsicmp(cls,L"Edit")==0)f.width=measureWidth(item->handle,L"00:00")+px(30);else if(accentSwatch)f.width=std::max(px(116),f.textWidth+px(52));else if(_wcsicmp(cls,L"Button")==0)f.width=std::max(px(76),f.textWidth+px(32));else f.width=f.textWidth+px(2);}
