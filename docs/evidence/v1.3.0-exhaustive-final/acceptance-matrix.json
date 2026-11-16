@@ -83,13 +83,14 @@
   ],
   "caseStatusTotals": {
     "PASS": 62,
+    "FAIL": 0,
     "NOT TESTED": 6,
     "NOT APPLICABLE": 1,
     "BLOCKED": 7,
     "TOTAL_CASES": 76
   },
   "releaseAssessment": {
-    "confirmedProductDefect": "None remains in the exact candidate. The 225% Break-heading clipping defect was fixed in source commit b39f014 and the exact candidate passed its regression. Display-probe failures were traced to missing audio-warning handling and a diagnostic-field bug; the corrected probe passed.",
+    "confirmedProductDefect": "None remains in the exact candidate. Candidate source commit b39f014 fixed the confirmed scaled Work/Break accent-readout clipping and Break-heading viewport/wrapping defects; the exact candidate passed text-scale regressions at 125%, 150%, 200% and 225%. Display-probe failures were traced to missing audio-warning handling and a diagnostic-field bug; the corrected probe passed.",
     "exhaustiveVerification": "Not fully verified: native Windows 11 x64, reboot/post-login, lock/unlock, sleep/resume, multi-monitor topology, Narrator speech capture, audio output capture, visible legacy Shell balloon, direct production-request overlap, full per-monitor DPI, and exhaustive hover/disabled/selected-state contrasts remain BLOCKED or NOT TESTED.",
     "recommendation": "READY FOR PUBLICATION APPROVAL WITH DOCUMENTED TESTING LIMITATIONS. Core and GUI regression, installer/upgrade, exact-candidate integrity, custom accents, accessibility protections, resource stability, and current Windows Server x64 display/focus behavior pass. No confirmed release-blocking defect remains. Do not claim FULLY VERIFIED or publish v1.3.0 without separate approval."
   },
