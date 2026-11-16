@@ -1303,60 +1303,67 @@ function Get-AccessibilitySurfaceSummary([IntPtr]$Window) {
 function Get-AccessibilityFocusSnapshot([string]$Surface) {
   try{
     $element=[System.Windows.Automation.AutomationElement]::FocusedElement
-    if($element){$current=$element.Current;return [pscustomobject]@{Surface=$Surface;Name=$current.Name;Role=$current.ControlType.ProgrammaticName;ProcessId=$current.ProcessId;HasKeyboardFocus=$current.HasKeyboardFocus}}
+    if($element){$current=$element.Current;return [pscustomobject]@{Surface=$Surface;Name=$current.Name;Role=$current.ControlType.ProgrammaticName;ProcessId=$current.ProcessId;NativeWindowHandle=$current.NativeWindowHandle;HasKeyboardFocus=$current.HasKeyboardFocus}}
   }catch{}
-  return [pscustomobject]@{Surface=$Surface;Name=$null;Role=$null;ProcessId=$null;HasKeyboardFocus=$false}
+  return [pscustomobject]@{Surface=$Surface;Name=$null;Role=$null;ProcessId=$null;NativeWindowHandle=$null;HasKeyboardFocus=$false}
+}
+function Click-NarratorControl([IntPtr]$Root,[IntPtr]$Control,[string]$Surface) {
+  $targetPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($Control,[ref]$targetPid)
+  if($targetPid-ne$script:appPid-or-not[EBR_PRE_NATIVE]::IsWindowEnabled($Control)){throw "Refusing to send Narrator test input to a disabled control or another process ($($Surface))."}
+  [void][EBR_PRE_NATIVE]::SetForegroundWindow($Root);$bounds=Get-Rect $Control
+  if(-not[EBR_PRE_NATIVE]::SetCursorPos([int](($bounds.Left+$bounds.Right)/2),[int](($bounds.Top+$bounds.Bottom)/2))){throw "Could not move the real pointer to $Surface."}
+  [EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 50;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 120
+  $snapshot=Get-AccessibilityFocusSnapshot $Surface
+  if($snapshot.ProcessId-ne$script:appPid-or-not$snapshot.HasKeyboardFocus){throw "Real pointer input did not place keyboard focus in the installed app for $($Surface): $($snapshot|ConvertTo-Json -Compress)."}
+  return $snapshot
 }
 function Test-NarratorNavigation {
   if(-not $script:interactiveDesktop){Not-Tested 'Narrator keyboard and accessible-surface navigation' 'No interactive Windows desktop was exposed.';Not-Tested 'Actual Narrator speech capture' 'No interactive Windows desktop or verified audio capture endpoint was available.';return}
   $narratorPath=Join-Path $env:WINDIR 'System32\Narrator.exe'
   if(-not(Test-Path -LiteralPath $narratorPath -PathType Leaf)){Not-Tested 'Narrator keyboard and accessible-surface navigation' 'Narrator.exe is not installed in this Windows Server image.';Not-Tested 'Actual Narrator speech capture' "Narrator is unavailable; the Windows audio inventory reports $audioDeviceCount playback endpoint(s).";return}
-  $narratorProcess=$null;$startedNarrator=$false;$picker=[IntPtr]::Zero;$breakWindow=[IntPtr]::Zero;$navigationError='';$surfaces=[System.Collections.Generic.List[object]]::new();$focusTrace=[System.Collections.Generic.List[object]]::new()
+  $narratorProcess=$null;$startedNarrator=$false;$narratorActive=$false;$picker=[IntPtr]::Zero;$breakWindow=[IntPtr]::Zero;$navigationError='';$surfaces=[System.Collections.Generic.List[object]]::new();$focusTrace=[System.Collections.Generic.List[object]]::new()
   try{
     $narratorProcess=@(Get-Process -Name Narrator -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId}|Select-Object -First 1)
     if(-not$narratorProcess.Count){$narratorProcess=Start-Process -FilePath $narratorPath -PassThru;$startedNarrator=$true}
     $watch=[Diagnostics.Stopwatch]::StartNew();$narratorActive=$false
     while($watch.Elapsed.TotalSeconds-lt8){$active=@(Get-Process -Name Narrator -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId});if($active.Count){$narratorProcess=$active[0];$narratorActive=$true;break};Start-Sleep -Milliseconds 100}
     if(-not$narratorActive){throw 'Windows did not expose a running Narrator process in the interactive test session.'}
-    [void][EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow)
-    Switch-Timer
     $timerNav=Get-Control $script:mainWindow 10 'Narrator Timer navigation focus'
-    $timerNavBounds=Get-Rect $timerNav.Handle
-    $timerNavX=[int](($timerNavBounds.Left+$timerNavBounds.Right)/2);$timerNavY=[int](($timerNavBounds.Top+$timerNavBounds.Bottom)/2)
-    if(-not[EBR_PRE_NATIVE]::SetCursorPos($timerNavX,$timerNavY)){throw 'Could not position the real pointer over the Timer navigation control for Narrator focus handoff.'}
-    [EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 50;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 150
-    $foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid)
-    if($foregroundPid-ne$script:appPid){throw "Real pointer input did not return foreground to the installed app for Narrator navigation (foreground PID $foregroundPid, app PID $script:appPid)."}
-    $pointerFocus=Get-AccessibilityFocusSnapshot 'Timer after real pointer focus handoff'
-    if($pointerFocus.ProcessId-ne$script:appPid-or-not$pointerFocus.HasKeyboardFocus){throw "Real pointer input did not focus the Timer navigation control before Narrator keyboard navigation: $($pointerFocus|ConvertTo-Json -Compress)."}
-    for($i=0;$i-lt4;$i++){Send-VirtualKey 0x09;Start-Sleep -Milliseconds 120;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'Timer'))}
+    $pointerFocus=Click-NarratorControl $script:mainWindow $timerNav.Handle 'Timer navigation'
+    $focusTrace.Add($pointerFocus)
+    for($i=0;$i-lt4;$i++){Send-VirtualKey 0x09;Start-Sleep -Milliseconds 120;$focusSnapshot=Get-AccessibilityFocusSnapshot 'Timer';if($focusSnapshot.ProcessId-ne$script:appPid-or-not$focusSnapshot.HasKeyboardFocus){throw "Narrator-active Tab navigation left the app at step $($i): $($focusSnapshot|ConvertTo-Json -Compress)."};$focusTrace.Add($focusSnapshot)}
     $surfaces.Add([pscustomobject]@{Surface='Timer';Controls=(Get-AccessibilitySurfaceSummary $script:mainWindow)})
-    Switch-Settings 4
+    $settingsNav=Get-Control $script:mainWindow 12 'Narrator Settings navigation';$focusTrace.Add((Click-NarratorControl $script:mainWindow $settingsNav.Handle 'Settings navigation'))
+    $appearanceNav=Get-Control $script:mainWindow 134 'Narrator Appearance section';$focusTrace.Add((Click-NarratorControl $script:mainWindow $appearanceNav.Handle 'Settings > Appearance'))
     $appearance=@(Get-AccessibilitySurfaceSummary $script:mainWindow)
     $surfaces.Add([pscustomobject]@{Surface='Settings > Appearance';Controls=$appearance})
-    $picker=Open-InstalledColorPicker 127 'Narrator Work accent ChooseColorW navigation'
+    $workColour=Get-Control $script:mainWindow 127 'Narrator Work accent ChooseColorW navigation';$focusTrace.Add((Click-NarratorControl $script:mainWindow $workColour.Handle 'Work accent ChooseColorW button'))
+    $pickerWatch=[Diagnostics.Stopwatch]::StartNew();while($pickerWatch.Elapsed.TotalSeconds-lt8){$picker=Find-InstalledColorPicker;if($picker-ne[IntPtr]::Zero){break};Start-Sleep -Milliseconds 50};if($picker-eq[IntPtr]::Zero){throw 'Narrator pointer activation did not open the native ChooseColorW dialog.'}
     $rgbControls=@(foreach($id in @(706,707,708)){$child=[EBR_PRE_NATIVE]::GetDlgItem($picker,$id);if($child-ne[IntPtr]::Zero){[pscustomobject]@{Id=$id;Class=[EBR_PRE_NATIVE]::ClassName($child);Name=[EBR_PRE_NATIVE]::Text($child);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($child)}}})
     $paletteControls=@(foreach($id in 721..736){$child=[EBR_PRE_NATIVE]::GetDlgItem($picker,$id);if($child-ne[IntPtr]::Zero-and[EBR_PRE_NATIVE]::IsWindowVisible($child)){[pscustomobject]@{Id=$id;Class=[EBR_PRE_NATIVE]::ClassName($child);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($child)}}})
     $pickerUia=@(Get-AccessibilitySurfaceSummary $picker)
     $surfaces.Add([pscustomobject]@{Surface='ChooseColorW';Controls=$pickerUia;RgbNativeControls=$rgbControls;VisiblePaletteCells=$paletteControls.Count})
-    foreach($id in @(706,707,708)){$child=[EBR_PRE_NATIVE]::GetDlgItem($picker,$id);if($child-ne[IntPtr]::Zero){$bounds=Get-Rect $child;if(-not[EBR_PRE_NATIVE]::SetCursorPos([int](($bounds.Left+$bounds.Right)/2),[int](($bounds.Top+$bounds.Bottom)/2))){throw "Could not position the real pointer over ChooseColorW RGB control $id."};[EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 40;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 100;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'ChooseColorW RGB/palette'));Send-VirtualKey 0x09}}
-    if($paletteControls.Count){$paletteCell=[EBR_PRE_NATIVE]::GetDlgItem($picker,[int]$paletteControls[0].Id);if($paletteCell-ne[IntPtr]::Zero){$bounds=Get-Rect $paletteCell;if(-not[EBR_PRE_NATIVE]::SetCursorPos([int](($bounds.Left+$bounds.Right)/2),[int](($bounds.Top+$bounds.Bottom)/2))){throw 'Could not position the real pointer over the ChooseColorW custom-colour palette.'};[EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 40;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 100;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'ChooseColorW palette'));Send-VirtualKey 0x09}}
-    Close-InstalledColorPicker $picker $false;$picker=[IntPtr]::Zero
-    Click-Control $script:mainWindow 11 'Narrator History navigation'
+    foreach($id in @(706,707,708)){$child=[EBR_PRE_NATIVE]::GetDlgItem($picker,$id);if($child-ne[IntPtr]::Zero){$focusTrace.Add((Click-NarratorControl $picker $child "ChooseColorW RGB control $id"));Send-VirtualKey 0x09;$focusSnapshot=Get-AccessibilityFocusSnapshot 'ChooseColorW RGB/palette Tab';if($focusSnapshot.ProcessId-ne$script:appPid-or-not$focusSnapshot.HasKeyboardFocus){throw "ChooseColorW Tab navigation left the app after RGB control $id."};$focusTrace.Add($focusSnapshot)}}
+    if($paletteControls.Count){$paletteCell=[EBR_PRE_NATIVE]::GetDlgItem($picker,[int]$paletteControls[0].Id);if($paletteCell-ne[IntPtr]::Zero){$focusTrace.Add((Click-NarratorControl $picker $paletteCell 'ChooseColorW palette'));Send-VirtualKey 0x09;$focusSnapshot=Get-AccessibilityFocusSnapshot 'ChooseColorW palette Tab';if($focusSnapshot.ProcessId-ne$script:appPid-or-not$focusSnapshot.HasKeyboardFocus){throw 'ChooseColorW Tab navigation left the app from its custom-colour palette.'};$focusTrace.Add($focusSnapshot)}}
+    [void][EBR_PRE_NATIVE]::SetForegroundWindow($picker);Send-VirtualKey 0x1B;$pickerClose=[Diagnostics.Stopwatch]::StartNew();while([EBR_PRE_NATIVE]::IsWindow($picker)-and$pickerClose.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 50};if([EBR_PRE_NATIVE]::IsWindow($picker)){Close-InstalledColorPicker $picker $false};$picker=[IntPtr]::Zero
+    $historyNav=Get-Control $script:mainWindow 11 'Narrator History navigation';$focusTrace.Add((Click-NarratorControl $script:mainWindow $historyNav.Handle 'History'))
     $surfaces.Add([pscustomobject]@{Surface='History';Controls=(Get-AccessibilitySurfaceSummary $script:mainWindow)})
-    Switch-Settings 5
+    $settingsNav=Get-Control $script:mainWindow 12 'Narrator About Settings navigation';$focusTrace.Add((Click-NarratorControl $script:mainWindow $settingsNav.Handle 'Settings before About'))
+    $aboutNav=Get-Control $script:mainWindow 135 'Narrator About section';$focusTrace.Add((Click-NarratorControl $script:mainWindow $aboutNav.Handle 'Settings > About'))
     $updateControl=Get-Control $script:mainWindow 160 'Narrator Check for Updates navigation'
     $surfaces.Add([pscustomobject]@{Surface='Settings > About / Check for Updates';Controls=(Get-AccessibilitySurfaceSummary $script:mainWindow);UpdateButton=[pscustomobject]@{Name=[EBR_PRE_NATIVE]::Text($updateControl.Handle);Enabled=$updateControl.Enabled}})
-    Switch-Timer
-    Invoke-InstalledBreakNow 'Narrator reminder navigation'
+    $focusTrace.Add((Click-NarratorControl $script:mainWindow $updateControl.Handle 'Check for Updates'))
+    $timerNav=Get-Control $script:mainWindow 10 'Narrator Timer before reminder';$focusTrace.Add((Click-NarratorControl $script:mainWindow $timerNav.Handle 'Timer before reminder'))
+    $startBreak=Get-Control $script:mainWindow 22 'Narrator reminder navigation';$focusTrace.Add((Click-NarratorControl $script:mainWindow $startBreak.Handle 'Take a break'))
     $breakWindows=Get-BreakWindow $script:appPid
     if($breakWindows.Count-ne1){throw "Expected one application-owned reminder while Narrator was active; observed $($breakWindows.Count)."}
     $breakWindow=$breakWindows[0]
     $breakControls=@(Get-AccessibilitySurfaceSummary $breakWindow)
     $surfaces.Add([pscustomobject]@{Surface='Break reminder';Controls=$breakControls})
+    $initialBreakFocus=Get-AccessibilityFocusSnapshot 'Break reminder initial focus';if($initialBreakFocus.ProcessId-ne$script:appPid-or-not$initialBreakFocus.HasKeyboardFocus){throw "Narrator-active Break reminder did not expose its initial focused control: $($initialBreakFocus|ConvertTo-Json -Compress)."};$focusTrace.Add($initialBreakFocus)
+    Send-VirtualKey 0x09;$focusSnapshot=Get-AccessibilityFocusSnapshot 'Break reminder Skip focus';if($focusSnapshot.ProcessId-ne$script:appPid-or-not$focusSnapshot.HasKeyboardFocus-or$focusSnapshot.Name-ne'Skip'){throw "Narrator-active Tab navigation did not focus Skip: $($focusSnapshot|ConvertTo-Json -Compress)."};$focusTrace.Add($focusSnapshot)
+    Send-VirtualKey 0x09;$focusSnapshot=Get-AccessibilityFocusSnapshot 'Break reminder Snooze focus';if($focusSnapshot.ProcessId-ne$script:appPid-or-not$focusSnapshot.HasKeyboardFocus-or$focusSnapshot.Name-ne'Snooze 1 min'){throw "Narrator-active Tab navigation did not focus Snooze 1 min: $($focusSnapshot|ConvertTo-Json -Compress)."};$focusTrace.Add($focusSnapshot)
     $acknowledge=Get-Control $breakWindow 23 'Narrator reminder acknowledgement'
-    Focus-AppControl $acknowledge.Handle
-    $focusTrace.Add((Get-AccessibilityFocusSnapshot 'Break reminder'))
     Click-Control $breakWindow 23 'Acknowledge Narrator reminder navigation'
     $breakWindow=[IntPtr]::Zero
   }catch{$navigationError=$_.Exception.Message}
@@ -1366,7 +1373,7 @@ function Test-NarratorNavigation {
     if($startedNarrator-and$narratorProcess){try{Stop-Process -Id $narratorProcess.Id -Force -ErrorAction SilentlyContinue}catch{}}
     try{Switch-Timer}catch{}
   }
-  if($navigationError){Not-Tested 'Narrator keyboard and accessible-surface navigation' $navigationError}
+  if($navigationError){Add-Event 'Narrator keyboard and accessible-surface navigation' 'NOT TESTED' ([pscustomobject]@{Reason=$navigationError;NarratorActive=$narratorActive;NarratorProcessId=if($narratorProcess){$narratorProcess.Id}else{$null};FocusTrace=$focusTrace.ToArray();Surfaces=$surfaces.ToArray()})}
   else{Pass 'Windows Narrator was active during Timer, Appearance, RGB/palette, History, update and reminder navigation' ([pscustomobject]@{NarratorPid=$narratorProcess.Id;Surfaces=$surfaces.ToArray();KeyboardFocusTrace=$focusTrace.ToArray();SpeechClaimed=$false})}
   $speechReason=if($null-ne$wasapiEndpointCount-and$wasapiEndpointCount-eq0){'WASAPI reports zero active render endpoints; no loopback endpoint was available to capture Narrator output.'}elseif($wasapiInventoryError){"WASAPI endpoint inventory failed: $wasapiInventoryError; actual speech output is not claimed."}else{"WASAPI reports $wasapiEndpointCount active render endpoint(s), but this run has no verified loopback capture; actual speech output is not claimed."}
   Not-Tested 'Actual Narrator speech capture' $speechReason
@@ -1739,9 +1746,13 @@ function Test-InstalledSettingsControls {
 
   Switch-Settings 4
   $workPicker=Open-InstalledColorPicker 127 'Installed Work picker for exhaustive theme sweep';Set-InstalledPickerRgb $workPicker 139 92 246;Close-InstalledColorPicker $workPicker $true
+  $workSweepSettings=Wait-ForSettingsMap $settingsPath @{customWorkAccent='1';workAccentColor=[string][int]0x8B5CF6} 8
+  Require ($workSweepSettings['customWorkAccent'] -eq '1') 'Work custom accent is enabled for theme-surface sweep after picker commit' ([pscustomobject]@{Expected='1';Actual=$workSweepSettings['customWorkAccent'];SettingsPath=$settingsPath})
+  Require ($workSweepSettings['workAccentColor'] -eq [string][int]0x8B5CF6) 'Work custom RGB is saved before theme-surface sweep' ([pscustomobject]@{Expected=[string][int]0x8B5CF6;Actual=$workSweepSettings['workAccentColor'];SettingsPath=$settingsPath})
   $breakPicker=Open-InstalledColorPicker 128 'Installed Break picker for exhaustive theme sweep';Set-InstalledPickerRgb $breakPicker 249 115 22;Close-InstalledColorPicker $breakPicker $true
-  Assert-InstalledSetting 'customWorkAccent' '1' 'Work custom accent is enabled for theme-surface sweep';Assert-InstalledSetting 'workAccentColor' ([string][int]0x8B5CF6) 'Work custom RGB is saved before theme-surface sweep'
-  Assert-InstalledSetting 'customBreakAccent' '1' 'Break custom accent is enabled for theme-surface sweep';Assert-InstalledSetting 'breakAccentColor' ([string][int]0xF97316) 'Break custom RGB is saved before theme-surface sweep'
+  $breakSweepSettings=Wait-ForSettingsMap $settingsPath @{customBreakAccent='1';breakAccentColor=[string][int]0xF97316} 8
+  Require ($breakSweepSettings['customBreakAccent'] -eq '1') 'Break custom accent is enabled for theme-surface sweep after picker commit' ([pscustomobject]@{Expected='1';Actual=$breakSweepSettings['customBreakAccent'];SettingsPath=$settingsPath})
+  Require ($breakSweepSettings['breakAccentColor'] -eq [string][int]0xF97316) 'Break custom RGB is saved before theme-surface sweep' ([pscustomobject]@{Expected=[string][int]0xF97316;Actual=$breakSweepSettings['breakAccentColor'];SettingsPath=$settingsPath})
   foreach($theme in 0..4){
     Set-Combo $script:mainWindow 106 $theme "Theme sweep $theme";Assert-InstalledSetting 'theme' ([string]$theme) "Theme $theme persists";Assert-InstalledSetting 'customWorkAccent' '1' "Theme $theme preserves Work custom accent enablement";Assert-InstalledSetting 'workAccentColor' ([string][int]0x8B5CF6) "Theme $theme preserves Work custom RGB";Assert-InstalledSetting 'customBreakAccent' '1' "Theme $theme preserves Break custom accent enablement";Assert-InstalledSetting 'breakAccentColor' ([string][int]0xF97316) "Theme $theme preserves Break custom RGB";Capture-ActiveWindow $script:mainWindow "settings-theme-$theme.png"|Out-Null
     Switch-Timer;Capture-ActiveWindow $script:mainWindow "theme-$theme-timer.png"|Out-Null
@@ -2645,7 +2656,17 @@ try {
       $script:ownedInstall=$false
     }else{Add-Event 'Owned partial installation cleanup' 'FAIL' ([pscustomobject]@{Errors=$cleanupErrors.ToArray();InstallDir=(Test-Path -LiteralPath $installDir);StartMenu=(Test-Path -LiteralPath $startMenuDir);DesktopLink=(Test-Path -LiteralPath $desktopLink);UninstallKey=(Test-Path -LiteralPath $uninstallKey);AppKey=(Test-Path -LiteralPath $appKey)})}
   }
-  if($script:ownedData -and (Test-Path -LiteralPath $dataDir)){try{Remove-Item -LiteralPath $dataDir -Recurse -Force}catch{Add-Event 'Runner user-data cleanup' 'FAIL' $_.Exception.Message}}
+  if($script:ownedData){
+    $dataCleanupError=''
+    if(Test-Path -LiteralPath $dataDir){
+      try{Remove-Item -LiteralPath $dataDir -Recurse -Force -ErrorAction Stop}catch{$dataCleanupError=$_.Exception.Message}
+      if((Test-Path -LiteralPath $dataDir)-and$dataCleanupError){
+        try{Remove-Item -LiteralPath $dataDir -Recurse -Force -ErrorAction Stop;$dataCleanupError=''}catch{$dataCleanupError=$_.Exception.Message}
+      }
+    }
+    if(Test-Path -LiteralPath $dataDir){Add-Event 'Runner user-data cleanup' 'FAIL' ([pscustomobject]@{Path=$dataDir;Error=$dataCleanupError})}
+    else{Pass 'Runner user-data cleanup completed' ([pscustomobject]@{Path=$dataDir;InitialError=$dataCleanupError;PathExists=$false})}
+  }
   $summary=[pscustomobject]@{
     Application='Eye Break Reminder'
     Version=$script:expectedProductVersion
