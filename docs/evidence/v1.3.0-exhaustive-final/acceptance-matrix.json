@@ -1864,15 +1864,46 @@
     "GAP-013"
   ],
   "latestFollowUpAttempt": {
-    "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43903542427",
-    "artifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43903542427/artifacts/14246095016",
+    "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43909542662",
+    "artifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43909542662/artifacts/14247965062",
     "candidateSourceCommit": "b39f014ddbd2074eba6469dd3f8fc14f91f269bc",
     "candidateExecutableSha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
-    "result": "Tray-menu interaction failed while a Windows Narrator updates dialog covered the tray. Shell_NotifyIconGetRect succeeded and the app process was responsive; no native popup menu appeared.",
-    "classification": "Windows UI obstruction and acceptance-harness setup gap; no product defect established.",
+    "workflowResult": "success",
+    "windowsX64Events": {
+      "pass": 49,
+      "fail": 0,
+      "notTested": 2,
+      "notApplicable": 0,
+      "blocked": 0
+    },
+    "result": "The exact candidate installer and app launch passed; the tray icon remained registered; the native tray menu opened while Narrator was active; and Pause, Resume, and Exit passed in the applicable timer states.",
+    "notTestedDetails": [
+      "Narrator navigation did not complete after Narrator's ApplicationFrameWindow received focus at the native Blue RGB field. This was recorded as NOT TESTED, not as a product failure.",
+      "Actual Narrator speech was not captured because WASAPI reported zero active render endpoints."
+    ],
+    "modalObservation": "The exact-title Narrator updates modal from earlier run 43903542427 was not present during this focused retest; the modal-dismissal branch was not runtime exercised.",
+    "classification": "Focused exact-candidate tray behavior PASS; remaining Narrator checks NOT TESTED due to Windows Narrator focus transfer and no audio endpoint. No product defect established.",
+    "previousHarnessFailures": [
+      {
+        "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43903542427",
+        "artifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43903542427/artifacts/14246095016",
+        "classification": "Windows Narrator updates dialog covered the tray; candidate icon remained registered and app responsive."
+      },
+      {
+        "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43908529355",
+        "classification": "Harness screenshot filename included a slash; installer wizard screenshot save failed before app execution."
+      },
+      {
+        "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43908923142",
+        "artifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43908923142/artifacts/14245254545",
+        "classification": "Harness expected state-dependent Pause and Resume entries simultaneously and checked the Break window before waiting for it."
+      }
+    ],
     "coverageCaseCountsChanged": false,
     "priorPassingTrayEvidenceRemainsValid": true,
-    "targetedFollowUp": "A Narrator-dialog cleanup and tray-narrator-only harness mode are prepared but not executed on Windows because the available GitHub credential is invalid."
+    "candidateArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+    "candidateArtifactRetainedThrough": "2027-02-14T11:25:58Z",
+    "evidenceArtifactRetainedThrough": "2027-02-14T16:37:27Z"
   },
   "priorNotTestedResolution": [
     {
