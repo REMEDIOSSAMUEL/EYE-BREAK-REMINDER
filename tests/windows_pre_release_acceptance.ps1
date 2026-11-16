@@ -1470,6 +1470,11 @@ function Test-OsAppearanceAndTextScale {
       Require ($layoutBreak-ne[IntPtr]::Zero) "Installed reminder opens at $textScale% text scale"
       $breakBounds=Get-Rect $layoutBreak
       Require ($breakBounds.Left-ge0-and$breakBounds.Top-ge0-and$breakBounds.Right-le$screenWidth-and$breakBounds.Bottom-le$screenHeight) "Break reminder remains within the display at $textScale% text scale" ([pscustomobject]@{Bounds=$breakBounds;DisplayWidth=$screenWidth;DisplayHeight=$screenHeight})
+      if($textScale-eq200){
+        $breakTitle=Get-Control $layoutBreak 43 '200% text-scale Break reminder heading';$breakInstruction=Get-Control $layoutBreak 44 '200% text-scale Break reminder instruction'
+        $minimumWrappedTitleHeight=[Math]::Ceiling(90*$dpi/96.0)
+        Require ($breakTitle.Text-eq'Taking an eye break'-and$breakTitle.Rect.Height-ge$minimumWrappedTitleHeight-and$breakTitle.Rect.Bottom-le$breakInstruction.Rect.Top) '200% text-scale Break heading has room for its wrapped lines without clipping or overlap' ([pscustomobject]@{Title=$breakTitle.Text;TitleBounds=$breakTitle.Rect;InstructionBounds=$breakInstruction.Rect;MinimumHeight=$minimumWrappedTitleHeight;Dpi=$dpi})
+      }
       Assert-VisibleInteractiveControlsInClient $layoutBreak "$textScale% text scale Break reminder"
       Capture-ActiveWindow $layoutBreak "text-scale-$textScale-break-reminder.png" | Out-Null
       Click-Control $layoutBreak 23 "Acknowledge $textScale% text scale Break reminder"

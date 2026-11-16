@@ -927,7 +927,15 @@ public:
   int pad=bpx(28),gap=bpx(12),bh=bpx(40*textScale),width=std::min(bpx(380),int(r.right)-2*pad),x=(r.right-width)/2,y=pad;
   breakItems.clear();
   auto place=[&](int id,int height){breakItems.push_back({GetDlgItem(breakWindow,id),x,y,width,height});y+=height+gap;};
-  place(BREAK_TITLE,bpx(42*textScale));place(BREAK_INSTRUCTION,bpx(48*textScale));place(COUNTDOWN,bpx(96*std::sqrt(textScale)));place(BREAK_GUIDANCE,bpx(48*textScale));place(COMPLETE,bh);
+  int titleHeight=bpx(42*textScale);
+  HDC titleDc=GetDC(breakWindow);
+  if(titleDc){
+   HGDIOBJ previous=SelectObject(titleDc,breakTitleFont);RECT titleBounds{0,0,width,0};
+   int measured=DrawTextW(titleDc,L"Taking an eye break",-1,&titleBounds,DT_CALCRECT|DT_WORDBREAK|DT_CENTER|DT_NOPREFIX);
+   SelectObject(titleDc,previous);ReleaseDC(breakWindow,titleDc);
+   if(measured>0)titleHeight=std::max(titleHeight,int(titleBounds.bottom)+2*bpx(4));
+  }
+  place(BREAK_TITLE,titleHeight);place(BREAK_INSTRUCTION,bpx(48*textScale));place(COUNTDOWN,bpx(96*std::sqrt(textScale)));place(BREAK_GUIDANCE,bpx(48*textScale));place(COMPLETE,bh);
   int skipWidth=breakSnooze?width/4:width;breakItems.push_back({GetDlgItem(breakWindow,SKIP),x,y,skipWidth-4,bh});
   if(breakSnooze){int widths[3]={width/3,width/5,width-width/4-width/3-width/5};int left=x+width/4;int ids[3]={SNOOZE1,SNOOZE3,SNOOZE5};for(int i=0;i<3;++i){breakItems.push_back({GetDlgItem(breakWindow,ids[i]),left,y,widths[i]-4,bh});left+=widths[i];}}
   breakHeight=y+bh+pad;breakScroller.setRange(std::max(0,breakHeight-int(r.bottom)));positionBreak(true);InvalidateRect(breakWindow,nullptr,TRUE);
