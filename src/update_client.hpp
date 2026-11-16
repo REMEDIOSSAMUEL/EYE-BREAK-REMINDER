@@ -165,7 +165,7 @@ inline DownloadResult downloadVerifiedFixture(const ReleaseAsset&asset,const std
     const std::string expected=client_detail::lower(asset.digest.substr(separator+1));
     HANDLE input=CreateFileW(sourcePath.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT|FILE_FLAG_SEQUENTIAL_SCAN,nullptr);
     if(input==INVALID_HANDLE_VALUE){result.error="The test update fixture could not be opened.";return result;}
-    FILE_ATTRIBUTE_TAG_INFO tag{};LARGE_INTEGER length{};const bool sourceValid=GetFileInformationByHandleEx(input,FileAttributeTagInfo,&tag,sizeof(tag))&&!(tag.FileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))&&GetFileSizeEx(input,&length)&&length.QuadPart>=0&&std::uint64_t(length.QuadPart)==asset.size;
+    FILE_ATTRIBUTE_TAG_INFO tag{};LARGE_INTEGER length{};const bool sourceValid=GetFileInformationByHandleEx(input,FileAttributeTagInfo,&tag,sizeof(tag))&&!(tag.FileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))&&GetFileSizeEx(input,&length)&&length.QuadPart>0&&std::uint64_t(length.QuadPart)<=asset.size;
     if(!sourceValid){CloseHandle(input);result.error="The test update fixture is not a regular file of the declared size.";return result;}
     const std::wstring partial=stagingDirectory+L"\\"+fileName+L".part",destination=stagingDirectory+L"\\"+fileName;HANDLE output=CreateFileW(partial.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_WRITE_THROUGH,nullptr);
     if(output==INVALID_HANDLE_VALUE){CloseHandle(input);result.error="Windows could not create the test update staging file.";return result;}

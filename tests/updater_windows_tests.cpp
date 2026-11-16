@@ -18,12 +18,18 @@ int main(){
     if(!CreateDirectoryW(folder.c_str(),nullptr)){std::cerr<<"FAIL: isolated test folder must be new; refusing to reuse or remove it\n";return 1;}
     const std::wstring stage=folder.wstring();bool ok=true;
     ok&=check(eye::updates::safeStagingDirectory(stage),"isolated staging directory is a regular non-reparse path");
+    const std::wstring testMutexName=L"Local\\EyeBreakReminder.UpdaterTest."+std::to_wstring(GetCurrentProcessId());HANDLE firstMutex{},duplicateMutex{};
+    const bool firstAcquired=eye::updates::acquireCoordinatorMutex(firstMutex,testMutexName.c_str());const bool duplicateRejected=!eye::updates::acquireCoordinatorMutex(duplicateMutex,testMutexName.c_str())&&duplicateMutex==nullptr;
+    ok&=check(firstAcquired&&duplicateRejected,"a repeated update attempt cannot acquire a second coordinator mutex");if(firstMutex)CloseHandle(firstMutex);
+    HANDLE retryMutex{};const bool retryAcquired=eye::updates::acquireCoordinatorMutex(retryMutex,testMutexName.c_str());ok&=check(retryAcquired,"a new update attempt can acquire the coordinator after the prior attempt exits");if(retryMutex)CloseHandle(retryMutex);
     const std::wstring source=stage+L"\\fixture.bin";ok&=check(writeBytes(source,"abc"),"create deterministic local test fixture");
     eye::updates::ReleaseAsset asset{"EyeBreakReminder.exe","https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder.exe","sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",3};
     std::atomic_bool cancelled{false};bool sawVerify=false;std::uint64_t progressed=0;
     auto valid=eye::updates::downloadVerifiedFixture(asset,source,stage,L"EyeBreakReminder.exe",cancelled,[&](auto p){progressed=p.received;if(p.verifying)sawVerify=true;});
     ok&=check(valid.ok&&valid.received==3&&valid.sha256==asset.digest.substr(7)&&sawVerify&&progressed==3,"valid fixture streams, reports bytes and verifies SHA-256");
     ok&=check(DeleteFileW((stage+L"\\EyeBreakReminder.exe").c_str())!=FALSE,"remove only the test output executable");
+    asset.size=4;auto interrupted=eye::updates::downloadVerifiedFixture(asset,source,stage,L"EyeBreakReminder.exe",cancelled);
+    ok&=check(!interrupted.ok&&interrupted.error.find("interrupted")!=std::string::npos&&GetFileAttributesW((stage+L"\\EyeBreakReminder.exe.part").c_str())==INVALID_FILE_ATTRIBUTES,"an incomplete streamed fixture is rejected and its partial file is removed");asset.size=3;
     asset.digest="sha256:0000000000000000000000000000000000000000000000000000000000000000";
     auto mismatch=eye::updates::downloadVerifiedFixture(asset,source,stage,L"EyeBreakReminder.exe",cancelled);
     ok&=check(!mismatch.ok&&mismatch.error.find("SHA-256")!=std::string::npos&&GetFileAttributesW((stage+L"\\EyeBreakReminder.exe").c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW((stage+L"\\EyeBreakReminder.exe.part").c_str())==INVALID_FILE_ATTRIBUTES,"hash mismatch removes partial and verified-output files");

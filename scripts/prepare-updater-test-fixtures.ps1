@@ -7,9 +7,10 @@ $temp=[IO.Path]::GetFullPath((Join-Path $runnerTemp 'EBR-v1.4-fixture-build'))
 if(Test-Path -LiteralPath $temp){throw "Refusing to reuse fixture build folder: $temp"}
 $release=Join-Path $root 'release';$build=Join-Path $root 'build/gui-test'
 $originalExe=Join-Path $temp 'candidate-EyeBreakReminder.exe';$originalSetup=Join-Path $temp 'candidate-EyeBreakReminder-Setup-x64.exe'
-$env:PATH="C:\msys64\mingw64\bin;C:\msys64\mingw32\bin;C:\msys64\usr\bin;$env:PATH"
-$make='C:\msys64\usr\bin\make.exe'
-function Invoke-Make([string]$Target){& $make $Target "CROSS_CXX=x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00" 'WINDRES=windres' 'MAKENSIS=makensis' 'PYTHON=python';if($LASTEXITCODE-ne0){throw "make $Target failed with exit code $LASTEXITCODE."}}
+$msysRoot=[IO.Path]::GetFullPath((Join-Path $runnerTemp 'setup-msys2'));$make=Join-Path $msysRoot 'usr\bin\make.exe'
+if(-not(Test-Path -LiteralPath $make -PathType Leaf)){throw "The configured MSYS2 make executable is missing: $make"}
+$env:PATH="$(Join-Path $msysRoot 'mingw64\bin');$(Join-Path $msysRoot 'mingw32\bin');$(Join-Path $msysRoot 'usr\bin');$env:PATH"
+function Invoke-Make([string]$Target){& $make $Target "CROSS_CXX=x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00" 'WINDRES=windres' "MAKENSIS=$NsisCompiler" 'PYTHON=python';if($LASTEXITCODE-ne0){throw "make $Target failed with exit code $LASTEXITCODE."}}
 function Set-SourceVersion([string]$Version){& python (Join-Path $root 'scripts/set-version.py') $Version;if($LASTEXITCODE-ne0){throw "Could not set the temporary source version to $Version."}}
 try{
   [void][IO.Directory]::CreateDirectory($temp)

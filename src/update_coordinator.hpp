@@ -121,6 +121,11 @@ inline bool setRecoveryRegistration(const Transaction&t,bool enabled){
     RegCloseKey(key);return ok;
 }
 inline bool recoveryRegistrationAbsent(){HKEY key{};LONG open=RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",0,KEY_QUERY_VALUE,&key);if(open==ERROR_FILE_NOT_FOUND)return true;if(open!=ERROR_SUCCESS)return false;DWORD type=0,bytes=0;LONG result=RegQueryValueExW(key,L"!EyeBreakReminderUpdateRecovery",nullptr,&type,nullptr,&bytes);RegCloseKey(key);return result==ERROR_FILE_NOT_FOUND;}
+inline bool acquireCoordinatorMutex(HANDLE&mutex,const wchar_t*name=L"Local\\EyeBreakReminder.UpdateCoordinator.1"){
+    mutex=CreateMutexW(nullptr,FALSE,name);if(!mutex)return false;
+    if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(mutex);mutex=nullptr;return false;}
+    return true;
+}
 inline std::wstring journalPhase(const Transaction&t){std::string data;if(!eye::win::read(t.stagingDirectory+L"\\transaction-state.ini",data,4096))return{};const auto end=data.find('\n');if(end==std::string::npos||data.compare(0,6,"phase=")!=0)return{};return eye::win::wide(data.substr(6,end-6));}
 inline bool backupData(Transaction&t){const wchar_t*names[]={L"settings.ini",L"timer.dat",L"history.dat"};for(unsigned i=0;i<3;++i){std::wstring path=t.dataDirectory+L"\\"+names[i];DWORD attr=GetFileAttributesW(path.c_str());if(attr==INVALID_FILE_ATTRIBUTES){if(GetLastError()==ERROR_FILE_NOT_FOUND)continue;return false;}if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(path,32ull*1024*1024))return false;const std::wstring backup=t.stagingDirectory+L"\\backup-"+std::to_wstring(i)+L".dat";if(!CopyFileW(path.c_str(),backup.c_str(),TRUE))return false;t.backupMask|=1u<<i;}return writeTransaction(t);}
 inline bool backupInstalledFiles(Transaction&t){if(t.kind!="installed")return true;const wchar_t*names[]={L"Uninstall.exe",L"README.md",L"PRIVACY.md",L"VERIFICATION.md"};for(unsigned i=0;i<4;++i){const std::wstring path=parentPath(t.targetExecutable)+L"\\"+names[i];DWORD attr=GetFileAttributesW(path.c_str());if(attr==INVALID_FILE_ATTRIBUTES){if(GetLastError()==ERROR_FILE_NOT_FOUND)continue;return false;}if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(path))return false;const std::wstring backup=t.stagingDirectory+L"\\previous-owned-"+std::to_wstring(i)+L".dat";if(!CopyFileW(path.c_str(),backup.c_str(),TRUE))return false;t.ownedFileMask|=1u<<i;}return writeTransaction(t);}
@@ -150,7 +155,7 @@ inline int runRecovery(const std::wstring&transactionPath){
     if(phase==L"complete"||phase==L"recovered"){setRecoveryRegistration(t,false);return 0;}
     if(phase==L"verified"){setRecoveryRegistration(t,false);return 0;}
     if(phase!=L"installing"&&phase!=L"installed"&&phase!=L"cleaning"&&phase!=L"starting")return 2;
-    HANDLE single=CreateMutexW(nullptr,FALSE,L"Local\\EyeBreakReminder.UpdateCoordinator.1");if(!single||GetLastError()==ERROR_ALREADY_EXISTS){if(single)CloseHandle(single);return 3;}
+    HANDLE single{};if(!acquireCoordinatorMutex(single))return 3;
     const bool restored=restorePreviousVersion(t);CloseHandle(single);
     if(!restored){setRecoveryRegistration(t,true);MessageBoxW(nullptr,L"Eye Break Reminder could not finish automatic recovery. The previous application and data backups remain in the updates folder. Close Eye Break Reminder and run the saved coordinator again, or contact support with the recovery folder contents.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 1;}
     return 0;
@@ -159,7 +164,7 @@ inline int runRecovery(const std::wstring&transactionPath){
 inline void performTransaction(Transaction t,UiState&ui){
     auto fail=[&](const std::wstring&message){coordinatorMessage(ui,message);ui.success=false;ui.done=true;};
     std::string error;if(!validateTransaction(t,t.stagingDirectory+L"\\transaction.ini",t.stagingDirectory+L"\\coordinator.exe",error)){fail(eye::win::wide(error));return;}
-    HANDLE single=CreateMutexW(nullptr,FALSE,L"Local\\EyeBreakReminder.UpdateCoordinator.1");if(!single||GetLastError()==ERROR_ALREADY_EXISTS){if(single)CloseHandle(single);fail(L"Another update operation is already running. Close it before trying again.");return;}
+    HANDLE single{};if(!acquireCoordinatorMutex(single)){fail(L"Another update operation is already running. Close it before trying again.");return;}
     auto rollback=[&](const wchar_t*message){coordinatorMessage(ui,L"Restoring the previous application and its data…");const bool restored=restorePreviousVersion(t);CloseHandle(single);fail(restored?message:L"Automatic rollback could not finish. The previous executable and data backup remain in the updates folder, and Windows will retry recovery at the next sign-in.");};
     auto abortBeforeInstall=[&](const std::wstring&message){const bool restarted=startPrevious(t);CloseHandle(single);fail(restarted?message:message+L" The existing version is unchanged; reopen Eye Break Reminder if it is not already running.");};
     coordinatorMessage(ui,L"Waiting for Eye Break Reminder to close safely…");if(!writeJournal(t,L"waiting")){CloseHandle(single);fail(L"The update recovery record could not be saved. No files were changed.");return;}
