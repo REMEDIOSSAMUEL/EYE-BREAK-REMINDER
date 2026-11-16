@@ -8,6 +8,8 @@ $ErrorActionPreference='Stop'
 [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
+Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
 
 $native=@"
 using System;
@@ -40,22 +42,26 @@ public static class EBR_DISPLAY_NATIVE {
  [DllImport("user32.dll",SetLastError=true)] private static extern bool GetWindowRect(IntPtr hwnd,out EBR_DISPLAY_RECT rect);
  [DllImport("user32.dll",SetLastError=true)] private static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint processId);
  [DllImport("user32.dll",SetLastError=true)] private static extern bool IsWindowVisible(IntPtr hwnd);
+ [DllImport("user32.dll",SetLastError=true)] private static extern bool IsWindowEnabled(IntPtr hwnd);
  [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr GetDlgItem(IntPtr hwnd,int id);
  [DllImport("user32.dll",SetLastError=true)] private static extern int GetDlgCtrlID(IntPtr hwnd);
  [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr SendMessageW(IntPtr hwnd,uint message,IntPtr wParam,IntPtr lParam);
  [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr SendMessageTimeoutW(IntPtr hwnd,uint message,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out IntPtr result);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
+ [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint message,IntPtr wParam,IntPtr lParam);
  public static EBR_DISPLAY_DEVMODE NewMode(){EBR_DISPLAY_DEVMODE d=new EBR_DISPLAY_DEVMODE();d.dmDeviceName=new string('\0',32);d.dmFormName=new string('\0',32);d.dmSize=(ushort)Marshal.SizeOf(typeof(EBR_DISPLAY_DEVMODE));return d;}
  public static string ClassName(IntPtr hwnd){StringBuilder b=new StringBuilder(256);GetClassNameW(hwnd,b,b.Capacity);return b.ToString();}
  public static string Text(IntPtr hwnd){if(hwnd==IntPtr.Zero)return "";StringBuilder b=new StringBuilder(512);GetWindowTextW(hwnd,b,b.Capacity);return b.ToString();}
  public static EBR_DISPLAY_RECT Bounds(IntPtr hwnd){EBR_DISPLAY_RECT r=new EBR_DISPLAY_RECT();if(hwnd!=IntPtr.Zero)GetWindowRect(hwnd,out r);return r;}
  public static bool Visible(IntPtr hwnd){return hwnd!=IntPtr.Zero&&IsWindowVisible(hwnd);}
+ public static bool Enabled(IntPtr hwnd){return hwnd!=IntPtr.Zero&&IsWindowEnabled(hwnd);}
  public static IntPtr Child(IntPtr hwnd,int id){return hwnd==IntPtr.Zero?IntPtr.Zero:GetDlgItem(hwnd,id);}
  public static int ControlId(IntPtr hwnd){return hwnd==IntPtr.Zero?-1:GetDlgCtrlID(hwnd);}
  public static IntPtr FindChildByText(IntPtr parent,string expected){IntPtr found=IntPtr.Zero;EnumProc cb=delegate(IntPtr h,IntPtr ignored){if(String.Equals(ClassName(h),"Button",StringComparison.OrdinalIgnoreCase)&&String.Equals(Text(h),expected,StringComparison.OrdinalIgnoreCase)){found=h;return false;}return true;};EnumChildWindows(parent,cb,IntPtr.Zero);GC.KeepAlive(cb);return found;}
- public static bool ClickButton(IntPtr hwnd,out string transport){if(hwnd==IntPtr.Zero){transport="control handle is null";return false;}IntPtr result;bool delivered=SendMessageTimeoutW(hwnd,0x00F5,IntPtr.Zero,IntPtr.Zero,2,5000,out result)!=IntPtr.Zero;int error=delivered?0:Marshal.GetLastWin32Error();transport=delivered?"BM_CLICK returned within 5 seconds; its message result is ignored and UI state is checked separately.":"BM_CLICK did not return within 5 seconds or the target rejected it; Win32 error "+error+". UI state is still checked separately.";return delivered;}
  public static bool Responsive(IntPtr hwnd){if(hwnd==IntPtr.Zero)return false;IntPtr result;return SendMessageTimeoutW(hwnd,0,IntPtr.Zero,IntPtr.Zero,2,1500,out result)!=IntPtr.Zero;}
  public static IntPtr[] Children(IntPtr root){List<IntPtr> result=new List<IntPtr>();EnumProc cb=delegate(IntPtr h,IntPtr ignored){result.Add(h);return true;};EnumChildWindows(root,cb,IntPtr.Zero);GC.KeepAlive(cb);return result.ToArray();}
+ public static IntPtr[] TopWindowsForProcess(int pid){List<IntPtr> result=new List<IntPtr>();EnumProc cb=delegate(IntPtr h,IntPtr ignored){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid)result.Add(h);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return result.ToArray();}
+ public static System.Threading.Tasks.Task<IntPtr> SendButtonClickAsync(IntPtr hwnd){return System.Threading.Tasks.Task.Factory.StartNew(()=>SendMessageW(hwnd,0x00F5,IntPtr.Zero,IntPtr.Zero),System.Threading.CancellationToken.None,System.Threading.Tasks.TaskCreationOptions.LongRunning,System.Threading.Tasks.TaskScheduler.Default);}
  public static IntPtr FindProcessWindow(int pid,string className){IntPtr found=IntPtr.Zero;EnumProc cb=delegate(IntPtr h,IntPtr ignored){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&String.Equals(ClassName(h),className,StringComparison.Ordinal)){found=h;return false;}return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return found;}
  public static int CountProcessWindows(int pid,string className){int count=0;EnumProc cb=delegate(IntPtr h,IntPtr ignored){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&String.Equals(ClassName(h),className,StringComparison.Ordinal))count++;return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return count;}
 }
@@ -81,6 +87,19 @@ function Get-Mode {
   if(-not [EBR_DISPLAY_NATIVE]::EnumDisplaySettingsW($script:displayDevice,-1,[ref]$mode)){$errorCode=[Runtime.InteropServices.Marshal]::GetLastWin32Error();throw "Windows could not report the current mode for $($script:displayDevice) (Win32 error $errorCode)."}
   return $mode
 }
+function Find-AudioUnavailableDialog {
+  foreach($window in [EBR_DISPLAY_NATIVE]::TopWindowsForProcess($script:app.Id)){
+    if(-not[EBR_DISPLAY_NATIVE]::Visible($window)){continue}
+    $texts=@([EBR_DISPLAY_NATIVE]::Text($window));foreach($child in [EBR_DISPLAY_NATIVE]::Children($window)){$text=[EBR_DISPLAY_NATIVE]::Text($child);if($text){$texts+=,$text}}
+    $pattern='The alarm couldn.t play\. Check your Windows audio output\.'
+    if(($texts-join' ')-match$pattern){return $window}
+    # The TaskDialog body may be exposed only through UI Automation on Windows Server.
+    if([EBR_DISPLAY_NATIVE]::ClassName($window)-eq'#32770'){
+      try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($window);if($root){$names=@();$elements=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($element in $elements){try{$name=$element.Current.Name;if($name){$names+=,$name}}catch{}};if(($names-join' ')-match$pattern){return $window}}}catch{}
+    }
+  }
+  return [IntPtr]::Zero
+}
 function Test-Mode([uint32]$Width,[uint32]$Height) {
   $mode=[EBR_DISPLAY_NATIVE]::NewMode();$mode.dmFields=0x00080000 -bor 0x00100000;$mode.dmPelsWidth=$Width;$mode.dmPelsHeight=$Height
   return [EBR_DISPLAY_NATIVE]::ChangeDisplaySettingsExW($script:displayDevice,[ref]$mode,[IntPtr]::Zero,2,[IntPtr]::Zero)
@@ -88,7 +107,7 @@ function Test-Mode([uint32]$Width,[uint32]$Height) {
 function Format-Mode($Mode){[pscustomobject]@{Width=[uint32]$Mode.dmPelsWidth;Height=[uint32]$Mode.dmPelsHeight;BitsPerPel=[uint32]$Mode.dmBitsPerPel;Frequency=[uint32]$Mode.dmDisplayFrequency}}
 function Test-InVirtualScreen($Rect,$VirtualScreen){return ($Rect.Left-ge$VirtualScreen.Left-and$Rect.Top-ge$VirtualScreen.Top-and$Rect.Right-le($VirtualScreen.Left+$VirtualScreen.Width)-and$Rect.Bottom-le($VirtualScreen.Top+$VirtualScreen.Height))}
 
-$script:app=$null;$script:displayDevice=$null;$originalMode=$null;$displayChanged=$false;$result=[ordered]@{Application='Eye Break Reminder';Test='Real Windows display-resolution change while a Break reminder is visible';Status='NOT TESTED';CandidateSHA256=$null;ExpectedSHA256=$ExpectedSha256.ToLowerInvariant();CandidateRunId=$env:CANDIDATE_RUN_ID;CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;Environment=$null;InitialMode=$null;ChangedMode=$null;RestoredMode=$null;TakeBreakControl=$null;InitialScreenshot=$null;ChangedScreenshot=$null;RestoredScreenshot=$null;BeforeChange=$null;AfterChange=$null;AfterRestore=$null;Reason='';Failure='';CompletedUtc=$null}
+$script:app=$null;$script:displayDevice=$null;$originalMode=$null;$displayChanged=$false;$result=[ordered]@{Application='Eye Break Reminder';Test='Real Windows display-resolution change while a Break reminder is visible';Status='NOT TESTED';CandidateSHA256=$null;ExpectedSHA256=$ExpectedSha256.ToLowerInvariant();CandidateRunId=$env:CANDIDATE_RUN_ID;CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;Environment=$null;InitialMode=$null;ChangedMode=$null;RestoredMode=$null;TakeBreakControl=$null;AudioUnavailableWarning=$null;InitialScreenshot=$null;ChangedScreenshot=$null;RestoredScreenshot=$null;BeforeChange=$null;AfterChange=$null;AfterRestore=$null;Reason='';Failure='';CompletedUtc=$null}
 try {
   $exe=(Resolve-Path -LiteralPath $ExecutablePath).Path;$hash=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant();$result.CandidateSHA256=$hash
   if($hash-cne$ExpectedSha256.ToLowerInvariant()){throw "Candidate executable hash mismatch: expected $ExpectedSha256; found $hash."}
@@ -118,11 +137,26 @@ try {
   if(-not$result.TakeBreakControl.Visible){throw 'The Take a break now control was not visible before it was activated.'}
   Write-Host 'DISPLAY_PROBE_PHASE: app-launched-and-responsive'
   [void][EBR_DISPLAY_NATIVE]::SetForegroundWindow($main);Start-Sleep -Milliseconds 200
-  $clickTransport=$null;$clickReturned=[EBR_DISPLAY_NATIVE]::ClickButton($breakButton,[ref]$clickTransport);$result.TakeBreakControl.Activation=[pscustomobject]@{ReturnedWithinTimeout=$clickReturned;Diagnostic=$clickTransport;Acceptance='Observed Break reminder window, not the BM_CLICK return value.'}
-  Write-Host "DISPLAY_PROBE_PHASE: break-click-returned=$clickReturned"
-  $watch.Restart();$break=[IntPtr]::Zero
-  while($watch.Elapsed.TotalSeconds-lt15-and$break-eq[IntPtr]::Zero){$break=[EBR_DISPLAY_NATIVE]::FindProcessWindow($script:app.Id,'EyeBreakReminder.Break');if($break-eq[IntPtr]::Zero){Start-Sleep -Milliseconds 100}}
-  if($break-eq[IntPtr]::Zero){throw "BM_CLICK via $buttonLookup did not produce the real Break reminder within 15 seconds."}
+  $clickTask=[EBR_DISPLAY_NATIVE]::SendButtonClickAsync($breakButton);$result.TakeBreakControl.Activation='Existing acceptance pattern: asynchronous BM_CLICK; observe and dismiss only the known unavailable-audio dialog.'
+  Write-Host 'DISPLAY_PROBE_PHASE: break-click-dispatched-asynchronously'
+  $watch.Restart();$break=[IntPtr]::Zero;$audioDialog=[IntPtr]::Zero
+  while($watch.Elapsed.TotalSeconds-lt8-and$break-eq[IntPtr]::Zero-and$audioDialog-eq[IntPtr]::Zero){$break=[EBR_DISPLAY_NATIVE]::FindProcessWindow($script:app.Id,'EyeBreakReminder.Break');if($break-eq[IntPtr]::Zero){$audioDialog=Find-AudioUnavailableDialog};if($break-eq[IntPtr]::Zero-and$audioDialog-eq[IntPtr]::Zero){Start-Sleep -Milliseconds 50}}
+  if($audioDialog-ne[IntPtr]::Zero){
+    $audioText=@([EBR_DISPLAY_NATIVE]::Text($audioDialog));foreach($child in [EBR_DISPLAY_NATIVE]::Children($audioDialog)){$text=[EBR_DISPLAY_NATIVE]::Text($child);if($text){$audioText+=,$text}}
+    $result.AudioUnavailableWarning=[pscustomobject]@{Observed=$true;Class=[EBR_DISPLAY_NATIVE]::ClassName($audioDialog);Text=($audioText-join' ');Screenshot=(Save-Screenshot 'display-change-audio-unavailable.png')}
+    Write-Host 'DISPLAY_PROBE_PHASE: known-audio-warning-observed'
+    $ok=@([EBR_DISPLAY_NATIVE]::Children($audioDialog)|Where-Object{[EBR_DISPLAY_NATIVE]::ClassName($_)-eq'Button'-and[EBR_DISPLAY_NATIVE]::Visible($_)-and[EBR_DISPLAY_NATIVE]::Enabled($_)-and[EBR_DISPLAY_NATIVE]::Text($_)-match'^\s*&?OK\s*$'})
+    if($ok.Count-eq1){$dismissTask=[EBR_DISPLAY_NATIVE]::SendButtonClickAsync($ok[0]);$dismissReturned=$dismissTask.Wait(5000)}else{$dismissReturned=[EBR_DISPLAY_NATIVE]::PostMessageW($audioDialog,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)}
+    $watch.Restart();while([EBR_DISPLAY_NATIVE]::Visible($audioDialog)-and$watch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 50}
+    if([EBR_DISPLAY_NATIVE]::Visible($audioDialog)){[void][EBR_DISPLAY_NATIVE]::PostMessageW($audioDialog,0x0010,[IntPtr]::Zero,[IntPtr]::Zero);$watch.Restart();while([EBR_DISPLAY_NATIVE]::Visible($audioDialog)-and$watch.Elapsed.TotalSeconds-lt3){Start-Sleep -Milliseconds 50}}
+    if([EBR_DISPLAY_NATIVE]::Visible($audioDialog)){throw 'The known unavailable-audio warning did not close after its OK/close action.'}
+    $result.AudioUnavailableWarning.Dismissal=[pscustomobject]@{VisibleOKButtons=$ok.Count;ActionReturned=$dismissReturned;Closed=$true}
+    if(-not$clickTask.Wait(8000)){throw 'The original manual-Break click did not return after dismissing the unavailable-audio warning.'}
+    $watch.Restart();while($watch.Elapsed.TotalSeconds-lt8-and$break-eq[IntPtr]::Zero){$break=[EBR_DISPLAY_NATIVE]::FindProcessWindow($script:app.Id,'EyeBreakReminder.Break');if($break-eq[IntPtr]::Zero){Start-Sleep -Milliseconds 50}}
+  }else{$result.AudioUnavailableWarning=[pscustomobject]@{Observed=$false}}
+  if($break-eq[IntPtr]::Zero){throw "Asynchronous BM_CLICK via $buttonLookup produced neither the real Break reminder nor the known audio warning within 8 seconds. ClickTask=$($clickTask.Status)."}
+  if(-not$clickTask.Wait(5000)){throw 'The manual-Break button click did not return after its observed UI state appeared.'}
+  $result.TakeBreakControl.Activation=[pscustomobject]@{Method='Asynchronous BM_CLICK using the existing installed-acceptance pattern';ClickTaskStatus=$clickTask.Status.ToString();AudioWarningObserved=$result.AudioUnavailableWarning.Observed;Acceptance='Observed the real Break reminder after dismissing only the known unavailable-audio warning.'}
   Write-Host 'DISPLAY_PROBE_PHASE: break-reminder-observed'
   $result.BeforeChange=Get-DisplaySnapshot
   if(-not$result.BeforeChange.BreakWindow.Visible){throw 'Break reminder was not visible before the display change.'}
@@ -142,8 +176,8 @@ try {
   if(-not(Test-InVirtualScreen $result.AfterChange.BreakWindow.Bounds $virtual)){throw 'The visible reminder moved outside the usable virtual screen after the display-mode change.'}
   [void][EBR_DISPLAY_NATIVE]::SetForegroundWindow($main);Start-Sleep -Milliseconds 200;[void][EBR_DISPLAY_NATIVE]::SetForegroundWindow($break);Start-Sleep -Milliseconds 200
   if(-not[EBR_DISPLAY_NATIVE]::Responsive($main)-or-not[EBR_DISPLAY_NATIVE]::Responsive($break)){throw 'The main or reminder window did not remain responsive after focus was moved across them.'}
-  $ack=[EBR_DISPLAY_NATIVE]::Child($break,23);if(-not[EBR_DISPLAY_NATIVE]::Visible($ack)){throw 'The reminder acknowledgement control was not visible after the display-mode change.'}
-  $ackTransport=$null;$ackReturned=[EBR_DISPLAY_NATIVE]::ClickButton($ack,[ref]$ackTransport);Write-Host "DISPLAY_PROBE_PHASE: acknowledgement-returned=$ackReturned"
+  $ack=[EBR_DISPLAY_NATIVE]::Child($break,24);if(-not[EBR_DISPLAY_NATIVE]::Visible($ack)){throw 'The reminder Skip control was not visible after the display-mode change.'}
+  $ackTask=[EBR_DISPLAY_NATIVE]::SendButtonClickAsync($ack);$ackReturned=$ackTask.Wait(5000);Write-Host "DISPLAY_PROBE_PHASE: skip-acknowledgement-returned=$ackReturned"
   $watch.Restart();do{$break=[EBR_DISPLAY_NATIVE]::FindProcessWindow($script:app.Id,'EyeBreakReminder.Break');if($break-eq[IntPtr]::Zero){break};Start-Sleep -Milliseconds 100}while($watch.Elapsed.TotalSeconds-lt10)
   if($break-ne[IntPtr]::Zero){throw 'The reminder did not close after acknowledging it following the display-mode change.'}
   if([EBR_DISPLAY_NATIVE]::CountProcessWindows($script:app.Id,'EyeBreakReminder.Break')-ne0){throw 'A duplicate reminder window remained after acknowledgement.'}
