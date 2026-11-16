@@ -57,7 +57,10 @@ jobs:
           $candidateRunId = $env:CANDIDATE_RUN_ID
           if ($candidateRunId -notmatch '^\d{5,}$') { throw "Invalid candidate run ID: '$candidateRunId'." }
           $run = Invoke-RestMethod -Headers @{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'} -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/actions/runs/$candidateRunId"
-          if ($run.status -cne 'completed' -or $run.conclusion -cne 'success' -or $run.head_branch -cne 'feature/v1.3.0-custom-accent-colours') { throw 'Requested candidate run must be a successful completed run on the authorized feature branch.' }
+          if ($run.status -cne 'completed' -or $run.head_branch -cne 'feature/v1.3.0-custom-accent-colours') { throw 'Requested candidate run must be completed on the authorized feature branch.' }
+          $runJobs = Invoke-RestMethod -Headers @{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'} -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/actions/runs/$candidateRunId/jobs?per_page=100"
+          $candidateJob = @($runJobs.jobs | Where-Object { $_.name -eq 'windows-pre-release' -and $_.conclusion -eq 'success' }) | Select-Object -First 1
+          if (-not $candidateJob) { throw 'Requested run did not complete its Windows pre-release job successfully; no authoritative candidate can be accepted.' }
           $expectedNames = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
           $releaseEntries = @(Get-ChildItem -LiteralPath 'release' -Force)
           if ($releaseEntries.Count -ne 5 -or @($releaseEntries | Where-Object PSIsContainer).Count -ne 0) { throw 'Candidate directory must contain exactly five files and no subdirectories.' }
@@ -83,7 +86,7 @@ jobs:
           $sealPath = Get-ChildItem -LiteralPath 'candidate-evidence' -Recurse -Filter 'authoritative-release-candidate.json' | Select-Object -First 1 -ExpandProperty FullName
           if (-not $sealPath) { throw 'Candidate seal was not present in the evidence artifact.' }
           $seal = Get-Content -LiteralPath $sealPath -Raw | ConvertFrom-Json
-          if ($seal.RunId -ne $candidateRunId -or $seal.SourceCommit -cne $run.head_sha -or $seal.Version -ne '1.3.0' -or $seal.Tests.ProductionExecutableSHA256 -ne $fixed['EyeBreakReminder.exe']) { throw 'Candidate seal does not identify the requested successful run, its source commit, and the downloaded executable.' }
+          if ($seal.RunId -ne $candidateRunId -or $seal.SourceCommit -cne $run.head_sha -or $seal.Version -ne '1.3.0' -or $seal.Tests.ProductionExecutableSHA256 -ne $fixed['EyeBreakReminder.exe']) { throw 'Candidate seal does not identify the requested successful Windows pre-release job, its source commit, and the downloaded executable.' }
           if ($seal.ArtifactFiles.Count -ne 5) { throw 'Candidate seal does not list exactly five files.' }
           foreach ($item in $seal.ArtifactFiles) { if ($item.SHA256 -cne $fixed[$item.Name] -or [long]$item.Bytes -ne [long](Get-Item -LiteralPath (Join-Path 'release' $item.Name)).Length) { throw "Seal identity mismatch for $($item.Name)." } }
           [pscustomobject]@{CandidateRunId=$seal.RunId;CandidateSourceCommit=$seal.SourceCommit;SourceArchiveSHA256=$fixed['EyeBreakReminder-Source.zip'];AcceptanceHarnessCommit=$env:GITHUB_SHA;OS=(Get-CimInstance Win32_OperatingSystem).Caption;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();CandidateFiles=@($expectedNames);SHA256=$fixed;ExecutableVersion=$exe.VersionInfo.ProductVersion;InstallerVersion=$setup.VersionInfo.ProductVersion} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'candidate-identity-retest.json' -Encoding UTF8

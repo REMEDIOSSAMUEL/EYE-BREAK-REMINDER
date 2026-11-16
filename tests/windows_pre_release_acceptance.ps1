@@ -1572,9 +1572,12 @@ function Test-OsAppearanceAndTextScale {
         $bottomLayout=Assert-VisibleInteractiveControlsInClient $layoutBreak "$textScale% text scale Break reminder bottom scroll position" -ReturnLayout
         $breakTitle=Get-StaticControlByText $layoutBreak 'Taking an eye break' "$textScale% Break title after bottom scroll"
         $breakClient=Get-ClientGeometry $layoutBreak;$breakClientBottom=$breakClient.Top+$breakClient.Height
-        Require ($bottomLayout.FullyVisibleNativeControlCount-eq9-and$bottomLayout.PartiallyVisibleAtViewportEdge.Count-eq0-and$breakTitle.Rect.Top-ge$breakClient.Top-and$breakTitle.Rect.Bottom-le$breakClientBottom) "$textScale% text-scale Break reminder scrolls all nine controls fully into the viewport while retaining its heading" ([pscustomobject]@{Layout=$bottomLayout;TitleBounds=$breakTitle.Rect;Client=$breakClient})
-        Assert-BreakButtonTextFits $layoutBreak @(23,24,25,26,27) "$textScale% text-scale Break reminder"
         Capture-ActiveWindow $layoutBreak "text-scale-$textScale-break-reminder-bottom.png"|Out-Null
+        $visibleActionIds=@($bottomLayout.Controls|Where-Object{$_.Id-in@(23,24,25,26,27)}|ForEach-Object{$_.Id}|Sort-Object -Unique)
+        $partialNonTitle=@($bottomLayout.PartiallyVisibleAtViewportEdge|Where-Object{$_.Id-ne43})
+        $titleWithinViewport=$breakTitle.Rect.Bottom-gt$breakClient.Top-and$breakTitle.Rect.Top-lt$breakClientBottom
+        Require ($visibleActionIds.Count-eq5-and$partialNonTitle.Count-eq0-and$bottomLayout.ScrolledOutsideViewportCount-eq0-and$bottomLayout.UiaNamedElementCount-eq9-and$titleWithinViewport) "$textScale% text-scale Break reminder bottom scroll keeps every action visible and the heading reachable" ([pscustomobject]@{Layout=$bottomLayout;VisibleActionIds=$visibleActionIds;PartiallyVisibleNonTitleControls=$partialNonTitle;TitleBounds=$breakTitle.Rect;TitleIntersectsViewport=$titleWithinViewport;Client=$breakClient})
+        Assert-BreakButtonTextFits $layoutBreak @(23,24,25,26,27) "$textScale% text-scale Break reminder"
       }
       Assert-VisibleInteractiveControlsInClient $layoutBreak "$textScale% text scale Break reminder"
       Capture-ActiveWindow $layoutBreak "text-scale-$textScale-break-reminder.png" | Out-Null

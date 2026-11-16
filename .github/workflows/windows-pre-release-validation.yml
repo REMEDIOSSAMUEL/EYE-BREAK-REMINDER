@@ -249,14 +249,14 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $evidencePath = 'build/pre-release-evidence/standard-user-results.json'
-          if ($env:GUI_DESKTOP_AVAILABLE -eq 'true' -and '${{ steps.installed_acceptance.outcome }}' -eq 'success') {
+          if ($env:GUI_DESKTOP_AVAILABLE -eq 'true') {
             & .\tests\windows_standard_user_acceptance.ps1 `
               -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
               -ExecutablePath '.\release\EyeBreakReminder.exe' `
               -EvidenceDirectory '.\build\pre-release-evidence'
           } else {
             New-Item -ItemType Directory -Force -Path 'build/pre-release-evidence' | Out-Null
-            [pscustomobject]@{Status='NOT TESTED';Account=$null;Failure='A successful interactive desktop and installed-candidate acceptance are required before the disposable standard-user install test.';CleanupErrors=@();AccountRemoved=$true;StageRemoved=$true;CandidateSHA256=(Get-FileHash -LiteralPath '.\release\EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant();Events=@();SettingsAppsUninstall='NOT TESTED';SettingsAppsUninstallReason='Windows Settings > Apps removal was not automated.';CompletedUtc=[DateTime]::UtcNow.ToString('o')} |
+            [pscustomobject]@{Status='NOT TESTED';Account=$null;Failure='No interactive Windows desktop was available for the disposable standard-user install test.';CleanupErrors=@();AccountRemoved=$true;StageRemoved=$true;CandidateSHA256=(Get-FileHash -LiteralPath '.\release\EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant();Events=@();SettingsAppsUninstall='NOT TESTED';SettingsAppsUninstallReason='Windows Settings > Apps removal was not automated.';CompletedUtc=[DateTime]::UtcNow.ToString('o')} |
               ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $evidencePath -Encoding UTF8
           }
 
