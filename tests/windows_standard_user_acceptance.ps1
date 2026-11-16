@@ -139,7 +139,12 @@ public static class EBR_STD_NATIVE {
       }catch{}
       if(-not$settingsRoot){Start-Sleep -Milliseconds 250}
     }
-    if(-not$settingsRoot){return [pscustomobject]@{Status='NOT TESTED';Reason='The disposable Windows session did not expose the Installed apps page through UI Automation.';SettingsProcessId=$(if($settingsProcess){$settingsProcess.Id}else{$null});LaunchErrors=$settingsLaunchErrors.ToArray()}}
+    if(-not$settingsRoot){
+      $screenshot=Capture-StandardUserDesktop 'standard-user-settings-apps-page-unavailable.png'
+      $settingsProcesses=@(Get-Process -Name SystemSettings,ApplicationFrameHost -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId}|ForEach-Object{[pscustomobject]@{Id=$_.Id;Name=$_.ProcessName;MainWindowHandle=('0x{0:X}' -f $_.MainWindowHandle.ToInt64());MainWindowTitle=$_.MainWindowTitle}})
+      $visibleWindows=@(foreach($process in $settingsProcesses){foreach($handle in [EBR_STD_NATIVE]::TopWindowsForProcess($process.Id)){if([EBR_STD_NATIVE]::IsWindowVisible($handle)){[pscustomobject]@{ProcessId=$process.Id;ProcessName=$process.Name;Handle=('0x{0:X}' -f $handle.ToInt64());Title=[EBR_STD_NATIVE]::Text($handle);Class=[EBR_STD_NATIVE]::ClassName($handle);Bounds=[EBR_STD_NATIVE]::Bounds($handle)}}}})
+      return [pscustomobject]@{Status='NOT TESTED';Reason='The disposable Windows session did not expose the Installed apps page through UI Automation.';SettingsProcessId=$(if($settingsProcess){$settingsProcess.Id}else{$null});SettingsProcesses=$settingsProcesses;VisibleWindows=$visibleWindows;Screenshot=$screenshot;LaunchErrors=$settingsLaunchErrors.ToArray()}
+    }
     try{
       $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
       if($bounds.Width-gt0-and$bounds.Height-gt0){$bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[System.Drawing.Graphics]::FromImage($bitmap);try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$screenshot=Join-Path $EvidenceDirectory 'standard-user-settings-apps-before-uninstall.png';$bitmap.Save($screenshot,[System.Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()}}
@@ -214,7 +219,7 @@ public static class EBR_STD_NATIVE {
     $installDir=Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder';$installed=Join-Path $installDir 'EyeBreakReminder.exe';$uninstaller=Join-Path $installDir 'Uninstall.exe'
     $wizardInstall=Invoke-StandardUserWizard $installer 'standard-user interactive install wizard'
     $events.Add([pscustomobject]@{Name='Standard-user interactive installer wizard';Status=$wizardInstall.Status;Details=$wizardInstall;TokenAdministrator=$false})
-    if($wizardInstall.Status-eq'PASS'){if($wizardInstall.FinishCheckbox-ne'Off'){$events.Add([pscustomobject]@{Name='Standard-user installer finish-page Run checkbox state';Status='NOT TESTED';Details="Finish-page checkbox state: $($wizardInstall.FinishCheckbox)."})}else{$events.Add([pscustomobject]@{Name='Standard-user installer finish-page Run checkbox is unchecked';Status='PASS';State=$wizardInstall.FinishCheckbox})}}
+    if($wizardInstall.Status-eq'PASS'){if($wizardInstall.FinishCheckbox-notmatch'(?i)^(Off|Unchecked)(?:\s+\(native Win32\))?$'){$events.Add([pscustomobject]@{Name='Standard-user installer finish-page Run checkbox state';Status='NOT TESTED';Details="Finish-page checkbox state: $($wizardInstall.FinishCheckbox)."})}else{$events.Add([pscustomobject]@{Name='Standard-user installer finish-page Run checkbox is unchecked';Status='PASS';State=$wizardInstall.FinishCheckbox})}}
     if($wizardInstall.Status-eq'FAIL'){throw $wizardInstall.Reason}
     if($wizardInstall.Status-ne'PASS'){
       $install=Start-Process -FilePath $installer -ArgumentList '/S' -PassThru

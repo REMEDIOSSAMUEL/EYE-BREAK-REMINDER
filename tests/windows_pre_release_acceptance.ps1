@@ -840,7 +840,19 @@ function Find-WizardButton([IntPtr]$Window,[string]$Pattern) {
     foreach($item in $all){
       if($item.Current.ControlType -ne [System.Windows.Automation.ControlType]::Button){continue}
       if($item.Current.IsOffscreen -or -not $item.Current.IsEnabled){continue}
-      if($item.Current.Name -match $Pattern){return [pscustomobject]@{Element=$item;Handle=[IntPtr]$item.Current.NativeWindowHandle;Name=$item.Current.Name;Source='UI Automation'}}
+      if($item.Current.Name -match $Pattern){
+        # UIA also exposes the native title-bar Close caption as a Button.
+        # Installer actions must be real child BUTTON HWNDs belonging to this
+        # wizard, never chrome or a zero-handle proxy element.
+        $nativeHandle=[IntPtr]$item.Current.NativeWindowHandle
+        if($nativeHandle-eq[IntPtr]::Zero-or-not[EBR_PRE_NATIVE]::IsWindow($nativeHandle)-or[EBR_PRE_NATIVE]::ClassName($nativeHandle)-ne'Button'){continue}
+        $nativeParent=[EBR_PRE_NATIVE]::GetParent($nativeHandle)
+        $nativePid=[uint32]0;$windowPid=[uint32]0
+        [void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($nativeHandle,[ref]$nativePid)
+        [void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($Window,[ref]$windowPid)
+        if($nativeParent-ne$Window-or$nativePid-ne$windowPid){continue}
+        return [pscustomobject]@{Element=$item;Handle=$nativeHandle;Name=$item.Current.Name;Source='UI Automation'}
+      }
     }
   } catch {}
   foreach($child in [EBR_PRE_NATIVE]::Children($Window)){
