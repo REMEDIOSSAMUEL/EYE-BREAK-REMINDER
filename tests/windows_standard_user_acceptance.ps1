@@ -146,12 +146,14 @@ public static class EBR_STD_UIA_CLIENT {
   }
   function Invoke-SettingsAppsUninstall([string]$UninstallerPath){
     Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop;Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop;Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop;Add-Type -AssemblyName System.Drawing -ErrorAction Stop
-    $settingsProcess=$null;$settingsRoot=$null;$names=[System.Collections.Generic.List[string]]::new();$screenshot=$null
+    $settingsProcess=$null;$settingsRoot=$null;$names=[System.Collections.Generic.List[string]]::new();$screenshot=$null;$settingsLaunchMethods=[System.Collections.Generic.List[string]]::new();$directSettingsLaunched=$false
     try{
     $settingsLaunchErrors=[System.Collections.Generic.List[string]]::new()
-    try{$settingsProcess=Start-Process -FilePath 'ms-settings:appsfeatures' -PassThru}catch{$settingsLaunchErrors.Add("URI activation: $($_.Exception.Message)")}
-    if(-not$settingsProcess){try{$explorer=Join-Path $env:WINDIR 'explorer.exe';$settingsProcess=Start-Process -FilePath $explorer -ArgumentList 'ms-settings:appsfeatures' -PassThru}catch{$settingsLaunchErrors.Add("Explorer URI activation: $($_.Exception.Message)")}}
-    if(-not$settingsProcess){return [pscustomobject]@{Status='NOT TESTED';Reason="Windows Settings Apps page could not be opened: $($settingsLaunchErrors -join '; ')"}}
+    try{$settingsProcess=Start-Process -FilePath 'ms-settings:appsfeatures' -PassThru;if($settingsProcess){$settingsLaunchMethods.Add('ms-settings URI activation')}}catch{$settingsLaunchErrors.Add("URI activation: $($_.Exception.Message)")}
+    if(-not$settingsProcess){try{$explorer=Join-Path $env:WINDIR 'explorer.exe';$settingsProcess=Start-Process -FilePath $explorer -ArgumentList 'ms-settings:appsfeatures' -PassThru;if($settingsProcess){$settingsLaunchMethods.Add('Explorer URI activation')}}catch{$settingsLaunchErrors.Add("Explorer URI activation: $($_.Exception.Message)")}}
+    if(-not$settingsProcess-and$settingsLaunchErrors.Count){$settingsLaunchErrors.Add('Shell URI activation did not return a process handle.')}
+    if(-not$settingsProcess){$settingsExe=Join-Path $env:WINDIR 'ImmersiveControlPanel\SystemSettings.exe';if(Test-Path -LiteralPath $settingsExe){try{$settingsProcess=Start-Process -FilePath $settingsExe -ArgumentList 'ms-settings:appsfeatures' -PassThru;if($settingsProcess){$directSettingsLaunched=$true;$settingsLaunchMethods.Add('direct SystemSettings.exe activation')}}catch{$settingsLaunchErrors.Add("Direct SystemSettings.exe activation: $($_.Exception.Message)")}}}
+    if(-not$settingsProcess){return [pscustomobject]@{Status='NOT TESTED';Reason="Windows Settings Apps page could not be opened: $($settingsLaunchErrors -join '; ')";LaunchMethods=$settingsLaunchMethods.ToArray()}}
     $watch=[Diagnostics.Stopwatch]::StartNew()
     while($watch.Elapsed.TotalSeconds-lt35-and-not$settingsRoot){
       try{
@@ -163,10 +165,24 @@ public static class EBR_STD_UIA_CLIENT {
       if(-not$settingsRoot){Start-Sleep -Milliseconds 250}
     }
     if(-not$settingsRoot){
+      $settingsExe=Join-Path $env:WINDIR 'ImmersiveControlPanel\SystemSettings.exe'
+      if(-not$directSettingsLaunched-and(Test-Path -LiteralPath $settingsExe)){
+        try{
+          $settingsProcess=Start-Process -FilePath $settingsExe -ArgumentList 'ms-settings:appsfeatures' -PassThru
+          $settingsLaunchMethods.Add('direct SystemSettings.exe activation after shell URI failed to expose Installed apps')
+          $watch.Restart()
+          while($watch.Elapsed.TotalSeconds-lt25-and-not$settingsRoot){
+            try{$tops=[System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition);foreach($top in $tops){try{$elements=@($top.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition));$currentNames=@(foreach($element in $elements){try{if($element.Current.Name){[string]$element.Current.Name}}catch{}});if(($currentNames-join'|')-match'(?i)Installed apps|Apps & features|App & features'){$settingsRoot=$top;$names.AddRange([string[]]$currentNames);break}}catch{}}}catch{}
+            if(-not$settingsRoot){Start-Sleep -Milliseconds 250}
+          }
+        }catch{$settingsLaunchErrors.Add("Direct SystemSettings.exe activation: $($_.Exception.Message)")}
+      }else{$settingsLaunchErrors.Add('Direct SystemSettings.exe was not present at the standard Windows path.')}
+    }
+    if(-not$settingsRoot){
       $screenshot=Capture-StandardUserDesktop 'standard-user-settings-apps-page-unavailable.png'
       $settingsProcesses=@(Get-Process -Name SystemSettings,ApplicationFrameHost -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId}|ForEach-Object{[pscustomobject]@{Id=$_.Id;Name=$_.ProcessName;MainWindowHandle=('0x{0:X}' -f $_.MainWindowHandle.ToInt64());MainWindowTitle=$_.MainWindowTitle}})
       $visibleWindows=@(foreach($process in $settingsProcesses){foreach($handle in [EBR_STD_NATIVE]::TopWindowsForProcess($process.Id)){if([EBR_STD_NATIVE]::IsWindowVisible($handle)){[pscustomobject]@{ProcessId=$process.Id;ProcessName=$process.Name;Handle=('0x{0:X}' -f $handle.ToInt64());Title=[EBR_STD_NATIVE]::Text($handle);Class=[EBR_STD_NATIVE]::ClassName($handle);Bounds=[EBR_STD_NATIVE]::Bounds($handle)}}}})
-      return [pscustomobject]@{Status='NOT TESTED';Reason='The disposable Windows session did not expose the Installed apps page through UI Automation.';SettingsProcessId=$(if($settingsProcess){$settingsProcess.Id}else{$null});SettingsProcesses=$settingsProcesses;VisibleWindows=$visibleWindows;Screenshot=$screenshot;LaunchErrors=$settingsLaunchErrors.ToArray()}
+      return [pscustomobject]@{Status='NOT TESTED';Reason='The disposable Windows session did not expose the Installed apps page through UI Automation, including direct SystemSettings.exe activation.';SettingsProcessId=$(if($settingsProcess){$settingsProcess.Id}else{$null});SettingsProcesses=$settingsProcesses;VisibleWindows=$visibleWindows;Screenshot=$screenshot;LaunchMethods=$settingsLaunchMethods.ToArray();LaunchErrors=$settingsLaunchErrors.ToArray()}
     }
     try{
       $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen

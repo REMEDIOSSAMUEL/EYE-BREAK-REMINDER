@@ -2,37 +2,37 @@
   "schemaVersion": "1.0.0",
   "application": "Eye Break Reminder",
   "version": "1.3.0",
-  "assessment": "Evidence-backed verification inventory; not a claim that blocked OS/hardware cases were executed.",
-  "sourceCommit": "a447a5fd7a1d9822ba83e6dd990b6faa84e64ad4",
+  "assessment": "Evidence-backed verification inventory for the current sealed candidate. Coverage totals distinguish executed checks from unresolved external limitations; this is not a FULLY VERIFIED claim.",
+  "sourceCommit": "b39f014ddbd2074eba6469dd3f8fc14f91f269bc",
   "branch": "feature/v1.3.0-custom-accent-colours",
-  "authoritativeRunUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008",
-  "candidateArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
-  "evidenceArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
+  "authoritativeRunUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638",
+  "candidateArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+  "evidenceArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
   "candidateFiles": [
     {
       "name": "EyeBreakReminder.exe",
-      "bytes": 2652672,
-      "sha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd"
+      "bytes": 2655232,
+      "sha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66"
     },
     {
       "name": "EyeBreakReminder-Setup-x64.exe",
-      "bytes": 1316781,
-      "sha256": "269795f500c2e4210ac02750997b39284c0ac0f8f2d6ef05878dfe05ba4525f2"
+      "bytes": 1315647,
+      "sha256": "67c7bb338e83397e17007fa0afff9b4ad06f0a2d7924bb016198d9d38e3a76b4"
     },
     {
       "name": "EyeBreakReminder-Portable-x64.zip",
-      "bytes": 1470719,
-      "sha256": "57406c46d7e3c75cae65c544ee5be9e509e3f37eba750f5d19c397dcd8f84d22"
+      "bytes": 1471802,
+      "sha256": "30407d37be7f3cb7438eaa42645b3db814bfa92d76bc4f709e09e0456e9b0da7"
     },
     {
       "name": "EyeBreakReminder-Source.zip",
-      "bytes": 2288442,
-      "sha256": "a1b4fa79034696eb43cd6db7ea2e123c887965bd0e428133fbbb6e97fbcdd670"
+      "bytes": 2329400,
+      "sha256": "7fd33ae02100fc754d787ca4834c02e0d73f18b0ab2c7f7d21601f69ed451404"
     },
     {
       "name": "EyeBreakReminder-SHA256.txt",
       "bytes": 382,
-      "sha256": "0de021530fd7d3cbfd6abbbfbf359f5c1039e524a2d789f1123a6e561e77df96"
+      "sha256": "15c79cea7cf7d8bc56df68560355acbfbaa6af3afdd9f0120c636f10d9c6ec6f"
     }
   ],
   "environment": {
@@ -52,19 +52,19 @@
     "makeTest": 6700,
     "makeAll": 6700,
     "makePackageCore": 6700,
-    "packageAssertions": 197,
-    "guiAssertions": 521,
-    "installedPass": 1180,
+    "packageAssertions": 202,
+    "guiAssertions": 837,
+    "installedPass": 1531,
     "installedFail": 0,
-    "installedNotTested": 13,
+    "installedNotTested": 9,
     "soakAssertions": 263,
     "soakCycles": 110,
     "pickerOperations": 100,
-    "resourceSamples": 2191,
+    "resourceSamples": 2190,
     "candidateLaunchSmokes": 2,
-    "countedPassAssertions": 22263,
+    "countedPassAssertions": 22935,
     "countedFailAssertions": 0,
-    "note": "Current candidate-run assertions: 20,100 core across three 6,700 runs; 197 package checks; 521 GUI assertions; 1,180 installed acceptance checks; 263 exact-production-EXE soak checks; and 2 exact-candidate launch smokes. Supplemental ARM64 emulation assertions are recorded separately and not double-counted here."
+    "note": "Current candidate-run assertions: 20,100 core across three 6,700 runs; 202 package checks; 837 accelerated GUI assertions; 1,531 installed acceptance checks; 263 exact-production-EXE soak checks; and 2 exact-candidate launch smokes. The GUI suite uses a distinct EYEBREAK_TEST_BUILD binary; deterministic overlap is implementation-level and not direct production HTTPS overlap. Supplemental ARM64 emulation assertions are recorded separately and not double-counted here."
   },
   "priorNotTestedIds": [
     "GAP-001",
@@ -82,16 +82,16 @@
     "GAP-013"
   ],
   "caseStatusTotals": {
-    "PASS": 60,
-    "NOT TESTED": 8,
+    "PASS": 62,
+    "NOT TESTED": 6,
     "NOT APPLICABLE": 1,
     "BLOCKED": 7,
     "TOTAL_CASES": 76
   },
   "releaseAssessment": {
-    "confirmedProductDefect": "None in the recorded exact-candidate evidence. Two supplemental ARM harness failures were diagnosed as harness API binding and cleanup timing issues, then the same candidate passed the corrected retest.",
-    "exhaustiveVerification": "Incomplete: NOT TESTED and BLOCKED cases remain, including native Windows 11 x64, genuine reboot, Narrator speech, acoustic output, actual lock/sleep, multi-monitor topology, and exhaustive control-state/theme/DPI sweeps.",
-    "recommendation": "Do not claim exhaustive verification or publish as exhaustively tested. Many previously mislabeled UI rows were reconciled to direct passing events in run 43698996008; material OS, audio, display and accessibility coverage remains."
+    "confirmedProductDefect": "None remains in the exact candidate. The 225% Break-heading clipping defect was fixed in source commit b39f014 and the exact candidate passed its regression. Display-probe failures were traced to missing audio-warning handling and a diagnostic-field bug; the corrected probe passed.",
+    "exhaustiveVerification": "Not fully verified: native Windows 11 x64, reboot/post-login, lock/unlock, sleep/resume, multi-monitor topology, Narrator speech capture, audio output capture, visible legacy Shell balloon, direct production-request overlap, full per-monitor DPI, and exhaustive hover/disabled/selected-state contrasts remain BLOCKED or NOT TESTED.",
+    "recommendation": "READY FOR PUBLICATION APPROVAL WITH DOCUMENTED TESTING LIMITATIONS. Core and GUI regression, installer/upgrade, exact-candidate integrity, custom accents, accessibility protections, resource stability, and current Windows Server x64 display/focus behavior pass. No confirmed release-blocking defect remains. Do not claim FULLY VERIFIED or publish v1.3.0 without separate approval."
   },
   "cases": [
     {
@@ -99,7 +99,7 @@
       "category": "Provenance",
       "description": "Approved product source commit",
       "expected": "Exact approved source is sealed into candidate provenance.",
-      "actual": "Run 43698996008 records source commit a447a5fd7a1d9822ba83e6dd990b6faa84e64ad4.",
+      "actual": "Run 43857689638 records source commit b39f014ddbd2074eba6469dd3f8fc14f91f269bc.",
       "environment": {
         "name": "GitHub-hosted Windows Server 2025 Datacenter",
         "version": "10.0.26100",
@@ -109,7 +109,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "",
@@ -127,10 +127,10 @@
         "os": "Personal Windows host; no application launch or settings mutation",
         "scope": "SHA-256, file count, manifest and portable archive comparison only"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -142,16 +142,16 @@
       "category": "Provenance",
       "description": "Portable executable identity",
       "expected": "Portable EXE is byte-identical to standalone candidate.",
-      "actual": "Both SHA-256 values are e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd.",
+      "actual": "Both SHA-256 values are 3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66.",
       "environment": {
         "name": "Local read-only candidate integrity check",
         "os": "Personal Windows host; no application launch or settings mutation",
         "scope": "SHA-256, file count, manifest and portable archive comparison only"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -171,10 +171,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -193,7 +193,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "",
@@ -215,7 +215,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "",
@@ -237,7 +237,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "",
@@ -259,7 +259,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "",
@@ -281,7 +281,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "GUI suite used a separate accelerated test EXE, not candidate production EXE.",
@@ -303,7 +303,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "",
@@ -323,10 +323,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "See GAP-001 through GAP-013.",
@@ -346,10 +346,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -369,10 +369,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -392,10 +392,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -417,7 +417,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Timer engine reset behavior is also source-level core coverage.",
@@ -437,10 +437,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -460,10 +460,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -483,10 +483,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -508,7 +508,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Core schedule calendar cases use deterministic fixtures, not wall-clock Windows time.",
@@ -528,10 +528,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -551,10 +551,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -574,10 +574,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -597,10 +597,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -622,7 +622,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "",
@@ -643,9 +643,9 @@
         "monitorCount": 1,
         "profile": "exact installed release candidate"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Actual audible/loopback output remains unverified; see GAP-004.",
@@ -665,10 +665,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "Does not establish visible Shell balloon; see GAP-003.",
@@ -689,9 +689,9 @@
         "monitorCount": 1,
         "profile": "exact installed release candidate"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Only the runner primary display was available; multi-monitor topology is BLOCKED separately.",
@@ -712,9 +712,9 @@
         "monitorCount": 1,
         "profile": "exact installed release candidate"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Multi-monitor placement, disconnect/reconnect and mixed-DPI topology remain BLOCKED in WIN-008.",
@@ -736,7 +736,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "",
@@ -757,9 +757,9 @@
         "monitorCount": 1,
         "profile": "disposable runner profile"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "No user history was accessed.",
@@ -779,10 +779,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -802,10 +802,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -825,10 +825,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -850,7 +850,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Pixel tests used accelerated GUI test EXE; production ring tests separately passed on candidate for custom and Forced Colors states.",
@@ -870,10 +870,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -893,10 +893,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "See NEW-002.",
@@ -918,7 +918,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Synthetic engine tests are not physical lock/unlock.",
@@ -938,10 +938,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -962,9 +962,9 @@
         "monitorCount": 1,
         "profile": "exact installed release candidate"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Narrator speech is a separate NOT TESTED case (ACCESS-003).",
@@ -984,9 +984,9 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1006,10 +1006,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1019,20 +1019,20 @@
     {
       "testId": "ACCESS-003",
       "category": "Accessibility",
-      "description": "Actual Narrator navigation and speech",
+      "description": "Narrator navigation and actual speech capture",
       "expected": "Narrator reads requested screens/dialogs in meaningful order.",
-      "actual": "No Narrator speech engine or speech capture was run.",
+      "actual": "Windows Narrator was active while the candidate was navigated through Timer, Settings > Appearance, both custom-color controls, ChooseColorW RGB/palette controls, History, Check for Updates, and the Break reminder. UI Automation recorded focused names, roles, states and controls. The harness explicitly records SpeechClaimed=false; no actual Narrator speech audio was captured.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "available": true,
+        "reason": "Narrator navigation and UI Automation focus metadata ran on the isolated Windows Server 2025 desktop; actual speech capture/audio output remains unavailable."
       },
-      "binarySha256": null,
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
         "pre-release-evidence/windows-pre-release-results.json"
       ],
       "status": "NOT TESTED",
-      "limitation": "UIA metadata PASS is not actual Narrator speech.",
+      "limitation": "Actual Narrator speech and its audio output were not captured; UIA metadata and Narrator navigation are separate PASS evidence.",
       "priorNotTestedId": "GAP-001",
       "countedAssertionCount": null,
       "priorNotTestedIds": [
@@ -1052,10 +1052,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1076,9 +1076,9 @@
         "monitorCount": 1,
         "profile": "exact installed release candidate"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Covers the tested client-area animation setting; it does not claim a broader OS motion policy than that API exposes.",
@@ -1098,10 +1098,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1121,10 +1121,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1136,19 +1136,19 @@
       "category": "Windows integration",
       "description": "Visible legacy Shell balloon",
       "expected": "A separate Shell notification surface is visible and dismissible.",
-      "actual": "Shell API path ran, but no distinct Shell balloon surface was observed.",
+      "actual": "The hidden-app Shell notification request ran, but Windows reported SHQueryUserNotificationState=QUNS_QUIET_TIME (6), AcceptsNotifications=false. No separate legacy balloon was observed; the in-app Break reminder was visible. The suppression is environmental, not an application failure.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "available": true,
+        "reason": "The isolated Windows Server 2025 runner reported QUNS_QUIET_TIME and suppressed Shell notification surfaces."
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
         "pre-release-evidence/windows-pre-release-results.json"
       ],
       "status": "NOT TESTED",
-      "limitation": "Modern toast is not implemented and is not claimed.",
+      "limitation": "The runner's quiet-time state prevented observing a visible legacy balloon. Modern Toast API is not implemented and is NOT APPLICABLE in WIN-003.",
       "priorNotTestedId": "GAP-003",
       "countedAssertionCount": null,
       "priorNotTestedIds": [
@@ -1167,7 +1167,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "NOT APPLICABLE",
       "limitation": "Not a feature of this application.",
@@ -1186,7 +1186,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "BLOCKED",
       "limitation": "Needs safe isolated native x64 Windows 11 environment. Hosted options list Server x64 and Windows 11 ARM64, not hosted Windows 11 x64. https://github.com/actions/runner-images/blob/main/README.md#available-images",
@@ -1205,7 +1205,7 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "BLOCKED",
       "limitation": "Needs reboot-capable disposable Windows VM.",
@@ -1224,8 +1224,8 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
         "pre-release-evidence/windows-pre-release-results.json"
       ],
       "status": "BLOCKED",
@@ -1248,8 +1248,8 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
         "pre-release-evidence/windows-pre-release-results.json"
       ],
       "status": "BLOCKED",
@@ -1272,8 +1272,8 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
         "pre-release-evidence/windows-pre-release-results.json"
       ],
       "status": "BLOCKED",
@@ -1297,10 +1297,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1320,10 +1320,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "A displayed tick overlapping the actual live response remains GAP-009.",
@@ -1342,8 +1342,8 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "BLOCKED",
       "limitation": "Requires WIN-005.",
@@ -1362,8 +1362,8 @@
       },
       "binarySha256": null,
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
         "pre-release-evidence/windows-pre-release-results.json"
       ],
       "status": "BLOCKED",
@@ -1388,10 +1388,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1411,10 +1411,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1434,10 +1434,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1457,10 +1457,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1480,10 +1480,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1495,19 +1495,19 @@
       "category": "Installer",
       "description": "Candidate and v1.1 uninstall finish checkbox / UI process code",
       "expected": "Capture finish-page Run state and child UI exit code.",
-      "actual": "Checkbox not exposed reliably; exited UI child did not expose exit code.",
+      "actual": "The exact-candidate install finish-page Run checkbox was observed Off. Candidate and v1.1 interactive uninstall UI child processes both exited with code 0; the code was captured from retained native process handles. Candidate uninstall removed files and registrations. The uninstaller has no finish Run checkbox page.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "available": true,
+        "reason": "Windows Server 2025 x64 exact-candidate installer and comparison uninstall UI runs completed."
       },
-      "binarySha256": null,
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
         "pre-release-evidence/windows-pre-release-results.json"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Parent completion and installed-state cleanup were separately observed.",
+      "status": "PASS",
+      "limitation": "Uninstaller finish Run checkbox is NOT APPLICABLE: NSIS uninstaller uses MUI_UNPAGE_FINISH and has no Run control.",
       "priorNotTestedId": "GAP-005/GAP-006/GAP-007/GAP-008",
       "countedAssertionCount": null,
       "priorNotTestedIds": [
@@ -1522,18 +1522,18 @@
       "category": "Installer",
       "description": "Standard-user account/UAC and Settings > Apps uninstall",
       "expected": "Verify standard user flows and Windows Settings uninstall entry point.",
-      "actual": "Per-user installer/uninstaller passed, but separate standard account/UAC and Settings > Apps removal were not run.",
+      "actual": "A disposable non-administrator Windows user installed the exact candidate into its LocalAppData path without elevation, completed the interactive wizard with Run unchecked, received HKCU registration, launched the app, and completed interactive plus silent uninstall. Settings > Apps removal for that secondary user remains NOT TESTED: Settings routed to runneradmin's shell instead of the disposable user's session; no unrelated app was selected or changed.",
       "environment": {
-        "available": false,
-        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+        "available": true,
+        "reason": "A disposable standard account was available on the isolated Windows Server runner. The Settings shell activation context for that secondary account was not available."
       },
-      "binarySha256": null,
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "NOT TESTED",
-      "limitation": "Needs disposable interactive account and desktop.",
+      "limitation": "The specific Windows Settings > Apps uninstall path still needs a Settings shell launched in the disposable standard-user session.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -1550,10 +1550,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1573,10 +1573,10 @@
         "interactiveExplorer": true,
         "monitorCount": 1
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
       ],
       "status": "PASS",
       "limitation": "",
@@ -1597,9 +1597,9 @@
         "monitorCount": 1,
         "profile": "exact installed release candidate"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "This resolves prior NOT TESTED observation GAP-002.",
@@ -1611,19 +1611,19 @@
       "category": "Prior untested observation",
       "description": "Real displayed tick during live HTTP response",
       "expected": "A displayed countdown tick occurs while a real production request remains in-flight.",
-      "actual": "One candidate acceptance event logged 60→59 while the update button remained disabled. A separate explicit live-request probe observed the displayed tick after 1.11 seconds and recorded that the response had already completed. The disabled button proves the UI completion callback had not re-enabled it, not that the HTTPS socket was still in flight; exact real overlap is therefore unproven.",
+      "actual": "The deterministic EYEBREAK_TEST_BUILD GUI test used named start/release event barriers and proved the controlled response remained unresolved while the timer advanced 10,800→10,797 in 9 ms; a bounded UI message succeeded, release produced the expected result, and the countdown remained correct. A separate live GitHub check on the exact production candidate completed before its displayed timer tick, so direct production-binary HTTP overlap is still unproven.",
       "environment": {
         "available": true,
-        "reason": "Hosted Windows Server 2025 x64 candidate acceptance ran the exact installed candidate. It did not use a controlled slow real HTTPS endpoint or direct in-flight socket instrumentation."
+        "reason": "The deterministic event barrier ran in a distinct test-only GUI executable. The exact production candidate made a live GitHub request, but the response completed before the displayed tick."
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160396621",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
         "pre-release-evidence/windows-pre-release-results.json"
       ],
       "status": "NOT TESTED",
-      "limitation": "Use an authorized controlled slow HTTPS route or network instrumentation that proves the real candidate request remains in flight at the exact displayed tick; do not infer socket state from the disabled button alone.",
+      "limitation": "Implementation-level asynchronous overlap passed. Direct exact-production-binary in-flight HTTPS overlap remains NOT TESTED; do not infer it from a disabled button or the test-only fixture.",
       "priorNotTestedId": "GAP-009",
       "countedAssertionCount": null,
       "priorNotTestedIds": [
@@ -1635,17 +1635,17 @@
       "category": "Accessibility",
       "description": "DPI/text scaling across all pages and dialogs",
       "expected": "Check Settings, History, reminder and dialogs at multiple DPI and text scale levels for clipping and focus.",
-      "actual": "Timer centering and representative settings/text scaling passed; full all-pages matrix was not recorded.",
+      "actual": "On the exact candidate at 96 DPI, rendered layout and control checks passed at 125%, 150%, 200%, and 225% Windows text scale (32, 32, 37, and 36 events). Coverage includes Timer, History, all six Settings sections, ChooseColorW, Work/Break accent swatches and the Break reminder; the 225% Break heading and controls remain visible. The full per-monitor DPI matrix was not available at the runner's single 96-DPI desktop.",
       "environment": {
-        "available": false,
-        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+        "available": true,
+        "reason": "Exact-candidate interactive text-scale coverage ran at four scale settings; the hosted display remained at 96 DPI."
       },
-      "binarySha256": null,
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "NOT TESTED",
-      "limitation": "Requires interactive per-scale screenshots and layout checks.",
+      "limitation": "Native DPI values beyond 96, per-monitor DPI movement, and every dialog/control state at each combination remain NOT TESTED.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -1663,9 +1663,9 @@
         "monitorCount": 1,
         "profile": "disposable runner profile"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "History created by this test only.",
@@ -1686,9 +1686,9 @@
         "monitorCount": 1,
         "profile": "disposable runner profile"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Windows sign-in startup after a genuine reboot remains BLOCKED in WIN-005.",
@@ -1709,9 +1709,9 @@
         "monitorCount": 1,
         "profile": "exact installed release candidate"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Disabled/hover/selected/focus contrast across every control and dialog is not exhaustively swept; see WIN-014.",
@@ -1732,9 +1732,9 @@
         "monitorCount": 1,
         "profile": "disposable runner profile"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "Work and active Break restart are covered by TIMER-007; genuine Windows reboot remains BLOCKED in WIN-005.",
@@ -1746,17 +1746,18 @@
       "category": "Windows integration",
       "description": "Reminder after focus or display configuration change",
       "expected": "Verify app-owned reminder remains visible and correctly positioned after focus/display change.",
-      "actual": "Reminder, theme changes and resize were covered; focus-loss/display-topology transition during reminder was not recorded.",
+      "actual": "The exact candidate remained visible, unique, responsive, and inside display bounds during a real Windows Server 2025 x64 resolution transition from 1024×768 to 1152×864, then returned to Work and restored 1024×768. A separate actual foreground-focus change to the tray left one Break reminder visible and responsive. The runner exposed one monitor.",
       "environment": {
-        "available": false,
-        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+        "available": true,
+        "reason": "A real resolution change and tray focus change ran on the isolated Windows Server 2025 x64 desktop; display topology remained single-monitor."
       },
-      "binarySha256": null,
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43893520574/artifacts/14238735337"
       ],
-      "status": "NOT TESTED",
-      "limitation": "Requires interactive desktop and display topology change.",
+      "status": "PASS",
+      "limitation": "Only a single display was exposed. Multi-monitor topology, disconnect/reconnect, and mixed-DPI changes remain BLOCKED in WIN-008.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -1765,17 +1766,17 @@
       "category": "Windows integration",
       "description": "Disabled control, hover and selected-state contrast across themes",
       "expected": "Check disabled, hover, selected and focus indicators in every theme, including custom extreme colors.",
-      "actual": "Focus, contrast and selected controls had representative coverage; all control states across every theme were not measured.",
+      "actual": "Representative focus, selected, high-contrast and forced-colors states passed; a complete disabled/hover/selected/focus contrast sweep across every theme and extreme custom color was not captured.",
       "environment": {
-        "available": false,
-        "reason": "The installed candidate was not driven through this specific full matrix case; additional isolated interactive Windows coverage is required."
+        "available": true,
+        "reason": "The isolated GUI runner supports rendered screenshots and UI Automation, but the full state-by-theme contrast sweep was not implemented in this run."
       },
-      "binarySha256": null,
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "NOT TESTED",
-      "limitation": "Requires installed GUI sweep and rendered contrast sampling.",
+      "limitation": "Complete disabled, hover, selected and keyboard-focus contrast measurements across all themes and custom extremes remain NOT TESTED.",
       "priorNotTestedId": null,
       "countedAssertionCount": null
     },
@@ -1792,10 +1793,10 @@
         "processArchitecture": "ARM64",
         "execution": "AMD64 x64 emulation; not native x64"
       },
-      "binarySha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43748011613/artifacts/14175370953",
-        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43698996008/artifacts/14160426522"
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232345870",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
       ],
       "status": "PASS",
       "limitation": "ARM64 results are supplemental emulation only. The app’s desktop screenshot was obstructed by Microsoft account/OOBE; native Windows 11 x64 remains BLOCKED in WIN-004.",
@@ -1803,21 +1804,25 @@
       "countedAssertionCount": null
     }
   ],
-  "artifactRetentionDeadline": "2027-02-13",
+  "artifactRetentionDeadline": "2027-02-14T11:25:58Z",
   "candidateWorkflowStatus": {
     "windowsServer2025X64Job": "success",
-    "overallRun": "failure",
-    "overallRunReason": "The primary x64 build, validation, resource soak and candidate upload succeeded; the dependent ARM64 job used an incorrect native-architecture expectation. The exact sealed candidate was retested in the separate successful ARM64 emulation run below.",
-    "windows11Arm64ExactCandidateRetestUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43748011613",
-    "windows11Arm64EvidenceArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43748011613/artifacts/14175370953"
+    "overallRun": "success",
+    "overallRunReason": "All four candidate workflow jobs passed: original-candidate comparison, Windows Server 2025 x64 pre-release acceptance/resource soak, exact-candidate Windows x64 acceptance, and Windows 11 ARM64 x64-emulation acceptance.",
+    "windows11Arm64ExactCandidateRetestUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638",
+    "windows11Arm64EvidenceArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232345870",
+    "displayResolutionChangeRunUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43893520574",
+    "displayResolutionChangeEvidenceArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43893520574/artifacts/14238735337",
+    "displayResolutionChangeResult": "PASS: exact executable remained visible and responsive with one Break reminder at 1152x864; runner display restored to 1024x768.",
+    "displayResolutionChangeRetentionDeadline": "2027-02-14T15:10:26Z"
   },
   "supplementalAcceptance": {
-    "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43748011613",
-    "artifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43748011613/artifacts/14175370953",
+    "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638",
+    "artifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232345870",
     "acceptanceHarnessCommit": "d656f07fc405301028b31f66736c6b10cd45c42b",
-    "candidateRunId": "43698996008",
-    "candidateSourceCommit": "a447a5fd7a1d9822ba83e6dd990b6faa84e64ad4",
-    "candidateExecutableSha256": "e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd",
+    "candidateRunId": "43857689638",
+    "candidateSourceCommit": "b39f014ddbd2074eba6469dd3f8fc14f91f269bc",
+    "candidateExecutableSha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
     "environment": {
       "name": "Microsoft Windows 11 Enterprise",
       "version": "10.0.26200",
@@ -1837,16 +1842,16 @@
     "blockedCase": "Native Windows 11 x64 acceptance remains blocked; this ARM64 runner only provides x64 emulation."
   },
   "resolvedPriorNotTestedIds": [
-    "GAP-002"
+    "GAP-002",
+    "GAP-005",
+    "GAP-006",
+    "GAP-007",
+    "GAP-008"
   ],
   "priorNotTestedIdsUnresolved": [
     "GAP-001",
     "GAP-003",
     "GAP-004",
-    "GAP-005",
-    "GAP-006",
-    "GAP-007",
-    "GAP-008",
     "GAP-009",
     "GAP-010",
     "GAP-011",
@@ -1879,27 +1884,32 @@
     {
       "priorId": "GAP-005",
       "currentCase": "INSTALL-006",
-      "status": "NOT TESTED"
+      "status": "PASS",
+      "note": "Install finish Run checkbox was observed Off; candidate and v1.1 uninstaller UI child exit codes were captured as 0 through retained process handles. An uninstall finish Run checkbox is not applicable because the uninstaller has no such finish page."
     },
     {
       "priorId": "GAP-006",
       "currentCase": "INSTALL-006",
-      "status": "NOT TESTED"
+      "status": "PASS",
+      "note": "Candidate and v1.1 uninstaller UI child exit codes were captured as 0 through retained process handles."
     },
     {
       "priorId": "GAP-007",
       "currentCase": "INSTALL-006",
-      "status": "NOT TESTED"
+      "status": "PASS",
+      "note": "Candidate uninstaller completed and removed installed files and registration; the child UI exit code was captured as 0."
     },
     {
       "priorId": "GAP-008",
       "currentCase": "INSTALL-006",
-      "status": "NOT TESTED"
+      "status": "PASS",
+      "note": "Candidate and v1.1 uninstall wizard states and child-process exit codes were retained; uninstall finish Run checkbox is NOT APPLICABLE."
     },
     {
       "priorId": "GAP-009",
       "currentCase": "GAP-009",
-      "status": "NOT TESTED"
+      "status": "NOT TESTED",
+      "note": "The controlled-response implementation test passed with explicit start/unresolved/release barriers and timer advancement while unresolved. A separate live GitHub request completed before the displayed tick, so exact production-binary overlap remains unproven."
     },
     {
       "priorId": "GAP-010",

@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       probe_mode:
-        description: Run emulation acceptance, inventory audio endpoints, or only run the Windows x64 display probe
+        description: Run full acceptance, inventory audio endpoints, run only the Windows x64 display probe, or retry only standard-user Settings/UAC
         required: true
         type: choice
         default: acceptance
@@ -16,13 +16,14 @@ on:
           - acceptance
           - audio-inventory
           - display-only
+          - standard-user-only
 
 permissions:
   contents: read
 
 jobs:
   arm64-candidate-emulation:
-    if: ${{ inputs.probe_mode != 'display-only' }}
+    if: ${{ inputs.probe_mode == 'acceptance' || inputs.probe_mode == 'audio-inventory' }}
     runs-on: windows-11-arm
     timeout-minutes: 30
     permissions:
@@ -149,8 +150,8 @@ jobs:
           retention-days: 90
 
   windows-server-display-change:
-    name: Exact-candidate display-resolution change on Windows x64
-    if: ${{ inputs.probe_mode == 'acceptance' || inputs.probe_mode == 'display-only' }}
+    name: ${{ inputs.probe_mode == 'standard-user-only' && 'Exact-candidate standard-user Settings and UAC probe on Windows x64' || 'Exact-candidate display-resolution change on Windows x64' }}
+    if: ${{ inputs.probe_mode == 'acceptance' || inputs.probe_mode == 'display-only' || inputs.probe_mode == 'standard-user-only' }}
     runs-on: windows-2025
     timeout-minutes: 20
     permissions:
@@ -213,6 +214,7 @@ jobs:
           $seal | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath 'candidate-display-change-seal.json' -Encoding UTF8
 
       - name: Run the reminder through a real display-resolution change
+        if: ${{ inputs.probe_mode != 'standard-user-only' }}
         shell: pwsh
         env:
           CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
@@ -225,13 +227,25 @@ jobs:
             -EvidenceDirectory '.\build\windows-display-change-evidence'
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Retry standard-user installer, Settings uninstall, and UAC
+        if: ${{ inputs.probe_mode == 'standard-user-only' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_standard_user_acceptance.ps1 `
+            -InstallerPath (Join-Path (Get-Location) 'release/EyeBreakReminder-Setup-x64.exe') `
+            -ExecutablePath (Join-Path (Get-Location) 'release/EyeBreakReminder.exe') `
+            -EvidenceDirectory (Join-Path (Get-Location) 'build/windows-standard-user-evidence')
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Upload exact-candidate display-change evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: eye-break-reminder-v1.3.0-display-change-${{ inputs.candidate_run_id }}-${{ github.run_id }}
+          name: eye-break-reminder-v1.3.0-${{ inputs.probe_mode }}-${{ inputs.candidate_run_id }}-${{ github.run_id }}
           path: |
             candidate-display-change-seal.json
             build/windows-display-change-evidence/**
+            build/windows-standard-user-evidence/**
           if-no-files-found: warn
           retention-days: 90
