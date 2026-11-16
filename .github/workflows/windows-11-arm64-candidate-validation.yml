@@ -144,3 +144,91 @@ jobs:
             build/audio-endpoint-evidence/**
           if-no-files-found: warn
           retention-days: 90
+
+  windows-server-display-change:
+    name: Exact-candidate display-resolution change on Windows x64
+    if: ${{ inputs.probe_mode == 'acceptance' }}
+    runs-on: windows-2025
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the feature-branch display-test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the requested retained candidate
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.3.0-VERIFIED-RELEASE-CANDIDATE
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release
+
+      - name: Download the requested candidate seal
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.3.0-final-pre-release-evidence-${{ inputs.candidate_run_id }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: candidate-evidence
+
+      - name: Verify exact candidate provenance on the Windows x64 runner
+        id: candidate_identity
+        shell: pwsh
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:CANDIDATE_RUN_ID -notmatch '^\d{5,}$') { throw "Invalid candidate run ID: '$env:CANDIDATE_RUN_ID'." }
+          $run = Invoke-RestMethod -Headers @{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'} -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:CANDIDATE_RUN_ID"
+          if ($run.status -cne 'completed' -or $run.conclusion -cne 'success' -or $run.head_branch -cne 'feature/v1.3.0-custom-accent-colours') { throw 'Requested candidate run must have completed successfully on the authorized feature branch.' }
+          $runJobs = Invoke-RestMethod -Headers @{Authorization="Bearer $env:GITHUB_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'} -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:CANDIDATE_RUN_ID/jobs?per_page=100"
+          if (-not @($runJobs.jobs | Where-Object { $_.name -eq 'windows-pre-release' -and $_.conclusion -eq 'success' }).Count) { throw 'Requested run has no successful candidate-producing Windows pre-release job.' }
+          $sealPath = Get-ChildItem -LiteralPath 'candidate-evidence' -Recurse -Filter 'authoritative-release-candidate.json' | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $sealPath) { throw 'Candidate evidence artifact lacks the authoritative release seal.' }
+          $seal = Get-Content -LiteralPath $sealPath -Raw | ConvertFrom-Json
+          if ($seal.RunId -ne $env:CANDIDATE_RUN_ID -or $seal.SourceCommit -cne $run.head_sha -or $seal.Version -ne '1.3.0' -or $seal.Application -ne 'Eye Break Reminder' -or $seal.ArtifactFiles.Count -ne 5) { throw 'The candidate seal does not match the requested successful run, source commit, version, and five-file inventory.' }
+          $expectedNames = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $actualNames = @(Get-ChildItem -LiteralPath 'release' -File | Sort-Object Name | Select-Object -ExpandProperty Name)
+          if (($actualNames -join "`n") -cne (($expectedNames | Sort-Object) -join "`n")) { throw "Unexpected candidate file set: $($actualNames -join ', ')." }
+          foreach ($item in $seal.ArtifactFiles) {
+            $file = Join-Path 'release' $item.Name
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Candidate artifact is missing $($item.Name)." }
+            $info = Get-Item -LiteralPath $file
+            $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($info.Length -ne [long]$item.Bytes -or $hash -cne ([string]$item.SHA256).ToLowerInvariant()) { throw "Candidate identity mismatch for $($item.Name)." }
+          }
+          $executableSha256 = (Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "sha256=$executableSha256" >> $env:GITHUB_OUTPUT
+          "source_commit=$($seal.SourceCommit)" >> $env:GITHUB_OUTPUT
+          $seal | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath 'candidate-display-change-seal.json' -Encoding UTF8
+
+      - name: Run the reminder through a real display-resolution change
+        shell: pwsh
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_COMMIT: ${{ steps.candidate_identity.outputs.source_commit }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_display_change_acceptance.ps1 `
+            -ExecutablePath '.\release\EyeBreakReminder.exe' `
+            -ExpectedSha256 '${{ steps.candidate_identity.outputs.sha256 }}' `
+            -EvidenceDirectory '.\build\windows-display-change-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload exact-candidate display-change evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.3.0-display-change-${{ inputs.candidate_run_id }}-${{ github.run_id }}
+          path: |
+            candidate-display-change-seal.json
+            build/windows-display-change-evidence/**
+          if-no-files-found: warn
+          retention-days: 90
