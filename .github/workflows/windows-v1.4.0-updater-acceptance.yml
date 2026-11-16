@@ -43,6 +43,10 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
+          msys_root="$(cygpath -aw /)"
+          msys_make="$(cygpath -aw "$(command -v make)")"
+          test -f "$(cygpath -u "$msys_make")"
+          printf 'MSYS2_ROOT=%s\nMSYS2_MAKE=%s\n' "$msys_root" "$msys_make" >> "$GITHUB_ENV"
           mkdir -p build/v1.4.0-updater-evidence
           mkdir -p "$RUNNER_TEMP/eye-break-reminder-tmp"
           export TMP="$(cygpath -u "$RUNNER_TEMP/eye-break-reminder-tmp")"
