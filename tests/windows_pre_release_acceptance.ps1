@@ -611,10 +611,12 @@ function Assert-AccentSwatchesFit([int]$Dpi,[string]$Name) {
   foreach($row in @(@(125,127,'Work'),@(126,128,'Break'))){
     $swatch=Get-Control $script:mainWindow $row[0] "$Name $($row[2]) accent swatch"
     $picker=Get-Control $script:mainWindow $row[1] "$Name $($row[2]) accent picker"
-    $textWidth=[EBR_PRE_NATIVE]::ControlTextWidth($swatch.Handle,$swatch.Text)
+    $fontReference=Get-StaticControlByText $script:mainWindow "$($row[2]) Mode colour" "$Name $($row[2]) accent renderer-font reference"
+    $textWidth=[EBR_PRE_NATIVE]::ControlTextWidth($fontReference.Handle,$swatch.Text)
+    $controlFontWidth=[EBR_PRE_NATIVE]::ControlTextWidth($swatch.Handle,$swatch.Text)
     $side=[Math]::Max(1,[Math]::Min($px36,$swatch.Rect.Height-$px8))
     $availableWidth=$swatch.Rect.Width-$px2-$side-$px8-$px2
-    Require ($swatch.Text -match '^#[0-9A-Fa-f]{6}$' -and $textWidth -le $availableWidth) "$Name $($row[2]) custom accent hex readout fits beside its color sample" ([pscustomobject]@{Text=$swatch.Text;MeasuredWidth=$textWidth;AvailableWidth=$availableWidth;Bounds=$swatch.Rect;Dpi=$Dpi})
+    Require ($swatch.Text -match '^#[0-9A-Fa-f]{6}$' -and $textWidth -le $availableWidth) "$Name $($row[2]) custom accent hex readout fits beside its color sample" ([pscustomobject]@{Text=$swatch.Text;RendererFontReference=$fontReference.Text;RendererFontWidth=$textWidth;OwnerDrawControlFontWidth=$controlFontWidth;AvailableWidth=$availableWidth;Bounds=$swatch.Rect;Dpi=$Dpi})
     $nonOverlapping=($swatch.Rect.Right -le $picker.Rect.Left -or $picker.Rect.Right -le $swatch.Rect.Left -or $swatch.Rect.Bottom -le $picker.Rect.Top -or $picker.Rect.Bottom -le $swatch.Rect.Top)
     Require $nonOverlapping "$Name $($row[2]) custom accent swatch and picker controls do not overlap" ([pscustomobject]@{SwatchBounds=$swatch.Rect;PickerBounds=$picker.Rect;Dpi=$Dpi})
   }

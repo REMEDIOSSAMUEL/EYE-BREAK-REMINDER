@@ -190,7 +190,7 @@ public:
  }
 // ---- measuring and metrics ------------------------------------------------------------------------------------
  static std::wstring windowText(HWND h){wchar_t text[1024]{};GetWindowTextW(h,text,1024);return text;}
- int measureWidth(HWND h,const std::wstring&text){HDC dc=GetDC(h);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));RECT r{0,0,0,0};DrawTextW(dc,text.c_str(),-1,&r,DT_CALCRECT|DT_SINGLELINE|DT_NOPREFIX);SelectObject(dc,previous);ReleaseDC(h,dc);return int(r.right-r.left);}
+ int measureWidth(HWND h,const std::wstring&text,HFONT font=nullptr){HDC dc=GetDC(h);HFONT selected=font?font:reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0));auto previous=SelectObject(dc,selected);RECT r{0,0,0,0};DrawTextW(dc,text.c_str(),-1,&r,DT_CALCRECT|DT_SINGLELINE|DT_NOPREFIX);SelectObject(dc,previous);ReleaseDC(h,dc);return int(r.right-r.left);}
  int measureHeight(HWND h,const std::wstring&text,int width){HDC dc=GetDC(h);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));RECT r{0,0,std::max(1,width),0};DrawTextW(dc,text.c_str(),-1,&r,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);SelectObject(dc,previous);ReleaseDC(h,dc);return int(r.bottom-r.top);}
  int tabHeight()const{return px(std::max(40.0,31.0*textScale));}
  int pillHeight()const{return px(std::max(28.0,21.0*textScale));}
@@ -579,10 +579,10 @@ public:
   std::vector<Control*> items;
   for(auto&c:controls)if(c.page==2){bool inSection=c.section==settingsSection;ShowWindow(c.handle,inSection?SW_SHOW:SW_HIDE);if(c.buddySpin)ShowWindow(c.buddySpin,inSection?SW_SHOW:SW_HIDE);if(inSection)items.push_back(&c);}
   std::vector<geometry::FormItem> form;
-  for(auto*item:items){geometry::FormItem f;f.kind=item->kind;std::wstring text=windowText(item->handle);f.textWidth=measureWidth(item->handle,text);
+  for(auto*item:items){geometry::FormItem f;f.kind=item->kind;std::wstring text=windowText(item->handle);bool accentSwatch=item->id==WORK_ACCENT_SWATCH||item->id==BREAK_ACCENT_SWATCH;f.textWidth=measureWidth(item->handle,text,accentSwatch?normalFont:nullptr);
    f.textHeight=[this,handle=item->handle,text](int width){return measureHeight(handle,text,width);};f.sameRow=item->sameRow;f.indent=item->indent;f.spin=item->buddySpin!=nullptr;f.keep=item->keep;
    // Inline rows: time fields fit "00:00" plus their margins and frame, buttons fit their caption, labels their text.
-   if(f.kind==Kind::Inline){wchar_t cls[16]{};GetClassNameW(item->handle,cls,16);if(_wcsicmp(cls,L"Edit")==0)f.width=measureWidth(item->handle,L"00:00")+px(30);else if(item->id==WORK_ACCENT_SWATCH||item->id==BREAK_ACCENT_SWATCH)f.width=std::max(px(116),f.textWidth+px(48));else if(_wcsicmp(cls,L"Button")==0)f.width=std::max(px(76),f.textWidth+px(32));else f.width=f.textWidth+px(2);}
+   if(f.kind==Kind::Inline){wchar_t cls[16]{};GetClassNameW(item->handle,cls,16);if(_wcsicmp(cls,L"Edit")==0)f.width=measureWidth(item->handle,L"00:00")+px(30);else if(accentSwatch)f.width=std::max(px(116),f.textWidth+px(52));else if(_wcsicmp(cls,L"Button")==0)f.width=std::max(px(76),f.textWidth+px(32));else f.width=f.textWidth+px(2);}
    form.push_back(std::move(f));}
   // Pass 1 lays the form out across the whole shell. Only if it is taller than the viewport does a scroll bar appear (inside the
   // shell, at its right edge) and the form is laid out again in the narrower client area. A taller form can never need less, so

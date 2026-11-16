@@ -848,6 +848,7 @@ jobs:
             '200% text-scale Break heading has room for its wrapped lines without clipping or overlap'
             '200% text-scale Break heading fits at full width without clipping or overlap'
             '200% text-scale Break reminder scrolls all nine controls fully into the viewport while retaining its heading'
+            '200% text scale Work custom accent hex readout fits beside its color sample'
           )
           $failures = @($result.Events | Where-Object { $_.Status -eq 'FAIL' })
           $knownFailures = @($failures | Where-Object { $_.Name -in $knownFindings })
@@ -856,7 +857,7 @@ jobs:
               throw "The original candidate had an unexpected failure. Outcome=$($env:ORIGINAL_ACCEPTANCE_OUTCOME); SHA256=$($result.CandidateExecutableSHA256); FailCount=$($result.Fail); Failures=$($failures.Name -join '; ')"
             }
             $classification = 'EXPECTED PRE-FIX DEFECT'
-            $details = 'The immutable original candidate reproduces one previously confirmed 200% Break-layout defect (clipped heading or partially clipped reminder controls). This comparison is retained as expected pre-fix evidence; the new candidate must pass every layout assertion.'
+            $details = 'The immutable original candidate reproduces one previously confirmed 200% layout defect: clipped Break controls/heading or clipped custom-accent text. This comparison is retained as expected pre-fix evidence; the new candidate must pass every layout assertion.'
           } elseif ($env:ORIGINAL_ACCEPTANCE_OUTCOME -eq 'success' -and [int]$result.Fail -eq 0 -and $failures.Count -eq 0) {
             $classification = 'PASS'
             $details = 'The original candidate comparison completed without failures.'
