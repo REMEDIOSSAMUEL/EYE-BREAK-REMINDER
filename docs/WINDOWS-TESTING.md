@@ -2,6 +2,12 @@
 
 Record OS build, display scaling, SDK/tool versions and actual results where available. Do not mark items passed from source inspection alone.
 
+## v1.4.0 integrated updater
+
+Use `docs/V1.4.0_UPDATER_TEST_PLAN.md` and the hosted disposable Windows workflow. All setup, uninstall, settings reset, history deletion, recovery and portable replacement scenarios must run only in that isolated hosted profile. The production WinHTTP smoke target `make github-updater-smoke` contacts the actual public release API and downloads the current supported assets into a newly created build folder; it never executes those downloads. Future-version transaction tests use an `EYEBREAK_TEST_BUILD` binary, local response metadata and a real built test installer, clearly separate from that public GitHub smoke.
+
+The existing `make gui-test` target is not by itself a production installer/update acceptance. Report GUI, resource, system Forced Colors, screen-reader, and VM-only recovery cases separately, and mark unavailable hosted desktop scenarios NOT TESTED.
+
 ## v1.3.0 custom accent colour acceptance
 
 Build `make all gui-test`, then run:

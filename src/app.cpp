@@ -1,10 +1,13 @@
 #include "windows_services.hpp"
 #include "theme.hpp"
 #include "update_checker.hpp"
+#include "update_client.hpp"
+#include "update_coordinator.hpp"
 #include <array>
 #include <atomic>
 #include <commdlg.h>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <winhttp.h>
 #include <winver.h>
@@ -20,7 +23,7 @@ constexpr int NAV_TIMER=10,NAV_HISTORY=11,NAV_SETTINGS=12,PAUSE=20,RESET=21,TAKE
 constexpr int COUNTDOWN=40,TIMER_STATE=41,COUNT_CAPTION=42,BREAK_TITLE=43,BREAK_INSTRUCTION=44,BREAK_GUIDANCE=45,HISTORY_TOGGLE=30,CLEAR_HISTORY=31,ALARM_TOGGLE=32,WORK=100,BREAK_SECONDS=101,SOUND=102,VOLUME=103,MODE=104,MONITOR=105,THEME=106,REPEAT=107,NOTIFY=108,SNOOZE=109,AUTO_START=110,STARTUP=111,TRAY=112,RESTORE=113,PAUSE_LOCK=114,SELECT_MONITOR=115,PREVIEW=116,STOP_AUDIO=117,RESET_SETTINGS=118,VOLUME_VALUE=119;
 constexpr int SCHEDULE_TOGGLE=120,PRESET_WEEKDAYS=121,PRESET_EVERYDAY=122,SCHEDULE_STATUS=123,BREAK_COLORS=124;
 constexpr int WORK_ACCENT_SWATCH=125,BREAK_ACCENT_SWATCH=126,CHOOSE_WORK_ACCENT=127,CHOOSE_BREAK_ACCENT=128,RESET_ACCENT_COLORS=129;
-constexpr int UPDATE_CHECK=160,UPDATE_OPEN=161,UPDATE_STATUS=162,UPDATE_LATEST=163,UPDATE_INSTALLED=164;
+constexpr int UPDATE_CHECK=160,UPDATE_OPEN=161,UPDATE_STATUS=162,UPDATE_LATEST=163,UPDATE_INSTALLED=164,UPDATE_AUTO_CHECK=165,UPDATE_AUTO_DOWNLOAD=166,UPDATE_LAST_CHECK=167;
 // Weekly hours: one check box per day (DAY_BASE + day). Period controls are PERIOD_BASE + day*10 + period*3 + {0 start, 1 end,
 // 2 Remove}; PERIOD_BASE + day*10 + 9 is the day's Add period button.
 constexpr int DAY_BASE=280,PERIOD_BASE=300,PERIOD_END=PERIOD_BASE+70;
@@ -40,7 +43,11 @@ struct Colors {
  bool dark=true,contrast=false,systemContrast=false;
 };
 struct UpdateDispatch {std::mutex mutex;HWND target{};bool alive=true;};
-struct UpdateMessage {updates::CheckResult result;};
+struct UpdateMessage {updates::CheckResult result;updates::ReleaseDetails release;bool automatic=false;};
+struct DownloadDialogState {std::atomic_bool cancelled{false},done{false};mutable std::mutex mutex;updates::DownloadProgress progress;updates::DownloadResult result;std::wstring phase=L"Downloading";bool dark=false,forcedColors=false,install=false;};
+struct UpdateChoiceState {std::wstring releaseUrl;bool dark=false,forcedColors=false;};
+struct UpdateChoiceResult {bool install=false,clean=false;};
+std::wstring startupUpdateNonce,startupCleanupDirectory;DWORD startupCoordinatorPid=0;
 class Application {
 public:
  HINSTANCE instance{};HWND main{},breakWindow{},trayMenuOwner{};HICON icon{};HFONT normalFont{},headingFont{},tabFont{},smallFont{},titleFont{},countFont{},breakFont{},breakTitleFont{},breakCountFont{};int countSize=0;HBRUSH backgroundBrush{},surfaceBrush{};
@@ -54,7 +61,7 @@ public:
  double deadline=0;CRITICAL_SECTION deadlineLock{};RECT normalBounds{};bool haveNormalBounds=false,breakSnooze=false;
  // Dynamic Annotation gives schedule fields full accessible names ("Monday, period 1, start time") beyond their short visible labels.
  IAccPropServices* accessibility{};std::vector<HWND> annotated;
- std::atomic_bool updateCheckActive{false};std::shared_ptr<UpdateDispatch> updateDispatch;std::wstring updateReleaseUrl;
+ std::atomic_bool updateCheckActive{false};std::shared_ptr<UpdateDispatch> updateDispatch;std::wstring updateReleaseUrl;std::string dismissedUpdateVersion;std::optional<UpdateMessage> deferredAutomaticUpdate;bool updateExitPending=false;
  static Application* app;
  int px(double value)const{return geometry::scaled(value,int(dpi));}
  int fontHeight(int points)const{return -int(std::round(points*dpi/72.0*textScale));}
@@ -363,12 +370,6 @@ public:
   VS_FIXEDFILEINFO* info=nullptr;UINT length=0;if(!VerQueryValueW(data.data(),L"\\",reinterpret_cast<void**>(&info),&length)||!info||length<sizeof(*info))return{};
   return std::to_wstring(HIWORD(info->dwProductVersionMS))+L"."+std::to_wstring(LOWORD(info->dwProductVersionMS))+L"."+std::to_wstring(HIWORD(info->dwProductVersionLS));
  }
- static updates::Failure networkFailure(DWORD code){
-  if(code==ERROR_WINHTTP_TIMEOUT)return updates::Failure::Timeout;
-  if(code==ERROR_WINHTTP_SECURE_FAILURE)return updates::Failure::SecureConnection;
-  if(code==ERROR_WINHTTP_NAME_NOT_RESOLVED||code==ERROR_WINHTTP_CANNOT_CONNECT||code==ERROR_WINHTTP_CONNECTION_ERROR)return updates::Failure::Offline;
-  return updates::Failure::Other;
- }
 #ifdef EYEBREAK_TEST_BUILD
  static bool waitForUpdateTestBarrier(){
   wchar_t startedName[256]{},releaseName[256]{};
@@ -388,7 +389,7 @@ public:
 #ifdef EYEBREAK_TEST_BUILD
   std::wstring fixturePath=executable();const auto slash=fixturePath.find_last_of(L"\\/");if(slash!=std::wstring::npos)fixturePath.resize(slash+1);fixturePath+=L"test-update-response.txt";
   std::string fixture;
-  if(read(fixturePath,fixture,65536)){
+   if(read(fixturePath,fixture,1100000)){
    updates::HttpResponse response;response.status=200;auto separator=fixture.find("\r\n\r\n");std::size_t bodyStart=separator==std::string::npos?std::string::npos:separator+4;
    if(separator==std::string::npos){separator=fixture.find("\n\n");if(separator!=std::string::npos)bodyStart=separator+2;}
    if(separator==std::string::npos){response.body=std::move(fixture);return response;}
@@ -403,62 +404,159 @@ public:
    response.body=fixture.substr(bodyStart);return response;
   }
 #endif
-  struct Handle {HINTERNET value{};~Handle(){if(value)WinHttpCloseHandle(value);}};
-  updates::HttpResponse response;
-  Handle session{WinHttpOpen(L"Eye Break Reminder (Windows x64)",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0)};
-  if(!session.value){response.failure=networkFailure(GetLastError());response.errorCode=GetLastError();return response;}
-  WinHttpSetTimeouts(session.value,5000,5000,5000,10000);
-  Handle connection{WinHttpConnect(session.value,L"api.github.com",INTERNET_DEFAULT_HTTPS_PORT,0)};
-  if(!connection.value){response.failure=networkFailure(GetLastError());response.errorCode=GetLastError();return response;}
-  Handle request{WinHttpOpenRequest(connection.value,L"GET",L"/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest",nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE)};
-  if(!request.value){response.failure=networkFailure(GetLastError());response.errorCode=GetLastError();return response;}
-  const wchar_t* headers=L"Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28\r\n";
-  if(!WinHttpAddRequestHeaders(request.value,headers,DWORD(-1),WINHTTP_ADDREQ_FLAG_ADD|WINHTTP_ADDREQ_FLAG_REPLACE)||
-     !WinHttpSendRequest(request.value,WINHTTP_NO_ADDITIONAL_HEADERS,0,WINHTTP_NO_REQUEST_DATA,0,0,0)||
-     !WinHttpReceiveResponse(request.value,nullptr)){
-   const DWORD error=GetLastError();response.failure=networkFailure(error);response.errorCode=error;return response;
-  }
-  DWORD status=0,statusSize=sizeof(status);
-  if(!WinHttpQueryHeaders(request.value,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&status,&statusSize,WINHTTP_NO_HEADER_INDEX)){
-   const DWORD error=GetLastError();response.failure=networkFailure(error);response.errorCode=error;return response;
-  }
-  response.status=int(status);
-  for(;;){DWORD available=0;if(!WinHttpQueryDataAvailable(request.value,&available)){const DWORD error=GetLastError();response.failure=networkFailure(error);response.errorCode=error;return response;}if(!available)break;
-   const DWORD amount=std::min<DWORD>(available,DWORD(65537-response.body.size()));if(!amount)break;const auto old=response.body.size();response.body.resize(old+amount);DWORD read=0;
-   if(!WinHttpReadData(request.value,response.body.data()+old,amount,&read)){const DWORD error=GetLastError();response.failure=networkFailure(error);response.errorCode=error;response.body.clear();return response;}
-   response.body.resize(old+read);if(!read||response.body.size()>65536)break;
-  }
-  return response;
+  return updates::latestStableReleaseResponse();
  }
  void setUpdateLabel(int id,const std::wstring&value){if(HWND h=find(id))SetWindowTextW(h,value.c_str());if(page==2&&settingsSection==5)layoutSettings();}
- void applyUpdateResult(const updates::CheckResult& result){
-  updateCheckActive=false;updateReleaseUrl.clear();EnableWindow(find(UPDATE_CHECK),TRUE);SetWindowTextW(find(UPDATE_CHECK),L"Check for Updates");
-  if(result.state==updates::State::Failed){setUpdateLabel(UPDATE_LATEST,L"Latest stable version: unavailable");setUpdateLabel(UPDATE_STATUS,wide(result.error));EnableWindow(find(UPDATE_OPEN),FALSE);}
-  else{
-   setUpdateLabel(UPDATE_LATEST,L"Latest stable version: "+wide(result.latestVersion));
-   if(result.state==updates::State::UpdateAvailable){updateReleaseUrl=wide(result.releaseUrl);setUpdateLabel(UPDATE_STATUS,L"An update is available. Open the official release page to review its downloads.");EnableWindow(find(UPDATE_OPEN),TRUE);}
-   else if(result.state==updates::State::InstalledNewer){setUpdateLabel(UPDATE_STATUS,L"The installed version is newer than the latest stable release.");EnableWindow(find(UPDATE_OPEN),FALSE);}
-   else {setUpdateLabel(UPDATE_STATUS,L"Eye Break Reminder is up to date.");EnableWindow(find(UPDATE_OPEN),FALSE);}
+  static constexpr int UPDATE_INSTALL_BUTTON=12001,UPDATE_LATER_BUTTON=12002,UPDATE_NOTES_BUTTON=12003,UPDATE_PRESERVE_RADIO=12101,UPDATE_CLEAN_RADIO=12102;
+  static constexpr int DOWNLOAD_INSTALL_BUTTON=12201,DOWNLOAD_CANCEL_BUTTON=12202;
+  static HRESULT CALLBACK updateChoiceCallback(HWND dialog,UINT notification,WPARAM button,LPARAM,LONG_PTR data){
+   auto&state=*reinterpret_cast<UpdateChoiceState*>(data);
+   if(notification==TDN_CREATED)taskDialogAppearance(dialog,notification,0,0,(state.dark?1:0)|(state.forcedColors?2:0));
+   if(notification==TDN_BUTTON_CLICKED&&button==UPDATE_NOTES_BUTTON){if(!state.releaseUrl.empty())ShellExecuteW(dialog,L"open",state.releaseUrl.c_str(),nullptr,nullptr,SW_SHOWNORMAL);return S_FALSE;}
+   return S_OK;
   }
-  if(HWND h=find(UPDATE_CHECK))InvalidateRect(h,nullptr,TRUE);
-  if(HWND h=find(UPDATE_OPEN))InvalidateRect(h,nullptr,TRUE);
- }
- void startUpdateCheck(){
-  bool expected=false;if(!updateCheckActive.compare_exchange_strong(expected,true))return;
-  HWND button=find(UPDATE_CHECK);if(button){EnableWindow(button,FALSE);SetWindowTextW(button,L"Checking…");InvalidateRect(button,nullptr,TRUE);}
-  setUpdateLabel(UPDATE_STATUS,L"Checking the official stable release on GitHub…");setUpdateLabel(UPDATE_LATEST,L"Latest stable version: checking…");EnableWindow(find(UPDATE_OPEN),FALSE);updateReleaseUrl.clear();
-  const std::wstring installed=installedVersion();auto dispatch=updateDispatch;
-  try{std::thread([dispatch,installed]{
-    updates::CheckResult result;
-    try{result=updates::evaluate(latestReleaseResponse(),utf8(installed));}
-    catch(...){result.error="The update check could not be completed.";}
-    std::unique_ptr<UpdateMessage> message(new(std::nothrow) UpdateMessage{std::move(result)});if(!message)return;
-    std::lock_guard<std::mutex> lock(dispatch->mutex);
-    if(dispatch->alive&&dispatch->target&&PostMessageW(dispatch->target,UPDATE_RESULT,0,reinterpret_cast<LPARAM>(message.get())))message.release();
-   }).detach();}
-  catch(...){updateCheckActive=false;EnableWindow(find(UPDATE_CHECK),TRUE);SetWindowTextW(find(UPDATE_CHECK),L"Check for Updates");setUpdateLabel(UPDATE_STATUS,L"Windows could not start the update check.");}
- }
+  static std::wstring progressText(const DownloadDialogState&state){
+   auto format=[](std::uint64_t bytes){if(bytes<1024*1024)return std::to_wstring((bytes+512)/1024)+L" KB";const std::uint64_t tenths=(bytes*10+512*1024)/(1024*1024);return std::to_wstring(tenths/10)+L"."+std::to_wstring(tenths%10)+L" MB";};
+   std::lock_guard<std::mutex>lock(state.mutex);if(state.done.load()){
+    if(state.result.ok)return L"Ready to install. The download is complete and its SHA-256 digest matches GitHub.\n\nDownloaded: "+format(state.progress.received)+L" / "+format(state.progress.total)+L" (100%)\n\nSelect Install Update to continue, or Cancel to leave the current version unchanged.";
+    return (state.result.cancelled?L"Download cancelled. ":L"Download failed. ")+wide(state.result.error)+L"\n\nThe currently installed application and its settings are unchanged.";
+   }
+   const auto p=state.progress;std::wstring text=state.phase+L"…\n\nDownloaded: "+format(p.received)+L" / "+format(p.total);
+   if(p.total)text+=L" ("+std::to_wstring(std::min<std::uint64_t>(100,p.received*100/p.total))+L"%)";
+   if(p.verifying)text+=L"\n\nChecking the downloaded file against GitHub's SHA-256 digest…";
+   return text;
+  }
+  static HRESULT CALLBACK downloadDialogCallback(HWND dialog,UINT notification,WPARAM button,LPARAM,LONG_PTR data){
+   auto&state=*reinterpret_cast<DownloadDialogState*>(data);
+   if(notification==TDN_CREATED){taskDialogAppearance(dialog,notification,0,0,(state.dark?1:0)|(state.forcedColors?2:0));SendMessageW(dialog,TDM_SET_PROGRESS_BAR_RANGE,0,MAKELPARAM(0,1000));SendMessageW(dialog,TDM_SET_PROGRESS_BAR_STATE,PBST_NORMAL,0);EnableWindow(GetDlgItem(dialog,DOWNLOAD_INSTALL_BUTTON),FALSE);}
+   else if(notification==TDN_TIMER){updates::DownloadProgress p;bool done=false;{std::lock_guard<std::mutex>lock(state.mutex);p=state.progress;done=state.done.load();}if(p.total)SendMessageW(dialog,TDM_SET_PROGRESS_BAR_POS,WPARAM(std::min<std::uint64_t>(1000,p.received*1000/p.total)),0);if(p.verifying)SendMessageW(dialog,TDM_SET_PROGRESS_BAR_STATE,PBST_PAUSED,0);auto text=progressText(state);SendMessageW(dialog,TDM_SET_ELEMENT_TEXT,TDE_CONTENT,reinterpret_cast<LPARAM>(text.c_str()));if(done){SendMessageW(dialog,TDM_SET_PROGRESS_BAR_MARQUEE,FALSE,0);if(state.result.ok)EnableWindow(GetDlgItem(dialog,DOWNLOAD_INSTALL_BUTTON),TRUE);}}
+   else if(notification==TDN_BUTTON_CLICKED&&button==DOWNLOAD_INSTALL_BUTTON){if(!state.done.load())return S_FALSE;state.install=state.result.ok;return S_OK;}
+   else if(notification==TDN_BUTTON_CLICKED&&button==DOWNLOAD_CANCEL_BUTTON){if(!state.done.load()){state.cancelled=true;return S_FALSE;}return S_OK;}
+   return S_OK;
+  }
+  static HRESULT CALLBACK cleanInstallCallback(HWND dialog,UINT notification,WPARAM checked,LPARAM,LONG_PTR data){
+   auto&state=*reinterpret_cast<UpdateChoiceState*>(data);if(notification==TDN_CREATED)taskDialogAppearance(dialog,notification,0,0,(state.dark?1:0)|(state.forcedColors?2:0));
+   if(notification==TDN_VERIFICATION_CLICKED){const wchar_t*text=checked?L"Your previous settings will be reset. Existing history and statistics will also be deleted from this Windows profile.":L"Your previous settings will be reset. History and statistics will be preserved unless you select their removal.";SendMessageW(dialog,TDM_SET_ELEMENT_TEXT,TDE_CONTENT,reinterpret_cast<LPARAM>(text));}
+   return S_OK;
+  }
+  std::wstring releaseNotes(const std::string&notes){std::wstring text=wide(notes);std::wstring safe;safe.reserve(std::min<std::size_t>(text.size(),1800));for(wchar_t c:text){if(c==0)continue;if((c<0x20&&c!=L'\r'&&c!=L'\n'&&c!=L'\t')||c==0x7f)safe.push_back(L' ');else safe.push_back(c);if(safe.size()>=1800){safe+=L"\n…";break;}}return safe;}
+  UpdateChoiceResult showUpdateChoice(const updates::ReleaseDetails&release,const updates::SelectedAsset&asset,bool ready){
+   UpdateChoiceState state{wide(release.releaseUrl),colors.dark,colors.systemContrast};TASKDIALOG_BUTTON buttons[]={{UPDATE_INSTALL_BUTTON,ready?L"Install Update":L"Download & Install"},{UPDATE_LATER_BUTTON,L"Remind Me Later"},{UPDATE_NOTES_BUTTON,L"View Release Notes"}};
+   const TASKDIALOG_BUTTON radios[]={{UPDATE_PRESERVE_RADIO,L"Preserve my settings (Recommended)"},{UPDATE_CLEAN_RADIO,L"Clean install — reset previous settings"}};
+   std::wstring content=L"Current version: "+installedVersion()+L"\nAvailable version: "+wide(release.tag)+L"\nDownload size: "+std::to_wstring((asset.asset.size+512*1024)/(1024*1024))+L" MB\n\nA newer stable version of Eye Break Reminder is available.";
+   if(ready)content+=L"\n\nThe update has already been downloaded and verified.";
+   auto notes=releaseNotes(release.notes);if(!notes.empty())content+=L"\n\nRelease notes\n"+notes;
+   for(;;){int button=0,radio=UPDATE_PRESERVE_RADIO;TASKDIALOGCONFIG cfg{};cfg.cbSize=sizeof(cfg);cfg.dwFlags=TDF_SIZE_TO_CONTENT|TDF_ALLOW_DIALOG_CANCELLATION|TDF_POSITION_RELATIVE_TO_WINDOW;cfg.hwndParent=main;cfg.pszWindowTitle=L"Eye Break Reminder Update";cfg.pszMainInstruction=L"Eye Break Reminder Update Available";cfg.pszContent=content.c_str();cfg.cButtons=3;cfg.pButtons=buttons;cfg.nDefaultButton=UPDATE_INSTALL_BUTTON;cfg.cRadioButtons=2;cfg.pRadioButtons=radios;cfg.nDefaultRadioButton=UPDATE_PRESERVE_RADIO;cfg.pfCallback=updateChoiceCallback;cfg.lpCallbackData=reinterpret_cast<LONG_PTR>(&state);
+    if(FAILED(TaskDialogIndirect(&cfg,&button,&radio,nullptr)))return{};
+    if(button==UPDATE_NOTES_BUTTON)continue;
+    if(button==UPDATE_INSTALL_BUTTON)return{true,radio==UPDATE_CLEAN_RADIO};
+    dismissedUpdateVersion=release.tag;return{};
+   }
+  }
+  bool confirmCleanInstall(bool&deleteHistory){
+   UpdateChoiceState state{{},colors.dark,colors.systemContrast};const TASKDIALOG_BUTTON buttons[]={{IDYES,L"Confirm Clean Install"},{IDCANCEL,L"Cancel"}};
+   TASKDIALOGCONFIG cfg{};cfg.cbSize=sizeof(cfg);cfg.dwFlags=TDF_SIZE_TO_CONTENT|TDF_ALLOW_DIALOG_CANCELLATION;cfg.hwndParent=main;cfg.pszWindowTitle=L"Eye Break Reminder";cfg.pszMainInstruction=L"Clean Installation";cfg.pszContent=L"This will reset your previous Eye Break Reminder settings. Your history and statistics will be preserved unless you select their removal. The previous settings remain recoverable until the new version starts successfully.";cfg.pszVerificationText=L"Also delete existing history and statistics";cfg.cButtons=2;cfg.pButtons=buttons;cfg.nDefaultButton=IDCANCEL;cfg.pfCallback=cleanInstallCallback;cfg.lpCallbackData=reinterpret_cast<LONG_PTR>(&state);int button=0;BOOL checked=FALSE;
+   if(FAILED(TaskDialogIndirect(&cfg,&button,nullptr,&checked))||button!=IDYES)return false;
+   deleteHistory=checked!=FALSE;return true;
+  }
+  void cleanupStage(const std::wstring&stage){
+    const wchar_t*files[]={L"EyeBreakReminder-Setup-x64.exe",L"EyeBreakReminder.exe",L"EyeBreakReminder-Setup-x64.exe.part",L"EyeBreakReminder.exe.part",L"transaction.ini",L"transaction-state.ini",L"transaction-state.ini.tmp",L"previous.exe",L"coordinator.exe",L"backup-0.dat",L"backup-1.dat",L"backup-2.dat",L"previous-owned-0.dat",L"previous-owned-1.dat",L"previous-owned-2.dat",L"previous-owned-3.dat"};
+   if(!updates::safeStagingDirectory(stage))return;
+   for(auto name:files)DeleteFileW((stage+L"\\"+name).c_str());
+   RemoveDirectoryW(stage.c_str());
+  }
+  bool downloadUpdate(const updates::ReleaseAsset&asset,const std::wstring&stage,std::wstring&path){
+   path=stage+L"\\"+(asset.name=="EyeBreakReminder-Setup-x64.exe"?L"EyeBreakReminder-Setup-x64.exe":L"EyeBreakReminder.exe");DownloadDialogState state;state.dark=colors.dark;state.forcedColors=colors.systemContrast;
+#ifdef EYEBREAK_TEST_BUILD
+   wchar_t fixtureBuffer[32768]{};DWORD fixtureLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_UPDATE_ASSET_PATH",fixtureBuffer,DWORD(std::size(fixtureBuffer)));const std::wstring fixturePath=fixtureLength&&fixtureLength<std::size(fixtureBuffer)?std::wstring(fixtureBuffer,fixtureLength):std::wstring{};
+#endif
+   std::thread worker;try{std::thread task([&state,asset,stage,path
+#ifdef EYEBREAK_TEST_BUILD
+    ,fixturePath
+#endif
+   ]{updates::DownloadResult result;try{
+#ifdef EYEBREAK_TEST_BUILD
+     if(!fixturePath.empty())result=updates::downloadVerifiedFixture(asset,fixturePath,stage,path.substr(path.find_last_of(L"\\")+1),state.cancelled,[&state](updates::DownloadProgress p){std::lock_guard<std::mutex>lock(state.mutex);state.progress=p;state.phase=p.verifying?L"Verifying":L"Downloading";});else
+#endif
+     result=updates::downloadVerified(asset,stage,path.substr(path.find_last_of(L"\\")+1),state.cancelled,[&state](updates::DownloadProgress p){std::lock_guard<std::mutex>lock(state.mutex);state.progress=p;state.phase=p.verifying?L"Verifying":L"Downloading";});}catch(...){result.error="The update download could not be completed.";}{std::lock_guard<std::mutex>lock(state.mutex);state.result=std::move(result);state.phase=state.result.ok?L"Ready to install":state.result.cancelled?L"Cancelled":L"Failed";state.done=true;}});worker=std::move(task);}catch(...){error(L"Windows could not start the update download.");return false;}
+   const TASKDIALOG_BUTTON buttons[]={{DOWNLOAD_INSTALL_BUTTON,L"Install Update"},{DOWNLOAD_CANCEL_BUTTON,L"Cancel"}};TASKDIALOGCONFIG cfg{};cfg.cbSize=sizeof(cfg);cfg.dwFlags=TDF_SIZE_TO_CONTENT|TDF_CALLBACK_TIMER|TDF_SHOW_PROGRESS_BAR;cfg.hwndParent=main;cfg.pszWindowTitle=L"Eye Break Reminder Update";cfg.pszMainInstruction=L"Downloading Eye Break Reminder";cfg.pszContent=L"Downloading…";cfg.cButtons=2;cfg.pButtons=buttons;cfg.nDefaultButton=DOWNLOAD_CANCEL_BUTTON;cfg.pfCallback=downloadDialogCallback;cfg.lpCallbackData=reinterpret_cast<LONG_PTR>(&state);int button=0;HRESULT shown=TaskDialogIndirect(&cfg,&button,nullptr,nullptr);if(FAILED(shown))state.cancelled=true;if(worker.joinable())worker.join();return SUCCEEDED(shown)&&button==DOWNLOAD_INSTALL_BUTTON&&state.result.ok&&state.install;
+  }
+  bool launchUpdateCoordinator(const updates::ReleaseDetails&release,const updates::SelectedAsset&asset,const updates::SelectedAsset&applicationAsset,const std::wstring&stage,const std::wstring&artifact,bool clean,bool deleteHistory){
+   if(engine->snapshot().phase==Phase::Break){inform(main,L"Finish your active break first",L"Eye Break Reminder will not close during an active eye break. You can install this verified update after the break.",colors.dark,colors.systemContrast);return false;}
+   std::wstring coordinator=stage+L"\\coordinator.exe";if(!CopyFileW(executable().c_str(),coordinator.c_str(),TRUE)){error(L"Windows could not prepare the separate update coordinator. The current application was not changed.");return false;}
+   GUID guid{};wchar_t raw[40]{};if(FAILED(CoCreateGuid(&guid))||!StringFromGUID2(guid,raw,40)){error(L"Windows could not create an update transaction identifier.");return false;}std::wstring nonce(raw);nonce=nonce.substr(1,36);
+   updates::Transaction t;t.stagingDirectory=stage;t.artifactPath=artifact;t.targetExecutable=executable();t.dataDirectory=directory;
+   updates::Version parsed;if(!updates::detail::parseVersion(release.tag,parsed)){error(L"The release version could not be verified.");return false;}t.version=wide(parsed.normalized);t.previousVersion=installedVersion();t.nonce=nonce;
+   std::wstring installDir;t.kind=updates::registeredInstallDirectory(installDir)&&updates::samePath(installDir,updates::parentPath(t.targetExecutable))?"installed":"portable";
+   t.artifactName=asset.asset.name;t.sha256=updates::client_detail::lower(asset.asset.digest.substr(asset.asset.digest.find(':')+1));t.expectedApplicationSha256=updates::client_detail::lower(applicationAsset.asset.digest.substr(applicationAsset.asset.digest.find(':')+1));t.expectedSize=asset.asset.size;t.ownerPid=GetCurrentProcessId();t.clean=clean;t.deleteHistory=deleteHistory;t.dark=colors.dark;t.forcedColors=colors.systemContrast;t.previousStartup=startupEnabled();
+   if(!updates::hashFile(t.targetExecutable,t.previousSha256)){error(L"The current application could not be hashed for recovery. It was not changed.");return false;}
+   if(!updates::writeTransaction(t)){error(L"The update recovery record could not be written. The current application was not changed.");return false;}
+   std::wstring args=L"--update-coordinator "+updates::quoteArgument(stage+L"\\transaction.ini");std::wstring command=updates::quoteArgument(coordinator)+L" "+args;STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION process{};
+   if(!CreateProcessW(coordinator.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_UNICODE_ENVIRONMENT,nullptr,stage.c_str(),&startup,&process)){error(L"Windows could not start the verified update coordinator. The current application and settings are unchanged.");return false;}
+   CloseHandle(process.hThread);CloseHandle(process.hProcess);updateExitPending=true;PostMessageW(main,quitMessage,0,0);return true;
+  }
+  void handleAvailableUpdate(const UpdateMessage&message){
+   if(dismissedUpdateVersion==message.release.tag)return;
+    if(engine->snapshot().phase==Phase::Break){deferredAutomaticUpdate=message;setUpdateLabel(UPDATE_STATUS,L"An update is available. Eye Break Reminder will wait until your active break ends before showing update options.");return;}
+   std::wstring installDir;const bool installed=updates::registeredInstallDirectory(installDir)&&updates::samePath(installDir,updates::parentPath(executable()));
+   const auto selected=updates::selectAsset(message.release,installed?updates::PackageKind::Installed:updates::PackageKind::Portable);
+   if(!selected.ok){setUpdateLabel(UPDATE_STATUS,wide(selected.error));return;}
+   const auto applicationAsset=updates::selectAsset(message.release,updates::PackageKind::Portable);
+   if(!applicationAsset.ok){setUpdateLabel(UPDATE_STATUS,wide(applicationAsset.error));return;}
+   std::wstring stage,artifact;bool ready=false;
+   if(message.automatic&&settings.autoDownloadUpdates){
+    if(engine->snapshot().phase==Phase::Break){setUpdateLabel(UPDATE_STATUS,L"An update is available. Automatic download is waiting until your active break ends.");return;}
+    if(!updates::createStagingDirectory(directory,stage)){setUpdateLabel(UPDATE_STATUS,L"There is not enough space or permission to prepare the automatic download.");return;}
+    setUpdateLabel(UPDATE_STATUS,L"Downloading the stable update…");if(!downloadUpdate(selected.asset,stage,artifact)){cleanupStage(stage);setUpdateLabel(UPDATE_STATUS,L"The update was not downloaded. Your installed application is unchanged.");return;}ready=true;
+   }
+   const auto choice=showUpdateChoice(message.release,selected,ready);
+   if(!choice.install){if(ready)cleanupStage(stage);return;}
+   bool deleteHistory=false;if(choice.clean&&!confirmCleanInstall(deleteHistory)){if(ready)cleanupStage(stage);return;}
+   if(!ready){if(!updates::createStagingDirectory(directory,stage)){setUpdateLabel(UPDATE_STATUS,L"Windows could not prepare a private update download folder.");return;}
+    setUpdateLabel(UPDATE_STATUS,L"Downloading the verified update…");if(!downloadUpdate(selected.asset,stage,artifact)){cleanupStage(stage);setUpdateLabel(UPDATE_STATUS,L"The update was not installed. Your current version and data are unchanged.");return;}}
+   setUpdateLabel(UPDATE_STATUS,L"Ready to install. The current application will close and restart automatically.");
+   if(!launchUpdateCoordinator(message.release,selected,applicationAsset,stage,artifact,choice.clean,deleteHistory)){cleanupStage(stage);return;}
+  }
+  void applyUpdateResult(UpdateMessage message){
+   updateCheckActive=false;EnableWindow(find(UPDATE_CHECK),TRUE);SetWindowTextW(find(UPDATE_CHECK),L"Check for Updates");
+   const auto&result=message.result;updateReleaseUrl.clear();
+   if(result.state==updates::State::Failed){setUpdateLabel(UPDATE_LATEST,L"Latest stable version: unavailable");setUpdateLabel(UPDATE_STATUS,wide(result.error));EnableWindow(find(UPDATE_OPEN),FALSE);}
+   else{
+    settings.updateLastCheck=std::int64_t(std::time(nullptr));saveSettings();setUpdateLabel(UPDATE_LATEST,L"Latest stable version: "+wide(result.latestVersion));setUpdateLabel(UPDATE_LAST_CHECK,L"Last successful check: "+formatDate(settings.updateLastCheck));
+    updateReleaseUrl=wide(result.releaseUrl);EnableWindow(find(UPDATE_OPEN),TRUE);
+    if(result.state==updates::State::UpdateAvailable){setUpdateLabel(UPDATE_STATUS,L"A newer stable version is available.");handleAvailableUpdate(message);}
+    else if(result.state==updates::State::InstalledNewer)setUpdateLabel(UPDATE_STATUS,L"The installed version is newer than the latest stable release.");
+    else setUpdateLabel(UPDATE_STATUS,L"Eye Break Reminder is up to date.");
+   }
+   if(HWND h=find(UPDATE_CHECK))InvalidateRect(h,nullptr,TRUE);
+   if(HWND h=find(UPDATE_OPEN))InvalidateRect(h,nullptr,TRUE);
+  }
+  void startUpdateCheck(bool automatic=false){
+   bool expected=false;if(!updateCheckActive.compare_exchange_strong(expected,true))return;
+   HWND button=find(UPDATE_CHECK);if(button){EnableWindow(button,FALSE);SetWindowTextW(button,L"Checking…");InvalidateRect(button,nullptr,TRUE);}
+   setUpdateLabel(UPDATE_STATUS,L"Checking the official stable release on GitHub…");setUpdateLabel(UPDATE_LATEST,L"Latest stable version: checking…");EnableWindow(find(UPDATE_OPEN),FALSE);updateReleaseUrl.clear();
+   const std::wstring installed=installedVersion();auto dispatch=updateDispatch;
+   try{std::thread([dispatch,installed,automatic]{
+     updates::CheckResult result;updates::ReleaseDetails release;
+     try{result=updates::evaluate(latestReleaseResponse(),utf8(installed),&release);}
+     catch(...){result.error="The update check could not be completed.";}
+     std::unique_ptr<UpdateMessage> message(new(std::nothrow) UpdateMessage{std::move(result),std::move(release),automatic});if(!message)return;
+     std::lock_guard<std::mutex> lock(dispatch->mutex);
+     if(dispatch->alive&&dispatch->target&&PostMessageW(dispatch->target,UPDATE_RESULT,0,reinterpret_cast<LPARAM>(message.get())))message.release();
+    }).detach();}
+   catch(...){updateCheckActive=false;EnableWindow(find(UPDATE_CHECK),TRUE);SetWindowTextW(find(UPDATE_CHECK),L"Check for Updates");setUpdateLabel(UPDATE_STATUS,L"Windows could not start the update check.");}
+  }
  void openOfficialRelease(){if(updateReleaseUrl.empty())return;auto result=reinterpret_cast<INT_PTR>(ShellExecuteW(main,L"open",updateReleaseUrl.c_str(),nullptr,nullptr,SW_SHOWNORMAL));if(result<=32)error(L"The official release page couldn't be opened. Check your default browser settings.");}
+  void confirmUpdateStartup(){
+   bool testSuppressConfirmation=false;
+#ifdef EYEBREAK_TEST_BUILD
+   wchar_t suppressedVersion[64]{};DWORD suppressedLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_SKIP_UPDATE_CONFIRM_VERSION",suppressedVersion,DWORD(std::size(suppressedVersion)));
+   if(suppressedLength&&suppressedLength<std::size(suppressedVersion))testSuppressConfirmation=installedVersion()==suppressedVersion;
+#endif
+   if(!testSuppressConfirmation&&!startupUpdateNonce.empty()){const std::wstring name=L"Local\\EyeBreakReminder.UpdateConfirm."+startupUpdateNonce;HANDLE event=OpenEventW(EVENT_MODIFY_STATE,FALSE,name.c_str());if(event){SetEvent(event);CloseHandle(event);}}
+   if(startupCleanupDirectory.empty()||!startupCoordinatorPid)return;
+   try{const auto stage=startupCleanupDirectory;const DWORD pid=startupCoordinatorPid;std::thread([stage,pid]{HANDLE helper=OpenProcess(SYNCHRONIZE,FALSE,pid);if(helper){WaitForSingleObject(helper,INFINITE);CloseHandle(helper);}if(!updates::safeStagingDirectory(stage)||!updates::recoveryRegistrationAbsent())return;const wchar_t*files[]={L"EyeBreakReminder-Setup-x64.exe",L"EyeBreakReminder.exe",L"EyeBreakReminder-Setup-x64.exe.part",L"EyeBreakReminder.exe.part",L"transaction.ini",L"transaction-state.ini",L"transaction-state.ini.tmp",L"previous.exe",L"coordinator.exe",L"backup-0.dat",L"backup-1.dat",L"backup-2.dat",L"previous-owned-0.dat",L"previous-owned-1.dat",L"previous-owned-2.dat",L"previous-owned-3.dat"};for(auto name:files)DeleteFileW((stage+L"\\"+name).c_str());RemoveDirectoryW(stage.c_str());}).detach();}catch(...){}
+  }
  // Stop is only useful while something is playing. The audio object only posts a request (never touches the UI itself), so
  // alarm playback never runs UI code; the request is coalesced and evaluated once the audio call has returned.
  void postPreviewRefresh(){if(previewRefreshPosted||!main)return;previewRefreshPosted=true;PostMessageW(main,PREVIEW_REFRESH,0,0);}
@@ -509,10 +607,13 @@ public:
   hint(L"Sleep counts as elapsed work time. Wake shows at most one reminder. Paused timers stay paused.",true);
   buildSection=5;label(L"About",Kind::Heading);label(L"Eye Break Reminder");hint((L"Installed version: "+installedVersion()).c_str());controls.back().id=UPDATE_INSTALLED;
   hint(L"Latest stable version: not checked");controls.back().id=UPDATE_LATEST;
-  hint(L"Select Check for Updates to query the official public GitHub Releases API.");controls.back().id=UPDATE_STATUS;
+   hint(L"Check for Updates queries the official public GitHub Releases API.");controls.back().id=UPDATE_STATUS;
+   const std::wstring lastCheck=settings.updateLastCheck?L"Last successful check: "+formatDate(settings.updateLastCheck):L"Last successful check: Never";hint(lastCheck.c_str());controls.back().id=UPDATE_LAST_CHECK;
   control(L"BUTTON",L"Check for Updates",BS_PUSHBUTTON,UPDATE_CHECK,2,Kind::Button,settingsPane);
-  control(L"BUTTON",L"Open Official Release",BS_PUSHBUTTON,UPDATE_OPEN,2,Kind::Button,settingsPane);EnableWindow(find(UPDATE_OPEN),FALSE);
-  hint(L"The checker only reports release information. It never downloads or runs an installer.",true);
+   control(L"BUTTON",L"View Release Notes",BS_PUSHBUTTON,UPDATE_OPEN,2,Kind::Button,settingsPane);EnableWindow(find(UPDATE_OPEN),FALSE);
+   checkbox(L"Automatically check for updates",UPDATE_AUTO_CHECK,2,settings.autoCheckUpdates,settingsPane);
+   checkbox(L"Automatically download updates (installation always asks first)",UPDATE_AUTO_DOWNLOAD,2,settings.autoDownloadUpdates,settingsPane);EnableWindow(find(UPDATE_AUTO_DOWNLOAD),settings.autoCheckUpdates?TRUE:FALSE);
+   hint(L"Automatic checks run at most once a day. Downloads use HTTPS and GitHub SHA-256 metadata; installation always requires your confirmation.",true);
   hint(L"All data stays on this device. No internet, telemetry, account, camera or microphone.");
   label(L"Accessibility",Kind::Heading);hint(L"Uses Windows text scaling, high contrast and keyboard focus.");
   hint(L"Ctrl+R: Reset · Ctrl+Shift+B: Take break · Ctrl+comma: Settings");
@@ -842,7 +943,7 @@ public:
    case UPDATE_CHECK:startUpdateCheck();return;case UPDATE_OPEN:openOfficialRelease();return;
    case CHOOSE_WORK_ACCENT:chooseAccentColor(true);return;case CHOOSE_BREAK_ACCENT:chooseAccentColor(false);return;case RESET_ACCENT_COLORS:resetAccentColors();return;
    case PRESET_WEEKDAYS:applyPreset(false);return;case PRESET_EVERYDAY:applyPreset(true);return;
-   case SCHEDULE_TOGGLE:settings.schedule.enabled=checked(id);break;case PAUSE:togglePause();return;case RESET:engine->reset();return;case TAKE_BREAK:engine->takeBreak();return;case COMPLETE:engine->finish(true);return;case SKIP:engine->finish(false);return;case SNOOZE1:engine->snooze(1);return;case SNOOZE3:engine->snooze(3);return;case SNOOZE5:engine->snooze(5);return;
+    case SCHEDULE_TOGGLE:settings.schedule.enabled=checked(id);break;case UPDATE_AUTO_CHECK:settings.autoCheckUpdates=checked(id);EnableWindow(find(UPDATE_AUTO_DOWNLOAD),settings.autoCheckUpdates?TRUE:FALSE);break;case UPDATE_AUTO_DOWNLOAD:settings.autoDownloadUpdates=checked(id);break;case PAUSE:togglePause();return;case RESET:engine->reset();return;case TAKE_BREAK:engine->takeBreak();return;case COMPLETE:engine->finish(true);return;case SKIP:engine->finish(false);return;case SNOOZE1:engine->snooze(1);return;case SNOOZE3:engine->snooze(3);return;case SNOOZE5:engine->snooze(5);return;
    case CLEAR_HISTORY:if(confirm(main,L"Clear all history?",L"This removes every eye break recorded on this device.",colors.dark,colors.systemContrast)){history.clear();saveHistory();updateHistory();}return;
    case PREVIEW:if(!audio->play(settings,true))error(L"The alarm couldn't play. Check your Windows audio output.");return;
    case STOP_AUDIO:audio->stop();return;
@@ -992,8 +1093,8 @@ public:
    case WM_DISPLAYCHANGE:if(a.page==2)a.buildSettings();return 0;
    case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;
    case WM_TIMER:if(w==RENDER)a.refreshTimerDisplay();else if(w==CHECKPOINT){a.saveTimer();if(a.dirtySettings)a.saveSettings();}else if(w==SCROLL)a.stepScroll();return 0;
-   case UPDATE_RESULT:{std::unique_ptr<UpdateMessage> result(reinterpret_cast<UpdateMessage*>(l));if(result)a.applyUpdateResult(result->result);return 0;}
-   case ENGINE_MESSAGE:if(!a.quitting){a.engine->tick();a.schedule();if(a.engine->scheduled()){a.updateAccessibleTimer();a.updateScheduleStatus();if(!a.hidden&&a.page==0)InvalidateRect(hwnd,nullptr,FALSE);}}return 0;
+   case UPDATE_RESULT:{std::unique_ptr<UpdateMessage> result(reinterpret_cast<UpdateMessage*>(l));if(result)a.applyUpdateResult(std::move(*result));return 0;}
+    case ENGINE_MESSAGE:if(!a.quitting){a.engine->tick();a.schedule();if(a.deferredAutomaticUpdate&&a.engine->snapshot().phase!=Phase::Break){auto deferred=std::move(*a.deferredAutomaticUpdate);a.deferredAutomaticUpdate.reset();a.handleAvailableUpdate(deferred);}if(a.engine->scheduled()){a.updateAccessibleTimer();a.updateScheduleStatus();if(!a.hidden&&a.page==0)InvalidateRect(hwnd,nullptr,FALSE);}}return 0;
    case WM_APP+3:a.error(L"Eye Break Reminder couldn't load some saved data. Defaults or a fresh timer have been restored.");return 0;
    case WM_APP+4:a.hideMain();return 0;
     case PREVIEW_REFRESH:a.previewRefreshPosted=false;a.refreshPreview();return 0;
@@ -1017,8 +1118,9 @@ public:
   auto list=monitors();Monitor selected=preferred(settings,main);for(auto&m:list)if(settings.x>=m.work.left&&settings.x<m.work.right&&settings.y>=m.work.top&&settings.y<m.work.bottom)selected=m;RECT work=selected.work;
   int width=std::min(px(settings.width),int(work.right-work.left)),height=std::min(px(settings.height),int(work.bottom-work.top));int x=settings.x==-32000?work.left+(work.right-work.left-width)/2:std::clamp(settings.x,int(work.left),int(work.right-width));int y=settings.y==-32000?work.top+(work.bottom-work.top-height)/2:std::clamp(settings.y,int(work.top),int(work.bottom-height));SetWindowPos(main,nullptr,x,y,width,height,SWP_NOZORDER);
   createControls();applyTheme();addTray();WTSRegisterSessionNotification(main,NOTIFY_FOR_THIS_SESSION);
-  engine->changed=[this]{changed();};engine->due=[this](auto cycle,bool alarm){breakDue(cycle,alarm);};engine->breakCompleted=[this](auto cycle,bool alarm){breakCompleted(cycle,alarm);};engine->ended=[this](Record record){if(settings.history){history.push_back(record);if(history.size()>10000)history.erase(history.begin());saveHistory();updateHistory();}};
-  worker=CreateThread(nullptr,0,Application::work,this,0,nullptr);if(!worker)throw std::runtime_error("Timer worker unavailable");changed();SetTimer(main,CHECKPOINT,30000,nullptr);ShowWindow(main,show);UpdateWindow(main);updateRenderTimer();SetFocus(nav[0]);
+   engine->changed=[this]{changed();};engine->due=[this](auto cycle,bool alarm){breakDue(cycle,alarm);};engine->breakCompleted=[this](auto cycle,bool alarm){breakCompleted(cycle,alarm);};engine->ended=[this](Record record){if(settings.history){history.push_back(record);if(history.size()>10000)history.erase(history.begin());saveHistory();updateHistory();}};
+   worker=CreateThread(nullptr,0,Application::work,this,0,nullptr);if(!worker)throw std::runtime_error("Timer worker unavailable");changed();SetTimer(main,CHECKPOINT,30000,nullptr);ShowWindow(main,show);UpdateWindow(main);updateRenderTimer();SetFocus(nav[0]);confirmUpdateStartup();
+   if(settings.autoCheckUpdates&&(settings.updateLastCheck==0||std::time(nullptr)-settings.updateLastCheck>=24*60*60))startUpdateCheck(true);
   HWND lastFocus=nullptr;MSG message{};while(GetMessageW(&message,nullptr,0,0)>0){if(message.message==WM_MOUSEWHEEL&&handleWheel(message))continue;if(message.message==WM_KEYDOWN&&GetKeyState(VK_CONTROL)<0){if(message.wParam=='R'){engine->reset();continue;}if(message.wParam=='B'&&GetKeyState(VK_SHIFT)<0){engine->takeBreak();continue;}if(message.wParam==VK_OEM_COMMA){showMain();switchPage(2);continue;}}
    if(message.message==WM_KEYDOWN&&message.wParam==VK_RETURN){HWND focus=GetFocus();wchar_t clsName[32]{};GetClassNameW(focus,clsName,32);if(wcscmp(clsName,L"Button")==0){SendMessageW(focus,BM_CLICK,0,0);continue;}
     // Enter in a schedule time field stores (or rejects) the typed time without leaving the field.
@@ -1039,6 +1141,18 @@ Application*Application::app=nullptr;
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show){
  OSVERSIONINFOEXW version{};version.dwOSVersionInfoSize=sizeof(version);GetVersionExW(reinterpret_cast<OSVERSIONINFOW*>(&version));if(version.dwMajorVersion<10||version.dwBuildNumber<22000){MessageBoxW(nullptr,L"Eye Break Reminder requires Windows 11 x64.",L"Eye Break Reminder",MB_OK|MB_ICONINFORMATION);return 1;}
  SYSTEM_INFO system{};GetNativeSystemInfo(&system);if(system.wProcessorArchitecture!=PROCESSOR_ARCHITECTURE_AMD64){MessageBoxW(nullptr,L"This release supports Windows 11 x64.",L"Eye Break Reminder",MB_OK);return 1;}
+ int argumentCount=0;LPWSTR*arguments=CommandLineToArgvW(GetCommandLineW(),&argumentCount);
+  bool authorizedUpdateStart=false;
+  if(arguments){
+   if(argumentCount>=2&&wcscmp(arguments[1],L"--update-coordinator")==0){int result=argumentCount==3?updates::runCoordinator(arguments[2]):2;LocalFree(arguments);return result;}
+   if(argumentCount>=2&&wcscmp(arguments[1],L"--update-recover")==0){int result=argumentCount==3?updates::runRecovery(arguments[2]):2;LocalFree(arguments);return result;}
+  for(int i=1;i<argumentCount;++i){
+    if(wcscmp(arguments[i],L"--update-confirm")==0&&i+1<argumentCount){std::wstring nonce=arguments[++i];if(nonce.size()==36&&nonce.find_first_not_of(L"0123456789abcdefABCDEF-")==std::wstring::npos){startupUpdateNonce=std::move(nonce);authorizedUpdateStart=true;}}
+    else if(wcscmp(arguments[i],L"--update-cleanup")==0&&i+2<argumentCount){startupCleanupDirectory=arguments[++i];try{auto pid=std::stoul(arguments[++i]);if(pid>0&&pid<=UINT32_MAX){startupCoordinatorPid=DWORD(pid);authorizedUpdateStart=true;}}catch(...){startupCleanupDirectory.clear();startupCoordinatorPid=0;}}
+  }
+  LocalFree(arguments);
+ }
+  if(!authorizedUpdateStart){HANDLE update=OpenMutexW(SYNCHRONIZE,FALSE,L"Local\\EyeBreakReminder.UpdateCoordinator.1");if(update){CloseHandle(update);return 0;}}
 #ifdef EYEBREAK_TEST_BUILD
  HANDLE mutex=CreateMutexW(nullptr,FALSE,L"Local\\EyeBreakReminder.GuiAcceptance.Native.1");
 #else

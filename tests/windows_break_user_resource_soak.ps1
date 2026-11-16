@@ -2,7 +2,7 @@ param(
   [Parameter(Mandatory=$true)][string]$ExecutablePath,
   [string]$EvidenceDirectory='build/hotfix-user-object-evidence/soak',
   [ValidateRange(10,200)][int]$Cycles=120,
-  [ValidateSet('1.2.0','1.2.1','1.3.0')][string]$ExpectedProductVersion='1.2.1',
+  [ValidateSet('1.2.0','1.2.1','1.3.0','1.4.0')][string]$ExpectedProductVersion='1.2.1',
   [ValidateSet('Growth','NoGrowth')][string]$ExpectedResourceBehavior='NoGrowth'
 )
 $ErrorActionPreference='Stop'

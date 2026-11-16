@@ -1,0 +1,237 @@
+name: Windows v1.4.0 updater and release-candidate acceptance
+
+on:
+  push:
+    branches:
+      - feature/v1.4.0-automatic-updater
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-updater-acceptance:
+    runs-on: windows-2025
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the requested source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install the native Windows compiler and utilities
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-python
+
+      - name: Install upstream NSIS 3.11 with the x86 Unicode plugin set
+        uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1
+        with:
+          version: '3.11'
+
+      - name: Build and verify the v1.4.0 candidate once
+        id: candidate
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          mkdir -p build/v1.4.0-updater-evidence
+          mkdir -p "$RUNNER_TEMP/eye-break-reminder-tmp"
+          export TMP="$(cygpath -u "$RUNNER_TEMP/eye-break-reminder-tmp")"
+          export TEMP="$TMP"
+          if ! command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
+            cp "$(command -v strip)" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          fi
+          nsis_root="$(cygpath -u "$NSISDIR")"
+          makensis_path="$nsis_root/makensis.exe"
+          test -x "$makensis_path"
+          {
+            echo "SOURCE_COMMIT=$GITHUB_SHA"
+            echo '--- compiler ---'
+            x86_64-w64-mingw32-g++ --version | head -n 1
+            echo '--- linker ---'
+            ld --version | head -n 1
+            echo '--- resource compiler ---'
+            windres --version | head -n 1
+            echo '--- make ---'
+            make --version | head -n 1
+            echo '--- python ---'
+            python --version 2>&1
+            echo '--- NSIS ---'
+            "$makensis_path" -VERSION
+          } > build/v1.4.0-updater-evidence/toolchain-provenance.txt 2>&1
+          pacman -Q > build/v1.4.0-updater-evidence/msys2-packages.txt
+          common_args=(CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' WINDRES=windres "MAKENSIS=$makensis_path" PYTHON=python)
+          make -B test "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-test.log
+          make all "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-all.log
+          make package "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-package.log
+          make gui-test "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-gui-test.log
+          make updater-windows-test "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/updater-windows-test.log
+          make updater-test-artifacts "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/updater-failure-fixture-build.log
+          make github-updater-smoke "${common_args[@]}" UPDATER_SMOKE_ARGS=--save-v1.3.0-setup 2>&1 | tee build/v1.4.0-updater-evidence/github-updater-smoke.log
+
+      - name: Record candidate artifact identities and exact build provenance
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $identities = foreach ($name in $files) {
+            $path = Join-Path 'release' $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate artifact is missing: $name" }
+            $file = Get-Item -LiteralPath $path
+            [pscustomobject]@{Name=$name;Bytes=$file.Length;SHA256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant();ProductVersion=if ($name.EndsWith('.exe')) {$file.VersionInfo.ProductVersion} else {$null}}
+          }
+          $identityPath = 'build/v1.4.0-updater-evidence/release-artifact-identities.json'
+          $identities | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $identityPath -Encoding UTF8
+          $manifest = Get-Content -LiteralPath 'release/EyeBreakReminder-SHA256.txt'
+          foreach ($line in $manifest) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "Malformed candidate manifest entry: $line" }
+            $item = $identities | Where-Object Name -CEQ $Matches[2]
+            if (-not $item -or $item.SHA256 -cne $Matches[1]) { throw "Candidate SHA-256 manifest mismatch: $($Matches[2])" }
+          }
+          $os = Get-CimInstance Win32_OperatingSystem
+          [pscustomobject]@{
+            Application='Eye Break Reminder';Version=(Get-Content -LiteralPath 'VERSION' -Raw).Trim()
+            SourceCommit=$env:GITHUB_SHA;Branch=$env:GITHUB_REF_NAME;RunId=$env:GITHUB_RUN_ID
+            RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            Runner=[pscustomobject]@{Image=$env:ImageOS;ImageVersion=$env:ImageVersion;Caption=$os.Caption;Version=$os.Version;Build=$os.BuildNumber}
+            Compiler='x86_64-w64-mingw32-g++ C++17, Win11 API target';NSIS='3.11 x86 Unicode';CandidateFiles=@($identities)
+            PackageManifest='release/EyeBreakReminder-SHA256.txt';PublicReleaseCreated=$false;TagCreated=$false
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/candidate-provenance.json' -Encoding UTF8
+
+      - name: Prepare versioned local fixtures for actual updater transactions
+        id: fixtures
+        if: steps.candidate.outcome == 'success'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\prepare-updater-test-fixtures.ps1 -NsisCompiler "$env:NSISDIR\makensis.exe"
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Probe availability of the interactive Windows desktop
+        id: desktop
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probe = & .\tests\windows_runner_probe.ps1
+          $capabilities = $probe | ConvertFrom-Json
+          "GUI_DESKTOP_AVAILABLE=$($capabilities.interactiveDesktopAvailable.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Run native GUI themes, accessibility and timer acceptance
+        id: gui
+        if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\gui_acceptance.ps1 -TestSystemHighContrast
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test the real v1.3.0 to v1.4.0 per-user installer transition
+        id: legacy_upgrade
+        if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_v1_3_to_v1_4_upgrade_acceptance.ps1 `
+            -LegacyInstaller '.\build\gui-test\public-v1.3.0-setup.exe' `
+            -CandidateInstaller '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -CandidateExecutable '.\release\EyeBreakReminder.exe' `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run actual update, install, settings, failure and portable transactions
+        id: updater
+        if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && steps.legacy_upgrade.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_v1_4_updater_acceptance.ps1 `
+            -BaselineInstaller '.\build\gui-test\baseline-test-setup.exe' `
+            -BaselineExecutable '.\build\gui-test\EyeBreakReminder.exe' `
+            -UpdateInstaller '.\build\gui-test\update-test-setup.exe' `
+            -UpdateExecutable '.\build\gui-test\update-test-executable.exe' `
+            -FailingInstaller '.\build\gui-test\failing-test-setup.exe' `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run the established 110-cycle native resource soak
+        id: soak
+        if: ${{ !cancelled() && steps.updater.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_break_user_resource_soak.ps1 `
+            -ExecutablePath '.\build\gui-test\EyeBreakReminder.exe' `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence\resource-soak' `
+            -Cycles 110 -ExpectedProductVersion '1.4.0' -ExpectedResourceBehavior NoGrowth
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify the exact candidate package stayed byte-identical after runtime acceptance
+        id: verify-candidate
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = Get-Content -LiteralPath 'build/v1.4.0-updater-evidence/release-artifact-identities.json' -Raw | ConvertFrom-Json
+          foreach ($item in $identity) {
+            $path = Join-Path 'release' $item.Name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate file disappeared: $($item.Name)" }
+            $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -cne $item.SHA256) { throw "Candidate changed during acceptance: $($item.Name) expected $($item.SHA256), got $actual" }
+          }
+          [pscustomobject]@{Status='PASS';Files=$identity;ExactCandidateRetained=$true;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/candidate-unchanged.json' -Encoding UTF8
+
+      - name: Require every feasible Windows acceptance prerequisite to pass
+        if: always()
+        shell: pwsh
+        env:
+          CANDIDATE_OUTCOME: ${{ steps.candidate.outcome }}
+          FIXTURE_OUTCOME: ${{ steps.fixtures.outcome }}
+          LEGACY_UPGRADE_OUTCOME: ${{ steps.legacy_upgrade.outcome }}
+          DESKTOP_OUTCOME: ${{ steps.desktop.outcome }}
+          GUI_OUTCOME: ${{ steps.gui.outcome }}
+          UPDATER_OUTCOME: ${{ steps.updater.outcome }}
+          SOAK_OUTCOME: ${{ steps.soak.outcome }}
+          IDENTITY_OUTCOME: ${{ steps.verify-candidate.outcome }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probePath = 'build/pre-release-evidence/runner-capabilities.json'
+          $desktopAvailable = $false
+          if (Test-Path -LiteralPath $probePath) { $desktopAvailable = [bool](Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json).interactiveDesktopAvailable }
+          $status = if ($env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:SOAK_OUTCOME -eq 'success') {'PASS'} else {'NOT READY'}
+          [pscustomobject]@{Status=$status;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;Updater=$env:UPDATER_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
+            ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Encoding UTF8
+          if ($status -ne 'PASS') {
+            if (-not $desktopAvailable) { throw 'Windows updater release acceptance is NOT TESTED: this runner exposed no interactive Explorer desktop. The exact development candidate is retained as evidence but is not release-ready.' }
+            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; updater=$env:UPDATER_OUTCOME; soak=$env:SOAK_OUTCOME; identity=$env:IDENTITY_OUTCOME."
+          }
+
+      - name: Upload the exact candidate and all Windows evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-candidate-${{ github.run_id }}
+          path: |
+            release/EyeBreakReminder.exe
+            release/EyeBreakReminder-Setup-x64.exe
+            release/EyeBreakReminder-Portable-x64.zip
+            release/EyeBreakReminder-Source.zip
+            release/EyeBreakReminder-SHA256.txt
+            build/v1.4.0-updater-evidence/**
+            build/pre-release-evidence/runner-capabilities.json
+            build/gui-test/evidence/**
+          if-no-files-found: warn
+          retention-days: 90

@@ -1,5 +1,11 @@
 # Verification — Windows x64 release 1.3.0 (feature branch)
 
+## v1.4.0 development verification (in progress)
+
+The development source has passed a strict local Windows x64 compile for both production and GUI-test variants, the native core suite currently reports 6,715 assertions, and the real unauthenticated WinHTTP smoke downloaded the published v1.3.0 setup and standalone EXE, matched their GitHub SHA-256 digests, and confirmed v1.4.0 compares as newer. These checks do not establish installer transaction, clean install, portable, rollback, GUI accessibility, or release-candidate acceptance. Record those only in `docs/V1.4.0_FINAL_PRE_RELEASE_VERIFICATION.md` after the exact candidate runs.
+
+See `docs/V1.4.0_UPDATER_TEST_PLAN.md` for required hosted tests and its explicit NOT TESTED policy.
+
 ## Prepared feature verification (2026-11-13)
 
 Version 1.3.0 adds independent custom Work Mode and Break Mode accents using the native Win32 `ChooseColorW` common dialog. The feature branch is prepared for review; no v1.3.0 tag or GitHub release has been published.

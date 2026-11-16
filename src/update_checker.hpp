@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,6 +14,17 @@ struct Version {
     std::uint64_t major=0, minor=0, patch=0;
     std::vector<std::string> prerelease;
     std::string normalized;
+};
+
+struct ReleaseAsset {
+    std::string name, downloadUrl, digest;
+    std::uint64_t size=0;
+};
+
+struct ReleaseDetails {
+    std::string tag, releaseUrl, notes;
+    bool draft=false, prerelease=false;
+    std::vector<ReleaseAsset> assets;
 };
 
 namespace detail {
@@ -156,6 +168,16 @@ class JsonReader {
         if(at<input.size()&&(input[at]=='e'||input[at]=='E')){++at;if(at<input.size()&&(input[at]=='+'||input[at]=='-'))++at;std::size_t digitsAt=at;while(at<input.size()&&input[at]>='0'&&input[at]<='9')++at;if(at==digitsAt)return false;}
         return at>start;
     }
+    bool unsignedInteger(std::uint64_t&out){
+        whitespace();const std::size_t start=at;
+        if(at>=input.size()||input[at]<'0'||input[at]>'9')return false;
+        if(input[at]=='0')++at;else while(at<input.size()&&input[at]>='0'&&input[at]<='9')++at;
+        const auto parsed=std::from_chars(input.data()+start,input.data()+at,out);
+        return parsed.ec==std::errc{}&&parsed.ptr==input.data()+at;
+    }
+    bool nullableString(std::string&out){
+        whitespace();if(input.substr(at,4)=="null"){at+=4;out.clear();return true;}return string(out);
+    }
     bool literal(std::string_view value){whitespace();if(input.substr(at,value.size())!=value)return false;at+=value.size();return true;}
     bool value(unsigned depth){
         whitespace();if(depth>32||at>=input.size())return false;
@@ -173,16 +195,40 @@ class JsonReader {
         if(input[at]=='n')return literal("null");
         return number();
     }
+    bool asset(ReleaseAsset&out){
+        whitespace();if(at>=input.size()||input[at++]!='{')return false;
+        bool hasName=false,hasUrl=false,hasSize=false,hasDigest=false;
+        whitespace();if(at<input.size()&&input[at]=='}')return false;
+        for(;;){
+            std::string key;if(!string(key))return false;whitespace();if(at>=input.size()||input[at++]!=':')return false;
+            if(key=="name"){if(hasName||!string(out.name))return false;hasName=true;}
+            else if(key=="browser_download_url"){if(hasUrl||!string(out.downloadUrl))return false;hasUrl=true;}
+            else if(key=="size"){if(hasSize||!unsignedInteger(out.size))return false;hasSize=true;}
+            else if(key=="digest"){if(hasDigest||!nullableString(out.digest))return false;hasDigest=true;}
+            else if(!value(1))return false;
+            whitespace();if(at>=input.size())return false;
+            const char separator=input[at++];if(separator=='}')break;if(separator!=',')return false;
+        }
+        return hasName&&hasUrl&&hasSize;
+    }
+    bool assetArray(std::vector<ReleaseAsset>&out){
+        whitespace();if(at>=input.size()||input[at++]!='[')return false;
+        whitespace();if(at<input.size()&&input[at]==']'){++at;return true;}
+        for(;;){if(out.size()>=256)return false;ReleaseAsset item;if(!asset(item))return false;out.push_back(std::move(item));whitespace();if(at>=input.size())return false;const char separator=input[at++];if(separator==']')return true;if(separator!=',')return false;}
+    }
 public:
     explicit JsonReader(std::string_view text):input(text){}
-    bool release(std::string&tag,std::string&url,bool&draft,bool&prerelease){
+    bool release(std::string&tag,std::string&url,bool&draft,bool&prerelease,
+                 std::vector<ReleaseAsset>*assets=nullptr,std::string*notes=nullptr){
         whitespace();if(at>=input.size()||input[at++]!='{')return false;
-        bool hasTag=false,hasUrl=false,hasDraft=false,hasPrerelease=false;
+        bool hasTag=false,hasUrl=false,hasDraft=false,hasPrerelease=false,hasAssets=false,hasNotes=false;
         whitespace();if(at<input.size()&&input[at]=='}')return false;
         for(;;){
             std::string key;if(!string(key))return false;whitespace();if(at>=input.size()||input[at++]!=':')return false;
             if(key=="tag_name") {if(hasTag||!string(tag))return false;hasTag=true;}
             else if(key=="html_url") {if(hasUrl||!string(url))return false;hasUrl=true;}
+            else if(key=="assets") {if(hasAssets)return false;std::vector<ReleaseAsset> parsed;if(!assetArray(parsed))return false;if(assets)*assets=std::move(parsed);hasAssets=true;}
+            else if(key=="body") {std::string parsed;if(hasNotes||!nullableString(parsed))return false;if(notes)*notes=std::move(parsed);hasNotes=true;}
             else if(key=="draft"||key=="prerelease"){
                 whitespace();bool parsed=false;
                 if(input.substr(at,4)=="true"){parsed=true;at+=4;}
@@ -204,7 +250,7 @@ struct HttpResponse { int status=0; std::string body; Failure failure=Failure::N
 enum class State { UpToDate, UpdateAvailable, InstalledNewer, Failed };
 struct CheckResult { State state=State::Failed; std::string latestVersion, releaseUrl, error; };
 
-inline CheckResult evaluate(const HttpResponse&response,std::string_view installedVersion){
+inline CheckResult evaluate(const HttpResponse&response,std::string_view installedVersion,ReleaseDetails*details=nullptr){
     CheckResult result;
     Version installed;
     if(!detail::parseVersion(installedVersion,installed)){result.error="Installed version information is missing or invalid.";return result;}
@@ -225,10 +271,11 @@ inline CheckResult evaluate(const HttpResponse&response,std::string_view install
         result.error=response.status>=500?"GitHub is temporarily unavailable (HTTP "+std::to_string(response.status)+"). Try again later.":"GitHub returned HTTP "+std::to_string(response.status)+".";
         return result;
     }
-    if(response.body.empty()||response.body.size()>65536){result.error="GitHub returned an empty or oversized response.";return result;}
+    if(response.body.empty()||response.body.size()>1024*1024){result.error="GitHub returned an empty or oversized response.";return result;}
     std::string tag,url;bool draft=false,prerelease=false;
     detail::JsonReader reader(response.body);
-    if(!reader.release(tag,url,draft,prerelease)){result.error="GitHub returned release information that could not be read.";return result;}
+    std::vector<ReleaseAsset> assets;std::string notes;
+    if(!reader.release(tag,url,draft,prerelease,details?&assets:nullptr,details?&notes:nullptr)){result.error="GitHub returned release information that could not be read.";return result;}
     if(draft||prerelease){result.error="The response was not a published stable release.";return result;}
     Version latest;
     if(!detail::parseVersion(tag,latest)||!latest.prerelease.empty()){result.error="The latest stable release has an invalid or prerelease version tag.";return result;}
@@ -237,10 +284,30 @@ inline CheckResult evaluate(const HttpResponse&response,std::string_view install
        !std::all_of(url.begin(),url.end(),[](unsigned char c){return c>=0x21&&c<=0x7e&&c!='\\'&&c!='"'&&c!='<';})){
         result.error="GitHub returned a release link outside the official Eye Break Reminder repository.";return result;
     }
-    result.latestVersion=latest.normalized;result.releaseUrl=std::move(url);
+    result.latestVersion=latest.normalized;result.releaseUrl=url;
     const int order=detail::compare(latest,installed);
     result.state=order>0?State::UpdateAvailable:order<0?State::InstalledNewer:State::UpToDate;
+    if(details){details->tag=tag;details->releaseUrl=url;details->notes=std::move(notes);details->draft=draft;details->prerelease=prerelease;details->assets=std::move(assets);}
     return result;
+}
+
+enum class PackageKind { Installed, Portable };
+struct SelectedAsset { bool ok=false;ReleaseAsset asset;std::string error; };
+inline SelectedAsset selectAsset(const ReleaseDetails&release,PackageKind kind){
+    SelectedAsset selected;const std::string expected=kind==PackageKind::Installed?"EyeBreakReminder-Setup-x64.exe":"EyeBreakReminder.exe";
+    const ReleaseAsset*match=nullptr;unsigned matches=0;
+    for(const auto&asset:release.assets)if(asset.name==expected){match=&asset;++matches;}
+    if(matches!=1){selected.error=matches?"GitHub returned duplicate update assets.":"The official release is missing the supported Windows x64 update asset.";return selected;}
+    if(match->size==0||match->size>100ull*1024*1024){selected.error="The update asset has an invalid or unsupported size.";return selected;}
+    const std::string expectedUrl="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/"+release.tag+"/"+expected;
+    Version parsedTag;
+    if(match->downloadUrl!=expectedUrl||!detail::parseVersion(release.tag,parsedTag)||!parsedTag.prerelease.empty()) {selected.error="GitHub returned an update asset outside the official repository.";return selected;}
+    constexpr std::string_view prefix="sha256:";
+    if(match->digest.size()!=prefix.size()+64||match->digest.compare(0,prefix.size(),prefix)!=0||
+       !std::all_of(match->digest.begin()+std::ptrdiff_t(prefix.size()),match->digest.end(),[](unsigned char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F');})){
+        selected.error="GitHub did not provide a usable SHA-256 digest for the update asset.";return selected;
+    }
+    selected.ok=true;selected.asset=*match;return selected;
 }
 
 } // namespace eye::updates

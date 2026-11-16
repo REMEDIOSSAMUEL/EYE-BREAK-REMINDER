@@ -28,7 +28,7 @@ inline std::string utf8(const std::wstring&s){if(s.empty())return{};int n=WideCh
 inline std::wstring executable(){std::wstring path(32768,L' ');DWORD n=GetModuleFileNameW(nullptr,path.data(),DWORD(path.size()));if(!n||n==path.size())throw std::runtime_error("Executable path unavailable");path.resize(n);return path;}
 #ifdef EYEBREAK_TEST_BUILD
 inline constexpr double monotonicScale=10.0;
-inline std::wstring dataDirectory(){std::wstring path=executable();const auto slash=path.find_last_of(L"\\/");if(slash==std::wstring::npos)throw std::runtime_error("Test executable folder unavailable");path.resize(slash+1);path+=L"test-data";std::filesystem::create_directories(path);return path;}
+inline std::wstring dataDirectory(){wchar_t overridePath[32768]{};DWORD length=GetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",overridePath,DWORD(std::size(overridePath)));if(length&&length<std::size(overridePath)){std::wstring path(overridePath,length);std::filesystem::create_directories(path);return path;}std::wstring path=executable();const auto slash=path.find_last_of(L"\\/");if(slash==std::wstring::npos)throw std::runtime_error("Test executable folder unavailable");path.resize(slash+1);path+=L"test-data";std::filesystem::create_directories(path);return path;}
 #else
 inline std::wstring dataDirectory(){PWSTR raw=nullptr;if(FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,0,nullptr,&raw)))throw std::runtime_error("Local data folder unavailable");std::wstring dir=raw;CoTaskMemFree(raw);dir+=L"\\EyeBreakReminder";std::filesystem::create_directories(dir);return dir;}
 #endif

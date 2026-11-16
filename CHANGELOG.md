@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.4.0 (development; not published)
+
+Added
+
+- Integrated stable-release discovery, in-app download progress, cancellation, SHA-256 validation and installer launch for supported installed and portable Windows x64 copies.
+- A themed native update dialog with release notes, current/available versions, Preserve Settings by default, and an explicitly confirmed Clean Install option. History/statistics deletion is a separate unchecked choice.
+- Optional daily update checks and background downloads. Both preferences default off, and installation always waits for user confirmation.
+- An external per-user update coordinator, durable recovery journal, previous-application/data backups, startup confirmation, and a next-sign-in rollback hook for interrupted future updates.
+- Interactive uninstall data retention choices. Silent uninstall keeps settings and history and removes only the transient timer checkpoint.
+- Version/asset validation tests, a Windows-only real GitHub release-download smoke tool, and updater architecture/security/acceptance documentation.
+
+Changed
+
+- Unknown valid legacy settings are retained when settings are saved, and update preferences are stored with the existing settings schema.
+- The v1.3.0 to v1.4.0 transition remains a one-time installer upgrade because v1.3.0 contains no integrated installer.
+
+Verification status
+
+- Development verification is in progress. Do not treat this section as release acceptance; see `docs/V1.4.0_FINAL_PRE_RELEASE_VERIFICATION.md` for evidence and NOT TESTED items before any publication decision.
+
 ## 1.3.0 (feature branch; prepared, not published)
 
 Added
