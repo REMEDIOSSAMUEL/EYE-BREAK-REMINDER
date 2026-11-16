@@ -907,9 +907,11 @@ try {
   }
 
   # Repeat the visible timer states with distinct Break colours disabled. This
-  # exercises the other half of the theme × accent-mode matrix and verifies
-  # that Break uses the Work ring colour in every theme.
+  # exercises the other half of the theme × accent-mode matrix. Standard
+  # themes share the Work ring; High Contrast retains its accessible phase
+  # colours even when custom accents are shared.
   $sharedAccentByTheme=@('#22C55E','#22C55E','#22C55E','#FFFF00','#0000B3')
+  $sharedBreakAccentByTheme=@('#22C55E','#22C55E','#22C55E','#00FFFF','#005A00')
   foreach($theme in 0..4){
     $themeName=$themeNames[$theme];$sharedAccent=$sharedAccentByTheme[$theme]
     Set-Theme $theme;Switch-Settings 4;Set-Check $script:mainWindow 124 $false "$themeName disable distinct Break accent for shared-colour state matrix"
@@ -926,7 +928,9 @@ try {
     Click-Control $script:mainWindow 22 "$themeName shared-colour Break state";$sharedBreakWindow=Wait-BreakWindow
     Assert-That ((Wait-Status 'Taking an eye break')-like'*Taking an eye break*') "$themeName shared-colour matrix Break state"
     Wait-RingProgress "$themeName shared-colour Break";$sharedBreakShot=Save-Screenshot $script:mainWindow "shared-accent-$themeName-break.png" -PreserveForeground
-    Assert-TimerRingPixel $sharedBreakShot $sharedAccent "$themeName distinct Break colour disabled uses Work ring colour"
+    $sharedBreakAccent=$sharedBreakAccentByTheme[$theme]
+    $ringExpectation=if($theme-ge3){'preserves the accessible system Break ring in High Contrast'}else{'uses the shared Work ring colour'}
+    Assert-TimerRingPixel $sharedBreakShot $sharedBreakAccent "$themeName shared-accent Break $ringExpectation"
     Click-Control $sharedBreakWindow 24 "$themeName complete shared-colour Break";Assert-That ((Wait-Status 'Running')-like'*Running*') "$themeName returns to Work after shared-colour Break"
     Switch-Settings 1;Set-Check $script:mainWindow 120 $false "$themeName clear schedule before shared-colour hold"
     foreach($dayId in 280..286){Set-Check $script:mainWindow $dayId $false "$themeName clear shared-colour schedule day $dayId"}

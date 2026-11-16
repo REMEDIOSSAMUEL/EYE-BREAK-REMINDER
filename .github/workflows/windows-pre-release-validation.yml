@@ -821,6 +821,8 @@ jobs:
           finally { Pop-Location }
 
       - name: Retest the original candidate installer and installed application
+        id: original_candidate_acceptance
+        continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -828,6 +830,36 @@ jobs:
             -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
             -EvidenceDirectory '.\build\pre-release-evidence' `
             -ExpectedProductVersion '1.3.0'
+
+      - name: Classify the original candidate comparison result
+        if: always()
+        shell: pwsh
+        env:
+          ORIGINAL_ACCEPTANCE_OUTCOME: ${{ steps.original_candidate_acceptance.outcome }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $resultPath = 'build/pre-release-evidence/windows-pre-release-results.json'
+          if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) { throw 'Original candidate acceptance did not retain its result JSON.' }
+          $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+          $expectedHash = 'e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd'
+          $knownFinding = '200% text-scale Break heading has room for its wrapped lines without clipping or overlap'
+          $failures = @($result.Events | Where-Object { $_.Status -eq 'FAIL' })
+          $knownFailures = @($failures | Where-Object { $_.Name -ceq $knownFinding })
+          if ($env:ORIGINAL_ACCEPTANCE_OUTCOME -eq 'failure') {
+            if ($result.CandidateExecutableSHA256 -cne $expectedHash -or [int]$result.Fail -ne 1 -or $failures.Count -ne 1 -or $knownFailures.Count -ne 1) {
+              throw "The original candidate had an unexpected failure. Outcome=$($env:ORIGINAL_ACCEPTANCE_OUTCOME); SHA256=$($result.CandidateExecutableSHA256); FailCount=$($result.Fail); Failures=$($failures.Name -join '; ')"
+            }
+            $classification = 'EXPECTED PRE-FIX DEFECT'
+            $details = 'The immutable original candidate reproduces the previously confirmed clipped Break heading at 200% text scale. This comparison is retained as expected evidence; the new candidate must pass this assertion.'
+          } elseif ($env:ORIGINAL_ACCEPTANCE_OUTCOME -eq 'success' -and [int]$result.Fail -eq 0 -and $failures.Count -eq 0) {
+            $classification = 'PASS'
+            $details = 'The original candidate comparison completed without failures.'
+          } else {
+            throw "Original candidate acceptance outcome is not an expected pass or the single known pre-fix defect: $($env:ORIGINAL_ACCEPTANCE_OUTCOME); FailCount=$($result.Fail); Failures=$($failures.Name -join '; ')"
+          }
+          New-Item -ItemType Directory -Force -Path 'build/pre-release-evidence' | Out-Null
+          [pscustomobject]@{Status=$classification;Details=$details;OriginalExecutableSHA256=$result.CandidateExecutableSHA256;AcceptanceOutcome=$env:ORIGINAL_ACCEPTANCE_OUTCOME;FailureCount=[int]$result.Fail;Failures=@($failures | ForEach-Object { [pscustomobject]@{Name=$_.Name;Details=$_.Details} });ComparedUtc=[DateTime]::UtcNow.ToString('o')} |
+            ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'build/pre-release-evidence/original-candidate-regression-classification.json' -Encoding UTF8
 
       - name: Retest original candidate installation as a disposable standard user
         shell: pwsh

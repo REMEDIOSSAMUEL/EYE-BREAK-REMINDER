@@ -1357,10 +1357,14 @@ function Test-OsAppearanceAndTextScale {
   $flags=[uint32]0
   if([EBR_PRE_NATIVE]::GetHighContrast([ref]$flags)){$script:highContrastOriginal=$flags}else{$script:highContrastOriginal=$null}
   Switch-Settings 4
-  $workPicker=Open-InstalledColorPicker 127 'Work picker for installed Forced Colors test';Set-InstalledPickerRgb $workPicker 139 92 246;Close-InstalledColorPicker $workPicker $true
-  $breakPicker=Open-InstalledColorPicker 128 'Break picker for installed Forced Colors test';Set-InstalledPickerRgb $breakPicker 249 115 22;Close-InstalledColorPicker $breakPicker $true
-  $forcedFixture=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
-  Require ($forcedFixture['customWorkAccent'] -eq '1' -and $forcedFixture['workAccentColor'] -eq [string][int]0x8B5CF6 -and $forcedFixture['customBreakAccent'] -eq '1' -and $forcedFixture['breakAccentColor'] -eq [string][int]0xF97316) 'Installed system Forced Colors test starts with distinct saved Work and Break accents' ([pscustomobject]@{Work=$forcedFixture['workAccentColor'];Break=$forcedFixture['breakAccentColor']})
+  $settingsPath=Join-Path $dataDir 'settings.ini'
+  $workPicker=Open-InstalledColorPicker 127 'Work picker for installed Forced Colors test';Set-InstalledPickerRgb $workPicker 139 92 246;Capture-ActiveWindow $workPicker 'forced-colors-work-picker-before-ok.png'|Out-Null;Close-InstalledColorPicker $workPicker $true
+  $workFixture=Wait-ForSettingsMap $settingsPath @{customWorkAccent='1';workAccentColor=[string][int]0x8B5CF6}
+  Require ($workFixture['customWorkAccent'] -eq '1' -and $workFixture['workAccentColor'] -eq [string][int]0x8B5CF6) 'Installed Work picker persists its chosen colour before the Break picker opens' ([pscustomobject]@{WorkEnabled=$workFixture['customWorkAccent'];Work=$workFixture['workAccentColor'];SettingsPath=$settingsPath})
+  $breakPicker=Open-InstalledColorPicker 128 'Break picker for installed Forced Colors test';Set-InstalledPickerRgb $breakPicker 249 115 22;Capture-ActiveWindow $breakPicker 'forced-colors-break-picker-before-ok.png'|Out-Null;Close-InstalledColorPicker $breakPicker $true
+  $forcedFixture=Wait-ForSettingsMap $settingsPath @{customWorkAccent='1';workAccentColor=[string][int]0x8B5CF6;customBreakAccent='1';breakAccentColor=[string][int]0xF97316}
+  Require ($forcedFixture['customBreakAccent'] -eq '1' -and $forcedFixture['breakAccentColor'] -eq [string][int]0xF97316) 'Installed Break picker persists its chosen colour independently after Work' ([pscustomobject]@{WorkEnabled=$forcedFixture['customWorkAccent'];Work=$forcedFixture['workAccentColor'];BreakEnabled=$forcedFixture['customBreakAccent'];Break=$forcedFixture['breakAccentColor'];SettingsPath=$settingsPath})
+  Pass 'Installed Forced Colors fixture has independently saved Work and Break accents' ([pscustomobject]@{Work=$forcedFixture['workAccentColor'];Break=$forcedFixture['breakAccentColor']})
   try {
     Switch-Settings 4
     Set-Combo $script:mainWindow 106 0 'Follow Windows Theme'
@@ -1724,6 +1728,7 @@ function Test-InstalledSettingsControls {
   Click-Control $sharedBreakWindow 24 'Complete shared Work-accent Break pixel test';Require ((Get-Status)-like'*Running*') 'Work resumes after shared Work-accent Break pixel test'
   Switch-Settings 4;Set-Check $script:mainWindow 124 $true 'Restore distinct Break colour setting after ring pixel test';Assert-InstalledSetting 'breakModeColors' '1' 'Distinct Break colour is restored after shared-accent test'
   $sharedAccentByTheme=@('#8B5CF6','#8B5CF6','#8B5CF6','#FFFF00','#0000B3')
+  $sharedBreakAccentByTheme=@('#8B5CF6','#8B5CF6','#8B5CF6','#00FFFF','#005A00')
   foreach($theme in 0..4){
     $sharedAccent=$sharedAccentByTheme[$theme]
     Set-Combo $script:mainWindow 106 $theme "Installed shared-accent theme $theme";Switch-Settings 4
@@ -1735,7 +1740,7 @@ function Test-InstalledSettingsControls {
     while($sharedBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$sharedBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
     Require ($sharedBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') "Installed theme $theme enters shared-accent Break state"
     Wait-ForRingProgress "Installed theme $theme shared-accent Break";$sharedBreakShot=Capture-PrintWindow $script:mainWindow "installed-shared-accent-theme-$theme-break.png"
-    if($sharedBreakShot){Assert-InstalledTimerRingPixel $sharedBreakShot $sharedAccent "Installed theme $theme with distinct Break colour disabled renders the Work accent"}
+    if($sharedBreakShot){$sharedBreakAccent=$sharedBreakAccentByTheme[$theme];$ringExpectation=if($theme-ge3){'preserves the accessible system Break ring in High Contrast'}else{'renders the shared Work accent'};Assert-InstalledTimerRingPixel $sharedBreakShot $sharedBreakAccent "Installed theme $theme shared-accent Break $ringExpectation"}
     Click-Control $sharedBreakWindow 24 "Installed theme $theme complete shared-accent Break";Require ((Get-Status)-like'*Running*') "Installed theme $theme returns to Work after shared-accent Break"
     Switch-Settings 4;Set-Check $script:mainWindow 124 $true "Installed theme $theme restore distinct Break colour";Assert-InstalledSetting 'breakModeColors' '1' "Installed theme $theme restores distinct Break colour preference"
   }
