@@ -107,6 +107,16 @@ jobs:
             -CandidateSourceCommit (Get-Content -LiteralPath 'candidate-identity-retest.json' -Raw | ConvertFrom-Json).CandidateSourceCommit
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Test standard-user install, Windows Settings uninstall, and UAC behavior
+        if: ${{ inputs.probe_mode == 'acceptance' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_standard_user_acceptance.ps1 `
+            -InstallerPath (Join-Path (Get-Location) 'release/EyeBreakReminder-Setup-x64.exe') `
+            -ExecutablePath (Join-Path (Get-Location) 'release/EyeBreakReminder.exe') `
+            -EvidenceDirectory (Join-Path (Get-Location) 'build/arm64-emulation-retest/standard-user')
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Inventory WinMM and WASAPI render endpoints without playing audio
         if: ${{ inputs.probe_mode == 'audio-inventory' }}
         shell: pwsh
