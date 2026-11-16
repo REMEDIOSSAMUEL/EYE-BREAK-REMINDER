@@ -184,6 +184,21 @@ Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
 Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
 Add-Type -AssemblyName System.Drawing -ErrorAction Stop
 Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+$uiaClientAssembly = [System.Windows.Automation.AutomationElement].Assembly.Location
+$uiaTypesAssembly = [System.Windows.Automation.ControlType].Assembly.Location
+Add-Type -ReferencedAssemblies @($uiaClientAssembly,$uiaTypesAssembly) -TypeDefinition @'
+using System;
+using System.Windows.Automation;
+public static class EBR_UIA_CLIENT {
+  public static AutomationElement ElementFromHandle(IntPtr hwnd) {
+    return AutomationElement.FromHandle(hwnd);
+  }
+  public static string InitializeAndDescribe(IntPtr hwnd) {
+    AutomationElement element = AutomationElement.FromHandle(hwnd);
+    return element == null ? "no-element" : element.Current.ControlType.ProgrammaticName;
+  }
+}
+'@ -ErrorAction Stop
 
 # Read-only inventory: this identifies whether the runner exposes a multimedia
 # playback device. It does not open the device or play audio.
@@ -564,7 +579,10 @@ function Wait-ForRingProgress([string]$Name) {
   Start-Sleep -Milliseconds 4500
 }
 function Get-UiaElements([IntPtr]$Window) {
-  $root=[System.Windows.Automation.AutomationElement]::FromHandle($Window)
+  # The provider assembly is discovered from the calling UIA client's references.
+  # Calling FromHandle directly in dynamically executed PowerShell omits that
+  # reference and makes native Win32 Buttons appear as generic Pane elements.
+  $root=[EBR_UIA_CLIENT]::ElementFromHandle($Window)
   if(-not $root){return @()}
   @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object { try { $_.Current.ProcessId -eq $script:appPid } catch { $false } })
 }
@@ -1329,7 +1347,7 @@ function Get-AccessibilitySurfaceSummary([IntPtr]$Window) {
   )
 }
 function Get-AccessibilityElementSnapshot([IntPtr]$Handle,[string]$Name) {
-  $element=[System.Windows.Automation.AutomationElement]::FromHandle($Handle)
+  $element=[EBR_UIA_CLIENT]::ElementFromHandle($Handle)
   if(-not$element){throw "UI Automation returned no element for $Name."}
   $current=$element.Current;$invokeAvailable=$false;$toggleAvailable=$false;$toggleState='Unavailable'
   try{$null=$element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern);$invokeAvailable=$true}catch{}
