@@ -935,7 +935,16 @@ public:
    SelectObject(titleDc,previous);ReleaseDC(breakWindow,titleDc);
    if(measured>0)titleHeight=std::max(titleHeight,int(titleBounds.bottom)+2*bpx(4));
   }
-  place(BREAK_TITLE,titleHeight);place(BREAK_INSTRUCTION,bpx(48*textScale));place(COUNTDOWN,bpx(96*std::sqrt(textScale)));place(BREAK_GUIDANCE,bpx(48*textScale));place(COMPLETE,bh);
+  auto captionHeight=[&](const wchar_t* text,HFONT font){
+   int height=0;HDC dc=GetDC(breakWindow);
+   if(dc){HGDIOBJ previous=SelectObject(dc,font);RECT bounds{0,0,width,0};int measured=DrawTextW(dc,text,-1,&bounds,DT_CALCRECT|DT_WORDBREAK|DT_CENTER|DT_NOPREFIX);SelectObject(dc,previous);ReleaseDC(breakWindow,dc);if(measured>0)height=int(bounds.bottom)+bpx(8);}
+   // Preserve the original breathing room through 150% text scaling. At larger
+   // scales, size caption rows to their wrapped text instead of reserving a
+   // 48-DIP row multiplied by the text scale, which can push the heading above
+   // the viewport even when each caption occupies only one line.
+   int minimum=bpx(48*std::min(textScale,1.5));return std::max(minimum,height);
+  };
+  place(BREAK_TITLE,titleHeight);place(BREAK_INSTRUCTION,captionHeight(L"Look at something at least 20 feet / 6 metres away.",breakFont));place(COUNTDOWN,bpx(96*std::sqrt(textScale)));place(BREAK_GUIDANCE,captionHeight(L"Keep looking into the distance.",breakFont));place(COMPLETE,bh);
   int skipWidth=breakSnooze?width/4:width;breakItems.push_back({GetDlgItem(breakWindow,SKIP),x,y,skipWidth-4,bh});
   if(breakSnooze){int widths[3]={width/3,width/5,width-width/4-width/3-width/5};int left=x+width/4;int ids[3]={SNOOZE1,SNOOZE3,SNOOZE5};for(int i=0;i<3;++i){breakItems.push_back({GetDlgItem(breakWindow,ids[i]),left,y,widths[i]-4,bh});left+=widths[i];}}
   breakHeight=y+bh+pad;breakScroller.setRange(std::max(0,breakHeight-int(r.bottom)));positionBreak(true);

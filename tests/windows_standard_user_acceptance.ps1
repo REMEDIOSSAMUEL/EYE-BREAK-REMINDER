@@ -105,7 +105,7 @@ public static class EBR_STD_UIA_CLIENT {
       $elements=@();if($root.Element){try{$elements=@($root.Element.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))}catch{}}
       $nativeControls=@(Get-StandardUserNativeControls $root.Handle);$nativeVisible=@($nativeControls|Where-Object{$_.Visible});$named=@(foreach($element in $elements){try{$name=[string]$element.Current.Name;if($name){$name}}catch{}});$signature=$named-join'|';if(-not$signature){$signature=($nativeVisible|Where-Object{$_.Text}|ForEach-Object{$_.Text})-join'|'}
       $buttons=@($elements|Where-Object{try{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$_.Current.IsEnabled-and-not$_.Current.IsOffscreen}catch{$false}})
-      $finish=@($buttons|Where-Object{try{$_.Current.Name-match'(?i)^\s*&?(Finish|Close)\s*$'}catch{$false}}|Select-Object -First 1)
+      $finish=@($buttons|Where-Object{try{$_.Current.Name-match'(?i)^\s*&?Finish\s*$'}catch{$false}}|Select-Object -First 1)
       $nativeButtons=@($nativeControls|Where-Object{$_.Class-eq'Button'-and$_.Visible-and$_.Enabled});$nativeFinish=@($nativeButtons|Where-Object{$_.Text-match'(?i)^\s*&?(Finish|Close)\s*$'}|Select-Object -First 1)
       if($finish.Count-or$nativeFinish.Count){
         [void][EBR_STD_NATIVE]::SetForegroundWindow($root.Handle)
