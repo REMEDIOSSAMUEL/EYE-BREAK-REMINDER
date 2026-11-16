@@ -2744,7 +2744,7 @@ try {
 
   if($TrayNarratorOnly){
     Require $script:interactiveDesktop 'Focused Narrator/tray repro has an interactive Explorer desktop'
-    Invoke-Install $InstallerPath 'candidate production installer for focused Narrator/tray repro' $true
+    Invoke-Install $InstallerPath 'candidate production installer for focused Narrator tray repro' $true
     Require (Start-And-CheckApp $script:expectedProductVersion) 'Exact candidate launches for focused Narrator/tray repro'
     Test-NarratorNavigation
     $trayRect=New-Object EBR_PRE_RECT
