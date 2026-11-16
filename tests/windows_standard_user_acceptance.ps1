@@ -30,6 +30,7 @@ public static class EBR_STD_NATIVE {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr hwnd,uint message,IntPtr wParam,IntPtr lParam);
+  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd,uint message,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out IntPtr result);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll",SetLastError=true)] static extern bool GetWindowRect(IntPtr hwnd,out RECT rect);
   [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left,Top,Right,Bottom; }
@@ -43,11 +44,16 @@ public static class EBR_STD_NATIVE {
 '@
   Add-Type -TypeDefinition $native -ErrorAction Stop
   $events=[System.Collections.Generic.List[object]]::new();$appProcess=$null;$status='FAIL';$failure=''
-  function Find-StandardUserWizardWindow([int]$ProcessId){
-    foreach($handle in [EBR_STD_NATIVE]::TopWindowsForProcess($ProcessId)){
-      if(-not[EBR_STD_NATIVE]::IsWindowVisible($handle)){continue}
-      try{$top=[System.Windows.Automation.AutomationElement]::FromHandle($handle);if($top){return [pscustomobject]@{Element=$top;Handle=$handle}}}catch{}
+  function Find-StandardUserWizardWindow([int]$ProcessId,[string]$Kind){
+    $processIds=[System.Collections.Generic.List[int]]::new();$processIds.Add($ProcessId)
+    if($Kind-match'(?i)uninstall'){
+      foreach($process in Get-Process -Name 'Un','Uninstall' -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId}){if(-not$processIds.Contains($process.Id)){$processIds.Add($process.Id)}}
     }
+    foreach($candidateId in $processIds){foreach($handle in [EBR_STD_NATIVE]::TopWindowsForProcess($candidateId)){
+      if(-not[EBR_STD_NATIVE]::IsWindowVisible($handle)){continue}
+      $top=$null;try{$top=[System.Windows.Automation.AutomationElement]::FromHandle($handle)}catch{}
+      return [pscustomobject]@{Element=$top;Handle=$handle;ProcessId=$candidateId}
+    }}
     return $null
   }
   function Get-StandardUserNativeControls([IntPtr]$Window){
@@ -55,6 +61,10 @@ public static class EBR_STD_NATIVE {
       if([EBR_STD_NATIVE]::ProcessId($handle)-ne[EBR_STD_NATIVE]::ProcessId($Window)){continue}
       [pscustomobject]@{Handle=$handle;Class=[EBR_STD_NATIVE]::ClassName($handle);Text=[EBR_STD_NATIVE]::Text($handle);Id=[EBR_STD_NATIVE]::GetDlgCtrlID($handle);Visible=[EBR_STD_NATIVE]::IsWindowVisible($handle);Enabled=[EBR_STD_NATIVE]::IsWindowEnabled($handle)}
     }
+  }
+  function Invoke-StandardUserNativeButton([IntPtr]$Button,[string]$Name){
+    $result=[IntPtr]::Zero;$sent=[EBR_STD_NATIVE]::SendMessageTimeoutW($Button,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero,2,5000,[ref]$result)
+    if($sent-eq[IntPtr]::Zero){throw "Native Win32 button '$Name' did not return within five seconds (win32Error=$([Runtime.InteropServices.Marshal]::GetLastWin32Error()))."}
   }
   function Capture-StandardUserWizard([IntPtr]$Window,[string]$Name){
     try{$bounds=[EBR_STD_NATIVE]::Bounds($Window);if($bounds.Count-ne4-or$bounds[2]-le$bounds[0]-or$bounds[3]-le$bounds[1]){return $null};$bitmap=[Drawing.Bitmap]::new($bounds[2]-$bounds[0],$bounds[3]-$bounds[1]);$graphics=[Drawing.Graphics]::FromImage($bitmap);$path=Join-Path $EvidenceDirectory $Name;try{$graphics.CopyFromScreen($bounds[0],$bounds[1],0,0,$bitmap.Size);$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()};return $path}catch{return $null}
@@ -67,36 +77,41 @@ public static class EBR_STD_NATIVE {
     $watch=[Diagnostics.Stopwatch]::StartNew();$root=$null;$lastSignature='';$pageNames=[System.Collections.Generic.List[string]]::new();$finishCheckbox=$null
     try{Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop;Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop;Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop;Add-Type -AssemblyName System.Drawing -ErrorAction Stop}catch{Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue;return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="UI Automation or keyboard assemblies are unavailable: $($_.Exception.Message)"}}
     while($watch.Elapsed.TotalSeconds-lt180){
-      $started.Refresh();if($started.HasExited){if($started.ExitCode-eq0){return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason='Installer exited without exposing a wizard window.';ExitCode=$started.ExitCode}};return [pscustomobject]@{Status='FAIL';Kind=$Kind;Reason='Installer exited before the wizard completed.';ExitCode=$started.ExitCode}}
-      $root=Find-StandardUserWizardWindow $started.Id
-      if(-not$root){Start-Sleep -Milliseconds 150;continue}
-      $elements=@($root.Element.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition));$named=@(foreach($element in $elements){try{$name=[string]$element.Current.Name;if($name){$name}}catch{}});$signature=$named-join'|'
+      $started.Refresh();$root=Find-StandardUserWizardWindow $started.Id $Kind
+      if(-not$root){if($started.HasExited-and$watch.Elapsed.TotalSeconds-ge8){if($started.ExitCode-eq0){return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason='Installer exited without exposing a wizard window.';ExitCode=$started.ExitCode}};return [pscustomobject]@{Status='FAIL';Kind=$Kind;Reason='Installer exited before the wizard completed.';ExitCode=$started.ExitCode}};Start-Sleep -Milliseconds 150;continue}
+      $elements=@();if($root.Element){try{$elements=@($root.Element.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))}catch{}}
+      $nativeControls=@(Get-StandardUserNativeControls $root.Handle);$nativeVisible=@($nativeControls|Where-Object{$_.Visible});$named=@(foreach($element in $elements){try{$name=[string]$element.Current.Name;if($name){$name}}catch{}});$signature=$named-join'|';if(-not$signature){$signature=($nativeVisible|Where-Object{$_.Text}|ForEach-Object{$_.Text})-join'|'}
       $buttons=@($elements|Where-Object{try{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$_.Current.IsEnabled-and-not$_.Current.IsOffscreen}catch{$false}})
       $finish=@($buttons|Where-Object{try{$_.Current.Name-match'(?i)^\s*&?(Finish|Close)\s*$'}catch{$false}}|Select-Object -First 1)
-      if($finish.Count){
+      $nativeButtons=@($nativeControls|Where-Object{$_.Class-eq'Button'-and$_.Visible-and$_.Enabled});$nativeFinish=@($nativeButtons|Where-Object{$_.Text-match'(?i)^\s*&?(Finish|Close)\s*$'}|Select-Object -First 1)
+      if($finish.Count-or$nativeFinish.Count){
         [void][EBR_STD_NATIVE]::SetForegroundWindow($root.Handle)
         $finishCheckbox=@($elements|Where-Object{try{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::CheckBox-and$_.Current.Name-match'(?i)Open Eye Break Reminder'}catch{$false}}|Select-Object -First 1)
         $checkboxState='NOT EXPOSED'
         if($finishCheckbox.Count){try{$toggle=$finishCheckbox[0].GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern);if($toggle.Current.ToggleState-eq[System.Windows.Automation.ToggleState]::On){$toggle.Toggle()};$checkboxState=$toggle.Current.ToggleState.ToString()}catch{$checkboxState='UIA state unavailable'}}
-        $nativeChecks=@(Get-StandardUserNativeControls $root.Handle|Where-Object{$_.Class-eq'Button'-and$_.Visible-and$_.Enabled-and$_.Text-match'(?i)Open Eye Break Reminder'})
+        $nativeChecks=@($nativeButtons|Where-Object{$_.Text-match'(?i)Open Eye Break Reminder'})
         if($nativeChecks.Count){foreach($check in $nativeChecks){if([EBR_STD_NATIVE]::SendMessageW($check.Handle,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()-eq1){[void][EBR_STD_NATIVE]::SendMessageW($check.Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)}};$remaining=@($nativeChecks|Where-Object{[EBR_STD_NATIVE]::SendMessageW($_.Handle,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()-eq1});if($remaining.Count){return [pscustomobject]@{Status='FAIL';Kind=$Kind;Reason='The native finish-page Run checkbox remained checked after the harness cleared it.';FinishCheckbox='On';Pages=$pageNames.ToArray();NativeChecks=$nativeChecks}};$checkboxState='Off (native Win32)'}elseif($finishCheckbox.Count-and$checkboxState-ne'Off'){return [pscustomobject]@{Status='FAIL';Kind=$Kind;Reason='The finish-page Run checkbox could not be cleared or verified.';FinishCheckbox=$checkboxState;Pages=$pageNames.ToArray()}}
         $finishScreenshot=Capture-StandardUserWizard $root.Handle 'standard-user-wizard-finish.png'
-        try{$finish[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$finish[0].SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue;return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="UI Automation could not activate the Finish button: $($_.Exception.Message)";FinishCheckbox=$checkboxState;Pages=$pageNames.ToArray()}}}
-        if(-not$started.WaitForExit(30000)){
-          $started.Refresh()
+        if($finish.Count){try{$finish[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$finish[0].SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue;return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="UI Automation could not activate the Finish button: $($_.Exception.Message)";FinishCheckbox=$checkboxState;Pages=$pageNames.ToArray()}}}}else{Invoke-StandardUserNativeButton $nativeFinish[0].Handle 'Finish'}
+        $wizardProcess=try{[Diagnostics.Process]::GetProcessById($root.ProcessId)}catch{$started}
+        if(-not$wizardProcess.WaitForExit(30000)){
+          $started.Refresh();$wizardProcess.Refresh()
           $processes=@(Get-Process -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq$started.SessionId-and($_.ProcessName-match'(?i)EyeBreakReminder|Setup|Uninstall')}|ForEach-Object{[pscustomobject]@{Pid=$_.Id;Name=$_.ProcessName;MainWindowTitle=$_.MainWindowTitle;Path=$(try{$_.Path}catch{$null})}})
-          $topWindowHandles=[EBR_STD_NATIVE]::TopWindowsForProcess($started.Id)
+          $topWindowHandles=[EBR_STD_NATIVE]::TopWindowsForProcess($root.ProcessId)
           $windows=@(foreach($handle in $topWindowHandles){[pscustomobject]@{Handle=('0x{0:X}'-f$handle.ToInt64());Title=[EBR_STD_NATIVE]::Text($handle);Class=[EBR_STD_NATIVE]::ClassName($handle);Controls=@(Get-StandardUserNativeControls $handle)}})
           $afterScreenshot=Capture-StandardUserWizard $root.Handle 'standard-user-wizard-after-finish-timeout.png'
-          Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue
-          return [pscustomobject]@{Status='FAIL';Kind=$Kind;Reason='Wizard remained running 30 seconds after Finish.';FinishCheckbox=$checkboxState;Pages=$pageNames.ToArray();ProcessId=$started.Id;HasExited=$started.HasExited;ExitCode=$(if($started.HasExited){$started.ExitCode}else{$null});WindowTitle=$root.Element.Current.Name;NativeWindow=('0x{0:X}'-f$root.Handle.ToInt64());NativeWindows=$windows;RelatedProcesses=$processes;FinishScreenshot=$finishScreenshot;TimeoutScreenshot=$afterScreenshot}
+          Stop-Process -Id $root.ProcessId -Force -ErrorAction SilentlyContinue;Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue
+          return [pscustomobject]@{Status='FAIL';Kind=$Kind;Reason='Wizard remained running 30 seconds after Finish.';FinishCheckbox=$checkboxState;Pages=$pageNames.ToArray();ProcessId=$root.ProcessId;HasExited=$wizardProcess.HasExited;ExitCode=$(if($wizardProcess.HasExited){$wizardProcess.ExitCode}else{$null});WindowTitle=[EBR_STD_NATIVE]::Text($root.Handle);NativeWindow=('0x{0:X}'-f$root.Handle.ToInt64());NativeWindows=$windows;RelatedProcesses=$processes;FinishScreenshot=$finishScreenshot;TimeoutScreenshot=$afterScreenshot}
         }
-        if($started.ExitCode-ne0){return [pscustomobject]@{Status='FAIL';Kind=$Kind;Reason="Wizard returned exit code $($started.ExitCode).";ExitCode=$started.ExitCode;FinishCheckbox=$checkboxState;Pages=$pageNames.ToArray()}}
-        return [pscustomobject]@{Status='PASS';Kind=$Kind;ExitCode=$started.ExitCode;FinishCheckbox=$checkboxState;Pages=$pageNames.ToArray();DurationSeconds=[Math]::Round($watch.Elapsed.TotalSeconds,1)}
+        $wizardExitCode=$wizardProcess.ExitCode;$started.Refresh();$parentExitCode=if($started.HasExited){$started.ExitCode}else{$null}
+        if($wizardExitCode-ne0-or($parentExitCode-ne$null-and$parentExitCode-ne0)){return [pscustomobject]@{Status='FAIL';Kind=$Kind;Reason='Installer or uninstaller wizard returned a nonzero process exit code.';ExitCode=$wizardExitCode;ParentExitCode=$parentExitCode;FinishCheckbox=$checkboxState;Pages=$pageNames.ToArray()}}
+        return [pscustomobject]@{Status='PASS';Kind=$Kind;ExitCode=$wizardExitCode;ParentExitCode=$parentExitCode;WizardProcessId=$root.ProcessId;FinishCheckbox=$checkboxState;Navigation='UI Automation with native Win32 fallback';Pages=$pageNames.ToArray();DurationSeconds=[Math]::Round($watch.Elapsed.TotalSeconds,1)}
       }
       if($signature-ne$lastSignature){
         $next=@($buttons|Where-Object{try{$_.Current.Name-match'(?i)^\s*&?(Next|Install|Uninstall|Remove)\s*>?\s*$'}catch{$false}}|Select-Object -First 1)
+        $nativeNext=@($nativeButtons|Where-Object{$_.Text-match'(?i)^\s*&?(Next|Install|Uninstall|Remove)\s*>?\s*$'}|Select-Object -First 1)
         if($next.Count){$buttonName=[string]$next[0].Current.Name;$pageNames.Add($buttonName);try{$next[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$next[0].SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue;return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="UI Automation could not activate wizard navigation: $($_.Exception.Message)";Pages=$pageNames.ToArray()}}};$lastSignature=$signature}
+        elseif($nativeNext.Count){$buttonName=[string]$nativeNext[0].Text;$pageNames.Add($buttonName);Invoke-StandardUserNativeButton $nativeNext[0].Handle $buttonName;$lastSignature=$signature}
       }
       Start-Sleep -Milliseconds 150
     }
@@ -110,7 +125,10 @@ public static class EBR_STD_NATIVE {
     Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop;Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop;Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop;Add-Type -AssemblyName System.Drawing -ErrorAction Stop
     $settingsProcess=$null;$settingsRoot=$null;$names=[System.Collections.Generic.List[string]]::new();$screenshot=$null
     try{
-    try{$settingsProcess=Start-Process -FilePath 'ms-settings:appsfeatures' -PassThru}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Windows Settings Apps page could not be opened: $($_.Exception.Message)"}}
+    $settingsLaunchErrors=[System.Collections.Generic.List[string]]::new()
+    try{$settingsProcess=Start-Process -FilePath 'ms-settings:appsfeatures' -PassThru}catch{$settingsLaunchErrors.Add("URI activation: $($_.Exception.Message)")}
+    if(-not$settingsProcess){try{$explorer=Join-Path $env:WINDIR 'explorer.exe';$settingsProcess=Start-Process -FilePath $explorer -ArgumentList 'ms-settings:appsfeatures' -PassThru}catch{$settingsLaunchErrors.Add("Explorer URI activation: $($_.Exception.Message)")}}
+    if(-not$settingsProcess){return [pscustomobject]@{Status='NOT TESTED';Reason="Windows Settings Apps page could not be opened: $($settingsLaunchErrors -join '; ')"}}
     $watch=[Diagnostics.Stopwatch]::StartNew()
     while($watch.Elapsed.TotalSeconds-lt35-and-not$settingsRoot){
       try{
@@ -121,7 +139,7 @@ public static class EBR_STD_NATIVE {
       }catch{}
       if(-not$settingsRoot){Start-Sleep -Milliseconds 250}
     }
-    if(-not$settingsRoot){return [pscustomobject]@{Status='NOT TESTED';Reason='The disposable Windows session did not expose the Installed apps page through UI Automation.';SettingsProcessId=$(if($settingsProcess){$settingsProcess.Id}else{$null})}}
+    if(-not$settingsRoot){return [pscustomobject]@{Status='NOT TESTED';Reason='The disposable Windows session did not expose the Installed apps page through UI Automation.';SettingsProcessId=$(if($settingsProcess){$settingsProcess.Id}else{$null});LaunchErrors=$settingsLaunchErrors.ToArray()}}
     try{
       $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
       if($bounds.Width-gt0-and$bounds.Height-gt0){$bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[System.Drawing.Graphics]::FromImage($bitmap);try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$screenshot=Join-Path $EvidenceDirectory 'standard-user-settings-apps-before-uninstall.png';$bitmap.Save($screenshot,[System.Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()}}

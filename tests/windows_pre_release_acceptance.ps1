@@ -1239,7 +1239,81 @@ function Test-UiaAndKeyboard {
   $focused=@($elements | Where-Object { $_.Current.HasKeyboardFocus } | ForEach-Object {$_.Current.Name})
   Require ($focusPid -eq $script:appPid -or $focused.Count -gt 0) 'Keyboard Tab input moves focus within the installed application' ([pscustomobject]@{FocusWindow=('0x{0:X}' -f $focus.ToInt64());FocusProcessId=$focusPid;AutomationFocus=$focused})
   Pass 'Screen-reader accessible names and focus properties are available through Windows UI Automation' ([pscustomobject]@{NamedControlCount=$named.Count;FocusedNames=$focused})
-  Not-Tested 'Narrator or other screen-reader speech' 'UI Automation properties were inspected; no screen-reader speech engine was started or verified.'
+  Test-NarratorNavigation
+}
+function Get-AccessibilitySurfaceSummary([IntPtr]$Window) {
+  @(
+    foreach($element in (Get-UiaElements $Window)){
+      try{
+        $current=$element.Current
+        if($current.Name){[pscustomobject]@{Name=$current.Name;Role=$current.ControlType.ProgrammaticName;Enabled=$current.IsEnabled;Offscreen=$current.IsOffscreen;KeyboardFocusable=$current.IsKeyboardFocusable;HasKeyboardFocus=$current.HasKeyboardFocus}}
+      }catch{}
+    }
+  )
+}
+function Get-AccessibilityFocusSnapshot([string]$Surface) {
+  try{
+    $element=[System.Windows.Automation.AutomationElement]::FocusedElement
+    if($element){$current=$element.Current;return [pscustomobject]@{Surface=$Surface;Name=$current.Name;Role=$current.ControlType.ProgrammaticName;ProcessId=$current.ProcessId;HasKeyboardFocus=$current.HasKeyboardFocus}}
+  }catch{}
+  return [pscustomobject]@{Surface=$Surface;Name=$null;Role=$null;ProcessId=$null;HasKeyboardFocus=$false}
+}
+function Test-NarratorNavigation {
+  if(-not $script:interactiveDesktop){Not-Tested 'Narrator keyboard and accessible-surface navigation' 'No interactive Windows desktop was exposed.';Not-Tested 'Actual Narrator speech capture' 'No interactive Windows desktop or verified audio capture endpoint was available.';return}
+  $narratorPath=Join-Path $env:WINDIR 'System32\Narrator.exe'
+  if(-not(Test-Path -LiteralPath $narratorPath -PathType Leaf)){Not-Tested 'Narrator keyboard and accessible-surface navigation' 'Narrator.exe is not installed in this Windows Server image.';Not-Tested 'Actual Narrator speech capture' "Narrator is unavailable; the Windows audio inventory reports $audioDeviceCount playback endpoint(s).";return}
+  $narratorProcess=$null;$startedNarrator=$false;$picker=[IntPtr]::Zero;$breakWindow=[IntPtr]::Zero;$navigationError='';$surfaces=[System.Collections.Generic.List[object]]::new();$focusTrace=[System.Collections.Generic.List[object]]::new()
+  try{
+    $narratorProcess=@(Get-Process -Name Narrator -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId}|Select-Object -First 1)
+    if(-not$narratorProcess.Count){$narratorProcess=Start-Process -FilePath $narratorPath -PassThru;$startedNarrator=$true}
+    $watch=[Diagnostics.Stopwatch]::StartNew();$narratorActive=$false
+    while($watch.Elapsed.TotalSeconds-lt8){$active=@(Get-Process -Name Narrator -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId});if($active.Count){$narratorProcess=$active[0];$narratorActive=$true;break};Start-Sleep -Milliseconds 100}
+    if(-not$narratorActive){throw 'Windows did not expose a running Narrator process in the interactive test session.'}
+    [void][EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow)
+    Switch-Timer
+    $timerNav=Get-Control $script:mainWindow 10 'Narrator Timer navigation focus'
+    Focus-AppControl $timerNav.Handle
+    for($i=0;$i-lt4;$i++){Send-VirtualKey 0x09;Start-Sleep -Milliseconds 120;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'Timer'))}
+    $surfaces.Add([pscustomobject]@{Surface='Timer';Controls=(Get-AccessibilitySurfaceSummary $script:mainWindow)})
+    Switch-Settings 4
+    $appearance=@(Get-AccessibilitySurfaceSummary $script:mainWindow)
+    $surfaces.Add([pscustomobject]@{Surface='Settings > Appearance';Controls=$appearance})
+    $picker=Open-InstalledColorPicker 127 'Narrator Work accent ChooseColorW navigation'
+    $rgbControls=@(foreach($id in @(706,707,708)){$child=[EBR_PRE_NATIVE]::GetDlgItem($picker,$id);if($child-ne[IntPtr]::Zero){[pscustomobject]@{Id=$id;Class=[EBR_PRE_NATIVE]::ClassName($child);Name=[EBR_PRE_NATIVE]::Text($child);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($child)}}})
+    $paletteControls=@(foreach($id in 721..736){$child=[EBR_PRE_NATIVE]::GetDlgItem($picker,$id);if($child-ne[IntPtr]::Zero-and[EBR_PRE_NATIVE]::IsWindowVisible($child)){[pscustomobject]@{Id=$id;Class=[EBR_PRE_NATIVE]::ClassName($child);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($child)}}})
+    $pickerUia=@(Get-AccessibilitySurfaceSummary $picker)
+    $surfaces.Add([pscustomobject]@{Surface='ChooseColorW';Controls=$pickerUia;RgbNativeControls=$rgbControls;VisiblePaletteCells=$paletteControls.Count})
+    foreach($id in @(706,707,708)){$child=[EBR_PRE_NATIVE]::GetDlgItem($picker,$id);if($child-ne[IntPtr]::Zero){Focus-AppControl $child;Send-VirtualKey 0x09;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'ChooseColorW RGB/palette'))}}
+    if($paletteControls.Count){$paletteCell=[EBR_PRE_NATIVE]::GetDlgItem($picker,[int]$paletteControls[0].Id);if($paletteCell-ne[IntPtr]::Zero){Focus-AppControl $paletteCell;Send-VirtualKey 0x09;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'ChooseColorW palette'))}}
+    Close-InstalledColorPicker $picker $false;$picker=[IntPtr]::Zero
+    Click-Control $script:mainWindow 11 'Narrator History navigation'
+    $surfaces.Add([pscustomobject]@{Surface='History';Controls=(Get-AccessibilitySurfaceSummary $script:mainWindow)})
+    Switch-Settings 5
+    $updateControl=Get-Control $script:mainWindow 160 'Narrator Check for Updates navigation'
+    $surfaces.Add([pscustomobject]@{Surface='Settings > About / Check for Updates';Controls=(Get-AccessibilitySurfaceSummary $script:mainWindow);UpdateButton=[pscustomobject]@{Name=[EBR_PRE_NATIVE]::Text($updateControl.Handle);Enabled=$updateControl.Enabled}})
+    Switch-Timer
+    Invoke-InstalledBreakNow 'Narrator reminder navigation'
+    $breakWindows=Get-BreakWindow $script:appPid
+    if($breakWindows.Count-ne1){throw "Expected one application-owned reminder while Narrator was active; observed $($breakWindows.Count)."}
+    $breakWindow=$breakWindows[0]
+    $breakControls=@(Get-AccessibilitySurfaceSummary $breakWindow)
+    $surfaces.Add([pscustomobject]@{Surface='Break reminder';Controls=$breakControls})
+    $acknowledge=Get-Control $breakWindow 23 'Narrator reminder acknowledgement'
+    Focus-AppControl $acknowledge.Handle
+    $focusTrace.Add((Get-AccessibilityFocusSnapshot 'Break reminder'))
+    Click-Control $breakWindow 23 'Acknowledge Narrator reminder navigation'
+    $breakWindow=[IntPtr]::Zero
+  }catch{$navigationError=$_.Exception.Message}
+  finally{
+    if($picker-ne[IntPtr]::Zero-and[EBR_PRE_NATIVE]::IsWindow($picker)){try{Close-InstalledColorPicker $picker $false}catch{[void][EBR_PRE_NATIVE]::SendMessageW($picker,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)}}
+    if($breakWindow-ne[IntPtr]::Zero-and[EBR_PRE_NATIVE]::IsWindow($breakWindow)){try{Click-Control $breakWindow 23 'Close reminder after Narrator navigation'}catch{[void][EBR_PRE_NATIVE]::SendMessageW($breakWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)}}
+    if($startedNarrator-and$narratorProcess){try{Stop-Process -Id $narratorProcess.Id -Force -ErrorAction SilentlyContinue}catch{}}
+    try{Switch-Timer}catch{}
+  }
+  if($navigationError){Not-Tested 'Narrator keyboard and accessible-surface navigation' $navigationError}
+  else{Pass 'Windows Narrator was active during Timer, Appearance, RGB/palette, History, update and reminder navigation' ([pscustomobject]@{NarratorPid=$narratorProcess.Id;Surfaces=$surfaces.ToArray();KeyboardFocusTrace=$focusTrace.ToArray();SpeechClaimed=$false})}
+  $speechReason=if($audioDeviceCount-eq0){'The Windows inventory reports zero WinMM playback endpoints; no WASAPI loopback endpoint was available to capture Narrator output.'}else{'A playback device was inventoried, but this run had no verified WASAPI loopback capture path; actual speech output is not claimed.'}
+  Not-Tested 'Actual Narrator speech capture' $speechReason
 }
 function Test-OsAppearanceAndTextScale {
   if(-not $script:interactiveDesktop){
