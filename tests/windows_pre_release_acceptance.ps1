@@ -188,14 +188,33 @@ $uiaClientAssembly = [System.Windows.Automation.AutomationElement].Assembly.Loca
 $uiaTypesAssembly = [System.Windows.Automation.ControlType].Assembly.Location
 Add-Type -ReferencedAssemblies @($uiaClientAssembly,$uiaTypesAssembly) -TypeDefinition @'
 using System;
+using System.Runtime.InteropServices;
 using System.Windows.Automation;
 public static class EBR_UIA_CLIENT {
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern IntPtr CreateWindowExW(uint ex, string cls, string text, uint style,
+    int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)]
+  static extern IntPtr GetModuleHandleW(string name);
+  [DllImport("user32.dll")]
+  static extern bool DestroyWindow(IntPtr hwnd);
   public static AutomationElement ElementFromHandle(IntPtr hwnd) {
     return AutomationElement.FromHandle(hwnd);
   }
-  public static string InitializeAndDescribe(IntPtr hwnd) {
-    AutomationElement element = AutomationElement.FromHandle(hwnd);
-    return element == null ? "no-element" : element.Current.ControlType.ProgrammaticName;
+  public static string InitializeNativeProviders() {
+    // PowerShell loads UI Automation dynamically, so its own assembly does not
+    // reference UIAutomationClient and cannot discover the default Win32 proxy
+    // table. A compiled client with explicit references initializes that table
+    // before the harness queries any installer or application HWNDs.
+    IntPtr hwnd = CreateWindowExW(0, "BUTTON", "UIA provider bootstrap", 0,
+      0, 0, 2, 2, IntPtr.Zero, IntPtr.Zero, GetModuleHandleW(null), IntPtr.Zero);
+    if (hwnd == IntPtr.Zero) throw new InvalidOperationException("Could not create the hidden native Button used to initialize the UI Automation proxy providers.");
+    try {
+      AutomationElement element = AutomationElement.FromHandle(hwnd);
+      return element.Current.ControlType.ProgrammaticName;
+    } finally {
+      DestroyWindow(hwnd);
+    }
   }
 }
 '@ -ErrorAction Stop
@@ -2627,6 +2646,8 @@ function Test-V11InteractiveUninstaller([string]$OldInstaller) {
 try {
   Start-Transcript -LiteralPath (Join-Path $EvidenceDirectory 'windows-pre-release-acceptance.log') -Force | Out-Null
   $script:transcriptStarted=$true
+  $uiaProviderBootstrap=[EBR_UIA_CLIENT]::InitializeNativeProviders()
+  Require ($uiaProviderBootstrap-eq'ControlType.Button') 'UI Automation client initializes the standard native Win32 Button provider' ([pscustomobject]@{ControlType=$uiaProviderBootstrap;ClientReferences=@($uiaClientAssembly,$uiaTypesAssembly)})
   $computer=Get-CimInstance Win32_OperatingSystem
   $script:interactiveDesktop=Get-DesktopCapability
   Pass 'Windows runner identity and interactive capability recorded' ([pscustomobject]@{Caption=$computer.Caption;Version=$computer.Version;Build=$computer.BuildNumber;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId;SessionName=$env:SESSIONNAME;UserInteractive=[Environment]::UserInteractive;ExplorerTaskbar=([EBR_PRE_NATIVE]::FindWindowW('Shell_TrayWnd',$null) -ne [IntPtr]::Zero);InteractiveDesktop=$script:interactiveDesktop;SourceCommit=$env:GITHUB_SHA;RunUrl=if($env:GITHUB_RUN_ID){"$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"}else{''}})
