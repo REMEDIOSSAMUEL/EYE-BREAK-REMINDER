@@ -815,7 +815,8 @@ try {
     Switch-Settings 4
     $selectedShot=Save-Screenshot $script:mainWindow ("settings-{0}.png" -f $themeNames[$theme])
     $selectedTab=Get-Control $script:mainWindow 134 'Selected Appearance section tab'
-    $selectedTabX=[int](($selectedTab.Rect.Left+$selectedTab.Rect.Right)/2);$selectedTabY=$selectedTab.Rect.Bottom-2
+    # Sample blank interior padding, away from the label glyph and the 2 px high-contrast border stroke.
+    $selectedTabX=$selectedTab.Rect.Left+8;$selectedTabY=[int](($selectedTab.Rect.Top+$selectedTab.Rect.Bottom)/2)
     $selectedTabPixel=Get-ScreenshotPixel $selectedShot $script:mainWindow $selectedTabX $selectedTabY
     $selectedAccent=@('#22C55E','#22C55E','#22C55E','#FFFF00','#0000B3')[$theme]
     $palette=Get-ThemePalette $theme

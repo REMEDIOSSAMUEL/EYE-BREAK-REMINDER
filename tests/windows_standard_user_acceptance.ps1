@@ -59,6 +59,9 @@ public static class EBR_STD_NATIVE {
   function Capture-StandardUserWizard([IntPtr]$Window,[string]$Name){
     try{$bounds=[EBR_STD_NATIVE]::Bounds($Window);if($bounds.Count-ne4-or$bounds[2]-le$bounds[0]-or$bounds[3]-le$bounds[1]){return $null};$bitmap=[Drawing.Bitmap]::new($bounds[2]-$bounds[0],$bounds[3]-$bounds[1]);$graphics=[Drawing.Graphics]::FromImage($bitmap);$path=Join-Path $EvidenceDirectory $Name;try{$graphics.CopyFromScreen($bounds[0],$bounds[1],0,0,$bitmap.Size);$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()};return $path}catch{return $null}
   }
+  function Capture-StandardUserDesktop([string]$Name){
+    try{$bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen;if($bounds.Width-le0-or$bounds.Height-le0){return $null};$bitmap=[Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[Drawing.Graphics]::FromImage($bitmap);$path=Join-Path $EvidenceDirectory $Name;try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()};return $path}catch{return $null}
+  }
   function Invoke-StandardUserWizard([string]$Path,[string]$Kind,[Diagnostics.Process]$ExistingProcess=$null){
     try{$started=if($ExistingProcess){$ExistingProcess}else{Start-Process -FilePath $Path -PassThru}}catch{return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="Could not launch the interactive wizard: $($_.Exception.Message)"}}
     $watch=[Diagnostics.Stopwatch]::StartNew();$root=$null;$lastSignature='';$pageNames=[System.Collections.Generic.List[string]]::new();$finishCheckbox=$null
@@ -97,8 +100,11 @@ public static class EBR_STD_NATIVE {
       }
       Start-Sleep -Milliseconds 150
     }
+    $started.Refresh();$nativeWindows=@(foreach($handle in [EBR_STD_NATIVE]::TopWindowsForProcess($started.Id)){[pscustomobject]@{Handle=('0x{0:X}'-f$handle.ToInt64());Title=[EBR_STD_NATIVE]::Text($handle);Class=[EBR_STD_NATIVE]::ClassName($handle);Visible=[EBR_STD_NATIVE]::IsWindowVisible($handle);Enabled=[EBR_STD_NATIVE]::IsWindowEnabled($handle);Bounds=[EBR_STD_NATIVE]::Bounds($handle);Controls=@(Get-StandardUserNativeControls $handle)}})
+    $desktopScreenshot=Capture-StandardUserDesktop 'standard-user-wizard-not-detected-desktop.png'
+    $processInfo=try{$started.Refresh();[pscustomobject]@{Id=$started.Id;HasExited=$started.HasExited;ExitCode=$(if($started.HasExited){$started.ExitCode}else{$null});SessionId=$started.SessionId;MainWindowHandle=('0x{0:X}'-f$started.MainWindowHandle.ToInt64());MainWindowTitle=$started.MainWindowTitle;Path=$started.Path}}catch{$null}
     Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue
-    [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason='Wizard did not expose a controllable finish page within three minutes.';Pages=$pageNames.ToArray()}
+    [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason='Wizard did not expose a controllable finish page within three minutes.';Pages=$pageNames.ToArray();NativeWindows=$nativeWindows;Process=$processInfo;ProcessEnvironmentLocalAppData=$env:LOCALAPPDATA;DesktopScreenshot=$desktopScreenshot}
   }
   function Invoke-SettingsAppsUninstall([string]$UninstallerPath){
     Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop;Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop;Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop;Add-Type -AssemblyName System.Drawing -ErrorAction Stop
@@ -173,7 +179,15 @@ public static class EBR_STD_NATIVE {
     }
   }
   try{
-    $identity=[Security.Principal.WindowsIdentity]::GetCurrent();$principal=[Security.Principal.WindowsPrincipal]::new($identity)
+    $identity=[Security.Principal.WindowsIdentity]::GetCurrent();$userProfileInfo=Get-CimInstance Win32_UserProfile -Filter "SID='$($identity.User.Value)'" -ErrorAction Stop|Where-Object{-not$_.Special}|Select-Object -First 1
+    if(-not$userProfileInfo-or-not(Test-Path -LiteralPath $userProfileInfo.LocalPath)){throw 'The disposable standard-user profile could not be resolved for its verified Windows SID.'}
+    # CreateProcessWithLogon can inherit the launching administrator's environment block. Use the loaded
+    # standard user's actual profile for per-user paths and for child installers launched by this process.
+    $env:USERPROFILE=[IO.Path]::GetFullPath($userProfileInfo.LocalPath);$env:LOCALAPPDATA=Join-Path $env:USERPROFILE 'AppData\Local';$env:APPDATA=Join-Path $env:USERPROFILE 'AppData\Roaming'
+    $env:TEMP=Join-Path $env:LOCALAPPDATA 'Temp';$env:TMP=$env:TEMP
+    if(-not(Test-Path -LiteralPath $env:LOCALAPPDATA)){[void][IO.Directory]::CreateDirectory($env:LOCALAPPDATA)}
+    if(-not(Test-Path -LiteralPath $env:TEMP)){[void][IO.Directory]::CreateDirectory($env:TEMP)}
+    $principal=[Security.Principal.WindowsPrincipal]::new($identity)
     $isAdministrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if($isAdministrator){throw 'The disposable test account unexpectedly has administrator membership.'}
     $events.Add([pscustomobject]@{Name='Child process has a standard Windows user token';Status='PASS';User=$identity.Name;Sid=$identity.User.Value;IsAdministrator=$false})
