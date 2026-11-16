@@ -53,7 +53,7 @@ public static class EBR_DISPLAY_NATIVE {
  public static IntPtr Child(IntPtr hwnd,int id){return hwnd==IntPtr.Zero?IntPtr.Zero:GetDlgItem(hwnd,id);}
  public static int ControlId(IntPtr hwnd){return hwnd==IntPtr.Zero?-1:GetDlgCtrlID(hwnd);}
  public static IntPtr FindChildByText(IntPtr parent,string expected){IntPtr found=IntPtr.Zero;EnumProc cb=delegate(IntPtr h,IntPtr ignored){if(String.Equals(ClassName(h),"Button",StringComparison.OrdinalIgnoreCase)&&String.Equals(Text(h),expected,StringComparison.OrdinalIgnoreCase)){found=h;return false;}return true;};EnumChildWindows(parent,cb,IntPtr.Zero);GC.KeepAlive(cb);return found;}
- public static bool Click(IntPtr hwnd){if(hwnd==IntPtr.Zero)return false;IntPtr result;return SendMessageTimeoutW(hwnd,0x00F5,IntPtr.Zero,IntPtr.Zero,2,2000,out result)!=IntPtr.Zero;}
+ public static void ClickButton(IntPtr hwnd){if(hwnd!=IntPtr.Zero)SendMessageW(hwnd,0x00F5,IntPtr.Zero,IntPtr.Zero);}
  public static bool Responsive(IntPtr hwnd){if(hwnd==IntPtr.Zero)return false;IntPtr result;return SendMessageTimeoutW(hwnd,0,IntPtr.Zero,IntPtr.Zero,2,1500,out result)!=IntPtr.Zero;}
  public static IntPtr[] Children(IntPtr root){List<IntPtr> result=new List<IntPtr>();EnumProc cb=delegate(IntPtr h,IntPtr ignored){result.Add(h);return true;};EnumChildWindows(root,cb,IntPtr.Zero);GC.KeepAlive(cb);return result.ToArray();}
  public static IntPtr FindProcessWindow(int pid,string className){IntPtr found=IntPtr.Zero;EnumProc cb=delegate(IntPtr h,IntPtr ignored){uint owner;GetWindowThreadProcessId(h,out owner);if(owner==(uint)pid&&IsWindowVisible(h)&&String.Equals(ClassName(h),className,StringComparison.Ordinal)){found=h;return false;}return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return found;}
@@ -114,13 +114,13 @@ try {
   $breakButton=[EBR_DISPLAY_NATIVE]::Child($main,22);$buttonLookup='GetDlgItem control ID 22'
   if($breakButton-eq[IntPtr]::Zero){$buttonMatches=@([EBR_DISPLAY_NATIVE]::Children($main)|Where-Object{$owner=[uint32]0;[void][EBR_DISPLAY_NATIVE]::GetWindowThreadProcessId($_,[ref]$owner);$owner-eq$script:app.Id-and[EBR_DISPLAY_NATIVE]::Visible($_)-and[EBR_DISPLAY_NATIVE]::ControlId($_)-eq22-and[EBR_DISPLAY_NATIVE]::ClassName($_)-eq'Button'});if($buttonMatches.Count-eq1){$breakButton=$buttonMatches[0];$buttonLookup='EnumChildWindows process/visible/control ID 22'}else{$breakButton=[EBR_DISPLAY_NATIVE]::FindChildByText($main,'Take a break now');$buttonLookup='visible button caption fallback'}}
   if($breakButton-eq[IntPtr]::Zero){$children=@([EBR_DISPLAY_NATIVE]::Children($main)|ForEach-Object{$owner=[uint32]0;[void][EBR_DISPLAY_NATIVE]::GetWindowThreadProcessId($_,[ref]$owner);[pscustomobject]@{ProcessId=$owner;ControlId=[EBR_DISPLAY_NATIVE]::ControlId($_);Class=[EBR_DISPLAY_NATIVE]::ClassName($_);Visible=[EBR_DISPLAY_NATIVE]::Visible($_);Caption=[EBR_DISPLAY_NATIVE]::Text($_)}});throw "The visible Take a break now button was not found by ID or caption. Main-window child controls: $($children|ConvertTo-Json -Compress -Depth 4)"}
-  $result.TakeBreakControl=[pscustomobject]@{Lookup=$buttonLookup;ControlId=[EBR_DISPLAY_NATIVE]::ControlId($breakButton);Caption=[EBR_DISPLAY_NATIVE]::Text($breakButton);Visible=[EBR_DISPLAY_NATIVE]::Visible($breakButton);Bounds=[EBR_DISPLAY_NATIVE]::Bounds($breakButton)}
+  $result.TakeBreakControl=[pscustomobject]@{Lookup=$buttonLookup;ControlId=[EBR_DISPLAY_NATIVE]::ControlId($breakButton);Caption=[EBR_DISPLAY_NATIVE]::Text($breakButton);Visible=[EBR_DISPLAY_NATIVE]::Visible($breakButton);Bounds=[EBR_DISPLAY_NATIVE]::Bounds($breakButton);Activation=$null}
   if(-not$result.TakeBreakControl.Visible){throw 'The Take a break now control was not visible before it was activated.'}
   [void][EBR_DISPLAY_NATIVE]::SetForegroundWindow($main);Start-Sleep -Milliseconds 200
-  if(-not[EBR_DISPLAY_NATIVE]::Click($breakButton)){throw "Could not activate the real Take a Break button via $buttonLookup."}
+  [EBR_DISPLAY_NATIVE]::ClickButton($breakButton);$result.TakeBreakControl.Activation='BM_CLICK sent; success will be determined from the resulting reminder window.'
   $watch.Restart();$break=[IntPtr]::Zero
   while($watch.Elapsed.TotalSeconds-lt15-and$break-eq[IntPtr]::Zero){$break=[EBR_DISPLAY_NATIVE]::FindProcessWindow($script:app.Id,'EyeBreakReminder.Break');if($break-eq[IntPtr]::Zero){Start-Sleep -Milliseconds 100}}
-  if($break-eq[IntPtr]::Zero){throw 'A real Break reminder did not appear before the display change.'}
+  if($break-eq[IntPtr]::Zero){throw "BM_CLICK via $buttonLookup did not produce the real Break reminder within 15 seconds."}
   $result.BeforeChange=Get-DisplaySnapshot
   if(-not$result.BeforeChange.BreakWindow.Visible){throw 'Break reminder was not visible before the display change.'}
   if($result.BeforeChange.BreakWindow.Actions.Count-ne5-or@($result.BeforeChange.BreakWindow.Actions|Where-Object{-not$_.Visible}).Count-gt0){throw 'The visible Break reminder did not expose all five visible action controls before the display change.'}
@@ -138,7 +138,7 @@ try {
   [void][EBR_DISPLAY_NATIVE]::SetForegroundWindow($main);Start-Sleep -Milliseconds 200;[void][EBR_DISPLAY_NATIVE]::SetForegroundWindow($break);Start-Sleep -Milliseconds 200
   if(-not[EBR_DISPLAY_NATIVE]::Responsive($main)-or-not[EBR_DISPLAY_NATIVE]::Responsive($break)){throw 'The main or reminder window did not remain responsive after focus was moved across them.'}
   $ack=[EBR_DISPLAY_NATIVE]::Child($break,23);if(-not[EBR_DISPLAY_NATIVE]::Visible($ack)){throw 'The reminder acknowledgement control was not visible after the display-mode change.'}
-  if(-not[EBR_DISPLAY_NATIVE]::Click($ack)){throw 'The reminder acknowledgement control did not respond after the display-mode change.'}
+  [EBR_DISPLAY_NATIVE]::ClickButton($ack)
   $watch.Restart();do{$break=[EBR_DISPLAY_NATIVE]::FindProcessWindow($script:app.Id,'EyeBreakReminder.Break');if($break-eq[IntPtr]::Zero){break};Start-Sleep -Milliseconds 100}while($watch.Elapsed.TotalSeconds-lt10)
   if($break-ne[IntPtr]::Zero){throw 'The reminder did not close after acknowledging it following the display-mode change.'}
   if([EBR_DISPLAY_NATIVE]::CountProcessWindows($script:app.Id,'EyeBreakReminder.Break')-ne0){throw 'A duplicate reminder window remained after acknowledgement.'}
