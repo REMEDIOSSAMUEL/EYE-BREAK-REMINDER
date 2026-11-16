@@ -1486,7 +1486,7 @@ function Test-OsAppearanceAndTextScale {
     $beforeRect=(Get-Control $script:mainWindow 22 'Take a break button').Rect
     $scaleValue=Get-SavedRegistryValue $accessibilityKey 'TextScaleFactor'
     if(-not (Test-Path -LiteralPath $accessibilityKey)){New-Item -Path $accessibilityKey -Force | Out-Null}
-    foreach($textScale in @(125,150,200)){
+    foreach($textScale in @(125,150,200,225)){
       Set-DwordRegistryValue $accessibilityKey 'TextScaleFactor' $textScale
       [void][EBR_PRE_NATIVE]::BroadcastSetting($script:mainWindow,'Accessibility')
       [void][EBR_PRE_NATIVE]::SendMessageW($script:mainWindow,0x001A,[IntPtr]::Zero,[IntPtr]::Zero)
@@ -1530,19 +1530,19 @@ function Test-OsAppearanceAndTextScale {
       Require ($layoutBreak-ne[IntPtr]::Zero) "Installed reminder opens at $textScale% text scale"
       $breakBounds=Get-Rect $layoutBreak
       Require ($breakBounds.Left-ge0-and$breakBounds.Top-ge0-and$breakBounds.Right-le$screenWidth-and$breakBounds.Bottom-le$screenHeight) "Break reminder remains within the display at $textScale% text scale" ([pscustomobject]@{Bounds=$breakBounds;DisplayWidth=$screenWidth;DisplayHeight=$screenHeight})
-      if($textScale-eq200){
-        $breakTitle=Get-Control $layoutBreak 43 '200% text-scale Break reminder heading';$breakInstruction=Get-Control $layoutBreak 44 '200% text-scale Break reminder instruction'
+      if($textScale-ge200){
+        $breakTitle=Get-Control $layoutBreak 43 "$textScale% text-scale Break reminder heading";$breakInstruction=Get-Control $layoutBreak 44 "$textScale% text-scale Break reminder instruction"
         $minimumTitleHeight=[Math]::Ceiling(42*($textScale/100.0)*$dpi/96.0);$titleTextWidth=[EBR_PRE_NATIVE]::ControlTextWidth($breakTitle.Handle,$breakTitle.Text)
-        Require ($breakTitle.Text-eq'Taking an eye break'-and$titleTextWidth-le$breakTitle.Rect.Width-and$breakTitle.Rect.Height-ge$minimumTitleHeight-and$breakTitle.Rect.Bottom-le$breakInstruction.Rect.Top) '200% text-scale Break heading fits at full width without clipping or overlap' ([pscustomobject]@{Title=$breakTitle.Text;MeasuredTextWidth=$titleTextWidth;TitleBounds=$breakTitle.Rect;InstructionBounds=$breakInstruction.Rect;MinimumHeight=$minimumTitleHeight;Dpi=$dpi})
+        Require ($breakTitle.Text-eq'Taking an eye break'-and$titleTextWidth-le$breakTitle.Rect.Width-and$breakTitle.Rect.Height-ge$minimumTitleHeight-and$breakTitle.Rect.Bottom-le$breakInstruction.Rect.Top) "$textScale% text-scale Break heading fits at full width without clipping or overlap" ([pscustomobject]@{Title=$breakTitle.Text;MeasuredTextWidth=$titleTextWidth;TitleBounds=$breakTitle.Rect;InstructionBounds=$breakInstruction.Rect;MinimumHeight=$minimumTitleHeight;Dpi=$dpi})
         $breakClient=Get-ClientGeometry $layoutBreak;$breakClientBottom=$breakClient.Top+$breakClient.Height
-        Require ($breakTitle.Rect.Top-ge$breakClient.Top-and$breakTitle.Rect.Bottom-le$breakClientBottom) '200% text-scale Break heading stays fully inside the reminder viewport after initial focus scroll' ([pscustomobject]@{TitleBounds=$breakTitle.Rect;Client=$breakClient;ClientBottom=$breakClientBottom;Window=(Get-Rect $layoutBreak)})
+        Require ($breakTitle.Rect.Top-ge$breakClient.Top-and$breakTitle.Rect.Bottom-le$breakClientBottom) "$textScale% text-scale Break heading stays fully inside the reminder viewport after initial focus scroll" ([pscustomobject]@{TitleBounds=$breakTitle.Rect;Client=$breakClient;ClientBottom=$breakClientBottom;Window=(Get-Rect $layoutBreak)})
         Set-BreakScrollPosition $layoutBreak 7
-        $bottomLayout=Assert-VisibleInteractiveControlsInClient $layoutBreak '200% text scale Break reminder bottom scroll position' -ReturnLayout
-        $breakTitle=Get-StaticControlByText $layoutBreak 'Taking an eye break' '200% Break title after bottom scroll'
+        $bottomLayout=Assert-VisibleInteractiveControlsInClient $layoutBreak "$textScale% text scale Break reminder bottom scroll position" -ReturnLayout
+        $breakTitle=Get-StaticControlByText $layoutBreak 'Taking an eye break' "$textScale% Break title after bottom scroll"
         $breakClient=Get-ClientGeometry $layoutBreak;$breakClientBottom=$breakClient.Top+$breakClient.Height
-        Require ($bottomLayout.FullyVisibleNativeControlCount-eq9-and$bottomLayout.PartiallyVisibleAtViewportEdge.Count-eq0-and$breakTitle.Rect.Top-ge$breakClient.Top-and$breakTitle.Rect.Bottom-le$breakClientBottom) '200% text-scale Break reminder scrolls all nine controls fully into the viewport while retaining its heading' ([pscustomobject]@{Layout=$bottomLayout;TitleBounds=$breakTitle.Rect;Client=$breakClient})
-        Assert-BreakButtonTextFits $layoutBreak @(23,24,25,26,27) '200% text-scale Break reminder'
-        Capture-ActiveWindow $layoutBreak 'text-scale-200-break-reminder-bottom.png'|Out-Null
+        Require ($bottomLayout.FullyVisibleNativeControlCount-eq9-and$bottomLayout.PartiallyVisibleAtViewportEdge.Count-eq0-and$breakTitle.Rect.Top-ge$breakClient.Top-and$breakTitle.Rect.Bottom-le$breakClientBottom) "$textScale% text-scale Break reminder scrolls all nine controls fully into the viewport while retaining its heading" ([pscustomobject]@{Layout=$bottomLayout;TitleBounds=$breakTitle.Rect;Client=$breakClient})
+        Assert-BreakButtonTextFits $layoutBreak @(23,24,25,26,27) "$textScale% text-scale Break reminder"
+        Capture-ActiveWindow $layoutBreak "text-scale-$textScale-break-reminder-bottom.png"|Out-Null
       }
       Assert-VisibleInteractiveControlsInClient $layoutBreak "$textScale% text scale Break reminder"
       Capture-ActiveWindow $layoutBreak "text-scale-$textScale-break-reminder.png" | Out-Null
@@ -2074,8 +2074,10 @@ function Invoke-TrayCommandByHitTest([IntPtr]$MenuWindow,[string]$Name) {
   }
   Pass "Tray menu command selected by native row interaction: $Name" ([pscustomobject]@{Source='Visible #32768 popup hit-test with keyboard retry';Index=$index;Bounds=$bounds})
 }
-function Invoke-TrayCommand([string]$Name) {
-  $menu=Open-TrayContextMenu
+function Invoke-TrayCommand([string]$Name,[IntPtr]$ExistingMenu=[IntPtr]::Zero) {
+  $menu=$ExistingMenu
+  if($menu -eq [IntPtr]::Zero){$menu=Open-TrayContextMenu}
+  elseif(-not [EBR_PRE_NATIVE]::IsWindowVisible($menu)){throw "The already-open Windows tray menu closed before selecting '$Name'."}
   if($menu -eq [IntPtr]::Zero){throw "Could not open the actual Windows tray menu to select '$Name'."}
   $items=Get-TrayMenuItems $menu
   if($items.Source -eq 'UIA'){
@@ -2158,7 +2160,7 @@ function Test-ShellTrayAndNaturalNotification {
   } else {
     Pass 'Tray popup has a readable native screenshot; row actions will be exercised against visible menu bounds' ([pscustomobject]@{Source=$menuItems.Source;Screenshot='tray-context-menu-active.png';Bounds=(Get-Rect $menu)})
   }
-  Invoke-TrayCommand 'Pause timer'
+  Invoke-TrayCommand 'Pause timer' $menu
   Require ((Wait-ForStatus 'Paused') -like '*Paused*') 'Tray Pause command pauses the installed timer' (Get-Status)
   Invoke-TrayCommand 'Resume timer'
   Require ((Wait-ForStatus 'Running') -like '*Running*') 'Tray Resume command resumes the installed timer' (Get-Status)
