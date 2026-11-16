@@ -7,7 +7,7 @@
 
 - **Name:** Protect main — PR and CI required
 - **Ruleset ID:** 27397921
-- **Settings:** [Open the ruleset](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/settings/rules/27397921)
+- **Settings:** [Open the ruleset](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/rules/27397921)
 - **Enforcement:** Active
 - **Target:** The exact branch ref `refs/heads/main`
 - **Required pull requests:** Yes. Ordinary direct pushes to `main` are blocked.
