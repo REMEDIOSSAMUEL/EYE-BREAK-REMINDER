@@ -845,11 +845,13 @@ jobs:
           $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
           $expectedHash = 'e6ba8b8bead1b86cd0b07e990cc543b8ed8a8a691f73c70e310de35a3f0a6afd'
           $knownFindings = @(
+            '150% text scale Work custom accent hex readout fits beside its color sample'
+            '150% text scale Break custom accent hex readout fits beside its color sample'
+            '200% text scale Work custom accent hex readout fits beside its color sample'
+            '200% text scale Break custom accent hex readout fits beside its color sample'
             '200% text-scale Break heading has room for its wrapped lines without clipping or overlap'
             '200% text-scale Break heading fits at full width without clipping or overlap'
             '200% text-scale Break reminder scrolls all nine controls fully into the viewport while retaining its heading'
-            '200% text scale Work custom accent hex readout fits beside its color sample'
-            '200% text scale Break custom accent hex readout fits beside its color sample'
           )
           $failures = @($result.Events | Where-Object { $_.Status -eq 'FAIL' })
           $knownFailures = @($failures | Where-Object { $_.Name -in $knownFindings })
@@ -858,7 +860,7 @@ jobs:
               throw "The original candidate had an unexpected failure. Outcome=$($env:ORIGINAL_ACCEPTANCE_OUTCOME); SHA256=$($result.CandidateExecutableSHA256); FailCount=$($result.Fail); Failures=$($failures.Name -join '; ')"
             }
             $classification = 'EXPECTED PRE-FIX DEFECT'
-            $details = 'The immutable original candidate reproduces only previously confirmed 200% layout defects: clipped Break controls/heading and/or clipped Work/Break custom-accent text. Any unlisted failure remains unexpected. This comparison is retained as expected pre-fix evidence; the new candidate must pass every layout assertion.'
+            $details = 'The immutable original candidate reproduces only previously confirmed 150%/200% clipped custom-accent text and/or 200% Break layout defects. Any unlisted failure remains unexpected. This comparison is retained as expected pre-fix evidence; the new candidate must pass every layout assertion.'
           } elseif ($env:ORIGINAL_ACCEPTANCE_OUTCOME -eq 'success' -and [int]$result.Fail -eq 0 -and $failures.Count -eq 0) {
             $classification = 'PASS'
             $details = 'The original candidate comparison completed without failures.'

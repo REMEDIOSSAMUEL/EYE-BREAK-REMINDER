@@ -582,7 +582,7 @@ public:
   for(auto*item:items){geometry::FormItem f;f.kind=item->kind;std::wstring text=windowText(item->handle);bool accentSwatch=item->id==WORK_ACCENT_SWATCH||item->id==BREAK_ACCENT_SWATCH;f.textWidth=measureWidth(accentSwatch?settingsPane:item->handle,text,accentSwatch?normalFont:nullptr);
    f.textHeight=[this,handle=item->handle,text](int width){return measureHeight(handle,text,width);};f.sameRow=item->sameRow;f.indent=item->indent;f.spin=item->buddySpin!=nullptr;f.keep=item->keep;
    // Inline rows: time fields fit "00:00" plus their margins and frame, buttons fit their caption, labels their text.
-   if(f.kind==Kind::Inline){wchar_t cls[16]{};GetClassNameW(item->handle,cls,16);if(_wcsicmp(cls,L"Edit")==0)f.width=measureWidth(item->handle,L"00:00")+px(30);else if(accentSwatch)f.width=std::max(px(116),f.textWidth+px(52));else if(_wcsicmp(cls,L"Button")==0)f.width=std::max(px(76),f.textWidth+px(32));else f.width=f.textWidth+px(2);}
+   if(f.kind==Kind::Inline){wchar_t cls[16]{};GetClassNameW(item->handle,cls,16);if(_wcsicmp(cls,L"Edit")==0)f.width=measureWidth(item->handle,L"00:00")+px(30);else if(accentSwatch)f.width=std::max(px(116),int(std::ceil(f.textWidth*textScale))+px(52));else if(_wcsicmp(cls,L"Button")==0)f.width=std::max(px(76),f.textWidth+px(32));else f.width=f.textWidth+px(2);}
    form.push_back(std::move(f));}
   // Pass 1 lays the form out across the whole shell. Only if it is taller than the viewport does a scroll bar appear (inside the
   // shell, at its right edge) and the form is laid out again in the narrower client area. A taller form can never need less, so

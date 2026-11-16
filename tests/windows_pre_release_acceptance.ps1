@@ -608,7 +608,8 @@ function Assert-BreakButtonTextFits([IntPtr]$BreakWindow,[int[]]$Ids,[string]$Na
   $clipped=@($measurements|Where-Object{$_.TextWidth-gt$_.AvailableTextWidth})
   Require ($clipped.Count-eq0) "$Name button labels fit without ellipsis" ([pscustomobject]@{Dpi=$dpi;Measurements=$measurements})
 }
-function Assert-AccentSwatchesFit([int]$Dpi,[string]$Name) {
+function Assert-AccentSwatchesFit([int]$Dpi,[int]$TextScalePercent,[string]$Name) {
+  $scaleFactor=$TextScalePercent/100.0
   $px2=[Math]::Max(1,[int][Math]::Floor(0.5+2*$Dpi/96.0));$px8=[Math]::Max(1,[int][Math]::Floor(0.5+8*$Dpi/96.0));$px36=[Math]::Max(1,[int][Math]::Floor(0.5+36*$Dpi/96.0))
   foreach($row in @(@(125,127,'Work'),@(126,128,'Break'))){
     $swatch=Get-Control $script:mainWindow $row[0] "$Name $($row[2]) accent swatch"
@@ -618,9 +619,10 @@ function Assert-AccentSwatchesFit([int]$Dpi,[string]$Name) {
     Require ($drawParent-ne[IntPtr]::Zero-and$drawParent-eq[EBR_PRE_NATIVE]::GetParent($fontReference.Handle)) "$Name $($row[2]) accent and renderer-font reference share the same draw parent" ([pscustomobject]@{DrawParentClass=[EBR_PRE_NATIVE]::ClassName($drawParent);FontReferenceParentClass=[EBR_PRE_NATIVE]::ClassName([EBR_PRE_NATIVE]::GetParent($fontReference.Handle))})
     $textWidth=[EBR_PRE_NATIVE]::ControlDrawTextWidth($drawParent,$fontReference.Handle,$swatch.Text)
     $controlFontWidth=[EBR_PRE_NATIVE]::ControlTextWidth($swatch.Handle,$swatch.Text)
+    $scaledTextWidth=[int][Math]::Ceiling($textWidth*$scaleFactor)
     $side=[Math]::Max(1,[Math]::Min($px36,$swatch.Rect.Height-$px8))
     $availableWidth=$swatch.Rect.Width-$px2-$side-$px8-$px2
-    Require ($swatch.Text -match '^#[0-9A-Fa-f]{6}$' -and $textWidth -le $availableWidth) "$Name $($row[2]) custom accent hex readout fits beside its color sample" ([pscustomobject]@{Text=$swatch.Text;RendererFontReference=$fontReference.Text;DrawParentClass=[EBR_PRE_NATIVE]::ClassName($drawParent);RendererDrawTextWidth=$textWidth;OwnerDrawControlFontWidth=$controlFontWidth;AvailableWidth=$availableWidth;Bounds=$swatch.Rect;Dpi=$Dpi})
+    Require ($swatch.Text -match '^#[0-9A-Fa-f]{6}$' -and $scaledTextWidth -le $availableWidth) "$Name $($row[2]) custom accent hex readout fits beside its color sample" ([pscustomobject]@{Text=$swatch.Text;RendererFontReference=$fontReference.Text;DrawParentClass=[EBR_PRE_NATIVE]::ClassName($drawParent);RendererDrawTextWidth=$textWidth;TextScalePercent=$TextScalePercent;RequiredScaledTextWidth=$scaledTextWidth;OwnerDrawControlFontWidth=$controlFontWidth;AvailableWidth=$availableWidth;Bounds=$swatch.Rect;Dpi=$Dpi})
     $nonOverlapping=($swatch.Rect.Right -le $picker.Rect.Left -or $picker.Rect.Right -le $swatch.Rect.Left -or $swatch.Rect.Bottom -le $picker.Rect.Top -or $picker.Rect.Bottom -le $swatch.Rect.Top)
     Require $nonOverlapping "$Name $($row[2]) custom accent swatch and picker controls do not overlap" ([pscustomobject]@{SwatchBounds=$swatch.Rect;PickerBounds=$picker.Rect;Dpi=$Dpi})
   }
@@ -1516,7 +1518,7 @@ function Test-OsAppearanceAndTextScale {
         }
       }
       Switch-Settings 4
-      Assert-AccentSwatchesFit $dpi "$textScale% text scale"
+      Assert-AccentSwatchesFit $dpi $textScale "$textScale% text scale"
       $layoutPicker=Open-InstalledColorPicker 127 "Choose Work Mode colour at $textScale% text scale"
       $pickerBounds=Get-Rect $layoutPicker;$screenWidth=[EBR_PRE_NATIVE]::GetSystemMetrics(0);$screenHeight=[EBR_PRE_NATIVE]::GetSystemMetrics(1)
       Require ($pickerBounds.Left-ge0-and$pickerBounds.Top-ge0-and$pickerBounds.Right-le$screenWidth-and$pickerBounds.Bottom-le$screenHeight) "Native ChooseColorW dialog remains within the display at $textScale% text scale" ([pscustomobject]@{Bounds=$pickerBounds;DisplayWidth=$screenWidth;DisplayHeight=$screenHeight})
