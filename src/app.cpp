@@ -3,6 +3,7 @@
 #include "update_checker.hpp"
 #include <array>
 #include <atomic>
+#include <commdlg.h>
 #include <mutex>
 #include <thread>
 #include <winhttp.h>
@@ -18,6 +19,7 @@ constexpr UINT UPDATE_RESULT=WM_APP+7;
 constexpr int NAV_TIMER=10,NAV_HISTORY=11,NAV_SETTINGS=12,PAUSE=20,RESET=21,TAKE_BREAK=22,COMPLETE=23,SKIP=24,SNOOZE1=25,SNOOZE3=26,SNOOZE5=27;
 constexpr int COUNTDOWN=40,TIMER_STATE=41,COUNT_CAPTION=42,BREAK_TITLE=43,BREAK_INSTRUCTION=44,BREAK_GUIDANCE=45,HISTORY_TOGGLE=30,CLEAR_HISTORY=31,ALARM_TOGGLE=32,WORK=100,BREAK_SECONDS=101,SOUND=102,VOLUME=103,MODE=104,MONITOR=105,THEME=106,REPEAT=107,NOTIFY=108,SNOOZE=109,AUTO_START=110,STARTUP=111,TRAY=112,RESTORE=113,PAUSE_LOCK=114,SELECT_MONITOR=115,PREVIEW=116,STOP_AUDIO=117,RESET_SETTINGS=118,VOLUME_VALUE=119;
 constexpr int SCHEDULE_TOGGLE=120,PRESET_WEEKDAYS=121,PRESET_EVERYDAY=122,SCHEDULE_STATUS=123,BREAK_COLORS=124;
+constexpr int WORK_ACCENT_SWATCH=125,BREAK_ACCENT_SWATCH=126,CHOOSE_WORK_ACCENT=127,CHOOSE_BREAK_ACCENT=128,RESET_ACCENT_COLORS=129;
 constexpr int UPDATE_CHECK=160,UPDATE_OPEN=161,UPDATE_STATUS=162,UPDATE_LATEST=163,UPDATE_INSTALLED=164;
 // Weekly hours: one check box per day (DAY_BASE + day). Period controls are PERIOD_BASE + day*10 + period*3 + {0 start, 1 end,
 // 2 Remove}; PERIOD_BASE + day*10 + 9 is the day's Add period button.
@@ -34,7 +36,7 @@ struct TimerGeometry {int left=0,top=0,diameter=0,ringX=0,ringY=0,ringDiameter=0
 struct TimerPresentation {std::wstring countdown,caption,status;double progress=0;};
 struct Colors {
  COLORREF background{},surface{},hover{},foreground{},secondary{},line{};
- COLORREF workAccent{},breakAccent{},focus{},workButtonText{},breakButtonText{};
+ COLORREF defaultWorkAccent{},defaultBreakAccent{},workAccent{},breakAccent{},focus{},workButtonText{},breakButtonText{};
  bool dark=true,contrast=false,systemContrast=false;
 };
 struct UpdateDispatch {std::mutex mutex;HWND target{};bool alive=true;};
@@ -43,6 +45,7 @@ class Application {
 public:
  HINSTANCE instance{};HWND main{},breakWindow{},trayMenuOwner{};HICON icon{};HFONT normalFont{},headingFont{},tabFont{},smallFont{},titleFont{},countFont{},breakFont{},breakTitleFont{},breakCountFont{};int countSize=0;HBRUSH backgroundBrush{},surfaceBrush{};
  Settings settings;std::unique_ptr<Engine> engine;std::unique_ptr<Audio> audio;std::vector<Record> history;
+ std::array<COLORREF,16> pickerCustomColors{{RGB(255,255,255),RGB(192,192,192),RGB(128,128,128),RGB(0,0,0),RGB(255,0,0),RGB(128,0,0),RGB(255,255,0),RGB(128,128,0),RGB(0,255,0),RGB(0,128,0),RGB(0,255,255),RGB(0,128,128),RGB(0,0,255),RGB(0,0,128),RGB(255,0,255),RGB(128,0,128)}};
  std::vector<Control> controls;std::array<HWND,3> nav{};std::array<HWND,SECTION_COUNT> sectionNav{};int settingsSection=0,buildSection=0;HWND historyList{},settingsPane{};std::vector<Monitor> displays;
  Colors colors;std::wstring directory;UINT dpi=96;double textScale=1;bool hidden=false,locked=false,sleeping=false,quitting=false,quietBreak=false,loading=false,trayAdded=false,dirtySettings=false,saveWarned=false;
  int page=0,settingsHeight=0,breakHeight=0,settingsApplied=INT_MIN,breakApplied=INT_MIN,historyApplied=0;TimerPresentation timerPresentation;UINT renderTimerInterval=0;std::uint64_t notifiedCycle=0,alarmedCycle=0;NOTIFYICONDATAW trayData{};
@@ -56,9 +59,20 @@ public:
  int px(double value)const{return geometry::scaled(value,int(dpi));}
  int fontHeight(int points)const{return -int(std::round(points*dpi/72.0*textScale));}
  static COLORREF nativeColor(theme::Color value){return RGB((value>>16)&0xffu,(value>>8)&0xffu,value&0xffu);}
+ static theme::Color themeColor(COLORREF value){return theme::rgb(GetRValue(value),GetGValue(value),GetBValue(value));}
  bool breakAccentActive()const{return engine&&engine->snapshot().phase==Phase::Break&&(settings.breakModeColors||colors.contrast);}
  COLORREF activeAccent()const{return breakAccentActive()?colors.breakAccent:colors.workAccent;}
  COLORREF activeButtonText()const{return breakAccentActive()?colors.breakButtonText:colors.workButtonText;}
+ COLORREF accentSwatch(bool work)const{
+  if(work)return settings.customWorkAccent?nativeColor(settings.workAccentColor):colors.defaultWorkAccent;
+  return settings.customBreakAccent?nativeColor(settings.breakAccentColor):colors.defaultBreakAccent;
+ }
+ COLORREF accentText()const{return colors.contrast?activeAccent():nativeColor(theme::readableAccentText(themeColor(activeAccent()),themeColor(colors.background)));}
+ void updateAccentSwatches(){
+  for(auto item:{std::pair<int,bool>{WORK_ACCENT_SWATCH,true},std::pair<int,bool>{BREAK_ACCENT_SWATCH,false}}){
+   if(HWND h=find(item.first)){SetWindowTextW(h,wide(theme::formatHexColor(themeColor(accentSwatch(item.second)))).c_str());InvalidateRect(h,nullptr,TRUE);}
+  }
+ }
  void error(const wchar_t* message){inform(main,L"Eye Break Reminder",message,colors.dark,colors.systemContrast);}
  LRESULT drawButton(NMHDR* notification){
   if(!notification||notification->code!=NM_CUSTOMDRAW||colors.systemContrast)return CDRF_DODEFAULT;
@@ -75,6 +89,8 @@ public:
   COLORREF accent=activeAccent();
   COLORREF fill=checkbox?colors.background:(primary?accent:(selected||hot?colors.hover:colors.surface));
   COLORREF ink=enabled?colors.foreground:colors.secondary;if(primary)ink=activeButtonText();
+  COLORREF buttonBorder=primary||selected?accent:colors.line;
+  if(primary&&theme::contrastRatio(themeColor(accent),themeColor(colors.background))<3.0)buttonBorder=colors.foreground;
   if(pressed&&!checkbox)fill=colors.hover;
   if(pressed&&primary)ink=colors.foreground;
   RECT rect=draw->rc;FillRect(draw->hdc,&rect,backgroundBrush);
@@ -84,7 +100,7 @@ public:
     if(selected){Gdiplus::Pen tick(rgba(activeButtonText()),float(bpx(2)));graphics.DrawLine(&tick,x+bpx(4),y+bpx(9),x+bpx(8),y+bpx(13));graphics.DrawLine(&tick,x+bpx(8),y+bpx(13),x+bpx(15),y+bpx(5));}
    }else{
     float x=float(rect.left+1),y=float(rect.top+1),w=float(rect.right-rect.left-2),h=float(rect.bottom-rect.top-2);
-    if(w>0&&h>0){Gdiplus::SolidBrush brush(rgba(fill));Gdiplus::Pen border(rgba(primary||selected?accent:colors.line),float(bpx(colors.contrast?2:1)));
+    if(w>0&&h>0){Gdiplus::SolidBrush brush(rgba(fill));Gdiplus::Pen border(rgba(buttonBorder),float(bpx(colors.contrast?2:1)));
      if(colors.contrast){graphics.FillRectangle(&brush,x,y,w,h);graphics.DrawRectangle(&border,x,y,w,h);}
      else {float corner=float(std::min(bpx(14),int(h)));Gdiplus::GraphicsPath path;path.AddArc(x,y,corner,corner,180,90);path.AddArc(x+w-corner,y,corner,corner,270,90);path.AddArc(x+w-corner,y+h-corner,corner,corner,0,90);path.AddArc(x,y+h-corner,corner,corner,90,90);path.CloseFigure();graphics.FillPath(&brush,&path);graphics.DrawPath(&border,&path);}}
    }
@@ -97,13 +113,25 @@ public:
   if((draw->uItemState&CDIS_FOCUS)&&!(cues&UISF_HIDEFOCUS)){RECT focus=rect;InflateRect(&focus,-bpx(4),-bpx(4));if(colors.contrast){HPEN pen=CreatePen(PS_SOLID,bpx(2),colors.focus);HGDIOBJ oldPen=SelectObject(draw->hdc,pen),oldBrush=SelectObject(draw->hdc,GetStockObject(NULL_BRUSH));Rectangle(draw->hdc,focus.left,focus.top,focus.right,focus.bottom);SelectObject(draw->hdc,oldBrush);SelectObject(draw->hdc,oldPen);DeleteObject(pen);}else DrawFocusRect(draw->hdc,&focus);}RestoreDC(draw->hdc,saved);
   return CDRF_SKIPDEFAULT;
  }
+ bool drawAccentSwatch(DRAWITEMSTRUCT*draw){
+  if(!draw||draw->CtlType!=ODT_STATIC||(draw->CtlID!=WORK_ACCENT_SWATCH&&draw->CtlID!=BREAK_ACCENT_SWATCH))return false;
+  const bool work=draw->CtlID==WORK_ACCENT_SWATCH;RECT rect=draw->rcItem;FillRect(draw->hDC,&rect,backgroundBrush);
+  const int side=std::max(1,std::min(px(36),int(rect.bottom-rect.top)-px(8)));
+  RECT sample{rect.left+px(2),rect.top+(int(rect.bottom-rect.top)-side)/2,rect.left+px(2)+side,rect.top+(int(rect.bottom-rect.top)+side)/2};
+  HBRUSH fill=CreateSolidBrush(accentSwatch(work));if(fill){FillRect(draw->hDC,&sample,fill);DeleteObject(fill);}
+  HBRUSH border=CreateSolidBrush(colors.line);if(border){FrameRect(draw->hDC,&sample,border);DeleteObject(border);}
+  RECT text{sample.right+px(8),rect.top,rect.right-px(2),rect.bottom};
+  int saved=SaveDC(draw->hDC);SelectObject(draw->hDC,normalFont);SetTextColor(draw->hDC,colors.foreground);SetBkMode(draw->hDC,TRANSPARENT);
+  const std::wstring value=wide(theme::formatHexColor(themeColor(accentSwatch(work))));DrawTextW(draw->hDC,value.c_str(),-1,&text,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
+  RestoreDC(draw->hDC,saved);return true;
+ }
  bool saveFile(const wchar_t* name,const std::string&content){if(writeAtomic(directory+L"\\"+name,content))return true;if(!saveWarned&&!locked&&!sleeping&&!quitting){saveWarned=true;error(L"Your changes couldn't be saved. Check that your device has free space and try again.");}return false;}
  void saveSettings(){captureBounds();saveFile(L"settings.ini",encodeSettings(settings));dirtySettings=false;}
  void saveTimer(){saveFile(L"timer.dat",encodeTimer(engine->save()));}
  void saveHistory(){saveFile(L"history.dat",encodeHistory(history));}
  void load(){
   directory=dataDirectory();std::string text;bool damaged=false;
-  auto path=directory+L"\\settings.ini";if(exists(path)&&(!read(path,text,65536)||!decodeSettings(text,settings))){quarantine(path);settings={};damaged=true;}settings.validate();settings.startup=startupEnabled();
+  auto path=directory+L"\\settings.ini";if(exists(path)&&(!read(path,text,65536)||!decodeSettings(text,settings))){quarantine(path);settings={};damaged=true;}settings.validate();for(std::size_t i=0;i<pickerCustomColors.size();++i){auto color=settings.pickerCustomColors[i];pickerCustomColors[i]=RGB((color>>16)&0xff,(color>>8)&0xff,color&0xff);}settings.startup=startupEnabled();
   engine=std::make_unique<Engine>(settings,monotonic,utc,localTime);Saved saved;path=directory+L"\\timer.dat";
   if(settings.restore&&exists(path)){if(!read(path,text,1024)||!decodeTimer(text,saved)||!engine->restore(saved)){quarantine(path);damaged=true;}}
   path=directory+L"\\history.dat";if(exists(path)&&(!read(path,text)||!decodeHistory(text,history,utc()))){quarantine(path);history.clear();damaged=true;}
@@ -133,8 +161,13 @@ public:
   colors.dark=palette.dark;colors.contrast=palette.highContrast||colors.systemContrast;
   colors.background=nativeColor(palette.background);colors.surface=nativeColor(palette.surface);colors.hover=nativeColor(palette.hover);
   colors.foreground=nativeColor(palette.foreground);colors.secondary=nativeColor(palette.secondary);colors.line=nativeColor(palette.line);
-  colors.workAccent=nativeColor(palette.workAccent);colors.breakAccent=nativeColor(palette.breakAccent);colors.focus=nativeColor(palette.focus);
+  colors.defaultWorkAccent=nativeColor(palette.workAccent);colors.defaultBreakAccent=nativeColor(palette.breakAccent);
+  colors.workAccent=colors.defaultWorkAccent;colors.breakAccent=colors.defaultBreakAccent;colors.focus=nativeColor(palette.focus);
   colors.workButtonText=nativeColor(palette.workButtonText);colors.breakButtonText=nativeColor(palette.breakButtonText);
+  if(!colors.contrast){
+   if(settings.customWorkAccent){colors.workAccent=nativeColor(settings.workAccentColor);colors.workButtonText=nativeColor(theme::readableButtonText(settings.workAccentColor));}
+   if(settings.customBreakAccent){colors.breakAccent=nativeColor(settings.breakAccentColor);colors.breakButtonText=nativeColor(theme::readableButtonText(settings.breakAccentColor));}
+  }
   if(colors.systemContrast){
    colors.background=colors.surface=GetSysColor(COLOR_WINDOW);colors.hover=GetSysColor(COLOR_BTNFACE);colors.foreground=GetSysColor(COLOR_WINDOWTEXT);
    colors.secondary=GetSysColor(COLOR_GRAYTEXT);colors.line=GetSysColor(COLOR_WINDOWTEXT);colors.workAccent=GetSysColor(COLOR_HIGHLIGHT);
@@ -152,11 +185,12 @@ public:
   for(auto h:nav)if(h)InvalidateRect(h,nullptr,TRUE);
   for(auto h:sectionNav)if(h)InvalidateRect(h,nullptr,TRUE);
   if(historyList){ListView_SetBkColor(historyList,colors.background);ListView_SetTextBkColor(historyList,colors.background);ListView_SetTextColor(historyList,colors.foreground);}
+  updateAccentSwatches();
   InvalidateRect(main,nullptr,TRUE);if(settingsPane)InvalidateRect(settingsPane,nullptr,TRUE);if(breakWindow)InvalidateRect(breakWindow,nullptr,TRUE);
  }
 // ---- measuring and metrics ------------------------------------------------------------------------------------
  static std::wstring windowText(HWND h){wchar_t text[1024]{};GetWindowTextW(h,text,1024);return text;}
- int measureWidth(HWND h,const std::wstring&text){HDC dc=GetDC(h);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));RECT r{0,0,0,0};DrawTextW(dc,text.c_str(),-1,&r,DT_CALCRECT|DT_SINGLELINE|DT_NOPREFIX);SelectObject(dc,previous);ReleaseDC(h,dc);return int(r.right-r.left);}
+ int measureWidth(HWND h,const std::wstring&text,HFONT font=nullptr){HDC dc=GetDC(h);HFONT selected=font?font:reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0));auto previous=SelectObject(dc,selected);RECT r{0,0,0,0};DrawTextW(dc,text.c_str(),-1,&r,DT_CALCRECT|DT_SINGLELINE|DT_NOPREFIX);SelectObject(dc,previous);ReleaseDC(h,dc);return int(r.right-r.left);}
  int measureHeight(HWND h,const std::wstring&text,int width){HDC dc=GetDC(h);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));RECT r{0,0,std::max(1,width),0};DrawTextW(dc,text.c_str(),-1,&r,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);SelectObject(dc,previous);ReleaseDC(h,dc);return int(r.bottom-r.top);}
  int tabHeight()const{return px(std::max(40.0,31.0*textScale));}
  int pillHeight()const{return px(std::max(28.0,21.0*textScale));}
@@ -174,8 +208,14 @@ public:
   Gdiplus::Pen track(rgba(colors.line),float(px(4))),accent(rgba(activeAccent()),float(px(4)));
   graphics.DrawEllipse(&track,ring.ringX,ring.ringY,ring.ringDiameter,ring.ringDiameter);
   progress=std::clamp(progress,0.0,1.0);
-  if(progress>=1.0)graphics.DrawEllipse(&accent,ring.ringX,ring.ringY,ring.ringDiameter,ring.ringDiameter);
-  else if(progress>0.0)graphics.DrawArc(&accent,ring.ringX,ring.ringY,ring.ringDiameter,ring.ringDiameter,float(geometry::timerProgressStartDegrees),float(geometry::timerProgressSweep(progress)));
+  const bool needsOutline=theme::contrastRatio(themeColor(activeAccent()),themeColor(colors.background))<3.0;
+  Gdiplus::Pen outline(rgba(colors.foreground),float(px(6)));
+  auto stroke=[&](Gdiplus::Pen&pen){
+   if(progress>=1.0)graphics.DrawEllipse(&pen,ring.ringX,ring.ringY,ring.ringDiameter,ring.ringDiameter);
+   else if(progress>0.0)graphics.DrawArc(&pen,ring.ringX,ring.ringY,ring.ringDiameter,ring.ringDiameter,float(geometry::timerProgressStartDegrees),float(geometry::timerProgressSweep(progress)));
+  };
+  if(needsOutline)stroke(outline);
+  stroke(accent);
  }
  // One content column (the Settings shell) shared by the tab bar, the section row, the page heading, the scroll viewport and the
  // History list. The settings scroll bar lives inside this column, at its right edge.
@@ -194,7 +234,9 @@ public:
     float x=float(rect.left),y=float(rect.top+bpx(2)),w=float(rect.right-rect.left),h=float(rect.bottom-rect.top-bpx(2)),d=float(bpx(16));
     if(selected||hot||pressed){Gdiplus::GraphicsPath path;path.AddArc(x,y,d,d,180,90);path.AddArc(x+w-d,y,d,d,270,90);path.AddLine(x+w,y+h,x,y+h);path.CloseFigure();Gdiplus::SolidBrush brush(rgba(selected?colors.surface:colors.hover));g.FillPath(&brush,&path);}
     {RECT rule{rect.left,rect.bottom-bpx(1),rect.right,rect.bottom};HBRUSH lineBrush=CreateSolidBrush(colors.line);FillRect(draw->hdc,&rule,lineBrush);DeleteObject(lineBrush);}
-    if(selected){RECT bar{rect.left,rect.bottom-bpx(3),rect.right,rect.bottom};HBRUSH accentBrush=CreateSolidBrush(activeAccent());FillRect(draw->hdc,&bar,accentBrush);DeleteObject(accentBrush);}
+    if(selected){bool outline=theme::contrastRatio(themeColor(activeAccent()),themeColor(colors.background))<3.0;
+     if(outline){RECT edge{rect.left,rect.bottom-bpx(5),rect.right,rect.bottom};HBRUSH focusBrush=CreateSolidBrush(colors.foreground);FillRect(draw->hdc,&edge,focusBrush);DeleteObject(focusBrush);}
+     RECT bar{rect.left,rect.bottom-bpx(3),rect.right,rect.bottom};HBRUSH accentBrush=CreateSolidBrush(activeAccent());FillRect(draw->hdc,&bar,accentBrush);DeleteObject(accentBrush);}
     ink=selected||hot?colors.foreground:colors.secondary;
    }else{
     // Secondary navigation: shorter, smaller text, quiet inactive segments, a tinted (never solid) selection.
@@ -235,9 +277,18 @@ public:
   else if(wcscmp(name,UPDOWN_CLASSW)==0)SetWindowTheme(h,dark?L"DarkMode_Explorer":nullptr,nullptr);
  }
  // Number fields draw their own 1 px frame and centre the text vertically; the native client edge is light and top-aligned.
+ // Disabled native Edit controls fall back to COLOR_GRAYTEXT on Windows, so their saved values need a themed client paint.
+ static bool disabledScheduleTimeField(HWND h){const int id=GetDlgCtrlID(h);return !IsWindowEnabled(h)&&id>=PERIOD_BASE&&id<PERIOD_END;}
+ static void paintDisabledScheduleTime(HWND h,HDC dc){
+  auto&a=*app;RECT client{};GetClientRect(h,&client);FillRect(dc,&client,a.surfaceBrush);int saved=SaveDC(dc);
+  SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));SetBkMode(dc,TRANSPARENT);SetTextColor(dc,a.colors.secondary);
+  wchar_t value[32]{};GetWindowTextW(h,value,int(std::size(value)));DrawTextW(dc,value,-1,&client,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);RestoreDC(dc,saved);
+ }
  static LRESULT CALLBACK editProc(HWND h,UINT msg,WPARAM w,LPARAM l,UINT_PTR,DWORD_PTR){
   auto&a=*app;
   switch(msg){
+   case WM_PAINT:if(disabledScheduleTimeField(h)){PAINTSTRUCT paint{};HDC dc=BeginPaint(h,&paint);paintDisabledScheduleTime(h,dc);EndPaint(h,&paint);return 0;}break;
+   case WM_PRINTCLIENT:if(disabledScheduleTimeField(h)){paintDisabledScheduleTime(h,reinterpret_cast<HDC>(w));return 0;}break;
    case WM_NCCALCSIZE:if(w){auto*params=reinterpret_cast<NCCALCSIZE_PARAMS*>(l);RECT&r=params->rgrc[0];int border=std::max(1,a.px(1));
      HDC dc=GetDC(h);auto previous=SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(h,WM_GETFONT,0,0)));TEXTMETRICW tm{};GetTextMetricsW(dc,&tm);SelectObject(dc,previous);ReleaseDC(h,dc);
      int vertical=std::max(border,int((r.bottom-r.top-tm.tmHeight)/2));r.left+=border;r.right-=border;r.top+=vertical;r.bottom-=vertical;return 0;}break;
@@ -286,6 +337,11 @@ public:
   SendMessageW(h,EM_SETLIMITTEXT,5,0);SendMessageW(h,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELPARAM(px(6),px(6)));accessibleName(h,name+L", 24-hour");
  }
  void rowButton(const wchar_t*text,int id,int day,const std::wstring&name){HWND h=control(L"BUTTON",text,BS_PUSHBUTTON,id,2,Kind::Inline,settingsPane);auto&c=controls.back();c.sameRow=true;c.group=day;accessibleName(h,name);}
+ void accentRow(const wchar_t*caption,int swatchId,int buttonId,const wchar_t*accessible){
+  label(caption,Kind::Inline);controls.back().keep=true;
+  control(L"STATIC",L"#000000",SS_OWNERDRAW|SS_NOPREFIX|SS_CENTERIMAGE,swatchId,2,Kind::Inline,settingsPane);controls.back().sameRow=true;
+  HWND choose=control(L"BUTTON",L"Choose Colour...",BS_PUSHBUTTON,buttonId,2,Kind::Inline,settingsPane);controls.back().sameRow=true;accessibleName(choose,accessible);
+ }
  // One day of the weekly hours: its check box, then one row per period ("From [start] to [end] [Remove]") with Add on the last row.
  void scheduleDay(int d){
   const auto&s=settings.schedule;checkbox(DAY_NAMES[d],DAY_BASE+d,2,s.days[d],settingsPane);
@@ -313,6 +369,21 @@ public:
   if(code==ERROR_WINHTTP_NAME_NOT_RESOLVED||code==ERROR_WINHTTP_CANNOT_CONNECT||code==ERROR_WINHTTP_CONNECTION_ERROR)return updates::Failure::Offline;
   return updates::Failure::Other;
  }
+#ifdef EYEBREAK_TEST_BUILD
+ static bool waitForUpdateTestBarrier(){
+  wchar_t startedName[256]{},releaseName[256]{};
+  const DWORD startedLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_UPDATE_STARTED",startedName,DWORD(std::size(startedName)));
+  const DWORD releaseLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_UPDATE_RELEASE",releaseName,DWORD(std::size(releaseName)));
+  if(!startedLength||startedLength>=std::size(startedName)||!releaseLength||releaseLength>=std::size(releaseName))return false;
+  HANDLE started=OpenEventW(EVENT_MODIFY_STATE,FALSE,startedName);
+  HANDLE release=OpenEventW(SYNCHRONIZE,FALSE,releaseName);
+  if(!started||!release){if(started)CloseHandle(started);if(release)CloseHandle(release);return false;}
+  const bool signalled=SetEvent(started)!=FALSE;
+  const DWORD result=signalled?WaitForSingleObject(release,30000):WAIT_FAILED;
+  CloseHandle(started);CloseHandle(release);
+  return result==WAIT_OBJECT_0;
+ }
+#endif
  static updates::HttpResponse latestReleaseResponse(){
 #ifdef EYEBREAK_TEST_BUILD
   std::wstring fixturePath=executable();const auto slash=fixturePath.find_last_of(L"\\/");if(slash!=std::wstring::npos)fixturePath.resize(slash+1);fixturePath+=L"test-update-response.txt";
@@ -326,6 +397,7 @@ public:
     if(key=="status")response.status=std::clamp(std::atoi(value.c_str()),0,999);
     else if(key=="failure"){if(value=="offline")response.failure=updates::Failure::Offline;else if(value=="timeout")response.failure=updates::Failure::Timeout;else if(value=="tls")response.failure=updates::Failure::SecureConnection;else if(value=="other")response.failure=updates::Failure::Other;}
     else if(key=="error")response.errorCode=std::strtoul(value.c_str(),nullptr,10);
+    else if(key=="barrier"&&value=="1"){if(!waitForUpdateTestBarrier()){response.failure=updates::Failure::Timeout;response.errorCode=WAIT_TIMEOUT;return response;}}
     else if(key=="delay_ms")Sleep(std::min<DWORD>(30000,DWORD(std::strtoul(value.c_str(),nullptr,10))));
    }
    response.body=fixture.substr(bodyStart);return response;
@@ -425,8 +497,12 @@ public:
   combo(L"Break presentation",MODE,{L"Normal window",L"Compact reminder",L"Fullscreen reminder (opt in)"},settings.mode);combo(L"Preferred monitor",MONITOR,{L"Active display",L"Primary display",L"Selected display"},settings.monitor);
   displays=monitors();std::vector<std::wstring> names;int chosen=0;for(std::size_t i=0;i<displays.size();++i){names.push_back(L"Display "+std::to_wstring(i+1)+(displays[i].primary?L" (primary)":L""));if(utf8(displays[i].device)==settings.selectedMonitor)chosen=int(i);}combo(L"Selected display",SELECT_MONITOR,names,chosen);
   buildSection=4;label(L"Appearance",Kind::Heading);combo(L"Theme",THEME,{L"Follow Windows Theme",L"Light",L"Dark",L"High Contrast Dark",L"High Contrast Light"},settings.theme);
-  checkbox(L"Use a distinct teal/green accent during eye breaks",BREAK_COLORS,2,settings.breakModeColors,settingsPane);
-  hint(L"Work keeps the blue accent. High contrast themes always distinguish work and break states.",true);
+  checkbox(L"Use a distinct accent during eye breaks",BREAK_COLORS,2,settings.breakModeColors,settingsPane);
+  label(L"CUSTOM ACCENT COLOURS",Kind::Heading);
+  accentRow(L"Work Mode colour",WORK_ACCENT_SWATCH,CHOOSE_WORK_ACCENT,L"Choose Work Mode colour");
+  accentRow(L"Break Mode colour",BREAK_ACCENT_SWATCH,CHOOSE_BREAK_ACCENT,L"Choose Break Mode colour");
+  control(L"BUTTON",L"Reset to Default Colours",BS_PUSHBUTTON,RESET_ACCENT_COLORS,2,Kind::Button,settingsPane);
+  hint(L"High contrast themes and Windows Forced Colors always use their accessible system colours.",true);
   label(L"Behaviour",Kind::Heading);checkbox(L"Start timer automatically on launch",AUTO_START,2,settings.autoStart,settingsPane);checkbox(L"Start with Windows",STARTUP,2,settings.startup,settingsPane);
   hint(L"Open Eye Break Reminder automatically when you sign in.",true);checkbox(L"Minimize to system tray",TRAY,2,settings.tray,settingsPane);hint(L"Closing keeps reminders active. Choose Exit in the tray menu to quit.",true);
   checkbox(L"Resume countdown when reopening the app",RESTORE,2,settings.restore,settingsPane);hint(L"Reinstalling after uninstall starts a fresh work interval. Preferences and history are kept.",true);checkbox(L"Pause while workstation is locked",PAUSE_LOCK,2,settings.pauseLocked,settingsPane);
@@ -503,10 +579,10 @@ public:
   std::vector<Control*> items;
   for(auto&c:controls)if(c.page==2){bool inSection=c.section==settingsSection;ShowWindow(c.handle,inSection?SW_SHOW:SW_HIDE);if(c.buddySpin)ShowWindow(c.buddySpin,inSection?SW_SHOW:SW_HIDE);if(inSection)items.push_back(&c);}
   std::vector<geometry::FormItem> form;
-  for(auto*item:items){geometry::FormItem f;f.kind=item->kind;std::wstring text=windowText(item->handle);f.textWidth=measureWidth(item->handle,text);
+  for(auto*item:items){geometry::FormItem f;f.kind=item->kind;std::wstring text=windowText(item->handle);bool accentSwatch=item->id==WORK_ACCENT_SWATCH||item->id==BREAK_ACCENT_SWATCH;f.textWidth=measureWidth(accentSwatch?settingsPane:item->handle,text,accentSwatch?normalFont:nullptr);
    f.textHeight=[this,handle=item->handle,text](int width){return measureHeight(handle,text,width);};f.sameRow=item->sameRow;f.indent=item->indent;f.spin=item->buddySpin!=nullptr;f.keep=item->keep;
    // Inline rows: time fields fit "00:00" plus their margins and frame, buttons fit their caption, labels their text.
-   if(f.kind==Kind::Inline){wchar_t cls[16]{};GetClassNameW(item->handle,cls,16);if(_wcsicmp(cls,L"Edit")==0)f.width=measureWidth(item->handle,L"00:00")+px(30);else if(_wcsicmp(cls,L"Button")==0)f.width=std::max(px(76),f.textWidth+px(32));else f.width=f.textWidth+px(2);}
+   if(f.kind==Kind::Inline){wchar_t cls[16]{};GetClassNameW(item->handle,cls,16);if(_wcsicmp(cls,L"Edit")==0)f.width=measureWidth(item->handle,L"00:00")+px(30);else if(accentSwatch)f.width=std::max(px(116),int(std::ceil(f.textWidth*textScale))+px(52));else if(_wcsicmp(cls,L"Button")==0)f.width=std::max(px(76),f.textWidth+px(32));else f.width=f.textWidth+px(2);}
    form.push_back(std::move(f));}
   // Pass 1 lays the form out across the whole shell. Only if it is taller than the viewport does a scroll bar appear (inside the
   // shell, at its right edge) and the form is laid out again in the narrower client area. A taller form can never need less, so
@@ -702,6 +778,16 @@ public:
  }
  void togglePause(){if(engine->snapshot().paused)engine->resume();else {engine->pause();audio->stop();}}
  void settingsChanged(){settings.validate();engine->configure(settings);dirtySettings=true;applyTheme();updateTray();updateScheduleStatus();InvalidateRect(main,nullptr,TRUE);}
+ void persistAccentPreferences(){applyTheme();saveSettings();InvalidateRect(main,nullptr,TRUE);if(breakWindow)InvalidateRect(breakWindow,nullptr,TRUE);}
+ void chooseAccentColor(bool work){
+  auto pendingColors=pickerCustomColors;CHOOSECOLORW picker{};picker.lStructSize=sizeof(picker);picker.hwndOwner=main;picker.lpCustColors=pendingColors.data();picker.rgbResult=accentSwatch(work);picker.Flags=CC_FULLOPEN|CC_RGBINIT|CC_ANYCOLOR;
+  if(!ChooseColorW(&picker))return;
+  pickerCustomColors=pendingColors;for(std::size_t i=0;i<pickerCustomColors.size();++i)settings.pickerCustomColors[i]=theme::rgb(GetRValue(pickerCustomColors[i]),GetGValue(pickerCustomColors[i]),GetBValue(pickerCustomColors[i]));theme::Color selected=theme::rgb(GetRValue(picker.rgbResult),GetGValue(picker.rgbResult),GetBValue(picker.rgbResult));
+  if(work){settings.customWorkAccent=true;settings.workAccentColor=selected;}
+  else{settings.customBreakAccent=true;settings.breakAccentColor=selected;}
+  persistAccentPreferences();
+ }
+ void resetAccentColors(){if(!settings.customWorkAccent&&!settings.customBreakAccent)return;settings.customWorkAccent=false;settings.customBreakAccent=false;persistAccentPreferences();}
  // Rebuilds the Settings controls after periods are added, removed or replaced, then focuses `focusId`.
  void rebuildSettings(int focusId){
   SendMessageW(settingsPane,WM_SETREDRAW,FALSE,0);buildSettings();SendMessageW(settingsPane,WM_SETREDRAW,TRUE,0);
@@ -754,6 +840,7 @@ public:
   if(scheduleCommand(id,code))return;
   if(code==BN_CLICKED){switch(id){
    case UPDATE_CHECK:startUpdateCheck();return;case UPDATE_OPEN:openOfficialRelease();return;
+   case CHOOSE_WORK_ACCENT:chooseAccentColor(true);return;case CHOOSE_BREAK_ACCENT:chooseAccentColor(false);return;case RESET_ACCENT_COLORS:resetAccentColors();return;
    case PRESET_WEEKDAYS:applyPreset(false);return;case PRESET_EVERYDAY:applyPreset(true);return;
    case SCHEDULE_TOGGLE:settings.schedule.enabled=checked(id);break;case PAUSE:togglePause();return;case RESET:engine->reset();return;case TAKE_BREAK:engine->takeBreak();return;case COMPLETE:engine->finish(true);return;case SKIP:engine->finish(false);return;case SNOOZE1:engine->snooze(1);return;case SNOOZE3:engine->snooze(3);return;case SNOOZE5:engine->snooze(5);return;
    case CLEAR_HISTORY:if(confirm(main,L"Clear all history?",L"This removes every eye break recorded on this device.",colors.dark,colors.systemContrast)){history.clear();saveHistory();updateHistory();}return;
@@ -821,7 +908,7 @@ public:
   monitorDpi=GetDpiForWindow(breakWindow);breakScroller=ScrollModel();breakApplied=INT_MIN;breakItems.clear();
   auto makeFont=[&](double height,int weight){return CreateFontW(-int(height*monitorDpi/96),0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable");};
   breakFont=makeFont(14*textScale,FW_NORMAL);breakTitleFont=makeFont(25*textScale,FW_SEMIBOLD);breakCountFont=makeFont(56*std::sqrt(textScale),FW_SEMIBOLD);
-  int w=int((settings.mode==1?440:580)*monitorDpi/96),h=int((settings.mode==1?500:580)*monitorDpi/96);
+  int w=int((settings.mode==1?440:580)*monitorDpi/96*textScale),h=int((settings.mode==1?500:580)*monitorDpi/96);
   if(settings.mode==2){work=monitor.bounds;w=work.right-work.left;h=work.bottom-work.top;}else {w=std::min(w,int(work.right-work.left));h=std::min(h,int(work.bottom-work.top));}
   SetWindowPos(breakWindow,nullptr,work.left+(work.right-work.left-w)/2,work.top+(work.bottom-work.top-h)/2,w,h,SWP_NOZORDER);
   SendMessageW(breakWindow,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(icon));SendMessageW(breakWindow,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(icon));
@@ -837,13 +924,41 @@ public:
   // Do not build a deferred-position batch from null HWNDs; Windows leaks a USER object when that batch fails.
   if(!breakWindow||!GetDlgItem(breakWindow,BREAK_TITLE)||!GetDlgItem(breakWindow,COMPLETE))return;
   RECT r{};GetClientRect(breakWindow,&r);int scale=int(GetDpiForWindow(breakWindow));auto bpx=[&](double n){return int(n*scale/96.0);};
-  int pad=bpx(28),gap=bpx(12),bh=bpx(40*textScale),width=std::min(bpx(380),int(r.right)-2*pad),x=(r.right-width)/2,y=pad;
+  int pad=bpx(28),gap=bpx(12),bh=bpx(40*textScale),width=std::min(bpx(380*textScale),int(r.right)-2*pad),x=(r.right-width)/2,y=pad;
   breakItems.clear();
   auto place=[&](int id,int height){breakItems.push_back({GetDlgItem(breakWindow,id),x,y,width,height});y+=height+gap;};
-  place(BREAK_TITLE,bpx(42*textScale));place(BREAK_INSTRUCTION,bpx(48*textScale));place(COUNTDOWN,bpx(96*std::sqrt(textScale)));place(BREAK_GUIDANCE,bpx(48*textScale));place(COMPLETE,bh);
+  int titleHeight=bpx(42*textScale);
+  HDC titleDc=GetDC(breakWindow);
+  if(titleDc){
+   HGDIOBJ previous=SelectObject(titleDc,breakTitleFont);RECT titleBounds{0,0,width,0};
+   int measured=DrawTextW(titleDc,L"Taking an eye break",-1,&titleBounds,DT_CALCRECT|DT_WORDBREAK|DT_CENTER|DT_NOPREFIX);
+   SelectObject(titleDc,previous);ReleaseDC(breakWindow,titleDc);
+   if(measured>0)titleHeight=std::max(titleHeight,int(titleBounds.bottom)+2*bpx(4));
+  }
+  auto captionHeight=[&](const wchar_t* text,HFONT font){
+   int height=0;HDC dc=GetDC(breakWindow);
+   if(dc){HGDIOBJ previous=SelectObject(dc,font);RECT bounds{0,0,width,0};int measured=DrawTextW(dc,text,-1,&bounds,DT_CALCRECT|DT_WORDBREAK|DT_CENTER|DT_NOPREFIX);SelectObject(dc,previous);ReleaseDC(breakWindow,dc);if(measured>0)height=int(bounds.bottom)+bpx(8);}
+   // Preserve the original breathing room through 150% text scaling. At larger
+   // scales, size caption rows to their wrapped text instead of reserving a
+   // 48-DIP row multiplied by the text scale, which can push the heading above
+   // the viewport even when each caption occupies only one line.
+   int minimum=bpx(48*std::min(textScale,1.5));return std::max(minimum,height);
+  };
+  place(BREAK_TITLE,titleHeight);place(BREAK_INSTRUCTION,captionHeight(L"Look at something at least 20 feet / 6 metres away.",breakFont));place(COUNTDOWN,bpx(96*std::sqrt(textScale)));place(BREAK_GUIDANCE,captionHeight(L"Keep looking into the distance.",breakFont));place(COMPLETE,bh);
   int skipWidth=breakSnooze?width/4:width;breakItems.push_back({GetDlgItem(breakWindow,SKIP),x,y,skipWidth-4,bh});
   if(breakSnooze){int widths[3]={width/3,width/5,width-width/4-width/3-width/5};int left=x+width/4;int ids[3]={SNOOZE1,SNOOZE3,SNOOZE5};for(int i=0;i<3;++i){breakItems.push_back({GetDlgItem(breakWindow,ids[i]),left,y,widths[i]-4,bh});left+=widths[i];}}
-  breakHeight=y+bh+pad;breakScroller.setRange(std::max(0,breakHeight-int(r.bottom)));positionBreak(true);InvalidateRect(breakWindow,nullptr,TRUE);
+  breakHeight=y+bh+pad;breakScroller.setRange(std::max(0,breakHeight-int(r.bottom)));positionBreak(true);
+  // At large text scales, keep as much of the reminder visible as the monitor allows.
+  // The initial focus is on the completion button; if the window stays short, ensureBreakVisible
+  // scrolls to that off-screen button and can move the wrapped heading above the viewport.
+  RECT windowRect{};MONITORINFO monitorInfo{};monitorInfo.cbSize=sizeof(monitorInfo);
+  if(GetWindowRect(breakWindow,&windowRect)&&GetMonitorInfoW(MonitorFromWindow(breakWindow,MONITOR_DEFAULTTONEAREST),&monitorInfo)){
+   int currentHeight=int(windowRect.bottom-windowRect.top),availableHeight=int(monitorInfo.rcWork.bottom-monitorInfo.rcWork.top);
+   int frameHeight=currentHeight-int(r.bottom-r.top),requiredHeight=breakHeight+frameHeight;
+   int expandedHeight=std::min(availableHeight,std::max(currentHeight,requiredHeight));
+   if(expandedHeight>currentHeight){int top=int(monitorInfo.rcWork.top)+(availableHeight-expandedHeight)/2;SetWindowPos(breakWindow,nullptr,windowRect.left,top,int(windowRect.right-windowRect.left),expandedHeight,SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS);}
+  }
+  InvalidateRect(breakWindow,nullptr,TRUE);
  }
  void positionBreak(bool force=false){
   if(!breakWindow)return;
@@ -858,8 +973,8 @@ public:
   // A disabled edit (the hours of an unselected day) asks for static colours; it keeps its field surface with secondary text.
   bool dimmed=false;if(child&&!input&&!IsWindowEnabled(child)){wchar_t cls[16]{};GetClassNameW(child,cls,16);dimmed=input=_wcsicmp(cls,L"Edit")==0;}
    SetBkColor(dc,input?colors.surface:colors.background);SetBkMode(dc,OPAQUE);
-   COLORREF ink=dimmed?colors.secondary:colors.foreground;if(child&&!dimmed){int id=GetDlgCtrlID(child);if(id==TIMER_STATE||id==BREAK_TITLE)ink=activeAccent();else if(reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0))==headingFont)ink=activeAccent();else if(id==COUNT_CAPTION||id==BREAK_INSTRUCTION||id==BREAK_GUIDANCE||GetWindowLongPtrW(child,GWLP_USERDATA)==1)ink=colors.secondary;}SetTextColor(dc,ink);return reinterpret_cast<LRESULT>(input?surfaceBrush:backgroundBrush);}
- static LRESULT CALLBACK paneProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;case WM_HSCROLL:if(reinterpret_cast<HWND>(l)==a.find(VOLUME)){a.settings.volume=int(SendMessageW(a.find(VOLUME),TBM_GETPOS,0,0));a.updateVolumeLabel();a.settingsChanged();if(LOWORD(w)==TB_ENDTRACK)a.saveSettings();}return 0;case WM_VSCROLL:if(a.barScroll(a.settingsScroller,hwnd,LOWORD(w),a.px(40)))a.settingsMoved();return 0;case WM_MOUSEWHEEL:a.wheelSettings(GET_WHEEL_DELTA_WPARAM(w));return 0;case WM_ERASEBKGND:{RECT r{};GetClientRect(hwnd,&r);FillRect(reinterpret_cast<HDC>(w),&r,a.backgroundBrush);return 1;}case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);}return DefWindowProcW(hwnd,msg,w,l);}
+   COLORREF ink=dimmed?colors.secondary:colors.foreground;if(child&&!dimmed){int id=GetDlgCtrlID(child);if(id==TIMER_STATE||id==BREAK_TITLE)ink=accentText();else if(reinterpret_cast<HFONT>(SendMessageW(child,WM_GETFONT,0,0))==headingFont)ink=accentText();else if(id==COUNT_CAPTION||id==BREAK_INSTRUCTION||id==BREAK_GUIDANCE||GetWindowLongPtrW(child,GWLP_USERDATA)==1)ink=colors.secondary;}SetTextColor(dc,ink);return reinterpret_cast<LRESULT>(input?surfaceBrush:backgroundBrush);}
+ static LRESULT CALLBACK paneProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_DRAWITEM:return a.drawAccentSwatch(reinterpret_cast<DRAWITEMSTRUCT*>(l))?TRUE:FALSE;case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;case WM_HSCROLL:if(reinterpret_cast<HWND>(l)==a.find(VOLUME)){a.settings.volume=int(SendMessageW(a.find(VOLUME),TBM_GETPOS,0,0));a.updateVolumeLabel();a.settingsChanged();if(LOWORD(w)==TB_ENDTRACK)a.saveSettings();}return 0;case WM_VSCROLL:if(a.barScroll(a.settingsScroller,hwnd,LOWORD(w),a.px(40)))a.settingsMoved();return 0;case WM_MOUSEWHEEL:a.wheelSettings(GET_WHEEL_DELTA_WPARAM(w));return 0;case WM_ERASEBKGND:{RECT r{};GetClientRect(hwnd,&r);FillRect(reinterpret_cast<HDC>(w),&r,a.backgroundBrush);return 1;}case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);}return DefWindowProcW(hwnd,msg,w,l);}
  static LRESULT CALLBACK breakProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){auto&a=*app;switch(msg){case WM_NOTIFY:return a.drawButton(reinterpret_cast<NMHDR*>(l));case WM_PAINT:a.paint(hwnd,true);return 0;case WM_ERASEBKGND:return 1;case WM_SIZE:a.layoutBreak();return 0;case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;
   case WM_VSCROLL:if(a.barScroll(a.breakScroller,hwnd,LOWORD(w),MulDiv(40,int(GetDpiForWindow(hwnd)),96)))a.breakMoved();return 0;
   case WM_MOUSEWHEEL:a.wheelBreak(GET_WHEEL_DELTA_WPARAM(w));return 0;
@@ -872,7 +987,7 @@ public:
     case WM_EXITSIZEMOVE:if(InterlockedExchange(&a.interactiveResize,0)!=0){SetEvent(a.dueEvent);a.refreshTimerDisplay();}a.updateRenderTimer();return 0;
    case WM_GETMINMAXINFO:{auto size=reinterpret_cast<MINMAXINFO*>(l);RECT frame{0,0,a.px(520),a.minimumTimerClientHeight()};AdjustWindowRectExForDpi(&frame,DWORD(GetWindowLongPtrW(hwnd,GWL_STYLE)),GetMenu(hwnd)!=nullptr,DWORD(GetWindowLongPtrW(hwnd,GWL_EXSTYLE)),a.dpi);size->ptMinTrackSize={frame.right-frame.left,frame.bottom-frame.top};return 0;}
    case WM_DPICHANGED:{a.settingsScroller.rescale(double(HIWORD(w))/a.dpi);a.dpi=HIWORD(w);auto r=reinterpret_cast<RECT*>(l);SetWindowPos(hwnd,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER);a.createFonts();a.layout();return 0;}
-   case WM_SETTINGCHANGE:case WM_THEMECHANGED:if(a.engine){a.createFonts();a.applyTheme();a.layout();a.layoutBreak();a.updateRenderTimer();if(msg==WM_SETTINGCHANGE)a.timeChanged();}return 0;
+   case WM_SETTINGCHANGE:case WM_THEMECHANGED:case WM_SYSCOLORCHANGE:if(a.engine){a.createFonts();a.applyTheme();a.layout();a.layoutBreak();a.updateRenderTimer();if(msg==WM_SETTINGCHANGE)a.timeChanged();}return 0;
    case WM_TIMECHANGE:_tzset();a.timeChanged();return 0;
    case WM_DISPLAYCHANGE:if(a.page==2)a.buildSettings();return 0;
    case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;

@@ -1,0 +1,27 @@
+[
+  {
+    "Path": "release/EyeBreakReminder.exe",
+    "Bytes": 2652672,
+    "SHA256": "47b17d031580a6ad90c322715f50691a448d58738fe9dcdfc8388d23f0bad624"
+  },
+  {
+    "Path": "release/EyeBreakReminder-Setup-x64.exe",
+    "Bytes": 1316456,
+    "SHA256": "2a2bbb0c83dc631b76301ad5ee2220bf7740bc73a79e7cf52068ed67838d9c48"
+  },
+  {
+    "Path": "release/EyeBreakReminder-Portable-x64.zip",
+    "Bytes": 1470519,
+    "SHA256": "fc783763d0261c0b881481363217a52079dbcd8ca2830a88da176e8ce17ebfeb"
+  },
+  {
+    "Path": "release/EyeBreakReminder-Source.zip",
+    "Bytes": 2261021,
+    "SHA256": "9fd0c1609195430c006ee3543712c9883cb358206286bd04010d24993b988151"
+  },
+  {
+    "Path": "release/EyeBreakReminder-SHA256.txt",
+    "Bytes": 382,
+    "SHA256": "d6db54bcf4b5cea61f2afcb53f360e75c3671f12f7c2fcc61e61c817a6a11b2d"
+  }
+]

@@ -1,0 +1,1985 @@
+{
+  "schemaVersion": "1.0.0",
+  "application": "Eye Break Reminder",
+  "version": "1.3.0",
+  "assessment": "Evidence-backed verification inventory for the current sealed candidate. Coverage totals distinguish executed checks from unresolved external limitations; this is not a FULLY VERIFIED claim.",
+  "sourceCommit": "b39f014ddbd2074eba6469dd3f8fc14f91f269bc",
+  "branch": "feature/v1.3.0-custom-accent-colours",
+  "authoritativeRunUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638",
+  "candidateArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+  "evidenceArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+  "candidateFiles": [
+    {
+      "name": "EyeBreakReminder.exe",
+      "bytes": 2655232,
+      "sha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66"
+    },
+    {
+      "name": "EyeBreakReminder-Setup-x64.exe",
+      "bytes": 1315647,
+      "sha256": "67c7bb338e83397e17007fa0afff9b4ad06f0a2d7924bb016198d9d38e3a76b4"
+    },
+    {
+      "name": "EyeBreakReminder-Portable-x64.zip",
+      "bytes": 1471802,
+      "sha256": "30407d37be7f3cb7438eaa42645b3db814bfa92d76bc4f709e09e0456e9b0da7"
+    },
+    {
+      "name": "EyeBreakReminder-Source.zip",
+      "bytes": 2329400,
+      "sha256": "7fd33ae02100fc754d787ca4834c02e0d73f18b0ab2c7f7d21601f69ed451404"
+    },
+    {
+      "name": "EyeBreakReminder-SHA256.txt",
+      "bytes": 382,
+      "sha256": "15c79cea7cf7d8bc56df68560355acbfbaa6af3afdd9f0120c636f10d9c6ec6f"
+    }
+  ],
+  "environment": {
+    "tested": {
+      "name": "GitHub-hosted Windows Server 2025 Datacenter",
+      "version": "10.0.26100",
+      "architecture": "x64",
+      "interactiveExplorer": true,
+      "monitorCount": 1
+    },
+    "localHostInventory": "Windows 11 Pro x64 26H2 build 26300; native host inventoried but excluded from candidate acceptance, reboot, lock, sleep, audio playback, and system theme changes because it is the user's personal machine and no isolated VM or sandbox was available.",
+    "nativeWindows11x64Available": false,
+    "blocker": "No disposable VM/Sandbox/hypervisor/self-hosted runner was available; current hosted run is Windows Server 2025, and GitHub-hosted labels do not provide consumer Windows 11 x64.",
+    "hostedRunnerImages": "https://github.com/actions/runner-images/blob/main/README.md#available-images"
+  },
+  "suiteAssertionTotals": {
+    "makeTest": 6700,
+    "makeAll": 6700,
+    "makePackageCore": 6700,
+    "packageAssertions": 202,
+    "guiAssertions": 837,
+    "installedPass": 1531,
+    "installedFail": 0,
+    "installedNotTested": 9,
+    "soakAssertions": 263,
+    "soakCycles": 110,
+    "pickerOperations": 100,
+    "resourceSamples": 2190,
+    "candidateLaunchSmokes": 2,
+    "countedPassAssertions": 22935,
+    "countedFailAssertions": 0,
+    "note": "Current candidate-run assertions: 20,100 core across three 6,700 runs; 202 package checks; 837 accelerated GUI assertions; 1,531 installed acceptance checks; 263 exact-production-EXE soak checks; and 2 exact-candidate launch smokes. The GUI suite uses a distinct EYEBREAK_TEST_BUILD binary; deterministic overlap is implementation-level and not direct production HTTPS overlap. Supplemental ARM64 emulation assertions are recorded separately and not double-counted here."
+  },
+  "priorNotTestedIds": [
+    "GAP-001",
+    "GAP-002",
+    "GAP-003",
+    "GAP-004",
+    "GAP-005",
+    "GAP-006",
+    "GAP-007",
+    "GAP-008",
+    "GAP-009",
+    "GAP-010",
+    "GAP-011",
+    "GAP-012",
+    "GAP-013"
+  ],
+  "caseStatusTotals": {
+    "PASS": 62,
+    "FAIL": 0,
+    "NOT TESTED": 6,
+    "NOT APPLICABLE": 1,
+    "BLOCKED": 7,
+    "TOTAL_CASES": 76
+  },
+  "releaseAssessment": {
+    "confirmedProductDefect": "None remains in the exact candidate. Candidate source commit b39f014 fixed the confirmed scaled Work/Break accent-readout clipping and Break-heading viewport/wrapping defects; the exact candidate passed text-scale regressions at 125%, 150%, 200% and 225%. Display-probe failures were traced to missing audio-warning handling and a diagnostic-field bug; the corrected probe passed.",
+    "exhaustiveVerification": "Not fully verified: native Windows 11 x64, reboot/post-login, lock/unlock, sleep/resume, multi-monitor topology, Narrator speech capture, audio output capture, visible legacy Shell balloon, direct production-request overlap, full per-monitor DPI, and exhaustive hover/disabled/selected-state contrasts remain BLOCKED or NOT TESTED.",
+    "recommendation": "READY FOR PUBLICATION APPROVAL WITH DOCUMENTED TESTING LIMITATIONS. Core and GUI regression, installer/upgrade, exact-candidate integrity, custom accents, accessibility protections, resource stability, and current Windows Server x64 display/focus behavior pass. No confirmed release-blocking defect remains. Do not claim FULLY VERIFIED or publish v1.3.0 without separate approval."
+  },
+  "cases": [
+    {
+      "testId": "PROV-001",
+      "category": "Provenance",
+      "description": "Approved product source commit",
+      "expected": "Exact approved source is sealed into candidate provenance.",
+      "actual": "Run 43857689638 records source commit b39f014ddbd2074eba6469dd3f8fc14f91f269bc.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "PROV-002",
+      "category": "Provenance",
+      "description": "Retained five-file candidate identity and manifest",
+      "expected": "Exactly five assets match their expected sizes, SHA-256 hashes and manifest entries.",
+      "actual": "All five downloaded candidate files and manifest independently rechecked successfully.",
+      "environment": {
+        "name": "Local read-only candidate integrity check",
+        "os": "Personal Windows host; no application launch or settings mutation",
+        "scope": "SHA-256, file count, manifest and portable archive comparison only"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "PROV-003",
+      "category": "Provenance",
+      "description": "Portable executable identity",
+      "expected": "Portable EXE is byte-identical to standalone candidate.",
+      "actual": "Both SHA-256 values are 3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66.",
+      "environment": {
+        "name": "Local read-only candidate integrity check",
+        "os": "Personal Windows host; no application launch or settings mutation",
+        "scope": "SHA-256, file count, manifest and portable archive comparison only"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "PROV-004",
+      "category": "Provenance",
+      "description": "Installed payload identity",
+      "expected": "Installed EXE equals release candidate EXE byte-for-byte.",
+      "actual": "Installer acceptance recorded installed EXE identity equal to candidate.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "PROV-005",
+      "category": "Provenance",
+      "description": "Source ZIP content",
+      "expected": "Source archive matches approved source snapshot and excludes private/generated content.",
+      "actual": "100 Source ZIP entries matched the candidate packaging policy and source snapshot at commit b39f014; the independent audit found no personal paths or secrets.",
+      "environment": {
+        "name": "Prior local source archive audit",
+        "scope": "129 ZIP entries compared byte-for-byte with approved source commit; no app execution"
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "BUILD-001",
+      "category": "Build",
+      "description": "make test",
+      "expected": "Core test suite passes.",
+      "actual": "6,700 assertions passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": 6700
+    },
+    {
+      "testId": "BUILD-002",
+      "category": "Build",
+      "description": "make all",
+      "expected": "Production build and core suite pass.",
+      "actual": "6,700 assertions passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": 6700
+    },
+    {
+      "testId": "BUILD-003",
+      "category": "Build",
+      "description": "make package",
+      "expected": "Package build and core suite pass.",
+      "actual": "6,700 assertions passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": 6700
+    },
+    {
+      "testId": "BUILD-004",
+      "category": "Build",
+      "description": "make gui-test and native GUI acceptance",
+      "expected": "Native GUI tests pass; accelerated GUI build is distinguished from release EXE.",
+      "actual": "521 native GUI assertions passed; separate GUI event records are not added to the assertion total. GUI test EXE is a distinct accelerated test binary, not byte-identical production executable evidence.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "GUI suite used a separate accelerated test EXE, not candidate production EXE.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": 519
+    },
+    {
+      "testId": "BUILD-005",
+      "category": "Build",
+      "description": "Package verification",
+      "expected": "All package assertions pass.",
+      "actual": "197 package verification assertions passed for the candidate build.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": 225
+    },
+    {
+      "testId": "BUILD-006",
+      "category": "Build",
+      "description": "Installed candidate acceptance",
+      "expected": "Exact installed candidate passes recorded acceptance.",
+      "actual": "1,180 PASS, 0 FAIL, 13 NOT TESTED in installed application/installer/upgrade/lifecycle acceptance.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "See GAP-001 through GAP-013.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": 656
+    },
+    {
+      "testId": "BUILD-007",
+      "category": "Build",
+      "description": "Exact production EXE resource soak",
+      "expected": "No sustained USER/GDI/handle growth over extended operations.",
+      "actual": "110 reminder cycles, 100 picker ops (50 OK/50 Cancel), 2,190 samples, 263 PASS.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": 263
+    },
+    {
+      "testId": "BUILD-008",
+      "category": "Build",
+      "description": "Standalone/portable candidate launch smoke",
+      "expected": "Both launch and close gracefully.",
+      "actual": "2 exact-candidate smoke checks passed; both use candidate EXE hash.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": 2
+    },
+    {
+      "testId": "TIMER-001",
+      "category": "Timer",
+      "description": "Work countdown and timer geometry",
+      "expected": "Work state and countdown are visible and centered.",
+      "actual": "Installed candidate displayed Work; centered status verified at 680x660 and 964x708; countdown progressed during live update.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "TIMER-002",
+      "category": "Timer",
+      "description": "Pause, resume and reset",
+      "expected": "Pause holds time; resume continues; reset follows documented semantics.",
+      "actual": "GUI pause/resume and deterministic reset/recovery core assertions passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Timer engine reset behavior is also source-level core coverage.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "TIMER-003",
+      "category": "Timer",
+      "description": "Manual and automatic Break",
+      "expected": "Manual and scheduled reminders open Break with named status.",
+      "actual": "Installed manual Break and real one-minute scheduled Break passed; GUI/core transitions passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "TIMER-004",
+      "category": "Timer",
+      "description": "Skip, completion and return to Work",
+      "expected": "Break completion/skip returns to Work and records correct outcome once.",
+      "actual": "Natural completion and acknowledgement returned to Work; history and actual ring pixels checked.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "TIMER-005",
+      "category": "Timer",
+      "description": "Snooze state and delay",
+      "expected": "Allowed snooze delays and reschedules without duplicate history.",
+      "actual": "Core covered 1/3/5-minute boundaries; installed one-minute snooze rescheduled and dismissal returned to Work.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "TIMER-006",
+      "category": "Timer",
+      "description": "Operating schedule and held/outside-hours behavior",
+      "expected": "Schedule boundaries, overnight periods, DST, held states and persistence behave correctly.",
+      "actual": "Deterministic core schedule suite passed; v1.2.1 UI schedule preset survived upgrade.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Core schedule calendar cases use deterministic fixtures, not wall-clock Windows time.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "TIMER-007",
+      "category": "Timer",
+      "description": "Restart during Work, paused state and active Break",
+      "expected": "Recovery follows existing semantics and avoids false completion or duplicate reminder.",
+      "actual": "Exact candidate active-Break restart returned to fresh Work; preferences persisted; no duplicate or false record. Core covers running/paused checkpoint recovery.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "TIMER-008",
+      "category": "Timer",
+      "description": "Tray minimize, close, reopen and Exit",
+      "expected": "Tray commands pause/resume, manual Break, reopen and exit without duplicate instance.",
+      "actual": "Interactive shell tray actions and close-to-tray explanation passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-001",
+      "category": "Settings",
+      "description": "Work/break interval fields",
+      "expected": "Keyboard edits persist.",
+      "actual": "Installed edits 100-minute Work/30-second Break accepted by Tab navigation; restart and upgrades preserved values.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-002",
+      "category": "Settings",
+      "description": "Operating schedule controls",
+      "expected": "Schedule settings survive upgrade and model covers hours.",
+      "actual": "v1.2.1 everyday preset configured, then preserved by v1.3.0 upgrade; core tests cover schedule rules.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-003",
+      "category": "Settings",
+      "description": "Alarm enable preference",
+      "expected": "Disabled alarm suppresses sound but retains reminder/completion behavior.",
+      "actual": "Core tests verified alarm suppression; installed acceptance read alarm checkbox state.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-004",
+      "category": "Settings",
+      "description": "Alarm sound controls, preview and no-output handling",
+      "expected": "Exercise all five sound choices, volume levels, repeat toggle, preview/stop state and behavior when no audio endpoint is available.",
+      "actual": "PASS: all five sounds were selected; volume 0, 55 and 100 and repeat on/off persisted. Preview controls opened the expected Windows no-output warning, stayed responsive, and Stop remained disabled because no usable endpoint was present. Acoustic output is separately NOT TESTED.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Actual audible/loopback output remains unverified; see GAP-004.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-005",
+      "category": "Settings",
+      "description": "Notifications preference and in-app reminder",
+      "expected": "Enabled preference allows in-app reminder while hidden in tray.",
+      "actual": "Actual reminder appeared after a real scheduled cycle while app was hidden. Shell balloon is a separate gap.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "Does not establish visible Shell balloon; see GAP-003.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-006",
+      "category": "Settings",
+      "description": "Normal, compact and fullscreen reminder modes",
+      "expected": "Open an actual Break window in each presentation mode; verify geometry, status, acknowledgement and return to Work.",
+      "actual": "PASS: normal and compact geometry were measured; fullscreen covered the runner primary display. Each mode displayed the named Break state and returned to Work after acknowledgement.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Only the runner primary display was available; multi-monitor topology is BLOCKED separately.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-007",
+      "category": "Settings",
+      "description": "Preferred monitor mode and selected display controls",
+      "expected": "Exercise available selection values and verify the selected display identity persists.",
+      "actual": "PASS: all three preferred-monitor modes persisted; the available primary display selection persisted its device identity.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Multi-monitor placement, disconnect/reconnect and mixed-DPI topology remain BLOCKED in WIN-008.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-008",
+      "category": "Settings",
+      "description": "History, statistics, persistence and retention",
+      "expected": "Records/statistics remain correct after restart, upgrade and retention bound.",
+      "actual": "History bytes and rows persisted; core statistics, corruption handling and 10,000-row cap passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-009",
+      "category": "Settings",
+      "description": "History-save toggle and Clear History UI",
+      "expected": "Toggle history saving, then clear disposable test history and confirm storage and visible rows are empty.",
+      "actual": "PASS: history saving toggled off/on and persisted; Clear History confirmation was operated and both file rows and visible list became empty.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "disposable runner profile"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "No user history was accessed.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-010",
+      "category": "Appearance",
+      "description": "Five application themes and Follow Windows",
+      "expected": "All five palettes work, persist, and do not erase custom colors.",
+      "actual": "Dark, Light, both HC themes and Follow Windows were exercised; real Windows light/dark change updated Follow Windows.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-011",
+      "category": "Appearance",
+      "description": "Distinct Break accent toggle",
+      "expected": "Disabled mode uses Work accent; enabled mode restores independent Break accent.",
+      "actual": "Actual ring pixels confirmed shared Work accent when disabled; independent Work/Break accents passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-012",
+      "category": "Appearance",
+      "description": "Native ChooseColorW picker, RGB, palette, keyboard and Cancel",
+      "expected": "Native dialog handles independent RGB selection, palette persistence and Cancel.",
+      "actual": "Work #8B5CF6 and Break #F97316 applied; RGB/hex, palette after restart, keyboard WS_TABSTOP and Cancel verified.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-013",
+      "category": "Appearance",
+      "description": "Extreme custom colors and ring pixel sampling",
+      "expected": "Extreme, identical and similar pairs render selected ring colors and preserve readable text.",
+      "actual": "Seven GUI color combinations including black/white, yellow/navy, red/pale and same/similar were pixel-sampled; contrast core passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Pixel tests used accelerated GUI test EXE; production ring tests separately passed on candidate for custom and Forced Colors states.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-014",
+      "category": "Appearance",
+      "description": "Reset and Cancel do not affect unrelated settings/timer",
+      "expected": "Reset changes accents only; Cancel changes none.",
+      "actual": "Installed reset restored Light defaults #1D4ED8/#0F766E, preserving theme, intervals, schedule, startup, history and timer; Cancel preserved swatch/settings.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-015",
+      "category": "Behavior",
+      "description": "Startup preference and registration migration",
+      "expected": "Registration is unique, survives upgrade and is removed by uninstall.",
+      "actual": "One startup registration remained after upgrade; owned registration removed on uninstall. Actual post-reboot launch remains untested.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "See NEW-002.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-016",
+      "category": "Behavior",
+      "description": "Resume timer and pause while locked engine semantics",
+      "expected": "Restore/opt-out and pause-lock logic follows documented recovery rules.",
+      "actual": "Deterministic core tests cover running/paused restore, opt-out, pause-lock and wake idempotence.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Synthetic engine tests are not physical lock/unlock.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-017",
+      "category": "About",
+      "description": "Live update check and failure handling",
+      "expected": "Version comparison avoids downgrade and errors remain responsive.",
+      "actual": "Live GitHub stable endpoint reported candidate newer; same/older/prerelease/invalid JSON/rate-limit/offline/timeout/TLS fixtures passed; real timer progressed during request.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SET-018",
+      "category": "Settings",
+      "description": "Documented keyboard shortcuts and OS reduced-motion response",
+      "expected": "Exercise Ctrl+R, Ctrl+comma, Ctrl+Shift+B and the actual Windows client-area animation setting; verify timer continuity and restoration.",
+      "actual": "PASS: all three shortcuts performed their documented actions. Windows client-area animation was toggled; Settings jumped when disabled and animated when enabled, timer state was preserved, and the original OS setting was restored.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Narrator speech is a separate NOT TESTED case (ACCESS-003).",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "ACCESS-001",
+      "category": "Accessibility",
+      "description": "Text, button, focus and status contrast",
+      "expected": "Normal/extreme/HC colors remain readable and statuses do not rely on color alone.",
+      "actual": "Core contrast tests passed; measured HC/Forced Colors: text 16.29:1, button 7.89:1, focus 11.17:1; labels distinguish Work/Break.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "ACCESS-002",
+      "category": "Accessibility",
+      "description": "UI Automation names/roles and keyboard focus",
+      "expected": "Navigation and controls expose names and focus remains visible.",
+      "actual": "UIA metadata, Tab traversal, picker keyboard style and Forced Colors focus passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "ACCESS-003",
+      "category": "Accessibility",
+      "description": "Narrator navigation and actual speech capture",
+      "expected": "Narrator reads requested screens/dialogs in meaningful order.",
+      "actual": "Windows Narrator was active while the candidate was navigated through Timer, Settings > Appearance, both custom-color controls, ChooseColorW RGB/palette controls, History, Check for Updates, and the Break reminder. UI Automation recorded focused names, roles, states and controls. The harness explicitly records SpeechClaimed=false; no actual Narrator speech audio was captured.",
+      "environment": {
+        "available": true,
+        "reason": "Narrator navigation and UI Automation focus metadata ran on the isolated Windows Server 2025 desktop; actual speech capture/audio output remains unavailable."
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43909542662/artifacts/14247965062",
+        "pre-release-evidence/windows-pre-release-results.json"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "Actual Narrator speech and its audio output were not captured. The earlier candidate workflow recorded Narrator navigation PASS, but focused run 43909542662 stopped at the native Blue RGB field when Narrator's ApplicationFrameWindow received focus; that repeat is NOT TESTED and does not establish a product defect.",
+      "priorNotTestedId": "GAP-001",
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-001"
+      ]
+    },
+    {
+      "testId": "ACCESS-004",
+      "category": "Accessibility",
+      "description": "Actual Windows High Contrast/Forced Colors",
+      "expected": "System palette overrides accents; saved colors return when disabled.",
+      "actual": "Actual Windows API enabled Forced Colors; five app themes and ring pixels checked; original OS setting restored; custom values returned.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "ACCESS-005",
+      "category": "Accessibility",
+      "description": "Actual Windows reduced-motion preference",
+      "expected": "Toggle the Windows client-area animation preference and verify the app responds and restores original preference.",
+      "actual": "PASS: with Windows animation disabled, Settings scrolling jumped; when enabled, it animated. The timer state was preserved and the original Windows preference was restored.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Covers the tested client-area animation setting; it does not claim a broader OS motion policy than that API exposes.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "ACCESS-006",
+      "category": "Accessibility",
+      "description": "DPI and 150% text scaling",
+      "expected": "Timer layout remains centered at tested scales.",
+      "actual": "96 DPI and additional DPI vs earlier 144-DPI run; actual 150% Windows text scale passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-001",
+      "category": "Windows integration",
+      "description": "In-app reminder window and tray surface",
+      "expected": "Actual app reminder and tray actions work independently.",
+      "actual": "In-app window displayed correct Break text; tray menu and snooze/dismissal passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-002",
+      "category": "Windows integration",
+      "description": "Visible legacy Shell balloon",
+      "expected": "A separate Shell notification surface is visible and dismissible.",
+      "actual": "The hidden-app Shell notification request ran, but Windows reported SHQueryUserNotificationState=QUNS_QUIET_TIME (6), AcceptsNotifications=false. No separate legacy balloon was observed; the in-app Break reminder was visible. The suppression is environmental, not an application failure.",
+      "environment": {
+        "available": true,
+        "reason": "The isolated Windows Server 2025 runner reported QUNS_QUIET_TIME and suppressed Shell notification surfaces."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+        "pre-release-evidence/windows-pre-release-results.json"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "The runner's quiet-time state prevented observing a visible legacy balloon. Modern Toast API is not implemented and is NOT APPLICABLE in WIN-003.",
+      "priorNotTestedId": "GAP-003",
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-003"
+      ]
+    },
+    {
+      "testId": "WIN-003",
+      "category": "Windows integration",
+      "description": "Modern actionable Toast API",
+      "expected": "Exercise supported app notification surface.",
+      "actual": "Application does not implement modern actionable Windows Toast API.",
+      "environment": {
+        "available": false,
+        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "NOT APPLICABLE",
+      "limitation": "Not a feature of this application.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-004",
+      "category": "Windows integration",
+      "description": "Native Windows 11 x64 desktop",
+      "expected": "Run exact candidate on consumer Windows 11 x64, not Server or ARM emulation.",
+      "actual": "The personal host is Windows 11 Pro x64, but is excluded from disruptive acceptance testing. Windows Sandbox is not installed/usable; VMware, VirtualBox, Hyper-V PowerShell VMs, existing disposable VMs, and authorized self-hosted runners were not available. The optional-feature query required elevation, so no feature state was changed or inferred.",
+      "environment": {
+        "available": false,
+        "reason": "The personal Windows 11 Pro x64 host was not used for disruptive testing. WindowsSandbox.exe, VMware vmrun, VirtualBox VBoxManage, Hyper-V Get-VM, existing disposable VMs, and registered self-hosted runners were unavailable. GitHub-hosted choices available to this repository provide Server x64 and Windows 11 ARM64, not native Windows 11 x64. Reading optional-feature state required elevation; no feature was enabled."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "BLOCKED",
+      "limitation": "Needs safe isolated native x64 Windows 11 environment. Hosted options list Server x64 and Windows 11 ARM64, not hosted Windows 11 x64. https://github.com/actions/runner-images/blob/main/README.md#available-images",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-005",
+      "category": "Windows integration",
+      "description": "Genuine Windows reboot and post-login startup",
+      "expected": "Reboot isolated VM and verify settings/startup/recovery.",
+      "actual": "No persistent safe VM; hosted runner reboot terminates job; personal PC not rebooted.",
+      "environment": {
+        "available": false,
+        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "BLOCKED",
+      "limitation": "Needs reboot-capable disposable Windows VM.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-006",
+      "category": "Windows integration",
+      "description": "Real lock/unlock session",
+      "expected": "Lock and unlock isolated session while timer runs.",
+      "actual": "Not attempted on personal machine; hosted runner lock risks stranding job.",
+      "environment": {
+        "available": false,
+        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+        "pre-release-evidence/windows-pre-release-results.json"
+      ],
+      "status": "BLOCKED",
+      "limitation": "Needs interactive isolated VM.",
+      "priorNotTestedId": "GAP-010",
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-010"
+      ]
+    },
+    {
+      "testId": "WIN-007",
+      "category": "Windows integration",
+      "description": "Real sleep/resume",
+      "expected": "Suspend/resume isolated Windows and observe timer/reminder recovery.",
+      "actual": "No reliable power-capable VM or wake path; no synthetic messages counted.",
+      "environment": {
+        "available": false,
+        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+        "pre-release-evidence/windows-pre-release-results.json"
+      ],
+      "status": "BLOCKED",
+      "limitation": "Needs isolated VM with real suspend/resume.",
+      "priorNotTestedId": "GAP-011",
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-011"
+      ]
+    },
+    {
+      "testId": "WIN-008",
+      "category": "Windows integration",
+      "description": "Real multi-monitor and mixed-DPI topology",
+      "expected": "Move windows, change primary display, disconnect/reconnect displays.",
+      "actual": "One-monitor hosted desktop only.",
+      "environment": {
+        "available": false,
+        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+        "pre-release-evidence/windows-pre-release-results.json"
+      ],
+      "status": "BLOCKED",
+      "limitation": "Needs real/virtual second display and topology changes.",
+      "priorNotTestedId": "GAP-012",
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-012"
+      ]
+    },
+    {
+      "testId": "WIN-009",
+      "category": "Windows integration",
+      "description": "Actual Windows light/dark and Forced Colors notifications",
+      "expected": "OS appearance changes update Follow Windows and saved custom colors restore.",
+      "actual": "Real per-user light/dark setting and High Contrast API changes repainted app, preserving saved values.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-010",
+      "category": "Windows integration",
+      "description": "Actual timer progression during live update",
+      "expected": "UI remains responsive and timer progresses during HTTP request.",
+      "actual": "Installed candidate countdown advanced while real request busy; it did not cross a displayed tick before response completion.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "A displayed tick overlapping the actual live response remains GAP-009.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-011",
+      "category": "Windows integration",
+      "description": "Actual application launch after Windows sign-in",
+      "expected": "Startup launches exactly one app after OS reboot/login.",
+      "actual": "Startup registration uniqueness tested, but no safe reboot/sign-in environment.",
+      "environment": {
+        "available": false,
+        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "BLOCKED",
+      "limitation": "Requires WIN-005.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-012",
+      "category": "Windows integration",
+      "description": "Verified Windows audio endpoint and WASAPI capture",
+      "expected": "Capture non-silent alarm sound output and verify controls.",
+      "actual": "No verified virtual/physical endpoint or loopback capture.",
+      "environment": {
+        "available": false,
+        "reason": "No authorised matching isolated environment was available; the personal desktop was not used for disruptive testing."
+      },
+      "binarySha256": null,
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+        "pre-release-evidence/windows-pre-release-results.json"
+      ],
+      "status": "BLOCKED",
+      "limitation": "Needs isolated audio-capable Windows desktop.",
+      "priorNotTestedId": "GAP-004",
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-004",
+        "GAP-013"
+      ]
+    },
+    {
+      "testId": "INSTALL-001",
+      "category": "Installer",
+      "description": "Fresh interactive installer and installed launch",
+      "expected": "Wizard installs v1.3.0 and installed app opens.",
+      "actual": "Exact candidate installer completed fresh install; metadata/path and launch passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "INSTALL-002",
+      "category": "Installer",
+      "description": "Shortcuts, registry, Installed Apps and uninstaller",
+      "expected": "Installed identity and expected paths are correct without duplicates.",
+      "actual": "Start Menu shortcut, registry, Installed Apps and install identity passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "INSTALL-003",
+      "category": "Installer",
+      "description": "Upgrade from published v1.2.1",
+      "expected": "In-place update preserves prior settings/history and avoids duplicate registration.",
+      "actual": "Exact v1.2.1 upgrade preserved theme, timers, schedule, startup, alarm prefs, history/statistics; one startup registration.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "INSTALL-004",
+      "category": "Installer",
+      "description": "Legacy v1.1.0 settings/history comparison",
+      "expected": "Legacy settings and history migrate and uninstall preserves user data.",
+      "actual": "v1.1 comparison upgrade/migration and history preservation passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "INSTALL-005",
+      "category": "Installer",
+      "description": "Interactive and silent uninstall, reinstall",
+      "expected": "Files/shortcuts/owned registration removed; settings/history policy respected; reinstall works.",
+      "actual": "Interactive and silent uninstalls, silent reinstall, cleanup and data preservation passed.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "INSTALL-006",
+      "category": "Installer",
+      "description": "Candidate and v1.1 uninstall finish checkbox / UI process code",
+      "expected": "Capture finish-page Run state and child UI exit code.",
+      "actual": "The exact-candidate install finish-page Run checkbox was observed Off. Candidate and v1.1 interactive uninstall UI child processes both exited with code 0; the code was captured from retained native process handles. Candidate uninstall removed files and registrations. The uninstaller has no finish Run checkbox page.",
+      "environment": {
+        "available": true,
+        "reason": "Windows Server 2025 x64 exact-candidate installer and comparison uninstall UI runs completed."
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+        "pre-release-evidence/windows-pre-release-results.json"
+      ],
+      "status": "PASS",
+      "limitation": "Uninstaller finish Run checkbox is NOT APPLICABLE: NSIS uninstaller uses MUI_UNPAGE_FINISH and has no Run control.",
+      "priorNotTestedId": "GAP-005/GAP-006/GAP-007/GAP-008",
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-005",
+        "GAP-006",
+        "GAP-007",
+        "GAP-008"
+      ]
+    },
+    {
+      "testId": "INSTALL-007",
+      "category": "Installer",
+      "description": "Standard-user account/UAC and Settings > Apps uninstall",
+      "expected": "Verify standard user flows and Windows Settings uninstall entry point.",
+      "actual": "The exact-candidate standard-user workflow passed 10 events, with 0 FAIL, 1 NOT APPLICABLE, and 1 NOT TESTED. A non-administrator user installed to LocalAppData without elevation, completed the wizard with Run unchecked, received HKCU registration, launched the app, and completed interactive and silent uninstall. The targeted retry used both Explorer URI and direct SystemSettings.exe activation. The retained screenshot shows the Apps > Installed apps page running as runneradmin; the disposable standard-user page was not exposed through UI Automation. No unrelated app was selected or changed.",
+      "environment": {
+        "available": true,
+        "reason": "A disposable standard account was available on the isolated Windows Server runner. In both the initial and targeted rerun, Windows opened Installed apps as runneradmin; direct SystemSettings.exe activation forwarded to the same interactive shell. The runner did not provide a separately logged-on standard-user Settings shell."
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43897712563/artifacts/14240990310"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "The runner's active Windows shell is runneradmin. The disposable standard-user session has a standard token but no separate interactive shell; both URI activation and direct SystemSettings.exe forwarded to runneradmin. A Windows environment with a separately logged-on standard user is required to exercise Settings > Apps removal safely.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "RES-001",
+      "category": "Resource stability",
+      "description": "Candidate long combined soak",
+      "expected": "No sustained resource increase proportional to interaction cycles.",
+      "actual": "110 cycles, 100 picker operations, 2,190 time-series samples; USER 164→164 (range 164–165), GDI 58→59 (57–59), handles 238→238 (237–240); private bytes 3.44–4.40 MB and working set 14.01–23.51 MB. No sustained USER/GDI/handle growth.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "RES-002",
+      "category": "Resource stability",
+      "description": "Repeated picker and reminder window cleanup",
+      "expected": "Each dialog/window closes and releases USER/GDI/handles.",
+      "actual": "50 OK/50 Cancel; 116 Break windows in soak; separate 20-cycle reminder regression; stable trends.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270"
+      ],
+      "status": "PASS",
+      "limitation": "",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "GAP-002",
+      "category": "Prior untested observation",
+      "description": "Close-to-tray explanatory text via native/UI Automation controls",
+      "expected": "Verify the visible dialog and its accessible instruction text using native controls or UI Automation.",
+      "actual": "PASS: the close-to-tray explanation was shown and captured; its instruction text was exposed through native controls/UI Automation, and the enabled OK button dismissed it.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "This resolves prior NOT TESTED observation GAP-002.",
+      "priorNotTestedId": "GAP-002",
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "GAP-009",
+      "category": "Prior untested observation",
+      "description": "Real displayed tick during live HTTP response",
+      "expected": "A displayed countdown tick occurs while a real production request remains in-flight.",
+      "actual": "The deterministic EYEBREAK_TEST_BUILD GUI test used named start/release event barriers and proved the controlled response remained unresolved while the timer advanced 10,800→10,797 in 9 ms; a bounded UI message succeeded, release produced the expected result, and the countdown remained correct. A separate live GitHub check on the exact production candidate completed before its displayed timer tick, so direct production-binary HTTP overlap is still unproven.",
+      "environment": {
+        "available": true,
+        "reason": "The deterministic event barrier ran in a distinct test-only GUI executable. The exact production candidate made a live GitHub request, but the response completed before the displayed tick."
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+        "pre-release-evidence/windows-pre-release-results.json"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "Implementation-level asynchronous overlap passed. Direct exact-production-binary in-flight HTTPS overlap remains NOT TESTED; do not infer it from a disabled button or the test-only fixture.",
+      "priorNotTestedId": "GAP-009",
+      "countedAssertionCount": null,
+      "priorNotTestedIds": [
+        "GAP-009"
+      ]
+    },
+    {
+      "testId": "ACCESS-007",
+      "category": "Accessibility",
+      "description": "DPI/text scaling across all pages and dialogs",
+      "expected": "Check Settings, History, reminder and dialogs at multiple DPI and text scale levels for clipping and focus.",
+      "actual": "On the exact candidate at 96 DPI, rendered layout and control checks passed at 125%, 150%, 200%, and 225% Windows text scale (32, 32, 37, and 36 events). Coverage includes Timer, History, all six Settings sections, ChooseColorW, Work/Break accent swatches and the Break reminder; the 225% Break heading and controls remain visible. The full per-monitor DPI matrix was not available at the runner's single 96-DPI desktop.",
+      "environment": {
+        "available": true,
+        "reason": "Exact-candidate interactive text-scale coverage ran at four scale settings; the hosted display remained at 96 DPI."
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "Native DPI values beyond 96, per-monitor DPI movement, and every dialog/control state at each combination remain NOT TESTED.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SETTING-019",
+      "category": "Settings",
+      "description": "Reset all settings UI action",
+      "expected": "Confirm Reset All restores documented preferences, removes startup registration, preserves history bytes, and leaves a running default timer.",
+      "actual": "PASS: confirmation was operated; defaults were restored, history bytes remained unchanged, startup registration was removed, and the default Work timer ran.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "disposable runner profile"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "History created by this test only.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "SETTING-020",
+      "category": "Behavior",
+      "description": "Start timer automatically on launch UI preference",
+      "expected": "Toggle automatic timer start and verify behavior after real application relaunch with restore both enabled and disabled.",
+      "actual": "PASS: disabled + restore enabled resumed saved running state; disabled + restore disabled opened paused; enabled launched a running Work timer.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "disposable runner profile"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Windows sign-in startup after a genuine reboot remains BLOCKED in WIN-005.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "THEME-001",
+      "category": "Appearance",
+      "description": "All five themes across core UI surfaces",
+      "expected": "Exercise Dark, Light, High Contrast Dark, High Contrast Light and Follow Windows across Settings, Timer, History and the application-owned Break reminder; verify state text and Work return.",
+      "actual": "PASS: all five themes persisted custom Work/Break colors and were shown on Settings, Timer, History and Break reminder surfaces. Break labels remained named, and acknowledgement returned to Work. Forced Colors ring pixels are covered in ACCESS-004.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "exact installed release candidate"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Disabled/hover/selected/focus contrast across every control and dialog is not exhaustively swept; see WIN-014.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "TIMER-009",
+      "category": "Timer",
+      "description": "Restart while paused, snoozed, schedule-held and hidden in tray",
+      "expected": "Exit the installed process from tray while paused, snoozed or outside schedule, restart it, and verify restored state, history and no duplicate reminder.",
+      "actual": "PASS: paused, schedule-held and snoozed states were each restarted after hiding the app in tray. Countdown/state and preferences restored; no duplicate reminder/process or false history record was created.",
+      "environment": {
+        "name": "GitHub-hosted Windows Server 2025 Datacenter",
+        "version": "10.0.26100",
+        "architecture": "x64",
+        "interactiveExplorer": true,
+        "monitorCount": 1,
+        "profile": "disposable runner profile"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "Work and active Break restart are covered by TIMER-007; genuine Windows reboot remains BLOCKED in WIN-005.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-013",
+      "category": "Windows integration",
+      "description": "Reminder after focus or display configuration change",
+      "expected": "Verify app-owned reminder remains visible and correctly positioned after focus/display change.",
+      "actual": "The exact candidate remained visible, unique, responsive, and inside display bounds during a real Windows Server 2025 x64 resolution transition from 1024×768 to 1152×864, then returned to Work and restored 1024×768. A separate actual foreground-focus change to the tray left one Break reminder visible and responsive. The runner exposed one monitor.",
+      "environment": {
+        "available": true,
+        "reason": "A real resolution change and tray focus change ran on the isolated Windows Server 2025 x64 desktop; display topology remained single-monitor."
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43893520574/artifacts/14238735337"
+      ],
+      "status": "PASS",
+      "limitation": "Only a single display was exposed. Multi-monitor topology, disconnect/reconnect, and mixed-DPI changes remain BLOCKED in WIN-008.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-014",
+      "category": "Windows integration",
+      "description": "Disabled control, hover and selected-state contrast across themes",
+      "expected": "Check disabled, hover, selected and focus indicators in every theme, including custom extreme colors.",
+      "actual": "Representative focus, selected, high-contrast and forced-colors states passed; a complete disabled/hover/selected/focus contrast sweep across every theme and extreme custom color was not captured.",
+      "environment": {
+        "available": true,
+        "reason": "The isolated GUI runner supports rendered screenshots and UI Automation, but the full state-by-theme contrast sweep was not implemented in this run."
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "NOT TESTED",
+      "limitation": "Complete disabled, hover, selected and keyboard-focus contrast measurements across all themes and custom extremes remain NOT TESTED.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    },
+    {
+      "testId": "WIN-015",
+      "category": "Windows integration",
+      "description": "Windows 11 ARM64 x64-candidate emulation acceptance (supplemental; not native x64)",
+      "expected": "Using the exact sealed release candidate, verify the AMD64 installer guard on Windows 11 ARM64 and confirm standalone/portable application startup plus running countdown through Win32 under x64 emulation.",
+      "actual": "PASS: installer displayed “Eye Break Reminder requires Windows 11 x64.” and exited without installation; standalone and portable AMD64 applications both created the main window, showed Running with valid countdown values, and each countdown decreased. Both desktop captures were obstructed by a Microsoft account/OOBE surface, so direct screenshot inspection remains untested.",
+      "environment": {
+        "name": "Microsoft Windows 11 Enterprise",
+        "version": "10.0.26200",
+        "architecture": "ARM64",
+        "processArchitecture": "ARM64",
+        "execution": "AMD64 x64 emulation; not native x64"
+      },
+      "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+      "evidence": [
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232345870",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357"
+      ],
+      "status": "PASS",
+      "limitation": "ARM64 results are supplemental emulation only. The app’s desktop screenshot was obstructed by Microsoft account/OOBE; native Windows 11 x64 remains BLOCKED in WIN-004.",
+      "priorNotTestedId": null,
+      "countedAssertionCount": null
+    }
+  ],
+  "artifactRetentionDeadline": "2027-02-14T11:25:58Z",
+  "candidateWorkflowStatus": {
+    "windowsServer2025X64Job": "success",
+    "overallRun": "success",
+    "overallRunReason": "All four candidate workflow jobs passed: original-candidate comparison, Windows Server 2025 x64 pre-release acceptance/resource soak, exact-candidate Windows x64 acceptance, and Windows 11 ARM64 x64-emulation acceptance.",
+    "windows11Arm64ExactCandidateRetestUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638",
+    "windows11Arm64EvidenceArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232345870",
+    "displayResolutionChangeRunUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43893520574",
+    "displayResolutionChangeEvidenceArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43893520574/artifacts/14238735337",
+    "displayResolutionChangeResult": "PASS: exact executable remained visible and responsive with one Break reminder at 1152x864; runner display restored to 1024x768.",
+    "displayResolutionChangeRetentionDeadline": "2027-02-14T15:10:26Z",
+    "standardUserProbeRunUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43897712563",
+    "standardUserProbeEvidenceArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43897712563/artifacts/14240990310",
+    "standardUserProbeRetentionDeadline": "2027-02-14T15:34:03Z",
+    "standardUserProbeWorkflowResult": "Workflow PASS: 10 standard-user events PASS, 0 FAIL, 1 NOT APPLICABLE, 1 NOT TESTED. Settings > Installed apps opened as runneradmin after both URI and direct SystemSettings.exe routes, so the standard-user Settings removal subcase remains NOT TESTED."
+  },
+  "supplementalAcceptance": {
+    "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638",
+    "artifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232345870",
+    "acceptanceHarnessCommit": "d656f07fc405301028b31f66736c6b10cd45c42b",
+    "candidateRunId": "43857689638",
+    "candidateSourceCommit": "b39f014ddbd2074eba6469dd3f8fc14f91f269bc",
+    "candidateExecutableSha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+    "environment": {
+      "name": "Microsoft Windows 11 Enterprise",
+      "version": "10.0.26200",
+      "osArchitecture": "Arm64",
+      "processArchitecture": "Arm64",
+      "execution": "AMD64 x64 emulation; not native Windows 11 x64"
+    },
+    "pass": 27,
+    "fail": 0,
+    "notTested": 2,
+    "blocked": 1,
+    "summary": "The exact retained standalone and portable AMD64 executable each created the app window, showed Running and a valid countdown, and the countdown decreased. The installer displayed the native-AMD64 support message and exited without creating an installation. The app screenshots were obstructed by the runner’s Microsoft account/OOBE foreground surface; no unobstructed app screenshot is claimed.",
+    "notTestedCases": [
+      "Standalone app visible in an unobstructed desktop screenshot",
+      "Portable app visible in an unobstructed desktop screenshot"
+    ],
+    "blockedCase": "Native Windows 11 x64 acceptance remains blocked; this ARM64 runner only provides x64 emulation."
+  },
+  "resolvedPriorNotTestedIds": [
+    "GAP-002",
+    "GAP-005",
+    "GAP-006",
+    "GAP-007",
+    "GAP-008"
+  ],
+  "priorNotTestedIdsUnresolved": [
+    "GAP-001",
+    "GAP-003",
+    "GAP-004",
+    "GAP-009",
+    "GAP-010",
+    "GAP-011",
+    "GAP-012",
+    "GAP-013"
+  ],
+  "latestFollowUpAttempt": {
+    "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43909542662",
+    "artifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43909542662/artifacts/14247965062",
+    "candidateSourceCommit": "b39f014ddbd2074eba6469dd3f8fc14f91f269bc",
+    "candidateExecutableSha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+    "workflowResult": "success",
+    "windowsX64Events": {
+      "pass": 49,
+      "fail": 0,
+      "notTested": 2,
+      "notApplicable": 0,
+      "blocked": 0
+    },
+    "result": "The exact candidate installer and app launch passed; the tray icon remained registered; the native tray menu opened while Narrator was active; and Pause, Resume, and Exit passed in the applicable timer states.",
+    "notTestedDetails": [
+      "Narrator navigation did not complete after Narrator's ApplicationFrameWindow received focus at the native Blue RGB field. This was recorded as NOT TESTED, not as a product failure.",
+      "Actual Narrator speech was not captured because WASAPI reported zero active render endpoints."
+    ],
+    "modalObservation": "The exact-title Narrator updates modal from earlier run 43903542427 was not present during this focused retest; the modal-dismissal branch was not runtime exercised.",
+    "classification": "Focused exact-candidate tray behavior PASS; remaining Narrator checks NOT TESTED due to Windows Narrator focus transfer and no audio endpoint. No product defect established.",
+    "previousHarnessFailures": [
+      {
+        "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43903542427",
+        "artifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43903542427/artifacts/14246095016",
+        "classification": "Windows Narrator updates dialog covered the tray; candidate icon remained registered and app responsive."
+      },
+      {
+        "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43908529355",
+        "classification": "Harness screenshot filename included a slash; installer wizard screenshot save failed before app execution."
+      },
+      {
+        "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43908923142",
+        "artifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43908923142/artifacts/14245254545",
+        "classification": "Harness expected state-dependent Pause and Resume entries simultaneously and checked the Break window before waiting for it."
+      }
+    ],
+    "coverageCaseCountsChanged": false,
+    "priorPassingTrayEvidenceRemainsValid": true,
+    "candidateArtifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14231567270",
+    "candidateArtifactRetainedThrough": "2027-02-14T11:25:58Z",
+    "evidenceArtifactRetainedThrough": "2027-02-14T16:37:27Z"
+  },
+  "priorNotTestedResolution": [
+    {
+      "priorId": "GAP-001",
+      "currentCase": "ACCESS-003",
+      "status": "NOT TESTED"
+    },
+    {
+      "priorId": "GAP-002",
+      "currentCase": "GAP-002",
+      "status": "PASS",
+      "note": "Close-to-tray explanation text was found through native/UI Automation controls and dismissed."
+    },
+    {
+      "priorId": "GAP-003",
+      "currentCase": "WIN-002",
+      "status": "NOT TESTED"
+    },
+    {
+      "priorId": "GAP-004",
+      "currentCase": "WIN-012",
+      "status": "BLOCKED",
+      "note": "No verified audio endpoint/WASAPI capture was available; the sound UI and no-output error path passed."
+    },
+    {
+      "priorId": "GAP-005",
+      "currentCase": "INSTALL-006",
+      "status": "PASS",
+      "note": "Install finish Run checkbox was observed Off; candidate and v1.1 uninstaller UI child exit codes were captured as 0 through retained process handles. An uninstall finish Run checkbox is not applicable because the uninstaller has no such finish page."
+    },
+    {
+      "priorId": "GAP-006",
+      "currentCase": "INSTALL-006",
+      "status": "PASS",
+      "note": "Candidate and v1.1 uninstaller UI child exit codes were captured as 0 through retained process handles."
+    },
+    {
+      "priorId": "GAP-007",
+      "currentCase": "INSTALL-006",
+      "status": "PASS",
+      "note": "Candidate uninstaller completed and removed installed files and registration; the child UI exit code was captured as 0."
+    },
+    {
+      "priorId": "GAP-008",
+      "currentCase": "INSTALL-006",
+      "status": "PASS",
+      "note": "Candidate and v1.1 uninstall wizard states and child-process exit codes were retained; uninstall finish Run checkbox is NOT APPLICABLE."
+    },
+    {
+      "priorId": "GAP-009",
+      "currentCase": "GAP-009",
+      "status": "NOT TESTED",
+      "note": "The controlled-response implementation test passed with explicit start/unresolved/release barriers and timer advancement while unresolved. A separate live GitHub request completed before the displayed tick, so exact production-binary overlap remains unproven."
+    },
+    {
+      "priorId": "GAP-010",
+      "currentCase": "WIN-006",
+      "status": "BLOCKED"
+    },
+    {
+      "priorId": "GAP-011",
+      "currentCase": "WIN-007",
+      "status": "BLOCKED"
+    },
+    {
+      "priorId": "GAP-012",
+      "currentCase": "WIN-008",
+      "status": "BLOCKED"
+    },
+    {
+      "priorId": "GAP-013",
+      "currentCase": "WIN-012",
+      "status": "BLOCKED",
+      "note": "Physical speaker audibility is untested; no verified endpoint was available."
+    }
+  ]
+}
