@@ -1,9 +1,6 @@
 name: Windows v1.4.0 updater and release-candidate acceptance
 
 on:
-  push:
-    branches:
-      - feature/v1.4.0-automatic-updater
   pull_request:
     branches:
       - main
