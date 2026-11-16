@@ -1030,10 +1030,11 @@
       "binarySha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
       "evidence": [
         "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43857689638/artifacts/14232011357",
+        "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43909542662/artifacts/14247965062",
         "pre-release-evidence/windows-pre-release-results.json"
       ],
       "status": "NOT TESTED",
-      "limitation": "Actual Narrator speech and its audio output were not captured; UIA metadata and Narrator navigation are separate PASS evidence.",
+      "limitation": "Actual Narrator speech and its audio output were not captured. The earlier candidate workflow recorded Narrator navigation PASS, but focused run 43909542662 stopped at the native Blue RGB field when Narrator's ApplicationFrameWindow received focus; that repeat is NOT TESTED and does not establish a product defect.",
       "priorNotTestedId": "GAP-001",
       "countedAssertionCount": null,
       "priorNotTestedIds": [
