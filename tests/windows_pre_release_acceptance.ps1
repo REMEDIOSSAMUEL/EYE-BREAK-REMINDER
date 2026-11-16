@@ -132,6 +132,7 @@ public static class EBR_PRE_NATIVE {
   public static uint ClientPixel(IntPtr hwnd,int x,int y){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)return 0;try{return GetPixel(dc,x,y);}finally{ReleaseDC(hwnd,dc);}}
   public static int ControlDrawTextWidth(IntPtr drawHwnd,IntPtr fontHwnd,string text){IntPtr dc=GetDC(drawHwnd);if(dc==IntPtr.Zero)throw new InvalidOperationException("GetDC failed while measuring owner-drawn text on its draw parent.");IntPtr font=SendMessageW(fontHwnd,0x0031,IntPtr.Zero,IntPtr.Zero),previous=IntPtr.Zero;try{if(font!=IntPtr.Zero)previous=SelectObject(dc,font);EBR_PRE_RECT rect=new EBR_PRE_RECT();if(DrawTextW(dc,text,-1,ref rect,0x0400|0x0020|0x0800)==0)throw new InvalidOperationException("DrawTextW failed while measuring owner-drawn text.");return rect.Right-rect.Left;}finally{if(previous!=IntPtr.Zero)SelectObject(dc,previous);ReleaseDC(drawHwnd,dc);}}
   public static int ControlTextWidth(IntPtr hwnd,string text){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)throw new InvalidOperationException("GetDC failed while measuring native control text.");IntPtr font=SendMessageW(hwnd,0x0031,IntPtr.Zero,IntPtr.Zero),previous=IntPtr.Zero;try{if(font!=IntPtr.Zero)previous=SelectObject(dc,font);EBR_PRE_SIZE size;if(!GetTextExtentPoint32W(dc,text,text.Length,out size))throw new InvalidOperationException("GetTextExtentPoint32W failed while measuring native control text.");return size.Width;}finally{if(previous!=IntPtr.Zero)SelectObject(dc,previous);ReleaseDC(hwnd,dc);}}
+  public static int ControlTextHeight(IntPtr hwnd,string text){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)throw new InvalidOperationException("GetDC failed while measuring native control text height.");IntPtr font=SendMessageW(hwnd,0x0031,IntPtr.Zero,IntPtr.Zero),previous=IntPtr.Zero;try{if(font!=IntPtr.Zero)previous=SelectObject(dc,font);EBR_PRE_SIZE size;if(!GetTextExtentPoint32W(dc,text,text.Length,out size))throw new InvalidOperationException("GetTextExtentPoint32W failed while measuring native control text height.");return size.Height;}finally{if(previous!=IntPtr.Zero)SelectObject(dc,previous);ReleaseDC(hwnd,dc);}}
   public static object AccessibleWindow(IntPtr hwnd,int objectId){Guid iid=new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");IntPtr accessible;int hr=AccessibleObjectFromWindow(hwnd,objectId,ref iid,out accessible);if(hr<0||accessible==IntPtr.Zero)return null;try{return Marshal.GetObjectForIUnknown(accessible);}finally{Marshal.Release(accessible);}}
 }
 '@
@@ -1300,6 +1301,12 @@ function Test-UiaAndKeyboard {
   $elements=Get-UiaElements $script:mainWindow
   $named=@($elements | Where-Object { $_.Current.IsControlElement -and $_.Current.Name -and $_.Current.IsEnabled -and -not $_.Current.IsOffscreen })
   Require ($named.Count -ge 9) 'UI Automation exposes enabled named controls on the Timer screen' ([pscustomobject]@{NamedEnabledVisibleControls=$named.Count;Examples=@($named | Select-Object -First 20 | ForEach-Object {$_.Current.Name})})
+  $breakButton=Get-Control $script:mainWindow 22 'Take a break action button'
+  Record-AccessibilityRole $breakButton.Handle 'UI Automation reports Take a break as an invokable Button' 'ControlType.Button' 'Invoke'
+  Switch-Settings 3
+  $notificationsCheck=Get-Control $script:mainWindow 108 'Windows notifications checkbox'
+  Record-AccessibilityRole $notificationsCheck.Handle 'UI Automation reports Windows notifications as a toggle CheckBox' 'ControlType.CheckBox' 'Toggle'
+  Switch-Timer
   if(-not $script:interactiveDesktop){Not-Tested 'Keyboard-only focus order' 'No interactive Windows desktop was exposed.';return}
   $nav=Get-Control $script:mainWindow 10 'Timer navigation'
   Focus-AppControl $nav.Handle
@@ -1316,17 +1323,34 @@ function Get-AccessibilitySurfaceSummary([IntPtr]$Window) {
     foreach($element in (Get-UiaElements $Window)){
       try{
         $current=$element.Current
-        if($current.Name){[pscustomobject]@{Name=$current.Name;Role=$current.ControlType.ProgrammaticName;Enabled=$current.IsEnabled;Offscreen=$current.IsOffscreen;KeyboardFocusable=$current.IsKeyboardFocusable;HasKeyboardFocus=$current.HasKeyboardFocus}}
+        if($current.Name){$nativeHandle=[IntPtr]$current.NativeWindowHandle;$nativeClass=if($nativeHandle-ne[IntPtr]::Zero){[EBR_PRE_NATIVE]::ClassName($nativeHandle)}else{''};$nativeId=if($nativeHandle-ne[IntPtr]::Zero){[EBR_PRE_NATIVE]::GetDlgCtrlID($nativeHandle)}else{-1};[pscustomobject]@{Name=$current.Name;Role=$current.ControlType.ProgrammaticName;NativeWindowHandle=('0x{0:X}'-f$nativeHandle.ToInt64());NativeClass=$nativeClass;NativeControlId=$nativeId;Enabled=$current.IsEnabled;Offscreen=$current.IsOffscreen;KeyboardFocusable=$current.IsKeyboardFocusable;HasKeyboardFocus=$current.HasKeyboardFocus}}
       }catch{}
     }
   )
 }
+function Get-AccessibilityElementSnapshot([IntPtr]$Handle,[string]$Name) {
+  $element=[System.Windows.Automation.AutomationElement]::FromHandle($Handle)
+  if(-not$element){throw "UI Automation returned no element for $Name."}
+  $current=$element.Current;$invokeAvailable=$false;$toggleAvailable=$false;$toggleState='Unavailable'
+  try{$null=$element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern);$invokeAvailable=$true}catch{}
+  try{$toggle=$element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern);$toggleAvailable=$true;$toggleState=$toggle.Current.ToggleState.ToString()}catch{}
+  [pscustomobject]@{Name=$current.Name;Role=$current.ControlType.ProgrammaticName;NativeWindowHandle=('0x{0:X}'-f$current.NativeWindowHandle);NativeClass=[EBR_PRE_NATIVE]::ClassName($Handle);NativeControlId=[EBR_PRE_NATIVE]::GetDlgCtrlID($Handle);Enabled=$current.IsEnabled;Offscreen=$current.IsOffscreen;KeyboardFocusable=$current.IsKeyboardFocusable;HasKeyboardFocus=$current.HasKeyboardFocus;InvokePattern=$invokeAvailable;TogglePattern=$toggleAvailable;ToggleState=$toggleState}
+}
+function Record-AccessibilityRole([IntPtr]$Handle,[string]$Name,[string]$ExpectedRole,[string]$ExpectedPattern) {
+  try{
+    $snapshot=Get-AccessibilityElementSnapshot $Handle $Name
+    $patternAvailable=if($ExpectedPattern-eq'Invoke'){$snapshot.InvokePattern}else{$snapshot.TogglePattern}
+    $nativeMatch=$snapshot.NativeClass-eq'Button'-and$snapshot.NativeWindowHandle-eq('0x{0:X}'-f$Handle.ToInt64())
+    $valid=$snapshot.Role-eq$ExpectedRole-and$snapshot.Enabled-and$snapshot.KeyboardFocusable-and$patternAvailable-and$nativeMatch
+    Add-Event $Name $(if($valid){'PASS'}else{'FAIL'}) $snapshot
+  }catch{Add-Event $Name 'FAIL' ([pscustomobject]@{Reason=$_.Exception.Message;ExpectedRole=$ExpectedRole;ExpectedPattern=$ExpectedPattern;Handle=('0x{0:X}'-f$Handle.ToInt64());NativeClass=[EBR_PRE_NATIVE]::ClassName($Handle)})}
+}
 function Get-AccessibilityFocusSnapshot([string]$Surface) {
   try{
     $element=[System.Windows.Automation.AutomationElement]::FocusedElement
-    if($element){$current=$element.Current;return [pscustomobject]@{Surface=$Surface;Name=$current.Name;Role=$current.ControlType.ProgrammaticName;ProcessId=$current.ProcessId;NativeWindowHandle=$current.NativeWindowHandle;HasKeyboardFocus=$current.HasKeyboardFocus}}
+    if($element){$current=$element.Current;$nativeHandle=[IntPtr]$current.NativeWindowHandle;$nativeClass=if($nativeHandle-ne[IntPtr]::Zero){[EBR_PRE_NATIVE]::ClassName($nativeHandle)}else{''};$nativeId=if($nativeHandle-ne[IntPtr]::Zero){[EBR_PRE_NATIVE]::GetDlgCtrlID($nativeHandle)}else{-1};return [pscustomobject]@{Surface=$Surface;Name=$current.Name;Role=$current.ControlType.ProgrammaticName;NativeWindowHandle=('0x{0:X}'-f$nativeHandle.ToInt64());NativeClass=$nativeClass;NativeControlId=$nativeId;ProcessId=$current.ProcessId;HasKeyboardFocus=$current.HasKeyboardFocus}}
   }catch{}
-  return [pscustomobject]@{Surface=$Surface;Name=$null;Role=$null;ProcessId=$null;NativeWindowHandle=$null;HasKeyboardFocus=$false}
+  return [pscustomobject]@{Surface=$Surface;Name=$null;Role=$null;ProcessId=$null;NativeWindowHandle='0x0';NativeClass='';NativeControlId=-1;HasKeyboardFocus=$false}
 }
 function Click-NarratorControl([IntPtr]$Root,[IntPtr]$Control,[string]$Surface) {
   $targetPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($Control,[ref]$targetPid)
@@ -1371,9 +1395,16 @@ function Test-NarratorNavigation {
     $surfaces.Add([pscustomobject]@{Surface='History';Controls=(Get-AccessibilitySurfaceSummary $script:mainWindow)})
     $settingsNav=Get-Control $script:mainWindow 12 'Narrator About Settings navigation';$focusTrace.Add((Click-NarratorControl $script:mainWindow $settingsNav.Handle 'Settings before About'))
     $aboutNav=Get-Control $script:mainWindow 135 'Narrator About section';$focusTrace.Add((Click-NarratorControl $script:mainWindow $aboutNav.Handle 'Settings > About'))
+    Set-SettingsScrollPosition 7
     $updateControl=Get-Control $script:mainWindow 160 'Narrator Check for Updates navigation'
     $surfaces.Add([pscustomobject]@{Surface='Settings > About / Check for Updates';Controls=(Get-AccessibilitySurfaceSummary $script:mainWindow);UpdateButton=[pscustomobject]@{Name=[EBR_PRE_NATIVE]::Text($updateControl.Handle);Enabled=$updateControl.Enabled}})
-    $focusTrace.Add((Click-NarratorControl $script:mainWindow $updateControl.Handle 'Check for Updates'))
+    $updateUia=Get-AccessibilityElementSnapshot $updateControl.Handle 'Check for Updates'
+    $updateRoleValid=$updateUia.Role-eq'ControlType.Button'-and$updateUia.Enabled-and$updateUia.KeyboardFocusable-and$updateUia.InvokePattern-and$updateUia.NativeWindowHandle-eq('0x{0:X}'-f$updateControl.Handle.ToInt64())
+    Add-Event 'UI Automation reports Check for Updates as an enabled, focusable Button with Invoke' $(if($updateRoleValid){'PASS'}else{'FAIL'}) $updateUia
+    Focus-AppControl $updateControl.Handle
+    $updateFocus=Get-AccessibilityFocusSnapshot 'Settings > About Check for Updates'
+    if($updateFocus.ProcessId-ne$script:appPid-or-not$updateFocus.HasKeyboardFocus-or$updateFocus.NativeWindowHandle-ne('0x{0:X}'-f$updateControl.Handle.ToInt64())){throw "Narrator focus did not reach the Check for Updates button before activation: $($updateFocus|ConvertTo-Json -Compress)."}
+    $focusTrace.Add($updateFocus)
     $timerNav=Get-Control $script:mainWindow 10 'Narrator Timer before reminder';$focusTrace.Add((Click-NarratorControl $script:mainWindow $timerNav.Handle 'Timer before reminder'))
     $startBreak=Get-Control $script:mainWindow 22 'Narrator reminder navigation';$focusTrace.Add((Click-NarratorControl $script:mainWindow $startBreak.Handle 'Take a break'))
     $breakWindows=Get-BreakWindow $script:appPid
@@ -1532,8 +1563,9 @@ function Test-OsAppearanceAndTextScale {
       Require ($breakBounds.Left-ge0-and$breakBounds.Top-ge0-and$breakBounds.Right-le$screenWidth-and$breakBounds.Bottom-le$screenHeight) "Break reminder remains within the display at $textScale% text scale" ([pscustomobject]@{Bounds=$breakBounds;DisplayWidth=$screenWidth;DisplayHeight=$screenHeight})
       if($textScale-ge200){
         $breakTitle=Get-Control $layoutBreak 43 "$textScale% text-scale Break reminder heading";$breakInstruction=Get-Control $layoutBreak 44 "$textScale% text-scale Break reminder instruction"
-        $minimumTitleHeight=[Math]::Ceiling(42*($textScale/100.0)*$dpi/96.0);$titleTextWidth=[EBR_PRE_NATIVE]::ControlTextWidth($breakTitle.Handle,$breakTitle.Text)
-        Require ($breakTitle.Text-eq'Taking an eye break'-and$titleTextWidth-le$breakTitle.Rect.Width-and$breakTitle.Rect.Height-ge$minimumTitleHeight-and$breakTitle.Rect.Bottom-le$breakInstruction.Rect.Top) "$textScale% text-scale Break heading fits at full width without clipping or overlap" ([pscustomobject]@{Title=$breakTitle.Text;MeasuredTextWidth=$titleTextWidth;TitleBounds=$breakTitle.Rect;InstructionBounds=$breakInstruction.Rect;MinimumHeight=$minimumTitleHeight;Dpi=$dpi})
+        $titleTextWidth=[EBR_PRE_NATIVE]::ControlTextWidth($breakTitle.Handle,$breakTitle.Text);$titleFontHeight=[EBR_PRE_NATIVE]::ControlTextHeight($breakTitle.Handle,$breakTitle.Text)
+        Capture-ActiveWindow $layoutBreak "text-scale-$textScale-break-reminder-heading.png"|Out-Null
+        Require ($breakTitle.Text-eq'Taking an eye break'-and$titleTextWidth-le$breakTitle.Rect.Width-and$titleFontHeight-le$breakTitle.Rect.Height-and$breakTitle.Rect.Bottom-le$breakInstruction.Rect.Top) "$textScale% text-scale Break heading fits at full width without clipping or overlap" ([pscustomobject]@{Title=$breakTitle.Text;MeasuredTextWidth=$titleTextWidth;MeasuredFontHeight=$titleFontHeight;TitleBounds=$breakTitle.Rect;InstructionBounds=$breakInstruction.Rect;Dpi=$dpi})
         $breakClient=Get-ClientGeometry $layoutBreak;$breakClientBottom=$breakClient.Top+$breakClient.Height
         Require ($breakTitle.Rect.Top-ge$breakClient.Top-and$breakTitle.Rect.Bottom-le$breakClientBottom) "$textScale% text-scale Break heading stays fully inside the reminder viewport after initial focus scroll" ([pscustomobject]@{TitleBounds=$breakTitle.Rect;Client=$breakClient;ClientBottom=$breakClientBottom;Window=(Get-Rect $layoutBreak)})
         Set-BreakScrollPosition $layoutBreak 7
