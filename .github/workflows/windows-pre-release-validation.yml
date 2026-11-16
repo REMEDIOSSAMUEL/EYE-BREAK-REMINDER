@@ -267,7 +267,7 @@ jobs:
         with:
           name: EyeBreakReminder-v1.3.0-VERIFIED-RELEASE-CANDIDATE
           repository: ${{ github.repository }}
-          run-id: 43756623975
+          run-id: 43779830935
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: build/prior-resource-evidence/candidate
 
@@ -277,9 +277,9 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: eye-break-reminder-v1.3.0-final-pre-release-evidence-43756623975
+          name: eye-break-reminder-v1.3.0-final-pre-release-evidence-43779830935
           repository: ${{ github.repository }}
-          run-id: 43756623975
+          run-id: 43779830935
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: build/prior-resource-evidence/evidence
 
@@ -309,14 +309,14 @@ jobs:
             $currentOS = Get-CimInstance Win32_OperatingSystem
             $sameEnvironment = $soak.Environment.OS -eq $currentOS.Caption -and $soak.Environment.OSVersion -eq [Environment]::OSVersion.VersionString -and $soak.Environment.OSArchitecture -eq 'X64' -and $env:RUNNER_ENVIRONMENT -eq 'github-hosted'
             $sameIdentity = $priorHash -eq $currentHash -and $soak.SHA256 -eq $currentHash -and $manifestMatch -and $manifestMatch.Matches[0].Groups[1].Value -eq $priorHash
-            $validSoak = $seal.RunId -eq '43756623975' -and $seal.Version -eq '1.3.0' -and [int]$seal.Tests.ResourceCycles -ge 110 -and $soak.Version -eq '1.3.0' -and $soak.ExpectedBehavior -eq 'NoGrowth' -and [int]$soak.CompletedCycles -ge 110 -and [int]$soak.MetricSamples -ge 1000 -and [int]$soak.Fail -eq 0 -and [int]$soak.NotTested -eq 0 -and $combined -and [int]$combined.Details.PickerTotal -ge 100 -and [int]$combined.Details.PickerOk -ge 50 -and [int]$combined.Details.PickerCancel -ge 50
+            $validSoak = $seal.RunId -eq '43779830935' -and $seal.Version -eq '1.3.0' -and [int]$seal.Tests.ResourceCycles -ge 110 -and $soak.Version -eq '1.3.0' -and $soak.ExpectedBehavior -eq 'NoGrowth' -and [int]$soak.CompletedCycles -ge 110 -and [int]$soak.MetricSamples -ge 1000 -and [int]$soak.Fail -eq 0 -and [int]$soak.NotTested -eq 0 -and $combined -and [int]$combined.Details.PickerTotal -ge 100 -and [int]$combined.Details.PickerOk -ge 50 -and [int]$combined.Details.PickerCancel -ge 50
             if ($sameIdentity -and $sameEnvironment -and $validSoak) {
               New-Item -ItemType Directory -Force -Path $evidence | Out-Null
               Get-ChildItem -LiteralPath $priorSoakRoot -Force | Copy-Item -Destination $evidence -Recurse -Force
-              $reuse = [pscustomobject]@{Status='PASS';EvidenceReused=$true;SourceRunId='43756623975';SourceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43756623975';SourceCommit=$seal.SourceCommit;SourceWindowsEnvironment=$soak.Environment;CurrentWindowsEnvironment=[pscustomobject]@{OS=$currentOS.Caption;OSVersion=[Environment]::OSVersion.VersionString;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()};SameWindowsEnvironment=$sameEnvironment;SourceExecutableSHA256=$priorHash;CurrentExecutableSHA256=$currentHash;ByteIdenticalProductionExecutable=$true;ResourceCycles=[int]$soak.CompletedCycles;PickerOperations=[int]$combined.Details.PickerTotal;PickerOk=[int]$combined.Details.PickerOk;PickerCancel=[int]$combined.Details.PickerCancel;ResourceSamples=[int]$soak.MetricSamples;Reason='The current candidate contains the byte-identical x64 production executable that passed the 110-cycle resource soak in run 43756623975 on the same Windows environment; the current build reruns GUI, installed-app and exact-candidate acceptance.';VerifiedUtc=[DateTime]::UtcNow.ToString('o')}
+              $reuse = [pscustomobject]@{Status='PASS';EvidenceReused=$true;SourceRunId='43779830935';SourceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43779830935';SourceCommit=$seal.SourceCommit;SourceWindowsEnvironment=$soak.Environment;CurrentWindowsEnvironment=[pscustomobject]@{OS=$currentOS.Caption;OSVersion=[Environment]::OSVersion.VersionString;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()};SameWindowsEnvironment=$sameEnvironment;SourceExecutableSHA256=$priorHash;CurrentExecutableSHA256=$currentHash;ByteIdenticalProductionExecutable=$true;ResourceCycles=[int]$soak.CompletedCycles;PickerOperations=[int]$combined.Details.PickerTotal;PickerOk=[int]$combined.Details.PickerOk;PickerCancel=[int]$combined.Details.PickerCancel;ResourceSamples=[int]$soak.MetricSamples;Reason='The current candidate contains the byte-identical x64 production executable that passed the 110-cycle resource soak in run 43779830935 on the same Windows environment; the current build reruns GUI, installed-app and exact-candidate acceptance.';VerifiedUtc=[DateTime]::UtcNow.ToString('o')}
               $reuse | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $evidence 'resource-soak-reuse.json') -Encoding utf8
               $reused = $true
-              $reuseReason = "Reused verified no-growth soak from run 43756623975 for byte-identical production EXE $currentHash."
+              $reuseReason = "Reused verified no-growth soak from run 43779830935 for byte-identical production EXE $currentHash."
             } else {
               $reuseReason = "Prior evidence was available but failed identity/environment/completeness checks (binary identity=$sameIdentity, same environment=$sameEnvironment, soak completeness=$validSoak); running the full soak."
             }
@@ -676,16 +676,6 @@ jobs:
           & python scripts/verify.py
           if ($LASTEXITCODE -ne 0) { throw "Downloaded candidate package/source verification failed with exit code $LASTEXITCODE." }
 
-      - name: Smoke test the downloaded standalone and portable executables
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          & .\tests\windows_candidate_binary_smoke.ps1 `
-            -StandaloneExecutable '.\release\EyeBreakReminder.exe' `
-            -PortableArchive '.\release\EyeBreakReminder-Portable-x64.zip' `
-            -ExpectedProductVersion '1.3.0' `
-            -EvidenceDirectory '.\build\downloaded-candidate-smoke'
-
       - name: Retest the downloaded candidate installer and installed application
         shell: pwsh
         run: |
@@ -703,6 +693,18 @@ jobs:
             -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
             -ExecutablePath '.\release\EyeBreakReminder.exe' `
             -EvidenceDirectory '.\build\exact-candidate-retest'
+
+      # Standalone and portable launches create the user's app-data directory.
+      # Keep them after the installer test's clean-profile preflight.
+      - name: Smoke test the downloaded standalone and portable executables
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_candidate_binary_smoke.ps1 `
+            -StandaloneExecutable '.\release\EyeBreakReminder.exe' `
+            -PortableArchive '.\release\EyeBreakReminder-Portable-x64.zip' `
+            -ExpectedProductVersion '1.3.0' `
+            -EvidenceDirectory '.\build\downloaded-candidate-smoke'
 
       - name: Confirm candidate bytes stayed untouched during the downloaded-artifact retest
         if: always()
@@ -860,15 +862,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path 'build/pre-release-evidence' | Out-Null
           [pscustomobject]@{Status=$classification;Details=$details;OriginalExecutableSHA256=$result.CandidateExecutableSHA256;AcceptanceOutcome=$env:ORIGINAL_ACCEPTANCE_OUTCOME;FailureCount=[int]$result.Fail;Failures=@($failures | ForEach-Object { [pscustomobject]@{Name=$_.Name;Details=$_.Details} });ComparedUtc=[DateTime]::UtcNow.ToString('o')} |
             ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'build/pre-release-evidence/original-candidate-regression-classification.json' -Encoding UTF8
-
-      - name: Retest original candidate installation as a disposable standard user
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          & .\tests\windows_standard_user_acceptance.ps1 `
-            -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
-            -ExecutablePath '.\release\EyeBreakReminder.exe' `
-            -EvidenceDirectory '.\build\original-authoritative-standard-user'
 
       # Run standalone and portable smoke tests after the installed-application
       # isolation checks. Launching either executable creates its user-data

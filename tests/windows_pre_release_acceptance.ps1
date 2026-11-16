@@ -1301,6 +1301,12 @@ function Test-NarratorNavigation {
     [void][EBR_PRE_NATIVE]::SetForegroundWindow($script:mainWindow)
     Switch-Timer
     $timerNav=Get-Control $script:mainWindow 10 'Narrator Timer navigation focus'
+    $timerNavBounds=Get-Rect $timerNav.Handle
+    $timerNavX=[int](($timerNavBounds.Left+$timerNavBounds.Right)/2);$timerNavY=[int](($timerNavBounds.Top+$timerNavBounds.Bottom)/2)
+    if(-not[EBR_PRE_NATIVE]::SetCursorPos($timerNavX,$timerNavY)){throw 'Could not position the real pointer over the Timer navigation control for Narrator focus handoff.'}
+    [EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 50;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 150
+    $foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid)
+    if($foregroundPid-ne$script:appPid){throw "Real pointer input did not return foreground to the installed app for Narrator navigation (foreground PID $foregroundPid, app PID $script:appPid)."}
     Focus-AppControl $timerNav.Handle
     for($i=0;$i-lt4;$i++){Send-VirtualKey 0x09;Start-Sleep -Milliseconds 120;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'Timer'))}
     $surfaces.Add([pscustomobject]@{Surface='Timer';Controls=(Get-AccessibilitySurfaceSummary $script:mainWindow)})
@@ -1478,6 +1484,8 @@ function Test-OsAppearanceAndTextScale {
         $breakTitle=Get-Control $layoutBreak 43 '200% text-scale Break reminder heading';$breakInstruction=Get-Control $layoutBreak 44 '200% text-scale Break reminder instruction'
         $minimumWrappedTitleHeight=[Math]::Ceiling(90*$dpi/96.0)
         Require ($breakTitle.Text-eq'Taking an eye break'-and$breakTitle.Rect.Height-ge$minimumWrappedTitleHeight-and$breakTitle.Rect.Bottom-le$breakInstruction.Rect.Top) '200% text-scale Break heading has room for its wrapped lines without clipping or overlap' ([pscustomobject]@{Title=$breakTitle.Text;TitleBounds=$breakTitle.Rect;InstructionBounds=$breakInstruction.Rect;MinimumHeight=$minimumWrappedTitleHeight;Dpi=$dpi})
+        $breakClient=Get-ClientGeometry $layoutBreak;$breakClientBottom=$breakClient.Top+$breakClient.Height
+        Require ($breakTitle.Rect.Top-ge$breakClient.Top-and$breakTitle.Rect.Bottom-le$breakClientBottom) '200% text-scale Break heading stays fully inside the reminder viewport after initial focus scroll' ([pscustomobject]@{TitleBounds=$breakTitle.Rect;Client=$breakClient;ClientBottom=$breakClientBottom;Window=(Get-Rect $layoutBreak)})
       }
       Assert-VisibleInteractiveControlsInClient $layoutBreak "$textScale% text scale Break reminder"
       Capture-ActiveWindow $layoutBreak "text-scale-$textScale-break-reminder.png" | Out-Null

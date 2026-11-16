@@ -938,7 +938,18 @@ public:
   place(BREAK_TITLE,titleHeight);place(BREAK_INSTRUCTION,bpx(48*textScale));place(COUNTDOWN,bpx(96*std::sqrt(textScale)));place(BREAK_GUIDANCE,bpx(48*textScale));place(COMPLETE,bh);
   int skipWidth=breakSnooze?width/4:width;breakItems.push_back({GetDlgItem(breakWindow,SKIP),x,y,skipWidth-4,bh});
   if(breakSnooze){int widths[3]={width/3,width/5,width-width/4-width/3-width/5};int left=x+width/4;int ids[3]={SNOOZE1,SNOOZE3,SNOOZE5};for(int i=0;i<3;++i){breakItems.push_back({GetDlgItem(breakWindow,ids[i]),left,y,widths[i]-4,bh});left+=widths[i];}}
-  breakHeight=y+bh+pad;breakScroller.setRange(std::max(0,breakHeight-int(r.bottom)));positionBreak(true);InvalidateRect(breakWindow,nullptr,TRUE);
+  breakHeight=y+bh+pad;breakScroller.setRange(std::max(0,breakHeight-int(r.bottom)));positionBreak(true);
+  // At large text scales, keep as much of the reminder visible as the monitor allows.
+  // The initial focus is on the completion button; if the window stays short, ensureBreakVisible
+  // scrolls to that off-screen button and can move the wrapped heading above the viewport.
+  RECT windowRect{};MONITORINFO monitorInfo{};monitorInfo.cbSize=sizeof(monitorInfo);
+  if(GetWindowRect(breakWindow,&windowRect)&&GetMonitorInfoW(MonitorFromWindow(breakWindow,MONITOR_DEFAULTTONEAREST),&monitorInfo)){
+   int currentHeight=int(windowRect.bottom-windowRect.top),availableHeight=int(monitorInfo.rcWork.bottom-monitorInfo.rcWork.top);
+   int frameHeight=currentHeight-int(r.bottom-r.top),requiredHeight=breakHeight+frameHeight;
+   int expandedHeight=std::min(availableHeight,std::max(currentHeight,requiredHeight));
+   if(expandedHeight>currentHeight){int top=int(monitorInfo.rcWork.top)+(availableHeight-expandedHeight)/2;SetWindowPos(breakWindow,nullptr,windowRect.left,top,int(windowRect.right-windowRect.left),expandedHeight,SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS);}
+  }
+  InvalidateRect(breakWindow,nullptr,TRUE);
  }
  void positionBreak(bool force=false){
   if(!breakWindow)return;
