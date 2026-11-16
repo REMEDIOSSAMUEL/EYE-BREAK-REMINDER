@@ -88,14 +88,15 @@ function Get-Mode {
   return $mode
 }
 function Find-AudioUnavailableDialog {
+  $script:lastAudioDialogDetails=$null
   foreach($window in [EBR_DISPLAY_NATIVE]::TopWindowsForProcess($script:app.Id)){
     if(-not[EBR_DISPLAY_NATIVE]::Visible($window)){continue}
     $texts=@([EBR_DISPLAY_NATIVE]::Text($window));foreach($child in [EBR_DISPLAY_NATIVE]::Children($window)){$text=[EBR_DISPLAY_NATIVE]::Text($child);if($text){$texts+=,$text}}
     $pattern='The alarm couldn.t play\. Check your Windows audio output\.'
-    if(($texts-join' ')-match$pattern){return $window}
+    if(($texts-join' ')-match$pattern){$script:lastAudioDialogDetails=[pscustomobject]@{NativeText=($texts-join' ');AutomationNames=@()};return $window}
     # The TaskDialog body may be exposed only through UI Automation on Windows Server.
     if([EBR_DISPLAY_NATIVE]::ClassName($window)-eq'#32770'){
-      try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($window);if($root){$names=@();$elements=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($element in $elements){try{$name=$element.Current.Name;if($name){$names+=,$name}}catch{}};if(($names-join' ')-match$pattern){return $window}}}catch{}
+      try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($window);if($root){$names=@();$elements=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($element in $elements){try{$name=$element.Current.Name;if($name){$names+=,$name}}catch{}};if(($names-join' ')-match$pattern){$script:lastAudioDialogDetails=[pscustomobject]@{NativeText=($texts-join' ');AutomationNames=$names};return $window}}}catch{}
     }
   }
   return [IntPtr]::Zero
@@ -143,7 +144,7 @@ try {
   while($watch.Elapsed.TotalSeconds-lt8-and$break-eq[IntPtr]::Zero-and$audioDialog-eq[IntPtr]::Zero){$break=[EBR_DISPLAY_NATIVE]::FindProcessWindow($script:app.Id,'EyeBreakReminder.Break');if($break-eq[IntPtr]::Zero){$audioDialog=Find-AudioUnavailableDialog};if($break-eq[IntPtr]::Zero-and$audioDialog-eq[IntPtr]::Zero){Start-Sleep -Milliseconds 50}}
   if($audioDialog-ne[IntPtr]::Zero){
     $audioText=@([EBR_DISPLAY_NATIVE]::Text($audioDialog));foreach($child in [EBR_DISPLAY_NATIVE]::Children($audioDialog)){$text=[EBR_DISPLAY_NATIVE]::Text($child);if($text){$audioText+=,$text}}
-    $result.AudioUnavailableWarning=[pscustomobject]@{Observed=$true;Class=[EBR_DISPLAY_NATIVE]::ClassName($audioDialog);Text=($audioText-join' ');Screenshot=(Save-Screenshot 'display-change-audio-unavailable.png')}
+    $result.AudioUnavailableWarning=[pscustomobject]@{Observed=$true;Class=[EBR_DISPLAY_NATIVE]::ClassName($audioDialog);Text=($audioText-join' ');NativeAndAutomationText=$script:lastAudioDialogDetails;Screenshot=(Save-Screenshot 'display-change-audio-unavailable.png');Dismissal=$null}
     Write-Host 'DISPLAY_PROBE_PHASE: known-audio-warning-observed'
     $ok=@([EBR_DISPLAY_NATIVE]::Children($audioDialog)|Where-Object{[EBR_DISPLAY_NATIVE]::ClassName($_)-eq'Button'-and[EBR_DISPLAY_NATIVE]::Visible($_)-and[EBR_DISPLAY_NATIVE]::Enabled($_)-and[EBR_DISPLAY_NATIVE]::Text($_)-match'^\s*&?OK\s*$'})
     if($ok.Count-eq1){$dismissTask=[EBR_DISPLAY_NATIVE]::SendButtonClickAsync($ok[0]);$dismissReturned=$dismissTask.Wait(5000)}else{$dismissReturned=[EBR_DISPLAY_NATIVE]::PostMessageW($audioDialog,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)}
