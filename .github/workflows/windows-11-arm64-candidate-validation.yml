@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       probe_mode:
-        description: Run full acceptance, inventory audio endpoints, run only the Windows x64 display probe, standard-user Settings/UAC, or installed-app lifecycle checks
+        description: Run full acceptance, inventory audio endpoints, or one focused Windows x64 display, standard-user, installed-app, or Narrator/tray check
         required: true
         type: choice
         default: acceptance
@@ -18,6 +18,7 @@ on:
           - display-only
           - standard-user-only
           - installed-only
+          - tray-narrator-only
 
 permissions:
   contents: read
@@ -151,8 +152,8 @@ jobs:
           retention-days: 90
 
   windows-server-display-change:
-    name: ${{ inputs.probe_mode == 'standard-user-only' && 'Exact-candidate standard-user Settings and UAC probe on Windows x64' || inputs.probe_mode == 'installed-only' && 'Exact-candidate installed-app lifecycle acceptance on Windows x64' || 'Exact-candidate display-resolution change on Windows x64' }}
-    if: ${{ inputs.probe_mode == 'acceptance' || inputs.probe_mode == 'display-only' || inputs.probe_mode == 'standard-user-only' || inputs.probe_mode == 'installed-only' }}
+    name: ${{ inputs.probe_mode == 'tray-narrator-only' && 'Exact-candidate Narrator modal and tray recovery on Windows x64' || inputs.probe_mode == 'standard-user-only' && 'Exact-candidate standard-user Settings and UAC probe on Windows x64' || inputs.probe_mode == 'installed-only' && 'Exact-candidate installed-app lifecycle acceptance on Windows x64' || 'Exact-candidate display-resolution change on Windows x64' }}
+    if: ${{ inputs.probe_mode == 'acceptance' || inputs.probe_mode == 'display-only' || inputs.probe_mode == 'standard-user-only' || inputs.probe_mode == 'installed-only' || inputs.probe_mode == 'tray-narrator-only' }}
     runs-on: windows-2025
     timeout-minutes: 20
     permissions:
@@ -247,6 +248,17 @@ jobs:
           & .\tests\windows_pre_release_acceptance.ps1 `
             -InstallerPath (Join-Path (Get-Location) 'release/EyeBreakReminder-Setup-x64.exe') `
             -EvidenceDirectory (Join-Path (Get-Location) 'build/pre-release-evidence')
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Retest exact-candidate tray commands after Narrator navigation
+        if: ${{ inputs.probe_mode == 'tray-narrator-only' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_pre_release_acceptance.ps1 `
+            -InstallerPath (Join-Path (Get-Location) 'release/EyeBreakReminder-Setup-x64.exe') `
+            -EvidenceDirectory (Join-Path (Get-Location) 'build/pre-release-evidence') `
+            -TrayNarratorOnly
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload exact-candidate display-change evidence

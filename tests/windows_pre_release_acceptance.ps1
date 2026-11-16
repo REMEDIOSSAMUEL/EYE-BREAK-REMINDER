@@ -1,7 +1,8 @@
 param(
   [string]$InstallerPath = (Join-Path $PSScriptRoot '..\release\EyeBreakReminder-Setup-x64.exe'),
   [string]$EvidenceDirectory = (Join-Path $PSScriptRoot '..\build\pre-release-evidence'),
-  [string]$ExpectedProductVersion = '1.3.0'
+  [string]$ExpectedProductVersion = '1.3.0',
+  [switch]$TrayNarratorOnly
 )
 $script:expectedProductVersion = $ExpectedProductVersion
 $ErrorActionPreference = 'Stop'
@@ -1412,6 +1413,43 @@ function Click-NarratorControl([IntPtr]$Root,[IntPtr]$Control,[string]$Surface) 
   if($snapshot.ProcessId-ne$script:appPid-or-not$snapshot.HasKeyboardFocus){throw "Real pointer input did not place keyboard focus in the installed app for $($Surface): $($snapshot|ConvertTo-Json -Compress)."}
   return $snapshot
 }
+function Dismiss-NarratorUpdatesDialog {
+  $dialogs=@(foreach($window in [EBR_PRE_NATIVE]::TopWindows()){
+    if(-not [EBR_PRE_NATIVE]::IsWindowVisible($window) -or [EBR_PRE_NATIVE]::Text($window) -cne 'Narrator updates'){continue}
+    $ownerPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($window,[ref]$ownerPid)
+    $owner=Get-Process -Id ([int]$ownerPid) -ErrorAction SilentlyContinue
+    [pscustomobject]@{Handle=$window;ProcessId=[int]$ownerPid;ProcessName=$(if($owner){$owner.ProcessName}else{''});Path=$(if($owner){$owner.Path}else{''});Class=[EBR_PRE_NATIVE]::ClassName($window);Title=[EBR_PRE_NATIVE]::Text($window)}
+  })
+  if($dialogs.Count-eq0){Add-Event 'Narrator updates modal cleanup' 'INFO' 'No visible top-level window had the exact title Narrator updates.';return $null}
+  foreach($dialog in $dialogs){
+    $screenshot=$null;try{$screenshot=Capture-ActiveWindow $dialog.Handle 'narrator-updates-modal-before-dismiss.png'}catch{Add-Event 'Narrator updates modal screenshot' 'INFO' $_.Exception.Message}
+    $doneButtons=@()
+    try{
+      $root=[System.Windows.Automation.AutomationElement]::FromHandle($dialog.Handle)
+      if($root){
+        $condition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button)
+        $doneButtons=@($root.FindAll([System.Windows.Automation.TreeScope]::Descendants,$condition)|Where-Object{$_.Current.Name -ceq 'Done' -and $_.Current.IsEnabled -and $_.Current.NativeWindowHandle -ne 0}|ForEach-Object{
+          $button=[IntPtr]$_.Current.NativeWindowHandle;$buttonPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($button,[ref]$buttonPid)
+          if($buttonPid-eq[uint32]$dialog.ProcessId-and[EBR_PRE_NATIVE]::GetParent($button)-eq$dialog.Handle){[pscustomobject]@{Handle=$button;Name=$_.Current.Name;ProcessId=[int]$buttonPid}}
+        })
+      }
+    }catch{}
+    $method=''
+    if($doneButtons.Count-eq1){
+      try{$element=[EBR_UIA_CLIENT]::ElementFromHandle($doneButtons[0].Handle);$element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke();$method='UI Automation Invoke on exact Done button'}catch{[void][EBR_PRE_NATIVE]::SendMessageW($doneButtons[0].Handle,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero);$method='BM_CLICK on exact Done button'}
+    }else{
+      if($dialog.ProcessName -ine 'Narrator'){
+        Add-Event 'Narrator updates modal cleanup' 'NOT TESTED' ([pscustomobject]@{Reason='No unique exact Done button was exposed and the exact-title window was not owned by Narrator.exe; it was left untouched.';Dialog=$dialog;Screenshot=$screenshot})
+        continue
+      }
+      [void][EBR_PRE_NATIVE]::PostMessageW($dialog.Handle,0x0010,[IntPtr]::Zero,[IntPtr]::Zero);$method='WM_CLOSE on exact Narrator-owned Narrator updates window; no unique enabled Done button was exposed'
+    }
+    $watch=[Diagnostics.Stopwatch]::StartNew();while([EBR_PRE_NATIVE]::IsWindow($dialog.Handle)-and$watch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 50}
+    $closed=-not[EBR_PRE_NATIVE]::IsWindow($dialog.Handle)
+    Add-Event 'Narrator updates modal cleanup' $(if($closed){'PASS'}else{'NOT TESTED'}) ([pscustomobject]@{Dialog=$dialog;Method=$method;Closed=$closed;ElapsedMs=$watch.ElapsedMilliseconds;Screenshot=$screenshot})
+  }
+  return @($dialogs | ForEach-Object {$_.Title})
+}
 function Test-NarratorNavigation {
   if(-not $script:interactiveDesktop){Not-Tested 'Narrator keyboard and accessible-surface navigation' 'No interactive Windows desktop was exposed.';Not-Tested 'Actual Narrator speech capture' 'No interactive Windows desktop or verified audio capture endpoint was available.';return}
   $narratorPath=Join-Path $env:WINDIR 'System32\Narrator.exe'
@@ -1423,6 +1461,7 @@ function Test-NarratorNavigation {
     $watch=[Diagnostics.Stopwatch]::StartNew();$narratorActive=$false
     while($watch.Elapsed.TotalSeconds-lt8){$active=@(Get-Process -Name Narrator -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId});if($active.Count){$narratorProcess=$active[0];$narratorActive=$true;break};Start-Sleep -Milliseconds 100}
     if(-not$narratorActive){throw 'Windows did not expose a running Narrator process in the interactive test session.'}
+    [void](Dismiss-NarratorUpdatesDialog)
     $timerNav=Get-Control $script:mainWindow 10 'Narrator Timer navigation focus'
     $pointerFocus=Click-NarratorControl $script:mainWindow $timerNav.Handle 'Timer navigation'
     $focusTrace.Add($pointerFocus)
@@ -1473,6 +1512,7 @@ function Test-NarratorNavigation {
     if($picker-ne[IntPtr]::Zero-and[EBR_PRE_NATIVE]::IsWindow($picker)){try{Close-InstalledColorPicker $picker $false}catch{[void][EBR_PRE_NATIVE]::SendMessageW($picker,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)}}
     if($breakWindow-ne[IntPtr]::Zero-and[EBR_PRE_NATIVE]::IsWindow($breakWindow)){try{Click-Control $breakWindow 23 'Close reminder after Narrator navigation'}catch{[void][EBR_PRE_NATIVE]::SendMessageW($breakWindow,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)}}
     if($startedNarrator-and$narratorProcess){try{Stop-Process -Id $narratorProcess.Id -Force -ErrorAction SilentlyContinue}catch{}}
+    try{[void](Dismiss-NarratorUpdatesDialog)}catch{Add-Event 'Narrator updates modal cleanup diagnostics' 'INFO' $_.Exception.Message}
     try{Switch-Timer}catch{}
   }
   if($navigationError){Add-Event 'Narrator keyboard and accessible-surface navigation' 'NOT TESTED' ([pscustomobject]@{Reason=$navigationError;NarratorActive=$narratorActive;NarratorProcessId=if($narratorProcess){$narratorProcess.Id}else{$null};FocusTrace=$focusTrace.ToArray();Surfaces=$surfaces.ToArray()})}
@@ -2702,6 +2742,28 @@ try {
   Require ($preExisting.Count -eq 0 -and $preExistingRegistry.Count -eq 0 -and -not $preExistingStartup) 'Runner user profile, install path, shortcuts, registry and startup slot were empty before cleanup ownership' ([pscustomobject]@{Paths=$preExisting;Registry=$preExistingRegistry;Startup=$preExistingStartup})
   $script:ownedData=$true
 
+  if($TrayNarratorOnly){
+    Require $script:interactiveDesktop 'Focused Narrator/tray repro has an interactive Explorer desktop'
+    Invoke-Install $InstallerPath 'candidate production installer for focused Narrator/tray repro' $true
+    Require (Start-And-CheckApp $script:expectedProductVersion) 'Exact candidate launches for focused Narrator/tray repro'
+    Test-NarratorNavigation
+    $trayRect=New-Object EBR_PRE_RECT
+    $trayHresult=[EBR_PRE_NATIVE]::GetTrayRectResult($script:mainWindow,1,[ref]$trayRect)
+    Require ($trayHresult-eq0) 'Candidate tray icon remains registered after Narrator navigation' ([pscustomobject]@{HResult=('0x{0:X8}'-f([long]$trayHresult-band[long]4294967295));Rectangle=@($trayRect.Left,$trayRect.Top,$trayRect.Right,$trayRect.Bottom)})
+    $focusedMenu=Open-TrayContextMenu
+    Require ($focusedMenu-ne[IntPtr]::Zero) 'Candidate tray menu opens after Narrator navigation and modal cleanup' (Get-TrayContextSnapshot)
+    $focusedItems=Get-TrayMenuItems $focusedMenu
+    $focusedNames=@(Get-TrayMenuNames $focusedItems)
+    if($focusedItems.Source-ne'HitTest'){Require (@('Pause timer','Resume timer','Exit'|Where-Object{$focusedNames-contains$_}).Count-eq3) 'Candidate tray menu exposes Pause, Resume, and Exit after Narrator navigation' $focusedNames}
+    Invoke-TrayCommand 'Pause timer' $focusedMenu
+    Require ((Wait-ForStatus 'Paused')-like'*Paused*') 'Candidate tray Pause command works after Narrator navigation' (Get-Status)
+    Invoke-TrayCommand 'Resume timer'
+    Require ((Wait-ForStatus 'Running')-like'*Running*') 'Candidate tray Resume command works after Narrator navigation' (Get-Status)
+    Invoke-TrayCommand 'Exit'
+    $focusedProcess=Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
+    if($focusedProcess){Require ($focusedProcess.WaitForExit(10000)) 'Candidate tray Exit command closes the app after Narrator navigation' ([pscustomobject]@{Pid=$script:appPid;ExitCode=$(if($focusedProcess.HasExited){$focusedProcess.ExitCode}else{$null})})}else{Pass 'Candidate tray Exit command closes the app after Narrator navigation'}
+    $script:appPid=0;$script:mainWindow=[IntPtr]::Zero
+  } else {
   $script:liveRelease=Get-OfficialRelease 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' 'Live latest stable GitHub Releases API'
   if($script:liveRelease){
     Require (-not $script:liveRelease.draft -and -not $script:liveRelease.prerelease) 'The official latest endpoint returned a published stable release' ([pscustomobject]@{Tag=$script:liveRelease.tag_name;Draft=$script:liveRelease.draft;Prerelease=$script:liveRelease.prerelease})
@@ -2760,6 +2822,7 @@ try {
   Not-Tested 'Physical speaker output' 'Hosted Windows runners do not have verified physical speaker hardware.'
   if($script:ownedInstall -and (Test-Path -LiteralPath (Join-Path $installDir 'Uninstall.exe'))){Stop-InstalledApp;Invoke-Uninstall 'final cleanup' $false}
   if($script:ownedData -and (Test-Path -LiteralPath $dataDir)){Remove-Item -LiteralPath $dataDir -Recurse -Force;Require (-not (Test-Path -LiteralPath $dataDir)) 'Disposable runner user-data cleanup completed' $dataDir}
+  }
 } catch {
   $fatal=$true
   if($script:failCount -eq 0){Add-Event 'Windows pre-release acceptance runner' 'FAIL' $_.Exception.Message}

@@ -1863,6 +1863,17 @@
     "GAP-012",
     "GAP-013"
   ],
+  "latestFollowUpAttempt": {
+    "runUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43903542427",
+    "artifactUrl": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/43903542427/artifacts/14246095016",
+    "candidateSourceCommit": "b39f014ddbd2074eba6469dd3f8fc14f91f269bc",
+    "candidateExecutableSha256": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66",
+    "result": "Tray-menu interaction failed while a Windows Narrator updates dialog covered the tray. Shell_NotifyIconGetRect succeeded and the app process was responsive; no native popup menu appeared.",
+    "classification": "Windows UI obstruction and acceptance-harness setup gap; no product defect established.",
+    "coverageCaseCountsChanged": false,
+    "priorPassingTrayEvidenceRemainsValid": true,
+    "targetedFollowUp": "A Narrator-dialog cleanup and tray-narrator-only harness mode are prepared but not executed on Windows because the available GitHub credential is invalid."
+  },
   "priorNotTestedResolution": [
     {
       "priorId": "GAP-001",
