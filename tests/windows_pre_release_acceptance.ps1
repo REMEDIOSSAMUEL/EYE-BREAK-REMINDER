@@ -122,7 +122,8 @@ public static class EBR_PRE_NATIVE {
   public static IntPtr ChildById(IntPtr root,int id){foreach(IntPtr h in Children(root))if(GetDlgCtrlID(h)==id)return h;return IntPtr.Zero;}
   public static bool AppResponds(IntPtr hwnd,uint timeout){IntPtr result;return SendMessageTimeoutW(hwnd,0,IntPtr.Zero,IntPtr.Zero,2,timeout,out result)!=IntPtr.Zero;}
   public static System.Threading.Tasks.Task<IntPtr> SendButtonClickAsync(IntPtr hwnd){return System.Threading.Tasks.Task.Factory.StartNew(()=>SendMessageW(hwnd,0x00F5,IntPtr.Zero,IntPtr.Zero),System.Threading.CancellationToken.None,System.Threading.Tasks.TaskCreationOptions.LongRunning,System.Threading.Tasks.TaskScheduler.Default);}
-  public static bool GetTrayRect(IntPtr hwnd,uint uid,out EBR_PRE_RECT rect){EBR_PRE_NOTIFYICONIDENTIFIER id=new EBR_PRE_NOTIFYICONIDENTIFIER();id.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_NOTIFYICONIDENTIFIER));id.hWnd=hwnd;id.uID=uid;id.guidItem=Guid.Empty;return Shell_NotifyIconGetRect(ref id,out rect)==0;}
+  public static int GetTrayRectResult(IntPtr hwnd,uint uid,out EBR_PRE_RECT rect){EBR_PRE_NOTIFYICONIDENTIFIER id=new EBR_PRE_NOTIFYICONIDENTIFIER();id.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_NOTIFYICONIDENTIFIER));id.hWnd=hwnd;id.uID=uid;id.guidItem=Guid.Empty;return Shell_NotifyIconGetRect(ref id,out rect);}
+  public static bool GetTrayRect(IntPtr hwnd,uint uid,out EBR_PRE_RECT rect){return GetTrayRectResult(hwnd,uid,out rect)==0;}
   public static bool GetHighContrast(out uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));bool ok=SystemParametersInfoW(0x0042,h.cbSize,ref h,0);flags=h.dwFlags;return ok;}
   public static bool SetHighContrast(uint flags){EBR_PRE_HIGHCONTRAST h=new EBR_PRE_HIGHCONTRAST();h.cbSize=(uint)Marshal.SizeOf(typeof(EBR_PRE_HIGHCONTRAST));h.dwFlags=flags;return SystemParametersInfoW(0x0043,h.cbSize,ref h,2);}
   public static bool GetClientAreaAnimation(out bool enabled){int value=0;bool ok=SystemParametersInfoGetAnimationW(0x1042,0,ref value,0);enabled=value!=0;return ok;}
@@ -2102,24 +2103,50 @@ function Wait-ForTrayPopup([int]$TimeoutSeconds=3) {
   while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds){$menus=@([EBR_PRE_NATIVE]::TopWindows() | Where-Object { [EBR_PRE_NATIVE]::ClassName($_) -eq '#32768' -and [EBR_PRE_NATIVE]::IsWindowVisible($_) });if($menus.Count -eq 1){return $menus[0]};Start-Sleep -Milliseconds 100}
   return [IntPtr]::Zero
 }
-function Open-TrayContextMenu {
-  $overflowOpened=Open-TrayOverflow
-  $icon=Get-ShellTrayIconElement
+function Get-TrayContextSnapshot {
   $rect=New-Object EBR_PRE_RECT
-  if(-not [EBR_PRE_NATIVE]::GetTrayRect($script:mainWindow,1,[ref]$rect)){return [IntPtr]::Zero}
-  $x=[int](($rect.Left+$rect.Right)/2);$y=[int](($rect.Top+$rect.Bottom)/2)
-  if($icon){$bounds=$icon.Current.BoundingRectangle;$x=[int]($bounds.Left+$bounds.Width/2);$y=[int]($bounds.Top+$bounds.Height/2)}
-  if([EBR_PRE_NATIVE]::SetCursorPos($x,$y)){
-    [EBR_PRE_NATIVE]::mouse_event(0x0008,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 60;[EBR_PRE_NATIVE]::mouse_event(0x0010,0,0,0,[UIntPtr]::Zero)
+  $hresult=[EBR_PRE_NATIVE]::GetTrayRectResult($script:mainWindow,1,[ref]$rect)
+  $hresultHex='0x{0:X8}'-f([long]$hresult-band[long]4294967295)
+  $icon=if($hresult-eq0){Get-ShellTrayIconElement}else{$null}
+  $iconBounds=if($icon){$bounds=$icon.Current.BoundingRectangle;[pscustomobject]@{Left=$bounds.Left;Top=$bounds.Top;Width=$bounds.Width;Height=$bounds.Height;Name=$icon.Current.Name}}else{$null}
+  $hidden=Get-HiddenIconsButton
+  $hiddenBounds=if($hidden){$bounds=$hidden.Current.BoundingRectangle;[pscustomobject]@{Left=$bounds.Left;Top=$bounds.Top;Width=$bounds.Width;Height=$bounds.Height;Name=$hidden.Current.Name}}else{$null}
+  $menus=@([EBR_PRE_NATIVE]::TopWindows()|Where-Object{[EBR_PRE_NATIVE]::ClassName($_)-eq'#32768'-and[EBR_PRE_NATIVE]::IsWindowVisible($_)}|ForEach-Object{[pscustomobject]@{Handle=('0x{0:X}'-f$_.ToInt64());Title=[EBR_PRE_NATIVE]::Text($_);Bounds=(Get-Rect $_)}})
+  $process=Get-Process -Id $script:appPid -ErrorAction SilentlyContinue
+  [pscustomobject]@{TrayRectHResult=$hresultHex;TrayRect=$(if($hresult-eq0){@($rect.Left,$rect.Top,$rect.Right,$rect.Bottom)}else{$null});ShellIcon=$iconBounds;HiddenIconsButton=$hiddenBounds;PopupMenus=$menus;Foreground=('0x{0:X}'-f[EBR_PRE_NATIVE]::GetForegroundWindow().ToInt64());ApplicationProcess=$(if($process){[pscustomobject]@{Id=$process.Id;Responding=$process.Responding;MainWindowHandle=('0x{0:X}'-f$process.MainWindowHandle.ToInt64())}}else{$null})}
+}
+function Open-TrayContextMenu {
+  $attempts=[System.Collections.Generic.List[object]]::new()
+  for($attempt=1;$attempt-le2;$attempt++){
+    $rect=New-Object EBR_PRE_RECT
+    $watch=[Diagnostics.Stopwatch]::StartNew();$hresult=[EBR_PRE_NATIVE]::GetTrayRectResult($script:mainWindow,1,[ref]$rect)
+    while($hresult-ne0-and$watch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 200;$hresult=[EBR_PRE_NATIVE]::GetTrayRectResult($script:mainWindow,1,[ref]$rect)}
+    if($hresult-ne0){$attempts.Add([pscustomobject]@{Attempt=$attempt;Phase='tray icon registration wait';TrayRectHResult=('0x{0:X8}'-f([long]$hresult-band[long]4294967295));ElapsedMs=$watch.ElapsedMilliseconds});if($attempt-lt2){Start-Sleep -Milliseconds 400;continue};break}
+    $overflowOpened=Open-TrayOverflow
+    $icon=Get-ShellTrayIconElement
+    $rect=New-Object EBR_PRE_RECT
+    $hresult=[EBR_PRE_NATIVE]::GetTrayRectResult($script:mainWindow,1,[ref]$rect)
+    if($hresult-ne0){$attempts.Add([pscustomobject]@{Attempt=$attempt;Phase='tray icon rectangle after overflow probe';TrayRectHResult=('0x{0:X8}'-f([long]$hresult-band[long]4294967295));OverflowOpened=$overflowOpened});if($attempt-lt2){Start-Sleep -Milliseconds 400;continue};break}
+    $x=[int](($rect.Left+$rect.Right)/2);$y=[int](($rect.Top+$rect.Bottom)/2)
+    if($icon){$bounds=$icon.Current.BoundingRectangle;$x=[int]($bounds.Left+$bounds.Width/2);$y=[int]($bounds.Top+$bounds.Height/2)}
+    $menu=[IntPtr]::Zero;$method='Shell tray icon right-click';$rightClickSent=$false
+    if([EBR_PRE_NATIVE]::SetCursorPos($x,$y)){
+      [EBR_PRE_NATIVE]::mouse_event(0x0008,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 60;[EBR_PRE_NATIVE]::mouse_event(0x0010,0,0,0,[UIntPtr]::Zero);$rightClickSent=$true
+      $menu=Wait-ForTrayPopup 3
+    }
+    if($menu-eq[IntPtr]::Zero-and$icon){
+      try{$icon.SetFocus();[EBR_PRE_NATIVE]::Key(0x10,$false);[EBR_PRE_NATIVE]::Key(0x79,$false);Start-Sleep -Milliseconds 80;[EBR_PRE_NATIVE]::Key(0x79,$true);[EBR_PRE_NATIVE]::Key(0x10,$true)}catch{}
+      $menu=Wait-ForTrayPopup 2;$method='Accessible shell tray icon Shift+F10'
+    }
+    if($menu-ne[IntPtr]::Zero){Pass 'Actual tray context menu opened through the interactive shell' ([pscustomobject]@{MenuWindow=('0x{0:X}' -f $menu.ToInt64());OverflowOpened=$overflowOpened;ShellIconAccessible=($null -ne $icon);Method=$method;Attempts=$attempt;TrayRect=@($rect.Left,$rect.Top,$rect.Right,$rect.Bottom)});return $menu}
+    $attempts.Add([pscustomobject]@{Attempt=$attempt;Phase='tray popup activation';TrayRectHResult=('0x{0:X8}'-f([long]$hresult-band[long]4294967295));TrayRect=@($rect.Left,$rect.Top,$rect.Right,$rect.Bottom);OverflowOpened=$overflowOpened;ShellIconAccessible=($null-ne$icon);RightClickSent=$rightClickSent;Method=$method})
+    if($attempt-lt2){Start-Sleep -Milliseconds 500}
   }
-  $menu=Wait-ForTrayPopup 3
-  $method='Shell tray icon right-click'
-  if($menu -eq [IntPtr]::Zero -and $icon){
-    try{$icon.SetFocus();[EBR_PRE_NATIVE]::Key(0x10,$false);[EBR_PRE_NATIVE]::Key(0x79,$false);Start-Sleep -Milliseconds 80;[EBR_PRE_NATIVE]::Key(0x79,$true);[EBR_PRE_NATIVE]::Key(0x10,$true)}catch{}
-    $menu=Wait-ForTrayPopup 2;$method='Accessible shell tray icon Shift+F10'
-  }
-  if($menu -ne [IntPtr]::Zero){Pass 'Actual tray context menu opened through the interactive shell' ([pscustomobject]@{MenuWindow=('0x{0:X}' -f $menu.ToInt64());OverflowOpened=$overflowOpened;ShellIconAccessible=($null -ne $icon);Method=$method})}
-  return $menu
+  $snapshot=$null;$snapshotError='';$screenshot=$null;$screenshotError=''
+  try{$snapshot=Get-TrayContextSnapshot}catch{$snapshotError=$_.Exception.Message}
+  try{$screenshot=Capture-DesktopScreenshot 'tray-context-menu-open-failure.png'}catch{$screenshotError=$_.Exception.Message}
+  Add-Event 'Tray context menu open recovery diagnostics' 'INFO' ([pscustomobject]@{Attempts=$attempts.ToArray();FinalSnapshot=$snapshot;SnapshotError=$snapshotError;Screenshot=$screenshot;ScreenshotError=$screenshotError})
+  return [IntPtr]::Zero
 }
 function Get-TrayMenuItems([IntPtr]$MenuWindow) {
   $menuRoot=[System.Windows.Automation.AutomationElement]::FromHandle($MenuWindow)
