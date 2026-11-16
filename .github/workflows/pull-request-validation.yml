@@ -1,0 +1,33 @@
+name: Pull request validation
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Core tests and Windows package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes build-essential g++-mingw-w64-x86-64 nsis python3
+
+      - name: Run core tests, Windows build, and package verification
+        run: make package
