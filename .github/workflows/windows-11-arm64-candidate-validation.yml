@@ -7,6 +7,14 @@ on:
         description: Completed Windows Server candidate run ID to retest
         required: true
         type: string
+      probe_mode:
+        description: Run exact-candidate emulation acceptance or only inventory runner audio endpoints
+        required: true
+        type: choice
+        default: acceptance
+        options:
+          - acceptance
+          - audio-inventory
 
 permissions:
   contents: read
@@ -84,6 +92,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Test installer policy and application under ARM64 x64 emulation
+        if: ${{ inputs.probe_mode == 'acceptance' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -95,6 +104,22 @@ jobs:
             -CandidateSourceCommit (Get-Content -LiteralPath 'candidate-identity-retest.json' -Raw | ConvertFrom-Json).CandidateSourceCommit
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Inventory WinMM and WASAPI render endpoints without playing audio
+        if: ${{ inputs.probe_mode == 'audio-inventory' }}
+        shell: pwsh
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'build/audio-endpoint-evidence' | Out-Null
+          $context = Get-Content -LiteralPath 'candidate-identity-retest.json' -Raw | ConvertFrom-Json
+          & .\tests\windows_audio_endpoint_inventory.ps1 `
+            -EvidenceDirectory 'build/audio-endpoint-evidence' `
+            -CandidateRunId $env:CANDIDATE_RUN_ID `
+            -CandidateExeSHA256 $context.SHA256.'EyeBreakReminder.exe'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item -LiteralPath 'candidate-identity-retest.json' -Destination 'build/audio-endpoint-evidence/candidate-identity-retest.json'
+
       - name: Upload ARM64 emulation retest evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -103,5 +128,6 @@ jobs:
           path: |
             candidate-identity-retest.json
             build/arm64-emulation-retest/**
+            build/audio-endpoint-evidence/**
           if-no-files-found: warn
           retention-days: 90
