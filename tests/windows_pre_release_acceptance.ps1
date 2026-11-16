@@ -1718,6 +1718,23 @@ function Test-InstalledSettingsControls {
   Require ($sharedBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') 'Shared-accent Break enters the named Break state';Wait-ForRingProgress 'Shared Work accent during Break';$sharedBreakShot=Capture-PrintWindow $script:mainWindow 'settings-sweep-shared-break-ring.png';if($sharedBreakShot){Assert-InstalledTimerRingPixel $sharedBreakShot '#8B5CF6' 'Disabled distinct Break colours use the custom Work ring pixels'}
   Click-Control $sharedBreakWindow 24 'Complete shared Work-accent Break pixel test';Require ((Get-Status)-like'*Running*') 'Work resumes after shared Work-accent Break pixel test'
   Switch-Settings 4;Set-Check $script:mainWindow 124 $true 'Restore distinct Break colour setting after ring pixel test';Assert-InstalledSetting 'breakModeColors' '1' 'Distinct Break colour is restored after shared-accent test'
+  $sharedAccentByTheme=@('#8B5CF6','#8B5CF6','#8B5CF6','#FFFF00','#0000B3')
+  foreach($theme in 0..4){
+    $sharedAccent=$sharedAccentByTheme[$theme]
+    Set-Combo $script:mainWindow 106 $theme "Installed shared-accent theme $theme";Switch-Settings 4
+    Set-Check $script:mainWindow 124 $false "Installed theme $theme disables distinct Break colour";Assert-InstalledSetting 'breakModeColors' '0' "Installed theme $theme saves shared-accent mode"
+    Switch-Timer;Click-Control $script:mainWindow 21 "Installed theme $theme reset shared-accent Work";Wait-ForRingProgress "Installed theme $theme shared-accent Work"
+    $sharedWorkShot=Capture-PrintWindow $script:mainWindow "installed-shared-accent-theme-$theme-work.png"
+    if($sharedWorkShot){Assert-InstalledTimerRingPixel $sharedWorkShot $sharedAccent "Installed theme $theme shared-accent Work ring"}
+    Invoke-InstalledBreakNow "Installed theme $theme shared-accent Break";$sharedBreakWindow=[IntPtr]::Zero;$sharedBreakWait=[Diagnostics.Stopwatch]::StartNew()
+    while($sharedBreakWait.Elapsed.TotalSeconds-lt8){$found=Get-BreakWindow $script:appPid;if($found.Count-eq1){$sharedBreakWindow=$found[0];break};Start-Sleep -Milliseconds 100}
+    Require ($sharedBreakWindow-ne[IntPtr]::Zero-and(Get-Status)-like'*Taking an eye break*') "Installed theme $theme enters shared-accent Break state"
+    Wait-ForRingProgress "Installed theme $theme shared-accent Break";$sharedBreakShot=Capture-PrintWindow $script:mainWindow "installed-shared-accent-theme-$theme-break.png"
+    if($sharedBreakShot){Assert-InstalledTimerRingPixel $sharedBreakShot $sharedAccent "Installed theme $theme with distinct Break colour disabled renders the Work accent"}
+    Click-Control $sharedBreakWindow 24 "Installed theme $theme complete shared-accent Break";Require ((Get-Status)-like'*Running*') "Installed theme $theme returns to Work after shared-accent Break"
+    Switch-Settings 4;Set-Check $script:mainWindow 124 $true "Installed theme $theme restore distinct Break colour";Assert-InstalledSetting 'breakModeColors' '1' "Installed theme $theme restores distinct Break colour preference"
+  }
+  Set-Combo $script:mainWindow 106 2 'Restore Dark theme after installed shared-accent theme checks'
   foreach($entry in @(@(110,'autoStart','Start timer automatically'),@(111,'startup','Start with Windows'),@(112,'tray','Minimize to system tray'),@(113,'restore','Resume countdown on reopening'),@(114,'pauseLocked','Pause while workstation is locked'))){
     $id=[int]$entry[0];$key=[string]$entry[1];$name=[string]$entry[2]
     foreach($value in @($false,$true)){Set-Check $script:mainWindow $id $value $name;Assert-InstalledSetting $key ([string][int]$value) "$name persists as $value"}

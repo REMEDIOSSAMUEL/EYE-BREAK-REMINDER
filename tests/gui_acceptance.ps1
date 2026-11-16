@@ -906,6 +906,46 @@ try {
     Assert-That ((Wait-Status 'Running')-like'*Running*') "$($themeNames[$theme]) Reset clears its snooze fixture"
   }
 
+  # Repeat the visible timer states with distinct Break colours disabled. This
+  # exercises the other half of the theme × accent-mode matrix and verifies
+  # that Break uses the Work ring colour in every theme.
+  $sharedAccentByTheme=@('#22C55E','#22C55E','#22C55E','#FFFF00','#0000B3')
+  foreach($theme in 0..4){
+    $themeName=$themeNames[$theme];$sharedAccent=$sharedAccentByTheme[$theme]
+    Set-Theme $theme;Switch-Settings 4;Set-Check $script:mainWindow 124 $false "$themeName disable distinct Break accent for shared-colour state matrix"
+    Assert-That ((Get-SettingLine 'breakModeColors')-eq'0') "$themeName shared-colour matrix disables distinct Break accent"
+    Switch-Timer;Click-Control $script:mainWindow 21 "$themeName reset shared-colour Work state";Wait-RingProgress "$themeName shared-colour Work"
+    $sharedWorkShot=Save-Screenshot $script:mainWindow "shared-accent-$themeName-work-running.png"
+    Assert-TimerRingPixel $sharedWorkShot $sharedAccent "$themeName shared-colour matrix Running Work ring"
+    Click-Control $script:mainWindow 20 "$themeName shared-colour pause state"
+    Assert-That ((Wait-Status 'Paused')-like'*Paused*') "$themeName shared-colour matrix Paused state"
+    Assert-StatusAlignment "$themeName shared-colour Paused state"
+    Save-Screenshot $script:mainWindow "shared-accent-$themeName-paused.png"|Out-Null
+    Click-Control $script:mainWindow 20 "$themeName resume shared-colour state"
+    Assert-That ((Wait-Status 'Running')-like'*Running*') "$themeName resumes from shared-colour pause"
+    Click-Control $script:mainWindow 22 "$themeName shared-colour Break state";$sharedBreakWindow=Wait-BreakWindow
+    Assert-That ((Wait-Status 'Taking an eye break')-like'*Taking an eye break*') "$themeName shared-colour matrix Break state"
+    Wait-RingProgress "$themeName shared-colour Break";$sharedBreakShot=Save-Screenshot $script:mainWindow "shared-accent-$themeName-break.png" -PreserveForeground
+    Assert-TimerRingPixel $sharedBreakShot $sharedAccent "$themeName distinct Break colour disabled uses Work ring colour"
+    Click-Control $sharedBreakWindow 24 "$themeName complete shared-colour Break";Assert-That ((Wait-Status 'Running')-like'*Running*') "$themeName returns to Work after shared-colour Break"
+    Switch-Settings 1;Set-Check $script:mainWindow 120 $false "$themeName clear schedule before shared-colour hold"
+    foreach($dayId in 280..286){Set-Check $script:mainWindow $dayId $false "$themeName clear shared-colour schedule day $dayId"}
+    Set-Check $script:mainWindow 120 $true "$themeName enable empty schedule shared-colour hold";Switch-Timer
+    Assert-That ((Wait-Status 'Outside scheduled hours')-like'*Outside scheduled hours*') "$themeName shared-colour matrix scheduled hold"
+    Assert-StatusAlignment "$themeName shared-colour scheduled hold"
+    Save-Screenshot $script:mainWindow "shared-accent-$themeName-scheduled-hold.png"|Out-Null
+    Switch-Settings 1;Set-Check $script:mainWindow 120 $false "$themeName restore disabled shared-colour schedule";Switch-Timer
+    Assert-That ((Wait-Status 'Running')-like'*Running*') "$themeName returns to Running after shared-colour hold"
+    Click-Control $script:mainWindow 22 "$themeName shared-colour Snooze reminder";$sharedSnoozeWindow=Wait-BreakWindow
+    Click-Control $sharedSnoozeWindow 25 "$themeName shared-colour Snooze action"
+    Assert-That ((Wait-Status 'Snoozed')-like'*Snoozed*') "$themeName shared-colour matrix Snoozed state"
+    Assert-StatusAlignment "$themeName shared-colour Snoozed state"
+    Save-Screenshot $script:mainWindow "shared-accent-$themeName-snoozed.png"|Out-Null
+    Click-Control $script:mainWindow 21 "$themeName clear shared-colour Snooze state"
+    Assert-That ((Wait-Status 'Running')-like'*Running*') "$themeName Reset clears the shared-colour Snooze fixture"
+  }
+  Switch-Settings 4;Set-Check $script:mainWindow 124 $true 'Restore distinct Break colours after the shared-colour matrix';Set-Theme 2;Switch-Timer
+
   Test-SystemHighContrast
   Test-ReducedMotionIntegration
 
