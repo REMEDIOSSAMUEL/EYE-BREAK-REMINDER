@@ -43,7 +43,30 @@ public static class EBR_STD_NATIVE {
 }
 '@
   Add-Type -TypeDefinition $native -ErrorAction Stop
+  Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
+  Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
+  $uiaClientAssembly=[System.Windows.Automation.AutomationElement].Assembly.Location
+  $uiaTypesAssembly=[System.Windows.Automation.ControlType].Assembly.Location
+  Add-Type -ReferencedAssemblies @($uiaClientAssembly,$uiaTypesAssembly) -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Automation;
+public static class EBR_STD_UIA_CLIENT {
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern IntPtr CreateWindowExW(uint ex,string cls,string text,uint style,int x,int y,int width,int height,IntPtr parent,IntPtr menu,IntPtr instance,IntPtr param);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern IntPtr GetModuleHandleW(string name);
+  [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr hwnd);
+  public static string InitializeNativeProviders(){
+    IntPtr hwnd=CreateWindowExW(0,"BUTTON","UIA provider bootstrap",0,0,0,2,2,IntPtr.Zero,IntPtr.Zero,GetModuleHandleW(null),IntPtr.Zero);
+    if(hwnd==IntPtr.Zero)throw new InvalidOperationException("Could not create the hidden native Button used to initialize UI Automation providers.");
+    try{return AutomationElement.FromHandle(hwnd).Current.ControlType.ProgrammaticName;}finally{DestroyWindow(hwnd);}
+  }
+}
+'@ -ErrorAction Stop
+  $uiaProviderBootstrap=[EBR_STD_UIA_CLIENT]::InitializeNativeProviders()
+  if($uiaProviderBootstrap-cne'ControlType.Button'){throw "UI Automation provider bootstrap returned '$uiaProviderBootstrap', expected ControlType.Button."}
   $events=[System.Collections.Generic.List[object]]::new();$appProcess=$null;$status='FAIL';$failure=''
+  $events.Add([pscustomobject]@{Name='UI Automation client initializes the standard native Button provider';Status='PASS';Details=$uiaProviderBootstrap})
   function Find-StandardUserWizardWindow([int]$ProcessId,[string]$Kind){
     $processIds=[System.Collections.Generic.List[int]]::new();$processIds.Add($ProcessId)
     if($Kind-match'(?i)uninstall'){

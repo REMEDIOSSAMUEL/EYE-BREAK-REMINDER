@@ -1623,9 +1623,12 @@ function Test-OsAppearanceAndTextScale {
         $breakClient=Get-ClientGeometry $layoutBreak;$breakClientBottom=$breakClient.Top+$breakClient.Height
         Capture-ActiveWindow $layoutBreak "text-scale-$textScale-break-reminder-bottom.png"|Out-Null
         $visibleActionIds=@($bottomLayout.Controls|Where-Object{$_.Id-in@(23,24,25,26,27)}|ForEach-Object{$_.Id}|Sort-Object -Unique)
+        $requiredBreakIds=@(23,24,25,26,27,40,43,44,45)
+        $visibleRequiredIds=@($bottomLayout.Controls|Where-Object{$_.Id-in$requiredBreakIds}|ForEach-Object{$_.Id}|Sort-Object -Unique)
+        $missingRequiredIds=@($requiredBreakIds|Where-Object{$_-notin$visibleRequiredIds})
         $partialNonTitle=@($bottomLayout.PartiallyVisibleAtViewportEdge|Where-Object{$_.Id-ne43})
-        $titleWithinViewport=$breakTitle.Rect.Bottom-gt$breakClient.Top-and$breakTitle.Rect.Top-lt$breakClientBottom
-        Require ($visibleActionIds.Count-eq5-and$partialNonTitle.Count-eq0-and$bottomLayout.ScrolledOutsideViewportCount-eq0-and$bottomLayout.UiaNamedElementCount-eq9-and$titleWithinViewport) "$textScale% text-scale Break reminder bottom scroll keeps every action visible and the heading reachable" ([pscustomobject]@{Layout=$bottomLayout;VisibleActionIds=$visibleActionIds;PartiallyVisibleNonTitleControls=$partialNonTitle;TitleBounds=$breakTitle.Rect;TitleIntersectsViewport=$titleWithinViewport;Client=$breakClient})
+        $titleFullyWithinViewport=$breakTitle.Rect.Left-ge$breakClient.Left-and$breakTitle.Rect.Top-ge$breakClient.Top-and$breakTitle.Rect.Right-le($breakClient.Left+$breakClient.Width)-and$breakTitle.Rect.Bottom-le$breakClientBottom
+        Require ($visibleActionIds.Count-eq5-and$missingRequiredIds.Count-eq0-and$partialNonTitle.Count-eq0-and$bottomLayout.ScrolledOutsideViewportCount-eq0-and$titleFullyWithinViewport) "$textScale% text-scale Break reminder bottom scroll keeps every action visible and the heading reachable" ([pscustomobject]@{Layout=$bottomLayout;VisibleActionIds=$visibleActionIds;RequiredNativeControlIds=$requiredBreakIds;MissingRequiredNativeControlIds=$missingRequiredIds;PartiallyVisibleNonTitleControls=$partialNonTitle;TitleBounds=$breakTitle.Rect;TitleFullyWithinViewport=$titleFullyWithinViewport;Client=$breakClient;UiaNamedElementCount=$bottomLayout.UiaNamedElementCount})
         Assert-BreakButtonTextFits $layoutBreak @(23,24,25,26,27) "$textScale% text-scale Break reminder"
       }
       Assert-VisibleInteractiveControlsInClient $layoutBreak "$textScale% text scale Break reminder"
