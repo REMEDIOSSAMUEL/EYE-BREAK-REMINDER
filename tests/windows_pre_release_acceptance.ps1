@@ -606,6 +606,19 @@ function Assert-BreakButtonTextFits([IntPtr]$BreakWindow,[int[]]$Ids,[string]$Na
   $clipped=@($measurements|Where-Object{$_.TextWidth-gt$_.AvailableTextWidth})
   Require ($clipped.Count-eq0) "$Name button labels fit without ellipsis" ([pscustomobject]@{Dpi=$dpi;Measurements=$measurements})
 }
+function Assert-AccentSwatchesFit([int]$Dpi,[string]$Name) {
+  $px2=[Math]::Max(1,[int][Math]::Floor(0.5+2*$Dpi/96.0));$px8=[Math]::Max(1,[int][Math]::Floor(0.5+8*$Dpi/96.0));$px36=[Math]::Max(1,[int][Math]::Floor(0.5+36*$Dpi/96.0))
+  foreach($row in @(@(125,127,'Work'),@(126,128,'Break'))){
+    $swatch=Get-Control $script:mainWindow $row[0] "$Name $($row[2]) accent swatch"
+    $picker=Get-Control $script:mainWindow $row[1] "$Name $($row[2]) accent picker"
+    $textWidth=[EBR_PRE_NATIVE]::ControlTextWidth($swatch.Handle,$swatch.Text)
+    $side=[Math]::Max(1,[Math]::Min($px36,$swatch.Rect.Height-$px8))
+    $availableWidth=$swatch.Rect.Width-$px2-$side-$px8-$px2
+    Require ($swatch.Text -match '^#[0-9A-Fa-f]{6}$' -and $textWidth -le $availableWidth) "$Name $($row[2]) custom accent hex readout fits beside its color sample" ([pscustomobject]@{Text=$swatch.Text;MeasuredWidth=$textWidth;AvailableWidth=$availableWidth;Bounds=$swatch.Rect;Dpi=$Dpi})
+    $nonOverlapping=($swatch.Rect.Right -le $picker.Rect.Left -or $picker.Rect.Right -le $swatch.Rect.Left -or $swatch.Rect.Bottom -le $picker.Rect.Top -or $picker.Rect.Bottom -le $swatch.Rect.Top)
+    Require $nonOverlapping "$Name $($row[2]) custom accent swatch and picker controls do not overlap" ([pscustomobject]@{SwatchBounds=$swatch.Rect;PickerBounds=$picker.Rect;Dpi=$Dpi})
+  }
+}
 function Capture-ActiveWindow([IntPtr]$Window,[string]$Name) {
   if(-not $script:interactiveDesktop){Not-Tested "Active desktop screenshot: $Name" 'Runner has no interactive Explorer desktop.';return $null}
   [void][EBR_PRE_NATIVE]::SetForegroundWindow($Window)
@@ -1497,6 +1510,7 @@ function Test-OsAppearanceAndTextScale {
         }
       }
       Switch-Settings 4
+      Assert-AccentSwatchesFit $dpi "$textScale% text scale"
       $layoutPicker=Open-InstalledColorPicker 127 "Choose Work Mode colour at $textScale% text scale"
       $pickerBounds=Get-Rect $layoutPicker;$screenWidth=[EBR_PRE_NATIVE]::GetSystemMetrics(0);$screenHeight=[EBR_PRE_NATIVE]::GetSystemMetrics(1)
       Require ($pickerBounds.Left-ge0-and$pickerBounds.Top-ge0-and$pickerBounds.Right-le$screenWidth-and$pickerBounds.Bottom-le$screenHeight) "Native ChooseColorW dialog remains within the display at $textScale% text scale" ([pscustomobject]@{Bounds=$pickerBounds;DisplayWidth=$screenWidth;DisplayHeight=$screenHeight})
