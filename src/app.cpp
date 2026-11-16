@@ -908,7 +908,7 @@ public:
   monitorDpi=GetDpiForWindow(breakWindow);breakScroller=ScrollModel();breakApplied=INT_MIN;breakItems.clear();
   auto makeFont=[&](double height,int weight){return CreateFontW(-int(height*monitorDpi/96),0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI Variable");};
   breakFont=makeFont(14*textScale,FW_NORMAL);breakTitleFont=makeFont(25*textScale,FW_SEMIBOLD);breakCountFont=makeFont(56*std::sqrt(textScale),FW_SEMIBOLD);
-  int w=int((settings.mode==1?440:580)*monitorDpi/96),h=int((settings.mode==1?500:580)*monitorDpi/96);
+  int w=int((settings.mode==1?440:580)*monitorDpi/96*textScale),h=int((settings.mode==1?500:580)*monitorDpi/96);
   if(settings.mode==2){work=monitor.bounds;w=work.right-work.left;h=work.bottom-work.top;}else {w=std::min(w,int(work.right-work.left));h=std::min(h,int(work.bottom-work.top));}
   SetWindowPos(breakWindow,nullptr,work.left+(work.right-work.left-w)/2,work.top+(work.bottom-work.top-h)/2,w,h,SWP_NOZORDER);
   SendMessageW(breakWindow,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(icon));SendMessageW(breakWindow,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(icon));
@@ -924,7 +924,7 @@ public:
   // Do not build a deferred-position batch from null HWNDs; Windows leaks a USER object when that batch fails.
   if(!breakWindow||!GetDlgItem(breakWindow,BREAK_TITLE)||!GetDlgItem(breakWindow,COMPLETE))return;
   RECT r{};GetClientRect(breakWindow,&r);int scale=int(GetDpiForWindow(breakWindow));auto bpx=[&](double n){return int(n*scale/96.0);};
-  int pad=bpx(28),gap=bpx(12),bh=bpx(40*textScale),width=std::min(bpx(380),int(r.right)-2*pad),x=(r.right-width)/2,y=pad;
+  int pad=bpx(28),gap=bpx(12),bh=bpx(40*textScale),width=std::min(bpx(380*textScale),int(r.right)-2*pad),x=(r.right-width)/2,y=pad;
   breakItems.clear();
   auto place=[&](int id,int height){breakItems.push_back({GetDlgItem(breakWindow,id),x,y,width,height});y+=height+gap;};
   int titleHeight=bpx(42*textScale);

@@ -56,6 +56,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 [StructLayout(LayoutKind.Sequential)] public struct EBR_PRE_RECT { public int Left, Top, Right, Bottom; }
 [StructLayout(LayoutKind.Sequential)] public struct EBR_PRE_POINT { public int X, Y; }
+[StructLayout(LayoutKind.Sequential)] public struct EBR_PRE_SIZE { public int Width, Height; }
 [StructLayout(LayoutKind.Sequential)] public struct EBR_PRE_HIGHCONTRAST { public uint cbSize, dwFlags; public IntPtr lpszDefaultScheme; }
 [StructLayout(LayoutKind.Sequential)] public struct EBR_PRE_NOTIFYICONIDENTIFIER { public uint cbSize; public IntPtr hWnd; public uint uID; public Guid guidItem; }
 public static class EBR_PRE_NATIVE {
@@ -102,6 +103,8 @@ public static class EBR_PRE_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetDC(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
   [DllImport("gdi32.dll", SetLastError=true)] public static extern uint GetPixel(IntPtr dc, int x, int y);
+  [DllImport("gdi32.dll", SetLastError=true)] public static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+  [DllImport("gdi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool GetTextExtentPoint32W(IntPtr dc,string text,int count,out EBR_PRE_SIZE size);
   [DllImport("oleacc.dll", PreserveSig=true)] private static extern int AccessibleObjectFromWindow(IntPtr hwnd, int objectId, ref Guid iid, out IntPtr accessible);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool SystemParametersInfoW(uint action, uint parameter, ref EBR_PRE_HIGHCONTRAST value, uint flags);
@@ -126,6 +129,7 @@ public static class EBR_PRE_NATIVE {
   public static bool SetClientAreaAnimation(bool enabled){IntPtr value=enabled?new IntPtr(1):IntPtr.Zero;return SystemParametersInfoSetAnimationW(0x1043,0,value,2);}
   public static bool BroadcastSetting(IntPtr hwnd,string name){IntPtr text=Marshal.StringToHGlobalUni(name);try{IntPtr result;return SendMessageTimeoutW(hwnd,0x001A,IntPtr.Zero,text,2,1500,out result)!=IntPtr.Zero;}finally{Marshal.FreeHGlobal(text);}}
   public static uint ClientPixel(IntPtr hwnd,int x,int y){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)return 0;try{return GetPixel(dc,x,y);}finally{ReleaseDC(hwnd,dc);}}
+  public static int ControlTextWidth(IntPtr hwnd,string text){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)throw new InvalidOperationException("GetDC failed while measuring native control text.");IntPtr font=SendMessageW(hwnd,0x0031,IntPtr.Zero,IntPtr.Zero),previous=IntPtr.Zero;try{if(font!=IntPtr.Zero)previous=SelectObject(dc,font);EBR_PRE_SIZE size;if(!GetTextExtentPoint32W(dc,text,text.Length,out size))throw new InvalidOperationException("GetTextExtentPoint32W failed while measuring native control text.");return size.Width;}finally{if(previous!=IntPtr.Zero)SelectObject(dc,previous);ReleaseDC(hwnd,dc);}}
   public static object AccessibleWindow(IntPtr hwnd,int objectId){Guid iid=new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");IntPtr accessible;int hr=AccessibleObjectFromWindow(hwnd,objectId,ref iid,out accessible);if(hr<0||accessible==IntPtr.Zero)return null;try{return Marshal.GetObjectForIUnknown(accessible);}finally{Marshal.Release(accessible);}}
 }
 '@
@@ -561,7 +565,7 @@ function Get-UiaElements([IntPtr]$Window) {
   if(-not $root){return @()}
   @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object { try { $_.Current.ProcessId -eq $script:appPid } catch { $false } })
 }
-function Assert-VisibleInteractiveControlsInClient([IntPtr]$Window,[string]$Name) {
+function Assert-VisibleInteractiveControlsInClient([IntPtr]$Window,[string]$Name,[switch]$ReturnLayout) {
   $client=Get-ClientGeometry $Window;$right=$client.Left+$client.Width;$bottom=$client.Top+$client.Height
   # This application is a native Win32 UI. Measure its child HWNDs for actual
   # rendered layout bounds. The separate UIA/name/focus acceptance remains in
@@ -578,13 +582,29 @@ function Assert-VisibleInteractiveControlsInClient([IntPtr]$Window,[string]$Name
     if($rect.Left-lt($client.Left-2)-or$rect.Top-lt($client.Top-2)-or$rect.Right-gt($right+2)-or$rect.Bottom-gt($bottom+2)){$partial.Add($item)}else{$checked.Add($item)}
   }
   $uiaElements=@(Get-UiaElements $Window);$uiaNamed=@($uiaElements|Where-Object{try{$_.Current.Name}catch{$false}})
-  Require ($checked.Count-gt0) "$Name exposes fully visible native controls with measurable bounds" ([pscustomobject]@{Window=$Name;Client=$client;FullyVisibleNativeControlCount=$checked.Count;Controls=$checked.ToArray();PartiallyVisibleAtViewportEdge=$partial.ToArray();ScrolledOutsideViewportCount=$offscreen.Count;UiaElementCount=$uiaElements.Count;UiaNamedElementCount=$uiaNamed.Count})
+  $summary=[pscustomobject]@{Window=$Name;Client=$client;FullyVisibleNativeControlCount=$checked.Count;Controls=$checked.ToArray();PartiallyVisibleAtViewportEdge=$partial.ToArray();ScrolledOutsideViewportCount=$offscreen.Count;UiaElementCount=$uiaElements.Count;UiaNamedElementCount=$uiaNamed.Count}
+  Require ($checked.Count-gt0) "$Name exposes fully visible native controls with measurable bounds" $summary
+  if($ReturnLayout){return $summary}
 }
 function Set-SettingsScrollPosition([int]$ScrollCommand) {
   $panes=@([EBR_PRE_NATIVE]::Children($script:mainWindow)|Where-Object{[EBR_PRE_NATIVE]::ClassName($_)-eq'EyeBreakReminder.Settings'})
   if($panes.Count-ne1){throw "Expected one native Settings scroll pane, found $($panes.Count)."}
   [void][EBR_PRE_NATIVE]::SendMessageW($panes[0],0x0115,[IntPtr]$ScrollCommand,[IntPtr]::Zero)
   Start-Sleep -Milliseconds 120
+}
+function Set-BreakScrollPosition([IntPtr]$BreakWindow,[int]$ScrollCommand) {
+  [void][EBR_PRE_NATIVE]::SendMessageW($BreakWindow,0x0115,[IntPtr]$ScrollCommand,[IntPtr]::Zero)
+  Start-Sleep -Milliseconds 180
+}
+function Assert-BreakButtonTextFits([IntPtr]$BreakWindow,[int[]]$Ids,[string]$Name) {
+  $dpi=[EBR_PRE_NATIVE]::GetDpiForWindow($BreakWindow);$padding=[int][Math]::Floor(24.0*$dpi/96.0+0.5);$measurements=@()
+  foreach($id in $Ids){
+    $button=Get-Control $BreakWindow $id "$Name button $id";$available=$button.Rect.Width-$padding
+    $measured=[EBR_PRE_NATIVE]::ControlTextWidth($button.Handle,$button.Text)
+    $measurements+=,[pscustomobject]@{Id=$id;Text=$button.Text;TextWidth=$measured;AvailableTextWidth=$available;ButtonWidth=$button.Rect.Width}
+  }
+  $clipped=@($measurements|Where-Object{$_.TextWidth-gt$_.AvailableTextWidth})
+  Require ($clipped.Count-eq0) "$Name button labels fit without ellipsis" ([pscustomobject]@{Dpi=$dpi;Measurements=$measurements})
 }
 function Capture-ActiveWindow([IntPtr]$Window,[string]$Name) {
   if(-not $script:interactiveDesktop){Not-Tested "Active desktop screenshot: $Name" 'Runner has no interactive Explorer desktop.';return $null}
@@ -1307,7 +1327,8 @@ function Test-NarratorNavigation {
     [EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 50;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 150
     $foreground=[EBR_PRE_NATIVE]::GetForegroundWindow();$foregroundPid=[uint32]0;[void][EBR_PRE_NATIVE]::GetWindowThreadProcessId($foreground,[ref]$foregroundPid)
     if($foregroundPid-ne$script:appPid){throw "Real pointer input did not return foreground to the installed app for Narrator navigation (foreground PID $foregroundPid, app PID $script:appPid)."}
-    Focus-AppControl $timerNav.Handle
+    $pointerFocus=Get-AccessibilityFocusSnapshot 'Timer after real pointer focus handoff'
+    if($pointerFocus.ProcessId-ne$script:appPid-or-not$pointerFocus.HasKeyboardFocus){throw "Real pointer input did not focus the Timer navigation control before Narrator keyboard navigation: $($pointerFocus|ConvertTo-Json -Compress)."}
     for($i=0;$i-lt4;$i++){Send-VirtualKey 0x09;Start-Sleep -Milliseconds 120;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'Timer'))}
     $surfaces.Add([pscustomobject]@{Surface='Timer';Controls=(Get-AccessibilitySurfaceSummary $script:mainWindow)})
     Switch-Settings 4
@@ -1318,8 +1339,8 @@ function Test-NarratorNavigation {
     $paletteControls=@(foreach($id in 721..736){$child=[EBR_PRE_NATIVE]::GetDlgItem($picker,$id);if($child-ne[IntPtr]::Zero-and[EBR_PRE_NATIVE]::IsWindowVisible($child)){[pscustomobject]@{Id=$id;Class=[EBR_PRE_NATIVE]::ClassName($child);Enabled=[EBR_PRE_NATIVE]::IsWindowEnabled($child)}}})
     $pickerUia=@(Get-AccessibilitySurfaceSummary $picker)
     $surfaces.Add([pscustomobject]@{Surface='ChooseColorW';Controls=$pickerUia;RgbNativeControls=$rgbControls;VisiblePaletteCells=$paletteControls.Count})
-    foreach($id in @(706,707,708)){$child=[EBR_PRE_NATIVE]::GetDlgItem($picker,$id);if($child-ne[IntPtr]::Zero){Focus-AppControl $child;Send-VirtualKey 0x09;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'ChooseColorW RGB/palette'))}}
-    if($paletteControls.Count){$paletteCell=[EBR_PRE_NATIVE]::GetDlgItem($picker,[int]$paletteControls[0].Id);if($paletteCell-ne[IntPtr]::Zero){Focus-AppControl $paletteCell;Send-VirtualKey 0x09;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'ChooseColorW palette'))}}
+    foreach($id in @(706,707,708)){$child=[EBR_PRE_NATIVE]::GetDlgItem($picker,$id);if($child-ne[IntPtr]::Zero){$bounds=Get-Rect $child;if(-not[EBR_PRE_NATIVE]::SetCursorPos([int](($bounds.Left+$bounds.Right)/2),[int](($bounds.Top+$bounds.Bottom)/2))){throw "Could not position the real pointer over ChooseColorW RGB control $id."};[EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 40;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 100;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'ChooseColorW RGB/palette'));Send-VirtualKey 0x09}}
+    if($paletteControls.Count){$paletteCell=[EBR_PRE_NATIVE]::GetDlgItem($picker,[int]$paletteControls[0].Id);if($paletteCell-ne[IntPtr]::Zero){$bounds=Get-Rect $paletteCell;if(-not[EBR_PRE_NATIVE]::SetCursorPos([int](($bounds.Left+$bounds.Right)/2),[int](($bounds.Top+$bounds.Bottom)/2))){throw 'Could not position the real pointer over the ChooseColorW custom-colour palette.'};[EBR_PRE_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 40;[EBR_PRE_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 100;$focusTrace.Add((Get-AccessibilityFocusSnapshot 'ChooseColorW palette'));Send-VirtualKey 0x09}}
     Close-InstalledColorPicker $picker $false;$picker=[IntPtr]::Zero
     Click-Control $script:mainWindow 11 'Narrator History navigation'
     $surfaces.Add([pscustomobject]@{Surface='History';Controls=(Get-AccessibilitySurfaceSummary $script:mainWindow)})
@@ -1486,6 +1507,13 @@ function Test-OsAppearanceAndTextScale {
         Require ($breakTitle.Text-eq'Taking an eye break'-and$breakTitle.Rect.Height-ge$minimumWrappedTitleHeight-and$breakTitle.Rect.Bottom-le$breakInstruction.Rect.Top) '200% text-scale Break heading has room for its wrapped lines without clipping or overlap' ([pscustomobject]@{Title=$breakTitle.Text;TitleBounds=$breakTitle.Rect;InstructionBounds=$breakInstruction.Rect;MinimumHeight=$minimumWrappedTitleHeight;Dpi=$dpi})
         $breakClient=Get-ClientGeometry $layoutBreak;$breakClientBottom=$breakClient.Top+$breakClient.Height
         Require ($breakTitle.Rect.Top-ge$breakClient.Top-and$breakTitle.Rect.Bottom-le$breakClientBottom) '200% text-scale Break heading stays fully inside the reminder viewport after initial focus scroll' ([pscustomobject]@{TitleBounds=$breakTitle.Rect;Client=$breakClient;ClientBottom=$breakClientBottom;Window=(Get-Rect $layoutBreak)})
+        Set-BreakScrollPosition $layoutBreak 7
+        $bottomLayout=Assert-VisibleInteractiveControlsInClient $layoutBreak '200% text scale Break reminder bottom scroll position' -ReturnLayout
+        $breakTitle=Get-StaticControlByText $layoutBreak 'Taking an eye break' '200% Break title after bottom scroll'
+        $breakClient=Get-ClientGeometry $layoutBreak;$breakClientBottom=$breakClient.Top+$breakClient.Height
+        Require ($bottomLayout.FullyVisibleNativeControlCount-eq9-and$bottomLayout.PartiallyVisibleAtViewportEdge.Count-eq0-and$breakTitle.Rect.Top-ge$breakClient.Top-and$breakTitle.Rect.Bottom-le$breakClientBottom) '200% text-scale Break reminder scrolls all nine controls fully into the viewport while retaining its heading' ([pscustomobject]@{Layout=$bottomLayout;TitleBounds=$breakTitle.Rect;Client=$breakClient})
+        Assert-BreakButtonTextFits $layoutBreak @(23,24,25,26,27) '200% text-scale Break reminder'
+        Capture-ActiveWindow $layoutBreak 'text-scale-200-break-reminder-bottom.png'|Out-Null
       }
       Assert-VisibleInteractiveControlsInClient $layoutBreak "$textScale% text scale Break reminder"
       Capture-ActiveWindow $layoutBreak "text-scale-$textScale-break-reminder.png" | Out-Null
