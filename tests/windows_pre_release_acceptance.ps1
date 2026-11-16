@@ -101,6 +101,7 @@ public static class EBR_PRE_NATIVE {
   [DllImport("user32.dll")] private static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
   public static void Key(byte key,bool up){keybd_event(key,0,up?2u:0u,UIntPtr.Zero);}
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetDC(IntPtr hwnd);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern int DrawTextW(IntPtr hdc,string text,int count,ref EBR_PRE_RECT rect,uint format);
   [DllImport("user32.dll", SetLastError=true)] public static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
   [DllImport("gdi32.dll", SetLastError=true)] public static extern uint GetPixel(IntPtr dc, int x, int y);
   [DllImport("gdi32.dll", SetLastError=true)] public static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
@@ -129,6 +130,7 @@ public static class EBR_PRE_NATIVE {
   public static bool SetClientAreaAnimation(bool enabled){IntPtr value=enabled?new IntPtr(1):IntPtr.Zero;return SystemParametersInfoSetAnimationW(0x1043,0,value,2);}
   public static bool BroadcastSetting(IntPtr hwnd,string name){IntPtr text=Marshal.StringToHGlobalUni(name);try{IntPtr result;return SendMessageTimeoutW(hwnd,0x001A,IntPtr.Zero,text,2,1500,out result)!=IntPtr.Zero;}finally{Marshal.FreeHGlobal(text);}}
   public static uint ClientPixel(IntPtr hwnd,int x,int y){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)return 0;try{return GetPixel(dc,x,y);}finally{ReleaseDC(hwnd,dc);}}
+  public static int ControlDrawTextWidth(IntPtr hwnd,string text){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)throw new InvalidOperationException("GetDC failed while measuring owner-drawn text.");IntPtr font=SendMessageW(hwnd,0x0031,IntPtr.Zero,IntPtr.Zero),previous=IntPtr.Zero;try{if(font!=IntPtr.Zero)previous=SelectObject(dc,font);EBR_PRE_RECT rect=new EBR_PRE_RECT();if(DrawTextW(dc,text,-1,ref rect,0x0400|0x0020|0x0800)==0)throw new InvalidOperationException("DrawTextW failed while measuring owner-drawn text.");return rect.Right-rect.Left;}finally{if(previous!=IntPtr.Zero)SelectObject(dc,previous);ReleaseDC(hwnd,dc);}}
   public static int ControlTextWidth(IntPtr hwnd,string text){IntPtr dc=GetDC(hwnd);if(dc==IntPtr.Zero)throw new InvalidOperationException("GetDC failed while measuring native control text.");IntPtr font=SendMessageW(hwnd,0x0031,IntPtr.Zero,IntPtr.Zero),previous=IntPtr.Zero;try{if(font!=IntPtr.Zero)previous=SelectObject(dc,font);EBR_PRE_SIZE size;if(!GetTextExtentPoint32W(dc,text,text.Length,out size))throw new InvalidOperationException("GetTextExtentPoint32W failed while measuring native control text.");return size.Width;}finally{if(previous!=IntPtr.Zero)SelectObject(dc,previous);ReleaseDC(hwnd,dc);}}
   public static object AccessibleWindow(IntPtr hwnd,int objectId){Guid iid=new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");IntPtr accessible;int hr=AccessibleObjectFromWindow(hwnd,objectId,ref iid,out accessible);if(hr<0||accessible==IntPtr.Zero)return null;try{return Marshal.GetObjectForIUnknown(accessible);}finally{Marshal.Release(accessible);}}
 }
@@ -612,11 +614,11 @@ function Assert-AccentSwatchesFit([int]$Dpi,[string]$Name) {
     $swatch=Get-Control $script:mainWindow $row[0] "$Name $($row[2]) accent swatch"
     $picker=Get-Control $script:mainWindow $row[1] "$Name $($row[2]) accent picker"
     $fontReference=Get-StaticControlByText $script:mainWindow "$($row[2]) Mode colour" "$Name $($row[2]) accent renderer-font reference"
-    $textWidth=[EBR_PRE_NATIVE]::ControlTextWidth($fontReference.Handle,$swatch.Text)
+    $textWidth=[EBR_PRE_NATIVE]::ControlDrawTextWidth($fontReference.Handle,$swatch.Text)
     $controlFontWidth=[EBR_PRE_NATIVE]::ControlTextWidth($swatch.Handle,$swatch.Text)
     $side=[Math]::Max(1,[Math]::Min($px36,$swatch.Rect.Height-$px8))
     $availableWidth=$swatch.Rect.Width-$px2-$side-$px8-$px2
-    Require ($swatch.Text -match '^#[0-9A-Fa-f]{6}$' -and $textWidth -le $availableWidth) "$Name $($row[2]) custom accent hex readout fits beside its color sample" ([pscustomobject]@{Text=$swatch.Text;RendererFontReference=$fontReference.Text;RendererFontWidth=$textWidth;OwnerDrawControlFontWidth=$controlFontWidth;AvailableWidth=$availableWidth;Bounds=$swatch.Rect;Dpi=$Dpi})
+    Require ($swatch.Text -match '^#[0-9A-Fa-f]{6}$' -and $textWidth -le $availableWidth) "$Name $($row[2]) custom accent hex readout fits beside its color sample" ([pscustomobject]@{Text=$swatch.Text;RendererFontReference=$fontReference.Text;RendererDrawTextWidth=$textWidth;OwnerDrawControlFontWidth=$controlFontWidth;AvailableWidth=$availableWidth;Bounds=$swatch.Rect;Dpi=$Dpi})
     $nonOverlapping=($swatch.Rect.Right -le $picker.Rect.Left -or $picker.Rect.Right -le $swatch.Rect.Left -or $swatch.Rect.Bottom -le $picker.Rect.Top -or $picker.Rect.Bottom -le $swatch.Rect.Top)
     Require $nonOverlapping "$Name $($row[2]) custom accent swatch and picker controls do not overlap" ([pscustomobject]@{SwatchBounds=$swatch.Rect;PickerBounds=$picker.Rect;Dpi=$Dpi})
   }
