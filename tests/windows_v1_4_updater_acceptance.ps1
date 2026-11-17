@@ -157,7 +157,7 @@ function Run-CancelAndHashFailure([bool]$Mismatch){
   if($Mismatch){$assetPath=Join-Path $scriptRoot 'corrupt-setup.exe';Copy-Item -LiteralPath $UpdateInstaller -Destination $assetPath;$bytes=[IO.File]::ReadAllBytes($assetPath);$bytes[$bytes.Length-1]=$bytes[$bytes.Length-1]-bxor 0x01;[IO.File]::WriteAllBytes($assetPath,$bytes);$delay=0}
   else{$assetPath=Join-Path $scriptRoot 'slow-fixture.bin';$bytes=[byte[]]::new(2*1024*1024);[Security.Cryptography.RandomNumberGenerator]::Fill($bytes);[IO.File]::WriteAllBytes($assetPath,$bytes);$delay=250;$fixturePath=Join-Path $installDir 'test-update-response.txt';$fixture=Get-Content -LiteralPath $fixturePath -Raw;$separator=$fixture.IndexOf("`r`n`r`n");if($separator-lt0){throw 'The updater fixture response has no HTTP header/body separator.'};$headers=$fixture.Substring(0,$separator);$body=$fixture.Substring($separator+4)|ConvertFrom-Json;$body.assets[0].size=$bytes.Length;$body.assets[0].digest='sha256:'+((Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant());[IO.File]::WriteAllText($fixturePath,($headers+"`r`n`r`n"+($body|ConvertTo-Json -Compress -Depth 6)),[Text.UTF8Encoding]::new($false))}
   $before=(Get-FileHash -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe') -Algorithm SHA256).Hash;$appProcessId=Start-TestApp $assetPath $delay;$download=Begin-Download $appProcessId
-  if($Mismatch){$failed=Find-Dialog 'failed GitHub' @($appProcessId) 60;Screenshot $failed 'hash-mismatch-rejected.png'}
+  if($Mismatch){$failed=Find-Dialog 'SHA-256 integrity check' @($appProcessId) 60;Screenshot $failed 'hash-mismatch-rejected.png'}
   else{
     Screenshot $download 'download-cancel-progress.png'
     $watch=[Diagnostics.Stopwatch]::StartNew();$observed=$false

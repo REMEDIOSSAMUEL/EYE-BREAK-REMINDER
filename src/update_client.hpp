@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cwchar>
 #include <functional>
 #include <string>
 #include <vector>
@@ -123,11 +124,24 @@ inline DownloadResult downloadVerified(const ReleaseAsset&asset,const std::wstri
     client_detail::HashProvider hash;if(!hash.open()){removePartial();result.error="Windows could not initialize SHA-256 verification.";return result;}
     std::wstring current;try{current=std::wstring(asset.downloadUrl.begin(),asset.downloadUrl.end());}catch(...){removePartial();result.error="The official download address is invalid.";return result;}
     DWORD accessType=WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
+    LPCWSTR proxyName=WINHTTP_NO_PROXY_NAME;
 #ifdef EYEBREAK_TEST_BUILD
     client_detail::Url initialUrl;const bool loopbackTestSession=client_detail::crackHttps(current,initialUrl)&&_wcsicmp(initialUrl.host.c_str(),L"localhost")==0;
     if(loopbackTestSession)accessType=WINHTTP_ACCESS_TYPE_NO_PROXY;
+    wchar_t configuredProxy[128]{};const DWORD configuredProxyLength=GetEnvironmentVariableW(L"EBR_TEST_HTTPS_PROXY",configuredProxy,DWORD(std::size(configuredProxy)));
+    std::wstring testProxy;
+    if(configuredProxyLength){
+        if(configuredProxyLength>=std::size(configuredProxy)||loopbackTestSession||!client_detail::crackHttps(current,initialUrl)||!client_detail::allowHost(initialUrl.host)||initialUrl.port!=INTERNET_DEFAULT_HTTPS_PORT){removePartial();result.error="The test HTTPS proxy is invalid for this official release asset.";return result;}
+        testProxy.assign(configuredProxy,configuredProxyLength);constexpr wchar_t prefix[]=L"127.0.0.1:";
+        if(testProxy.compare(0,std::size(prefix)-1,prefix)!=0||testProxy.size()<=std::size(prefix)-1){removePartial();result.error="The test HTTPS proxy must use a loopback IPv4 address and port.";return result;}
+        const std::wstring portText=testProxy.substr(std::size(prefix)-1);
+        if(!std::all_of(portText.begin(),portText.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';})){removePartial();result.error="The test HTTPS proxy port is invalid.";return result;}
+        wchar_t*portEnd=nullptr;const unsigned long port=std::wcstoul(portText.c_str(),&portEnd,10);
+        if(!portEnd||*portEnd||port<1024||port>65535){removePartial();result.error="The test HTTPS proxy port is outside the permitted range.";return result;}
+        accessType=WINHTTP_ACCESS_TYPE_NAMED_PROXY;proxyName=testProxy.c_str();
+    }
 #endif
-    client_detail::Internet session{WinHttpOpen(L"Eye Break Reminder updater",accessType,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0)};
+    client_detail::Internet session{WinHttpOpen(L"Eye Break Reminder updater",accessType,proxyName,WINHTTP_NO_PROXY_BYPASS,0)};
     if(!session.value){removePartial();result.error="Windows could not start the secure download service.";return result;}
 #ifdef EYEBREAK_TEST_BUILD
     if(loopbackTestSession)WinHttpSetTimeouts(session.value,1000,1000,1000,3000);
