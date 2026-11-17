@@ -24,6 +24,9 @@ constexpr int COUNTDOWN=40,TIMER_STATE=41,COUNT_CAPTION=42,BREAK_TITLE=43,BREAK_
 constexpr int SCHEDULE_TOGGLE=120,PRESET_WEEKDAYS=121,PRESET_EVERYDAY=122,SCHEDULE_STATUS=123,BREAK_COLORS=124;
 constexpr int WORK_ACCENT_SWATCH=125,BREAK_ACCENT_SWATCH=126,CHOOSE_WORK_ACCENT=127,CHOOSE_BREAK_ACCENT=128,RESET_ACCENT_COLORS=129;
 constexpr int UPDATE_CHECK=160,UPDATE_OPEN=161,UPDATE_STATUS=162,UPDATE_LATEST=163,UPDATE_INSTALLED=164,UPDATE_AUTO_CHECK=165,UPDATE_AUTO_DOWNLOAD=166,UPDATE_LAST_CHECK=167;
+constexpr wchar_t UPDATE_MODAL_CLASS[]=L"EyeBreakReminder.UpdateModal";
+constexpr int UPDATE_MODAL_HEADING=12320,UPDATE_MODAL_BODY=12321,UPDATE_MODAL_OPTIONS=12322,UPDATE_MODAL_NOTES_LABEL=12323,UPDATE_MODAL_NOTES_TEXT=12324,UPDATE_MODAL_HISTORY=12325,UPDATE_CONFIRM_BUTTON=12326,UPDATE_CONFIRM_CANCEL=12327,UPDATE_MODAL_PROGRESS=12328;
+constexpr UINT_PTR UPDATE_MODAL_BREAK_TIMER=23;
 // Weekly hours: one check box per day (DAY_BASE + day). Period controls are PERIOD_BASE + day*10 + period*3 + {0 start, 1 end,
 // 2 Remove}; PERIOD_BASE + day*10 + 9 is the day's Add period button.
 constexpr int DAY_BASE=280,PERIOD_BASE=300,PERIOD_END=PERIOD_BASE+70;
@@ -44,9 +47,14 @@ struct Colors {
 };
 struct UpdateDispatch {std::mutex mutex;HWND target{};bool alive=true;};
 struct UpdateMessage {updates::CheckResult result;updates::ReleaseDetails release;bool automatic=false;};
-struct DownloadDialogState {std::atomic_bool cancelled{false},done{false};mutable std::mutex mutex;updates::DownloadProgress progress;updates::DownloadResult result;std::wstring phase=L"Downloading";bool dark=false,forcedColors=false,install=false;};
-struct UpdateChoiceState {std::wstring releaseUrl;bool dark=false,forcedColors=false;};
-struct UpdateChoiceResult {bool install=false,clean=false;};
+struct DownloadDialogState {std::atomic_bool cancelled{false},done{false};mutable std::mutex mutex;updates::DownloadProgress progress;updates::DownloadResult result;std::wstring phase=L"Downloading";bool install=false;};
+struct UpdateChoiceResult {bool install=false,clean=false,deferred=false;};
+class Application;
+enum class UpdateModalKind {Choice,CleanInstall,Download};
+struct UpdateModalState {
+ Application* owner=nullptr;UpdateModalKind kind=UpdateModalKind::Choice;DownloadDialogState* download=nullptr;HWND window{},heading{},body{},options{},preserve{},clean{},notesLabel{},notesText{},deleteHistory{},primary{},secondary{},notesButton{},progressBar{};
+ std::wstring headingText,bodyText,releaseNotes,releaseUrl,primaryText;HFONT normalFont{},headingFont{};UINT dpi=96;bool ready=false,install=false,cleanInstall=false,removeHistory=false,finished=false,deferred=false,breakHidden=false;int result=IDCANCEL;
+};
 std::wstring startupUpdateNonce,startupCleanupDirectory;DWORD startupCoordinatorPid=0;
 class Application {
 public:
@@ -92,7 +100,7 @@ public:
   bool enabled=IsWindowEnabled(button)!=FALSE,pressed=(draw->uItemState&CDIS_SELECTED)!=0;
   bool selected=SendMessageW(button,BM_GETCHECK,0,0)==BST_CHECKED,hot=(draw->uItemState&CDIS_HOT)!=0;
   if((id>=NAV_TIMER&&id<=NAV_SETTINGS)||(id>=SECTION_BASE&&id<SECTION_BASE+SECTION_COUNT))return drawTab(draw,button,id,selected,hot,pressed);
-  bool primary=id==TAKE_BREAK||id==COMPLETE||id==PREVIEW;
+  bool primary=id==TAKE_BREAK||id==COMPLETE||id==PREVIEW||id==UPDATE_INSTALL_BUTTON||id==UPDATE_CONFIRM_BUTTON;
   COLORREF accent=activeAccent();
   COLORREF fill=checkbox?colors.background:(primary?accent:(selected||hot?colors.hover:colors.surface));
   COLORREF ink=enabled?colors.foreground:colors.secondary;if(primary)ink=activeButtonText();
@@ -409,56 +417,92 @@ public:
  void setUpdateLabel(int id,const std::wstring&value){if(HWND h=find(id))SetWindowTextW(h,value.c_str());if(page==2&&settingsSection==5)layoutSettings();}
   static constexpr int UPDATE_INSTALL_BUTTON=12001,UPDATE_LATER_BUTTON=12002,UPDATE_NOTES_BUTTON=12003,UPDATE_PRESERVE_RADIO=12101,UPDATE_CLEAN_RADIO=12102;
   static constexpr int DOWNLOAD_INSTALL_BUTTON=12201,DOWNLOAD_CANCEL_BUTTON=12202;
-  static HRESULT CALLBACK updateChoiceCallback(HWND dialog,UINT notification,WPARAM button,LPARAM,LONG_PTR data){
-   auto&state=*reinterpret_cast<UpdateChoiceState*>(data);
-   if(notification==TDN_CREATED)taskDialogAppearance(dialog,notification,0,0,(state.dark?1:0)|(state.forcedColors?2:0));
-   if(notification==TDN_BUTTON_CLICKED&&button==UPDATE_NOTES_BUTTON){if(!state.releaseUrl.empty())ShellExecuteW(dialog,L"open",state.releaseUrl.c_str(),nullptr,nullptr,SW_SHOWNORMAL);return S_FALSE;}
-   return S_OK;
+  static int modalDpiPx(const UpdateModalState&state,int value){return std::max(1,MulDiv(value,int(state.dpi),96));}
+  static int modalMeasureText(const UpdateModalState&state,HFONT font,const std::wstring&value,int width){if(value.empty())return 0;HDC dc=GetDC(state.owner->main);if(!dc)return modalDpiPx(state,24);HGDIOBJ previous=SelectObject(dc,font);RECT bounds{0,0,width,0};DrawTextW(dc,value.c_str(),-1,&bounds,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);SelectObject(dc,previous);ReleaseDC(state.owner->main,dc);return std::max(modalDpiPx(state,20),int(bounds.bottom-bounds.top));}
+  static void modalCreateFonts(UpdateModalState&state){if(state.normalFont)DeleteObject(state.normalFont);if(state.headingFont)DeleteObject(state.headingFont);const double scale=state.owner->textScale;auto height=[&](double points){return -std::max(1,int(std::lround(points*double(state.dpi)/72.0*scale)));};state.normalFont=CreateFontW(height(11),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI Variable");state.headingFont=CreateFontW(height(15),0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI Variable");}
+  static HWND modalControl(UpdateModalState&state,const wchar_t*cls,const wchar_t*text,DWORD style,int id,HFONT font){HWND h=CreateWindowExW(0,cls,text,WS_CHILD|WS_VISIBLE|style,0,0,1,1,state.window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),state.owner->instance,nullptr);if(h&&font)SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(font),FALSE);if(h&&state.owner->colors.dark&&!state.owner->colors.systemContrast&&_wcsicmp(cls,L"BUTTON")==0)SetWindowTheme(h,L"DarkMode_Explorer",nullptr);return h;}
+  struct ModalMetrics {int width=0,height=0,pad=0,gap=0,headingHeight=0,bodyHeight=0,sectionHeight=0,preserveHeight=0,cleanHeight=0,notesLabelHeight=0,notesHeight=0,progressHeight=0,buttonHeight=0;};
+  static ModalMetrics modalMetrics(UpdateModalState&state,int width,int maxHeight){ModalMetrics m;m.width=width;m.pad=modalDpiPx(state,24);m.gap=modalDpiPx(state,9);const int inner=std::max(100,width-2*m.pad);m.headingHeight=std::max(modalDpiPx(state,30),modalMeasureText(state,state.headingFont,state.headingText,inner));m.bodyHeight=modalMeasureText(state,state.normalFont,state.bodyText,inner);m.buttonHeight=std::max(modalDpiPx(state,36),int(std::lround(modalDpiPx(state,30)*state.owner->textScale)));int fixed=m.pad+m.headingHeight+m.gap+m.bodyHeight+m.gap+m.buttonHeight+m.pad;
+   if(state.kind==UpdateModalKind::Choice){m.sectionHeight=modalDpiPx(state,22);const int radioWidth=std::max(80,inner-modalDpiPx(state,34));m.preserveHeight=std::max(modalDpiPx(state,30),modalMeasureText(state,state.normalFont,L"Preserve my settings (Recommended)",radioWidth)+modalDpiPx(state,8));m.cleanHeight=std::max(modalDpiPx(state,30),modalMeasureText(state,state.normalFont,L"Clean install — reset previous settings",radioWidth)+modalDpiPx(state,8));fixed+=m.sectionHeight+m.preserveHeight+m.cleanHeight+m.gap;
+    if(!state.releaseNotes.empty()){m.notesLabelHeight=modalDpiPx(state,22);fixed+=m.notesLabelHeight+m.gap;int room=std::max(0,maxHeight-fixed);m.notesHeight=std::min(modalDpiPx(state,170),room);if(room>=modalDpiPx(state,50))m.notesHeight=std::max(modalDpiPx(state,50),m.notesHeight);fixed+=m.notesHeight;}
+    }else if(state.kind==UpdateModalKind::CleanInstall){const int checkboxWidth=std::max(80,inner-modalDpiPx(state,34));m.cleanHeight=std::max(modalDpiPx(state,36),modalMeasureText(state,state.normalFont,L"Also delete existing history and statistics",checkboxWidth)+modalDpiPx(state,10));fixed+=m.cleanHeight+m.gap;
+    }else{const int oldBodyHeight=m.bodyHeight;m.bodyHeight=std::max(m.bodyHeight,modalDpiPx(state,78));fixed+=m.bodyHeight-oldBodyHeight;m.progressHeight=modalDpiPx(state,20);fixed+=m.progressHeight+m.gap;}
+   m.height=std::clamp(fixed,modalDpiPx(state,180),std::max(modalDpiPx(state,180),maxHeight));return m;
   }
+  static void layoutModal(UpdateModalState&state){if(!state.window)return;RECT client{};GetClientRect(state.window,&client);const int width=client.right,pad=modalDpiPx(state,24),gap=modalDpiPx(state,9),inner=std::max(100,width-2*pad);RECT work{};MONITORINFO info{};info.cbSize=sizeof(info);if(GetMonitorInfoW(MonitorFromWindow(state.window,MONITOR_DEFAULTTONEAREST),&info))work=info.rcWork;const int maxHeight=std::max(modalDpiPx(state,180),int(work.bottom-work.top)-modalDpiPx(state,80));ModalMetrics m=modalMetrics(state,width,maxHeight);int y=pad;MoveWindow(state.heading,pad,y,inner,m.headingHeight,TRUE);y+=m.headingHeight+gap;MoveWindow(state.body,pad,y,inner,m.bodyHeight,TRUE);y+=m.bodyHeight+gap;
+   if(state.kind==UpdateModalKind::Choice){MoveWindow(state.options,pad,y,inner,m.sectionHeight,TRUE);y+=m.sectionHeight;MoveWindow(state.preserve,pad,y,inner,m.preserveHeight,TRUE);y+=m.preserveHeight;MoveWindow(state.clean,pad,y,inner,m.cleanHeight,TRUE);y+=m.cleanHeight+gap;if(state.notesLabel){MoveWindow(state.notesLabel,pad,y,inner,m.notesLabelHeight,TRUE);y+=m.notesLabelHeight;MoveWindow(state.notesText,pad,y,inner,m.notesHeight,TRUE);}}
+    else if(state.kind==UpdateModalKind::CleanInstall){MoveWindow(state.deleteHistory,pad,y,inner,m.cleanHeight,TRUE);}
+    else{MoveWindow(state.progressBar,pad,y,inner,m.progressHeight,TRUE);}
+   const int buttonY=client.bottom-pad-m.buttonHeight;if(state.kind==UpdateModalKind::Choice){const int gap2=modalDpiPx(state,10),buttonWidth=(inner-2*gap2)/3;MoveWindow(state.primary,pad,buttonY,buttonWidth,m.buttonHeight,TRUE);MoveWindow(state.secondary,pad+buttonWidth+gap2,buttonY,buttonWidth,m.buttonHeight,TRUE);MoveWindow(state.notesButton,pad+2*(buttonWidth+gap2),buttonY,inner-2*(buttonWidth+gap2),m.buttonHeight,TRUE);}
+   else{const int gap2=modalDpiPx(state,12),buttonWidth=(inner-gap2)/2;MoveWindow(state.primary,pad,buttonY,buttonWidth,m.buttonHeight,TRUE);MoveWindow(state.secondary,pad+buttonWidth+gap2,buttonY,inner-buttonWidth-gap2,m.buttonHeight,TRUE);}
+  }
+  static void finishModal(UpdateModalState&state,int result){state.result=result;state.finished=true;if(state.window)DestroyWindow(state.window);}
+  static LRESULT CALLBACK updateModalProc(HWND hwnd,UINT message,WPARAM w,LPARAM l){UpdateModalState*state=reinterpret_cast<UpdateModalState*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));if(message==WM_NCCREATE){auto*create=reinterpret_cast<CREATESTRUCTW*>(l);state=static_cast<UpdateModalState*>(create->lpCreateParams);if(!state)return FALSE;state->window=hwnd;state->dpi=GetDpiForWindow(hwnd);SetWindowLongPtrW(hwnd,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(state));}
+   if(!state)return DefWindowProcW(hwnd,message,w,l);
+   switch(message){case WM_CREATE:{modalCreateFonts(*state);auto make=[&](const wchar_t*cls,const wchar_t*text,DWORD style,int id,HFONT font){return modalControl(*state,cls,text,style,id,font);};state->heading=make(L"STATIC",state->headingText.c_str(),SS_LEFT|SS_NOPREFIX,UPDATE_MODAL_HEADING,state->headingFont);state->body=make(L"STATIC",state->bodyText.c_str(),SS_LEFT|SS_NOPREFIX|SS_EDITCONTROL,UPDATE_MODAL_BODY,state->normalFont);
+    if(state->kind==UpdateModalKind::Choice){state->options=make(L"STATIC",L"Installation options",SS_LEFT|SS_NOPREFIX,UPDATE_MODAL_OPTIONS,state->normalFont);state->preserve=make(L"BUTTON",L"&Preserve my settings (Recommended)",BS_AUTORADIOBUTTON|BS_MULTILINE|WS_TABSTOP|WS_GROUP,UPDATE_PRESERVE_RADIO,state->normalFont);state->clean=make(L"BUTTON",L"Clean &install — reset previous settings",BS_AUTORADIOBUTTON|BS_MULTILINE|WS_TABSTOP,UPDATE_CLEAN_RADIO,state->normalFont);SendMessageW(state->preserve,BM_SETCHECK,BST_CHECKED,0);if(!state->releaseNotes.empty()){state->notesLabel=make(L"STATIC",L"Release notes",SS_LEFT|SS_NOPREFIX,UPDATE_MODAL_NOTES_LABEL,state->normalFont);state->notesText=make(L"EDIT",state->releaseNotes.c_str(),ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|WS_VSCROLL|WS_TABSTOP|WS_BORDER|ES_NOHIDESEL,UPDATE_MODAL_NOTES_TEXT,state->normalFont);}}
+     else if(state->kind==UpdateModalKind::CleanInstall)state->deleteHistory=make(L"BUTTON",L"Also delete existing history and statistics",BS_AUTOCHECKBOX|BS_MULTILINE|WS_TABSTOP,UPDATE_MODAL_HISTORY,state->normalFont);
+    if(state->kind==UpdateModalKind::Choice){state->primary=make(L"BUTTON",state->primaryText.c_str(),BS_DEFPUSHBUTTON|BS_MULTILINE|WS_TABSTOP,UPDATE_INSTALL_BUTTON,state->normalFont);state->secondary=make(L"BUTTON",L"Remind Me Later",BS_PUSHBUTTON|WS_TABSTOP|WS_GROUP,UPDATE_LATER_BUTTON,state->normalFont);state->notesButton=make(L"BUTTON",L"View Release Notes",BS_PUSHBUTTON|WS_TABSTOP,UPDATE_NOTES_BUTTON,state->normalFont);}
+     else if(state->kind==UpdateModalKind::CleanInstall){state->primary=make(L"BUTTON",L"Confirm Clean Install",BS_PUSHBUTTON|BS_MULTILINE|WS_TABSTOP,UPDATE_CONFIRM_BUTTON,state->normalFont);state->secondary=make(L"BUTTON",L"Cancel",BS_DEFPUSHBUTTON|WS_TABSTOP|WS_GROUP,UPDATE_CONFIRM_CANCEL,state->normalFont);}
+      else{state->progressBar=make(PROGRESS_CLASSW,L"",PBS_SMOOTH|PBS_MARQUEE,UPDATE_MODAL_PROGRESS,state->normalFont);state->primary=make(L"BUTTON",L"Install Update",BS_DEFPUSHBUTTON|WS_TABSTOP,UPDATE_INSTALL_BUTTON,state->normalFont);state->secondary=make(L"BUTTON",L"Cancel",BS_PUSHBUTTON|WS_TABSTOP|WS_GROUP,DOWNLOAD_CANCEL_BUTTON,state->normalFont);SendMessageW(state->progressBar,PBM_SETRANGE32,0,1000);EnableWindow(state->primary,FALSE);}
+     if(!state->heading||!state->body||!state->primary||!state->secondary||(state->kind==UpdateModalKind::Choice&&(!state->options||!state->preserve||!state->clean||!state->notesButton||(!state->releaseNotes.empty()&&(!state->notesLabel||!state->notesText))))||(state->kind==UpdateModalKind::CleanInstall&&!state->deleteHistory)||(state->kind==UpdateModalKind::Download&&(!state->download||!state->progressBar)))return -1;
+     if(state->notesText)SendMessageW(state->notesText,EM_SETSEL,0,0);
+     SetTimer(hwnd,UPDATE_MODAL_BREAK_TIMER,250,nullptr);return 0;}
+   case WM_SIZE:layoutModal(*state);return 0;
+    case WM_DPICHANGED:{state->dpi=HIWORD(w);modalCreateFonts(*state);for(HWND child:{state->heading,state->body,state->options,state->preserve,state->clean,state->notesLabel,state->notesText,state->deleteHistory,state->primary,state->secondary,state->notesButton,state->progressBar})if(child)SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(child==state->heading?state->headingFont:state->normalFont),TRUE);auto*r=reinterpret_cast<RECT*>(l);SetWindowPos(hwnd,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER|SWP_NOACTIVATE);layoutModal(*state);return 0;}
+    case WM_TIMER:if(w==UPDATE_MODAL_BREAK_TIMER){const bool breaking=state->owner->engine&&state->owner->engine->snapshot().phase==Phase::Break;if(state->kind!=UpdateModalKind::Download&&breaking){state->deferred=true;finishModal(*state,IDCANCEL);return 0;}if(state->kind==UpdateModalKind::Download&&state->download){if(breaking&&!state->breakHidden){state->breakHidden=true;ShowWindow(hwnd,SW_HIDE);}else if(!breaking&&state->breakHidden){state->breakHidden=false;ShowWindow(hwnd,SW_SHOWNORMAL);SetForegroundWindow(hwnd);}updates::DownloadProgress p;bool done=false,ok=false;{std::lock_guard<std::mutex>lock(state->download->mutex);p=state->download->progress;done=state->download->done.load();ok=state->download->result.ok;}if(p.total){SendMessageW(state->progressBar,PBM_SETMARQUEE,FALSE,0);SendMessageW(state->progressBar,PBM_SETPOS,WPARAM(std::min<std::uint64_t>(1000,p.received*1000/p.total)),0);}else if(!done)SendMessageW(state->progressBar,PBM_SETMARQUEE,TRUE,50);else{SendMessageW(state->progressBar,PBM_SETMARQUEE,FALSE,0);SendMessageW(state->progressBar,PBM_SETPOS,0,0);}auto status=progressText(*state->download);SetWindowTextW(state->body,status.c_str());if(done)EnableWindow(state->primary,ok);else if(state->download->cancelled.load())EnableWindow(state->secondary,FALSE);}return 0;}return 0;
+   case WM_NOTIFY:return state->owner->drawButton(reinterpret_cast<NMHDR*>(l));
+   case WM_ERASEBKGND:{RECT r{};GetClientRect(hwnd,&r);FillRect(reinterpret_cast<HDC>(w),&r,state->owner->backgroundBrush);return 1;}
+   case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return state->owner->color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:return state->owner->color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);
+   case WM_COMMAND:{const int id=LOWORD(w);if(id==IDCANCEL){if(state->kind==UpdateModalKind::Download&&state->download&&!state->download->done.load()){state->download->cancelled=true;EnableWindow(state->secondary,FALSE);return 0;}finishModal(*state,IDCANCEL);return 0;}if(state->kind==UpdateModalKind::Choice){if(id==UPDATE_NOTES_BUTTON){if(!state->releaseUrl.empty())ShellExecuteW(hwnd,L"open",state->releaseUrl.c_str(),nullptr,nullptr,SW_SHOWNORMAL);return 0;}if(id==UPDATE_INSTALL_BUTTON){if(state->owner->engine&&state->owner->engine->snapshot().phase==Phase::Break){state->deferred=true;finishModal(*state,IDCANCEL);return 0;}state->install=true;state->cleanInstall=SendMessageW(state->clean,BM_GETCHECK,0,0)==BST_CHECKED;finishModal(*state,UPDATE_INSTALL_BUTTON);return 0;}if(id==UPDATE_LATER_BUTTON)finishModal(*state,UPDATE_LATER_BUTTON);}
+    else if(state->kind==UpdateModalKind::CleanInstall&&id==UPDATE_MODAL_HISTORY){const bool remove=SendMessageW(state->deleteHistory,BM_GETCHECK,0,0)==BST_CHECKED;state->bodyText=remove?L"This will reset your previous Eye Break Reminder settings. Existing history and statistics will also be deleted from this Windows profile. The previous settings remain recoverable until the new version starts successfully.":L"This will reset your previous Eye Break Reminder settings. Your history and statistics will be preserved unless you select their removal. The previous settings remain recoverable until the new version starts successfully.";SetWindowTextW(state->body,state->bodyText.c_str());layoutModal(*state);return 0;}
+    else if(id==UPDATE_CONFIRM_BUTTON){if(state->owner->engine&&state->owner->engine->snapshot().phase==Phase::Break){state->deferred=true;finishModal(*state,IDCANCEL);return 0;}state->removeHistory=SendMessageW(state->deleteHistory,BM_GETCHECK,0,0)==BST_CHECKED;finishModal(*state,UPDATE_CONFIRM_BUTTON);return 0;}
+    else if(id==UPDATE_CONFIRM_CANCEL)finishModal(*state,IDCANCEL);
+    else if(state->kind==UpdateModalKind::Download&&id==DOWNLOAD_CANCEL_BUTTON){if(!state->download->done.load()){state->download->cancelled=true;EnableWindow(state->secondary,FALSE);}else finishModal(*state,IDCANCEL);}
+    else if(state->kind==UpdateModalKind::Download&&id==UPDATE_INSTALL_BUTTON&&state->download->done.load()&&state->download->result.ok){state->install=true;finishModal(*state,UPDATE_INSTALL_BUTTON);}
+    return 0;}
+   case WM_CLOSE:if(state->kind==UpdateModalKind::Download&&state->download&&!state->download->done.load()){state->download->cancelled=true;EnableWindow(state->secondary,FALSE);return 0;}finishModal(*state,IDCANCEL);return 0;
+   case WM_DESTROY:KillTimer(hwnd,UPDATE_MODAL_BREAK_TIMER);return 0;
+   case WM_NCDESTROY:{LRESULT result=DefWindowProcW(hwnd,message,w,l);if(state->normalFont)DeleteObject(state->normalFont);if(state->headingFont)DeleteObject(state->headingFont);state->normalFont=state->headingFont=nullptr;state->window=nullptr;SetWindowLongPtrW(hwnd,GWLP_USERDATA,0);return result;}
+   }
+   return DefWindowProcW(hwnd,message,w,l);
+  }
+  static bool runUpdateModal(UpdateModalState&state){HWND owner=state.owner->main;const bool ownerEnabled=owner&&IsWindowEnabled(owner);if(ownerEnabled)EnableWindow(owner,FALSE);const DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN,exstyle=WS_EX_DLGMODALFRAME|WS_EX_CONTROLPARENT;HWND dialog=CreateWindowExW(exstyle,UPDATE_MODAL_CLASS,L"Eye Break Reminder Update",style,CW_USEDEFAULT,CW_USEDEFAULT,modalDpiPx(state,640),modalDpiPx(state,520),owner,nullptr,state.owner->instance,&state);if(!dialog){if(ownerEnabled)EnableWindow(owner,TRUE);return false;}
+   SendMessageW(dialog,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(state.owner->icon));BOOL dark=state.owner->colors.dark&&!state.owner->colors.systemContrast;DwmSetWindowAttribute(dialog,20,&dark,sizeof(dark));RECT work{};MONITORINFO monitor{};monitor.cbSize=sizeof(monitor);if(GetMonitorInfoW(MonitorFromWindow(owner,MONITOR_DEFAULTTONEAREST),&monitor))work=monitor.rcWork;state.dpi=GetDpiForWindow(dialog);const int desiredWidth=std::min(modalDpiPx(state,int(std::round(620*std::sqrt(state.owner->textScale)))),int(work.right-work.left)-modalDpiPx(state,40));ModalMetrics metrics=modalMetrics(state,desiredWidth,std::max(modalDpiPx(state,180),int(work.bottom-work.top)-modalDpiPx(state,100)));RECT outer{0,0,metrics.width,metrics.height};AdjustWindowRectExForDpi(&outer,DWORD(style),FALSE,DWORD(exstyle),state.dpi);const int outerWidth=outer.right-outer.left,outerHeight=outer.bottom-outer.top;RECT parent{};GetWindowRect(owner,&parent);int x=parent.left+(parent.right-parent.left-outerWidth)/2,y=parent.top+(parent.bottom-parent.top-outerHeight)/2;x=std::clamp(x,int(work.left),int(work.right)-outerWidth);y=std::clamp(y,int(work.top),int(work.bottom)-outerHeight);SetWindowPos(dialog,nullptr,x,y,outerWidth,outerHeight,SWP_NOZORDER|SWP_NOACTIVATE);ShowWindow(dialog,SW_SHOWNORMAL);UpdateWindow(dialog);HWND focus=state.kind==UpdateModalKind::Choice?state.primary:state.secondary;SetFocus(focus);SetForegroundWindow(dialog);
+   MSG message{};while(!state.finished){BOOL received=GetMessageW(&message,nullptr,0,0);if(received<=0){if(received==0)PostQuitMessage(int(message.wParam));finishModal(state,IDCANCEL);break;}if(!IsDialogMessageW(dialog,&message)){TranslateMessage(&message);DispatchMessageW(&message);}if(owner&&!IsWindow(owner)&&!state.finished)finishModal(state,IDCANCEL);}
+   if(state.window)DestroyWindow(state.window);
+   if(ownerEnabled&&owner&&IsWindow(owner))EnableWindow(owner,TRUE);
+   if(owner&&IsWindow(owner))SetForegroundWindow(owner);
+   return state.result!=IDCANCEL;
+  }
+  static bool registerUpdateModal(HINSTANCE instance){WNDCLASSEXW cls{};cls.cbSize=sizeof(cls);cls.hInstance=instance;cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.hIcon=cls.hIconSm=LoadIconW(instance,MAKEINTRESOURCEW(1));cls.lpfnWndProc=updateModalProc;cls.lpszClassName=UPDATE_MODAL_CLASS;return RegisterClassExW(&cls)!=0||GetLastError()==ERROR_CLASS_ALREADY_EXISTS;}
   static std::wstring progressText(const DownloadDialogState&state){
    auto format=[](std::uint64_t bytes){if(bytes<1024*1024)return std::to_wstring((bytes+512)/1024)+L" KB";const std::uint64_t tenths=(bytes*10+512*1024)/(1024*1024);return std::to_wstring(tenths/10)+L"."+std::to_wstring(tenths%10)+L" MB";};
    std::lock_guard<std::mutex>lock(state.mutex);if(state.done.load()){
     if(state.result.ok)return L"Ready to install. The download is complete and its SHA-256 digest matches GitHub.\n\nDownloaded: "+format(state.progress.received)+L" / "+format(state.progress.total)+L" (100%)\n\nSelect Install Update to continue, or Cancel to leave the current version unchanged.";
     return (state.result.cancelled?L"Download cancelled. ":L"Download failed. ")+wide(state.result.error)+L"\n\nThe currently installed application and its settings are unchanged.";
    }
-   const auto p=state.progress;std::wstring text=state.phase+L"…\n\nDownloaded: "+format(p.received)+L" / "+format(p.total);
+    const auto p=state.progress;std::wstring text=state.cancelled.load()?L"Cancelling download…":state.phase+L"…";text+=L"\n\nDownloaded: "+format(p.received)+L" / "+format(p.total);
    if(p.total)text+=L" ("+std::to_wstring(std::min<std::uint64_t>(100,p.received*100/p.total))+L"%)";
    if(p.verifying)text+=L"\n\nChecking the downloaded file against GitHub's SHA-256 digest…";
    return text;
   }
-  static HRESULT CALLBACK downloadDialogCallback(HWND dialog,UINT notification,WPARAM button,LPARAM,LONG_PTR data){
-   auto&state=*reinterpret_cast<DownloadDialogState*>(data);
-   if(notification==TDN_CREATED){taskDialogAppearance(dialog,notification,0,0,(state.dark?1:0)|(state.forcedColors?2:0));SendMessageW(dialog,TDM_SET_PROGRESS_BAR_RANGE,0,MAKELPARAM(0,1000));SendMessageW(dialog,TDM_SET_PROGRESS_BAR_STATE,PBST_NORMAL,0);EnableWindow(GetDlgItem(dialog,DOWNLOAD_INSTALL_BUTTON),FALSE);}
-   else if(notification==TDN_TIMER){updates::DownloadProgress p;bool done=false;{std::lock_guard<std::mutex>lock(state.mutex);p=state.progress;done=state.done.load();}if(p.total)SendMessageW(dialog,TDM_SET_PROGRESS_BAR_POS,WPARAM(std::min<std::uint64_t>(1000,p.received*1000/p.total)),0);if(p.verifying)SendMessageW(dialog,TDM_SET_PROGRESS_BAR_STATE,PBST_PAUSED,0);auto text=progressText(state);SendMessageW(dialog,TDM_SET_ELEMENT_TEXT,TDE_CONTENT,reinterpret_cast<LPARAM>(text.c_str()));if(done){SendMessageW(dialog,TDM_SET_PROGRESS_BAR_MARQUEE,FALSE,0);if(state.result.ok)EnableWindow(GetDlgItem(dialog,DOWNLOAD_INSTALL_BUTTON),TRUE);}}
-   else if(notification==TDN_BUTTON_CLICKED&&button==DOWNLOAD_INSTALL_BUTTON){if(!state.done.load())return S_FALSE;state.install=state.result.ok;return S_OK;}
-   else if(notification==TDN_BUTTON_CLICKED&&button==DOWNLOAD_CANCEL_BUTTON){if(!state.done.load()){state.cancelled=true;return S_FALSE;}return S_OK;}
-   return S_OK;
-  }
-  static HRESULT CALLBACK cleanInstallCallback(HWND dialog,UINT notification,WPARAM checked,LPARAM,LONG_PTR data){
-   auto&state=*reinterpret_cast<UpdateChoiceState*>(data);if(notification==TDN_CREATED)taskDialogAppearance(dialog,notification,0,0,(state.dark?1:0)|(state.forcedColors?2:0));
-   if(notification==TDN_VERIFICATION_CLICKED){const wchar_t*text=checked?L"Your previous settings will be reset. Existing history and statistics will also be deleted from this Windows profile.":L"Your previous settings will be reset. History and statistics will be preserved unless you select their removal.";SendMessageW(dialog,TDM_SET_ELEMENT_TEXT,TDE_CONTENT,reinterpret_cast<LPARAM>(text));}
-   return S_OK;
-  }
   std::wstring releaseNotes(const std::string&notes){std::wstring text=wide(notes);std::wstring safe;safe.reserve(std::min<std::size_t>(text.size(),1800));for(wchar_t c:text){if(c==0)continue;if((c<0x20&&c!=L'\r'&&c!=L'\n'&&c!=L'\t')||c==0x7f)safe.push_back(L' ');else safe.push_back(c);if(safe.size()>=1800){safe+=L"\n…";break;}}return safe;}
-  UpdateChoiceResult showUpdateChoice(const updates::ReleaseDetails&release,const updates::SelectedAsset&asset,bool ready){
-   UpdateChoiceState state{wide(release.releaseUrl),colors.dark,colors.systemContrast};TASKDIALOG_BUTTON buttons[]={{UPDATE_INSTALL_BUTTON,ready?L"Install Update":L"Download && Install"},{UPDATE_LATER_BUTTON,L"Remind Me Later"},{UPDATE_NOTES_BUTTON,L"View Release Notes"}};
-   const TASKDIALOG_BUTTON radios[]={{UPDATE_PRESERVE_RADIO,L"Preserve my settings (Recommended)"},{UPDATE_CLEAN_RADIO,L"Clean install — reset previous settings"}};
-   std::wstring content=L"Current version: "+installedVersion()+L"\nAvailable version: "+wide(release.tag)+L"\nDownload size: "+std::to_wstring((asset.asset.size+512*1024)/(1024*1024))+L" MB\n\nA newer stable version of Eye Break Reminder is available.";
-   if(ready)content+=L"\n\nThe update has already been downloaded and verified.";
-   auto notes=releaseNotes(release.notes);if(!notes.empty())content+=L"\n\nRelease notes\n"+notes;
-   for(;;){int button=0,radio=UPDATE_PRESERVE_RADIO;TASKDIALOGCONFIG cfg{};cfg.cbSize=sizeof(cfg);cfg.dwFlags=TDF_SIZE_TO_CONTENT|TDF_ALLOW_DIALOG_CANCELLATION|TDF_POSITION_RELATIVE_TO_WINDOW;cfg.hwndParent=main;cfg.pszWindowTitle=L"Eye Break Reminder Update";cfg.pszMainInstruction=L"Eye Break Reminder Update Available";cfg.pszContent=content.c_str();cfg.cButtons=3;cfg.pButtons=buttons;cfg.nDefaultButton=UPDATE_INSTALL_BUTTON;cfg.cRadioButtons=2;cfg.pRadioButtons=radios;cfg.nDefaultRadioButton=UPDATE_PRESERVE_RADIO;cfg.pfCallback=updateChoiceCallback;cfg.lpCallbackData=reinterpret_cast<LONG_PTR>(&state);
-    if(FAILED(TaskDialogIndirect(&cfg,&button,&radio,nullptr)))return{};
-    if(button==UPDATE_NOTES_BUTTON)continue;
-    if(button==UPDATE_INSTALL_BUTTON)return{true,radio==UPDATE_CLEAN_RADIO};
-    dismissedUpdateVersion=release.tag;return{};
+   UpdateChoiceResult showUpdateChoice(const updates::ReleaseDetails&release,const updates::SelectedAsset&asset,bool ready){
+    UpdateModalState state;state.owner=this;state.kind=UpdateModalKind::Choice;state.ready=ready;state.headingText=L"Eye Break Reminder Update Available";state.bodyText=L"Current version: "+installedVersion()+L"\nAvailable version: "+wide(release.tag)+L"\nDownload size: "+std::to_wstring((asset.asset.size+512*1024)/(1024*1024))+L" MB\n\nA newer stable version of Eye Break Reminder is available.";
+    if(ready)state.bodyText+=L"\n\nThe update has already been downloaded and verified.";
+    state.releaseNotes=releaseNotes(release.notes);state.releaseUrl=wide(release.releaseUrl);state.primaryText=ready?L"Install Update":L"Download & Install";
+    if(!runUpdateModal(state)){
+     if(state.deferred)return{false,false,true};
+     if(state.result==UPDATE_LATER_BUTTON)dismissedUpdateVersion=release.tag;
+     return{};
+    }
+    return{state.install,state.cleanInstall,false};
    }
-  }
-  bool confirmCleanInstall(bool&deleteHistory){
-   UpdateChoiceState state{{},colors.dark,colors.systemContrast};const TASKDIALOG_BUTTON buttons[]={{IDYES,L"Confirm Clean Install"},{IDCANCEL,L"Cancel"}};
-   TASKDIALOGCONFIG cfg{};cfg.cbSize=sizeof(cfg);cfg.dwFlags=TDF_SIZE_TO_CONTENT|TDF_ALLOW_DIALOG_CANCELLATION;cfg.hwndParent=main;cfg.pszWindowTitle=L"Eye Break Reminder";cfg.pszMainInstruction=L"Clean Installation";cfg.pszContent=L"This will reset your previous Eye Break Reminder settings. Your history and statistics will be preserved unless you select their removal. The previous settings remain recoverable until the new version starts successfully.";cfg.pszVerificationText=L"Also delete existing history and statistics";cfg.cButtons=2;cfg.pButtons=buttons;cfg.nDefaultButton=IDCANCEL;cfg.pfCallback=cleanInstallCallback;cfg.lpCallbackData=reinterpret_cast<LONG_PTR>(&state);int button=0;BOOL checked=FALSE;
-   if(FAILED(TaskDialogIndirect(&cfg,&button,nullptr,&checked))||button!=IDYES)return false;
-   deleteHistory=checked!=FALSE;return true;
-  }
+   bool confirmCleanInstall(bool&deleteHistory,bool&deferred){
+    UpdateModalState state;state.owner=this;state.kind=UpdateModalKind::CleanInstall;state.headingText=L"Clean Installation";state.bodyText=L"This will reset your previous Eye Break Reminder settings. Your history and statistics will be preserved unless you select their removal. The previous settings remain recoverable until the new version starts successfully.";
+    const bool confirmed=runUpdateModal(state)&&state.result==UPDATE_CONFIRM_BUTTON;deleteHistory=confirmed&&state.removeHistory;deferred=state.deferred;return confirmed;
+   }
   void cleanupStage(const std::wstring&stage){
     const wchar_t*files[]={L"EyeBreakReminder-Setup-x64.exe",L"EyeBreakReminder.exe",L"EyeBreakReminder-Setup-x64.exe.part",L"EyeBreakReminder.exe.part",L"transaction.ini",L"transaction-state.ini",L"transaction-state.ini.tmp",L"previous.exe",L"coordinator.exe",L"backup-0.dat",L"backup-1.dat",L"backup-2.dat",L"previous-owned-0.dat",L"previous-owned-1.dat",L"previous-owned-2.dat",L"previous-owned-3.dat"};
    if(!updates::safeStagingDirectory(stage))return;
@@ -466,7 +510,7 @@ public:
    RemoveDirectoryW(stage.c_str());
   }
   bool downloadUpdate(const updates::ReleaseAsset&asset,const std::wstring&stage,std::wstring&path){
-   path=stage+L"\\"+(asset.name=="EyeBreakReminder-Setup-x64.exe"?L"EyeBreakReminder-Setup-x64.exe":L"EyeBreakReminder.exe");DownloadDialogState state;state.dark=colors.dark;state.forcedColors=colors.systemContrast;
+   path=stage+L"\\"+(asset.name=="EyeBreakReminder-Setup-x64.exe"?L"EyeBreakReminder-Setup-x64.exe":L"EyeBreakReminder.exe");DownloadDialogState state;
 #ifdef EYEBREAK_TEST_BUILD
    wchar_t fixtureBuffer[32768]{};DWORD fixtureLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_UPDATE_ASSET_PATH",fixtureBuffer,DWORD(std::size(fixtureBuffer)));const std::wstring fixturePath=fixtureLength&&fixtureLength<std::size(fixtureBuffer)?std::wstring(fixtureBuffer,fixtureLength):std::wstring{};
 #endif
@@ -479,7 +523,7 @@ public:
      if(!fixturePath.empty())result=updates::downloadVerifiedFixture(asset,fixturePath,stage,path.substr(path.find_last_of(L"\\")+1),state.cancelled,[&state](updates::DownloadProgress p){std::lock_guard<std::mutex>lock(state.mutex);state.progress=p;state.phase=p.verifying?L"Verifying":L"Downloading";});else
 #endif
      result=updates::downloadVerified(asset,stage,path.substr(path.find_last_of(L"\\")+1),state.cancelled,[&state](updates::DownloadProgress p){std::lock_guard<std::mutex>lock(state.mutex);state.progress=p;state.phase=p.verifying?L"Verifying":L"Downloading";});}catch(...){result.error="The update download could not be completed.";}{std::lock_guard<std::mutex>lock(state.mutex);state.result=std::move(result);state.phase=state.result.ok?L"Ready to install":state.result.cancelled?L"Cancelled":L"Failed";state.done=true;}});worker=std::move(task);}catch(...){error(L"Windows could not start the update download.");return false;}
-   const TASKDIALOG_BUTTON buttons[]={{DOWNLOAD_INSTALL_BUTTON,L"Install Update"},{DOWNLOAD_CANCEL_BUTTON,L"Cancel"}};TASKDIALOGCONFIG cfg{};cfg.cbSize=sizeof(cfg);cfg.dwFlags=TDF_SIZE_TO_CONTENT|TDF_CALLBACK_TIMER|TDF_SHOW_PROGRESS_BAR;cfg.hwndParent=main;cfg.pszWindowTitle=L"Eye Break Reminder Update";cfg.pszMainInstruction=L"Downloading Eye Break Reminder";cfg.pszContent=L"Downloading…";cfg.cButtons=2;cfg.pButtons=buttons;cfg.nDefaultButton=DOWNLOAD_CANCEL_BUTTON;cfg.pfCallback=downloadDialogCallback;cfg.lpCallbackData=reinterpret_cast<LONG_PTR>(&state);int button=0;HRESULT shown=TaskDialogIndirect(&cfg,&button,nullptr,nullptr);if(FAILED(shown))state.cancelled=true;if(worker.joinable())worker.join();return SUCCEEDED(shown)&&button==DOWNLOAD_INSTALL_BUTTON&&state.result.ok&&state.install;
+    UpdateModalState dialog;dialog.owner=this;dialog.kind=UpdateModalKind::Download;dialog.download=&state;dialog.headingText=L"Downloading Eye Break Reminder";dialog.bodyText=L"Starting secure download…";const bool shown=runUpdateModal(dialog);if(!shown&&!state.done.load())state.cancelled=true;if(worker.joinable())worker.join();return shown&&dialog.result==UPDATE_INSTALL_BUTTON&&state.result.ok&&state.install;
   }
   bool launchUpdateCoordinator(const updates::ReleaseDetails&release,const updates::SelectedAsset&asset,const updates::SelectedAsset&applicationAsset,const std::wstring&stage,const std::wstring&artifact,bool clean,bool deleteHistory){
    if(engine->snapshot().phase==Phase::Break){inform(main,L"Finish your active break first",L"Eye Break Reminder will not close during an active eye break. You can install this verified update after the break.",colors.dark,colors.systemContrast);return false;}
@@ -509,9 +553,10 @@ public:
     if(!updates::createStagingDirectory(directory,stage)){setUpdateLabel(UPDATE_STATUS,L"There is not enough space or permission to prepare the automatic download.");return;}
     setUpdateLabel(UPDATE_STATUS,L"Downloading the stable update…");if(!downloadUpdate(selected.asset,stage,artifact)){cleanupStage(stage);setUpdateLabel(UPDATE_STATUS,L"The update was not downloaded. Your installed application is unchanged.");return;}ready=true;
    }
-   const auto choice=showUpdateChoice(message.release,selected,ready);
-   if(!choice.install){if(ready)cleanupStage(stage);return;}
-   bool deleteHistory=false;if(choice.clean&&!confirmCleanInstall(deleteHistory)){if(ready)cleanupStage(stage);return;}
+    const auto choice=showUpdateChoice(message.release,selected,ready);
+    if(choice.deferred){deferredAutomaticUpdate=message;if(ready)cleanupStage(stage);setUpdateLabel(UPDATE_STATUS,L"An update is available. Installation is waiting until your active break ends.");return;}
+    if(!choice.install){if(ready)cleanupStage(stage);return;}
+    bool deleteHistory=false,confirmationDeferred=false;if(choice.clean&&!confirmCleanInstall(deleteHistory,confirmationDeferred)){if(ready)cleanupStage(stage);if(confirmationDeferred){deferredAutomaticUpdate=message;setUpdateLabel(UPDATE_STATUS,L"An update is available. Installation is waiting until your active break ends.");}return;}
    if(!ready){if(!updates::createStagingDirectory(directory,stage)){setUpdateLabel(UPDATE_STATUS,L"Windows could not prepare a private update download folder.");return;}
     setUpdateLabel(UPDATE_STATUS,L"Downloading the verified update…");if(!downloadUpdate(selected.asset,stage,artifact)){cleanupStage(stage);setUpdateLabel(UPDATE_STATUS,L"The update was not installed. Your current version and data are unchanged.");return;}}
    setUpdateLabel(UPDATE_STATUS,L"Ready to install. The current application will close and restart automatically.");
@@ -1110,7 +1155,7 @@ public:
   }return DefWindowProcW(hwnd,msg,w,l);
  }
  int run(HINSTANCE h,int show){instance=h;app=this;InitializeCriticalSection(&deadlineLock);stopEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);dueEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!stopEvent||!dueEvent)throw std::runtime_error("Timer scheduler unavailable");
-  INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES|ICC_LISTVIEW_CLASSES|ICC_UPDOWN_CLASS|ICC_BAR_CLASSES};InitCommonControlsEx(&common);icon=LoadIconW(instance,MAKEINTRESOURCEW(1));
+   INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES|ICC_LISTVIEW_CLASSES|ICC_UPDOWN_CLASS|ICC_BAR_CLASSES};InitCommonControlsEx(&common);icon=LoadIconW(instance,MAKEINTRESOURCEW(1));if(!registerUpdateModal(instance))throw std::runtime_error("Update dialog unavailable");
   WNDCLASSEXW cls{};cls.cbSize=sizeof(cls);cls.hInstance=instance;cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.hIcon=cls.hIconSm=icon;cls.style=CS_HREDRAW|CS_VREDRAW;cls.lpfnWndProc=mainProc;cls.lpszClassName=CLASS;RegisterClassExW(&cls);cls.style=0;cls.lpfnWndProc=breakProc;cls.lpszClassName=BREAK_CLASS;RegisterClassExW(&cls);cls.style=CS_HREDRAW|CS_VREDRAW;cls.lpfnWndProc=paneProc;cls.lpszClassName=L"EyeBreakReminder.Settings";RegisterClassExW(&cls);cls.style=0;
   cls.lpfnWndProc=DefWindowProcW;cls.lpszClassName=TRAY_MENU_CLASS;RegisterClassExW(&cls);
   trayMenuOwner=CreateWindowExW(WS_EX_TOOLWINDOW,TRAY_MENU_CLASS,L"",WS_POPUP,0,0,0,0,nullptr,nullptr,instance,nullptr);if(!trayMenuOwner)throw std::runtime_error("Tray menu window unavailable");

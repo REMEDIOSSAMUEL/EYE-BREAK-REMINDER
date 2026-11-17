@@ -81,29 +81,10 @@ inline int calendarDay(std::int64_t stamp){std::time_t t=std::time_t(stamp);std:
  int y=tm.tm_year+1900,m=tm.tm_mon+1,d=tm.tm_mday;y-=m<=2;int era=(y>=0?y:y-399)/400;unsigned yo=unsigned(y-era*400),doy=(153*(m+(m>2?-3:9))+2)/5+d-1;return era*146097+int(yo*365+yo/4-yo/100+doy);}
 inline std::wstring formatDate(std::int64_t stamp){std::time_t t=std::time_t(stamp);std::tm tm{};localtime_s(&tm,&t);wchar_t text[100]{};std::wcsftime(text,100,L"%x %H:%M",&tm);return text;}
 inline std::wstring timeText(double remaining){int n=int(std::ceil(remaining));wchar_t text[32]{};swprintf(text,32,L"%02d:%02d",n/60,n%60);return text;}
-inline constexpr GUID TaskDialogControlTypePropertyGuid={0xca774fea,0x28ac,0x4bc2,{0x94,0xca,0xac,0xec,0x6d,0x6c,0x10,0xa3}};
-struct TaskDialogChildAppearance {bool dark=false;IAccPropServices* accessibility=nullptr;};
-inline BOOL CALLBACK taskDialogChildAppearance(HWND child,LPARAM parameter){
- auto&state=*reinterpret_cast<TaskDialogChildAppearance*>(parameter);wchar_t name[128]{};if(!GetClassNameW(child,name,int(std::size(name))))return TRUE;
- LONG role=0,controlType=0;if(_wcsicmp(name,L"CCPushButton")==0||_wcsicmp(name,L"CCCommandLink")==0){role=ROLE_SYSTEM_PUSHBUTTON;controlType=50000;}
- else if(_wcsicmp(name,L"CCRadioButton")==0){role=ROLE_SYSTEM_RADIOBUTTON;controlType=50013;}
- else if(_wcsicmp(name,L"CCCheckBox")==0){role=ROLE_SYSTEM_CHECKBUTTON;controlType=50002;}
- if(state.dark)SetWindowTheme(child,L"DarkMode_Explorer",nullptr);
- if(role&&state.accessibility){VARIANT value{};value.vt=VT_I4;value.lVal=role;state.accessibility->SetHwndProp(child,DWORD(OBJID_CLIENT),DWORD(CHILDID_SELF),PROPID_ACC_ROLE,value);value.lVal=controlType;state.accessibility->SetHwndProp(child,DWORD(OBJID_CLIENT),DWORD(CHILDID_SELF),TaskDialogControlTypePropertyGuid,value);}
- return TRUE;
-}
-struct TaskDialogDarkColors {HBRUSH brush=nullptr;COLORREF background=RGB(35,35,35),text=RGB(245,245,245);};
-inline LRESULT CALLBACK taskDialogDarkColors(HWND dialog,UINT message,WPARAM wParam,LPARAM lParam,UINT_PTR subclass,DWORD_PTR parameter){
- auto*state=reinterpret_cast<TaskDialogDarkColors*>(parameter);
- if(message==WM_CTLCOLORSTATIC||message==WM_CTLCOLORBTN||message==WM_CTLCOLORDLG||message==WM_CTLCOLOREDIT||message==WM_CTLCOLORLISTBOX){HDC dc=reinterpret_cast<HDC>(wParam);SetTextColor(dc,state->text);SetBkColor(dc,state->background);SetBkMode(dc,OPAQUE);return reinterpret_cast<LRESULT>(state->brush);}
- if(message==WM_NCDESTROY){LRESULT result=DefSubclassProc(dialog,message,wParam,lParam);RemoveWindowSubclass(dialog,taskDialogDarkColors,subclass);if(state->brush)DeleteObject(state->brush);delete state;return result;}
- return DefSubclassProc(dialog,message,wParam,lParam);
-}
 inline HRESULT CALLBACK taskDialogAppearance(HWND dialog,UINT notification,WPARAM,LPARAM,LONG_PTR appearance){
- if(notification==TDN_CREATED){const bool forcedColors=(appearance&2)!=0,dark=(appearance&1)!=0&&!forcedColors;if(!forcedColors){BOOL enabled=dark;DwmSetWindowAttribute(dialog,20,&enabled,sizeof(enabled));SetWindowTheme(dialog,dark?L"DarkMode_Explorer":nullptr,nullptr);}
-  if(dark){auto*colors=new(std::nothrow)TaskDialogDarkColors;if(colors){colors->brush=CreateSolidBrush(colors->background);if(!colors->brush||!SetWindowSubclass(dialog,taskDialogDarkColors,0x45425231,reinterpret_cast<DWORD_PTR>(colors))){if(colors->brush)DeleteObject(colors->brush);delete colors;}}}
-  TaskDialogChildAppearance state;state.dark=dark;CoCreateInstance(CLSID_AccPropServices,nullptr,CLSCTX_INPROC_SERVER,IID_IAccPropServices,reinterpret_cast<void**>(&state.accessibility));EnumChildWindows(dialog,taskDialogChildAppearance,reinterpret_cast<LPARAM>(&state));if(state.accessibility)state.accessibility->Release();
- }
+ // Common Controls' TaskDialog ignores child contrast colors and UIA role annotations on supported Windows builds.
+ // Keep simple error/confirmation dialogs in the system's high-contrast or light palette for reliable readability.
+ if(notification==TDN_CREATED&&(appearance&2)==0){BOOL dark=FALSE;DwmSetWindowAttribute(dialog,20,&dark,sizeof(dark));SetWindowTheme(dialog,nullptr,nullptr);}
  return S_OK;
 }
 inline bool confirm(HWND parent,const wchar_t*title,const wchar_t*message,bool dark=false,bool forcedColors=false){TASKDIALOGCONFIG cfg{};cfg.cbSize=sizeof(cfg);cfg.hwndParent=parent;cfg.dwFlags=TDF_ALLOW_DIALOG_CANCELLATION|TDF_SIZE_TO_CONTENT;cfg.pszWindowTitle=L"Eye Break Reminder";cfg.pszMainInstruction=title;cfg.pszContent=message;cfg.dwCommonButtons=TDCBF_YES_BUTTON|TDCBF_CANCEL_BUTTON;cfg.nDefaultButton=IDCANCEL;cfg.pfCallback=taskDialogAppearance;cfg.lpCallbackData=(dark?1:0)|(forcedColors?2:0);int result=0;return SUCCEEDED(TaskDialogIndirect(&cfg,&result,nullptr,nullptr))&&result==IDYES;}
