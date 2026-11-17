@@ -4,7 +4,7 @@
 
 Open Settings → About. **Check for Updates** checks only the official public stable-release API for `REMEDIOSSAMUEL/EYE-BREAK-REMINDER`. It sends no GitHub credentials and no user settings or history. Drafts, prereleases, malformed versions, same/older versions and packages without usable GitHub SHA-256 metadata are not installed.
 
-Automatic checks and automatic background downloads are optional and default off. Automatic checks run at most once per day. Even if automatic download is enabled, setup never begins without the user's confirmation. An update prompt/download waits while a break is active.
+Automatic checks and automatic background downloads are optional and default off. Automatic checks run at most once per day. Even if automatic download is enabled, setup never begins without the user's confirmation. Prompts and automatic downloads wait while a break is active. If a user-approved download is already running when a break starts, it continues in the background and the progress window is hidden until the break ends.
 
 ## Install dialog
 

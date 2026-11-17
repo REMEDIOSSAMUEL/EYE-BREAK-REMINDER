@@ -491,7 +491,7 @@ public:
    UpdateChoiceResult showUpdateChoice(const updates::ReleaseDetails&release,const updates::SelectedAsset&asset,bool ready){
     UpdateModalState state;state.owner=this;state.kind=UpdateModalKind::Choice;state.ready=ready;state.headingText=L"Eye Break Reminder Update Available";state.bodyText=L"Current version: "+installedVersion()+L"\nAvailable version: "+wide(release.tag)+L"\nDownload size: "+std::to_wstring((asset.asset.size+512*1024)/(1024*1024))+L" MB\n\nA newer stable version of Eye Break Reminder is available.";
     if(ready)state.bodyText+=L"\n\nThe update has already been downloaded and verified.";
-    state.releaseNotes=releaseNotes(release.notes);state.releaseUrl=wide(release.releaseUrl);state.primaryText=ready?L"Install Update":L"Download & Install";
+    state.releaseNotes=releaseNotes(release.notes);state.releaseUrl=wide(release.releaseUrl);state.primaryText=ready?L"Install Update":L"Download && Install";
     if(!runUpdateModal(state)){
      if(state.deferred)return{false,false,true};
      return{};

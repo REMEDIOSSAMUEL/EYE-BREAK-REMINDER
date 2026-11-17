@@ -16,7 +16,7 @@ The optional distinct-break-colour setting affects normal themes. High contrast 
 
 ## Update and confirmation dialogs
 
-Update availability, download progress, clean-install confirmation, and update-coordinator status use native Windows Task Dialog controls. Their buttons and radio choices have accessible names, follow keyboard focus order, and expose progress text as well as a bar. Dark/light appearance follows Windows; forced high contrast is left to the system. Progress includes byte counts and a phase label so it is not conveyed by colour alone. Update prompts are deferred until an active break ends.
+Update availability, download progress, clean-install confirmation, and update-coordinator status use standard native Win32 controls. Their buttons and radio choices have accessible names, follow keyboard focus order, and expose progress text as well as a bar. Dark/light appearance follows Windows; forced high contrast is left to the system. Progress includes byte counts and a phase label so it is not conveyed by colour alone. Update prompts are deferred until an active break ends; a user-approved download continues in the background if a break starts, while its progress window is hidden until the break ends.
 
 ## Verification
 
