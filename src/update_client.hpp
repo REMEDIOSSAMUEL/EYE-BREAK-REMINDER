@@ -38,8 +38,14 @@ inline bool allowHost(const std::wstring&host){
 inline bool crackHttps(const std::wstring&text,Url&out){
     if(text.empty()||text.size()>8192)return false;
     URL_COMPONENTSW c{};c.dwStructSize=sizeof(c);c.dwSchemeLength=DWORD(-1);c.dwHostNameLength=DWORD(-1);c.dwUserNameLength=DWORD(-1);c.dwPasswordLength=DWORD(-1);c.dwUrlPathLength=DWORD(-1);c.dwExtraInfoLength=DWORD(-1);
-    if(!WinHttpCrackUrl(text.c_str(),DWORD(text.size()),0,&c)||c.nScheme!=INTERNET_SCHEME_HTTPS||c.nPort!=INTERNET_DEFAULT_HTTPS_PORT||c.dwUserNameLength||c.dwPasswordLength)return false;
-    out.host.assign(c.lpszHostName,c.dwHostNameLength);if(!allowHost(out.host))return false;out.port=c.nPort;
+    if(!WinHttpCrackUrl(text.c_str(),DWORD(text.size()),0,&c)||c.nScheme!=INTERNET_SCHEME_HTTPS||c.dwUserNameLength||c.dwPasswordLength)return false;
+    out.host.assign(c.lpszHostName,c.dwHostNameLength);out.port=c.nPort;
+#ifdef EYEBREAK_TEST_BUILD
+    const bool loopbackTest=_wcsicmp(out.host.c_str(),L"localhost")==0&&out.port>=1024;
+    if(!allowHost(out.host)&&!loopbackTest)return false;
+#else
+    if(out.port!=INTERNET_DEFAULT_HTTPS_PORT||!allowHost(out.host))return false;
+#endif
     out.path.assign(c.lpszUrlPath,c.dwUrlPathLength);if(c.dwExtraInfoLength)out.path.append(c.lpszExtraInfo,c.dwExtraInfoLength);
     if(out.path.empty())out.path=L"/";
     return out.path.front()==L'/';
@@ -116,7 +122,11 @@ inline DownloadResult downloadVerified(const ReleaseAsset&asset,const std::wstri
     auto removePartial=[&]{CloseHandle(output);output=INVALID_HANDLE_VALUE;DeleteFileW(partial.c_str());};
     client_detail::HashProvider hash;if(!hash.open()){removePartial();result.error="Windows could not initialize SHA-256 verification.";return result;}
     std::wstring current;try{current=std::wstring(asset.downloadUrl.begin(),asset.downloadUrl.end());}catch(...){removePartial();result.error="The official download address is invalid.";return result;}
-    client_detail::Internet session{WinHttpOpen(L"Eye Break Reminder updater",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0)};
+    DWORD accessType=WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
+#ifdef EYEBREAK_TEST_BUILD
+    client_detail::Url initialUrl;if(client_detail::crackHttps(current,initialUrl)&&_wcsicmp(initialUrl.host.c_str(),L"localhost")==0)accessType=WINHTTP_ACCESS_TYPE_NO_PROXY;
+#endif
+    client_detail::Internet session{WinHttpOpen(L"Eye Break Reminder updater",accessType,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0)};
     if(!session.value){removePartial();result.error="Windows could not start the secure download service.";return result;}
     WinHttpSetTimeouts(session.value,5000,5000,10000,15000);const ULONGLONG start=GetTickCount64();bool complete=false;
     for(unsigned redirect=0;redirect<=5&&!complete;++redirect){

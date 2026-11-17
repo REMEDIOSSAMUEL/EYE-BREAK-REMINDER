@@ -121,6 +121,17 @@ jobs:
           & .\scripts\prepare-updater-test-fixtures.ps1 -NsisCompiler "$env:NSISDIR\makensis.exe"
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Interrupt a real WinHTTP HTTPS transfer and verify retry
+        id: network-interruption
+        if: ${{ !cancelled() && steps.candidate.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_updater_network_interruption.ps1 `
+            -TestExecutable '.\build\updater-windows-tests.exe' `
+            -EvidencePath '.\build\v1.4.0-updater-evidence\https-interruption.json'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Probe availability of the interactive Windows desktop
         id: desktop
         if: always()
@@ -201,6 +212,7 @@ jobs:
         env:
           CANDIDATE_OUTCOME: ${{ steps.candidate.outcome }}
           FIXTURE_OUTCOME: ${{ steps.fixtures.outcome }}
+          NETWORK_INTERRUPTION_OUTCOME: ${{ steps.network-interruption.outcome }}
           LEGACY_UPGRADE_OUTCOME: ${{ steps.legacy_upgrade.outcome }}
           DESKTOP_OUTCOME: ${{ steps.desktop.outcome }}
           GUI_OUTCOME: ${{ steps.gui.outcome }}
@@ -212,12 +224,12 @@ jobs:
           $probePath = 'build/pre-release-evidence/runner-capabilities.json'
           $desktopAvailable = $false
           if (Test-Path -LiteralPath $probePath) { $desktopAvailable = [bool](Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json).interactiveDesktopAvailable }
-          $status = if ($env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:SOAK_OUTCOME -eq 'success') {'PASS'} else {'NOT READY'}
-          [pscustomobject]@{Status=$status;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;Updater=$env:UPDATER_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
+          $status = if ($env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:SOAK_OUTCOME -eq 'success') {'PASS'} else {'NOT READY'}
+          [pscustomobject]@{Status=$status;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;Updater=$env:UPDATER_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
             ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Encoding UTF8
           if ($status -ne 'PASS') {
             if (-not $desktopAvailable) { throw 'Windows updater release acceptance is NOT TESTED: this runner exposed no interactive Explorer desktop. The exact development candidate is retained as evidence but is not release-ready.' }
-            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; updater=$env:UPDATER_OUTCOME; soak=$env:SOAK_OUTCOME; identity=$env:IDENTITY_OUTCOME."
+            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; network interruption=$env:NETWORK_INTERRUPTION_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; updater=$env:UPDATER_OUTCOME; soak=$env:SOAK_OUTCOME; identity=$env:IDENTITY_OUTCOME."
           }
 
       - name: Upload the exact candidate and all Windows evidence

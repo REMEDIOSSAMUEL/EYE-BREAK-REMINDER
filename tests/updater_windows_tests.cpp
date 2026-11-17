@@ -6,14 +6,43 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <cstdlib>
 
 namespace {
 int assertions=0;
 bool check(bool value,const char*name){++assertions;if(!value)std::cerr<<"FAIL: "<<name<<'\n';return value;}
 bool writeBytes(const std::wstring&path,const std::string&value){HANDLE file=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return false;DWORD wrote=0;const bool ok=WriteFile(file,value.data(),DWORD(value.size()),&wrote,nullptr)&&wrote==value.size();CloseHandle(file);return ok;}
+int runHttpsInterruption(int argc,char**argv){
+    if(argc!=4){std::cerr<<"Usage: updater-windows-tests --https-interruption <port> <staging-directory>\n";return 2;}
+    const unsigned long port=std::strtoul(argv[2],nullptr,10);if(port<1024||port>65535){std::cerr<<"Invalid loopback test port.\n";return 2;}
+    const std::wstring stage=std::filesystem::path(argv[3]).wstring();bool ok=true;
+    std::vector<BYTE> payload(1024*1024);for(std::size_t i=0;i<payload.size();++i)payload[i]=BYTE((i*37u+11u)&0xffu);
+    eye::updates::client_detail::HashProvider hash;BYTE digest[32]{};
+    ok&=check(hash.open()&&BCryptHashData(hash.hash,payload.data(),ULONG(payload.size()),0)>=0&&BCryptFinishHash(hash.hash,digest,sizeof(digest),0)>=0,"create deterministic SHA-256 metadata for loopback HTTPS payload");
+    if(!ok)return 1;
+    const std::string expected=eye::updates::client_detail::hex(digest,sizeof(digest));
+    const std::string url="https://localhost:"+std::to_string(port)+"/asset";
+    eye::updates::ReleaseAsset asset{"EyeBreakReminder.exe",url,"sha256:"+expected,payload.size()};
+    std::atomic_bool cancelled{false};const std::wstring sentinel=stage+L"\\working-app.sentinel";
+    ok&=check(writeBytes(sentinel,"installed-v1.4.0"),"create isolated prior-install sentinel");
+    auto interrupted=eye::updates::downloadVerified(asset,stage,L"EyeBreakReminder.exe",cancelled);
+    std::string oldContents;eye::win::read(sentinel,oldContents,128);
+    ok&=check(!interrupted.ok&&!interrupted.cancelled&&interrupted.received>0&&interrupted.received<asset.size&&
+              GetFileAttributesW((stage+L"\\EyeBreakReminder.exe.part").c_str())==INVALID_FILE_ATTRIBUTES&&
+              GetFileAttributesW((stage+L"\\EyeBreakReminder.exe").c_str())==INVALID_FILE_ATTRIBUTES&&oldContents=="installed-v1.4.0",
+              "unexpected mid-body HTTPS connection loss rejects and removes partial bytes while preserving the prior app sentinel");
+    bool sawVerify=false;std::uint64_t finalProgress=0;
+    auto retried=eye::updates::downloadVerified(asset,stage,L"EyeBreakReminder.exe",cancelled,[&](auto p){finalProgress=p.received;if(p.verifying)sawVerify=true;});
+    ok&=check(retried.ok&&retried.received==asset.size&&retried.sha256==expected&&finalProgress==asset.size&&sawVerify,
+              "a fresh HTTPS retry streams the complete asset, reports progress and verifies SHA-256");
+    ok&=check(oldContents=="installed-v1.4.0"&&DeleteFileW(sentinel.c_str())!=FALSE,"successful retry still leaves the existing application untouched before installer coordination");
+    if(!ok)return 1;
+    std::cout<<"PASS: "<<assertions<<" HTTPS interruption and retry assertions executed.\n";return 0;
+}
 }
 
-int main(){
+int main(int argc,char**argv){
+    if(argc>1&&std::string(argv[1])=="--https-interruption")return runHttpsInterruption(argc,argv);
     const auto folder=std::filesystem::current_path()/"build"/"updater-windows-tests";
     if(!CreateDirectoryW(folder.c_str(),nullptr)){std::cerr<<"FAIL: isolated test folder must be new; refusing to reuse or remove it\n";return 1;}
     const std::wstring stage=folder.wstring();bool ok=true;

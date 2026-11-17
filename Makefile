@@ -30,8 +30,11 @@ github-updater-smoke: build/github-updater-smoke.exe
 	./build/github-updater-smoke.exe $(UPDATER_SMOKE_ARGS)
 build/updater-windows-tests.exe: tests/updater_windows_tests.cpp src/update_checker.hpp src/update_client.hpp src/update_coordinator.hpp src/windows_services.hpp | build
 	$(HOST_CXX) -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE $< -o $@ -lwinhttp -lbcrypt
-updater-windows-test: build/updater-windows-tests.exe
+build/updater-production-policy-test.exe: tests/updater_production_url_policy.cpp src/update_checker.hpp src/update_client.hpp | build
+	$(HOST_CXX) -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE $< -o $@ -lwinhttp -lbcrypt
+updater-windows-test: build/updater-windows-tests.exe build/updater-production-policy-test.exe
 	./build/updater-windows-tests.exe
+	./build/updater-production-policy-test.exe
 build/updater-failing-installer-resources.o: tests/updater_failing_installer.rc | build
 	$(WINDRES) $< -O coff -o $@
 build/updater-failing-installer.exe: tests/updater_failing_installer.cpp build/updater-failing-installer-resources.o | build
