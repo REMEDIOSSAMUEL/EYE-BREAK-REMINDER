@@ -124,6 +124,7 @@ jobs:
       - name: Interrupt a real WinHTTP HTTPS transfer and verify retry
         id: network-interruption
         if: ${{ !cancelled() && steps.candidate.outcome == 'success' }}
+        timeout-minutes: 3
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -181,7 +182,7 @@ jobs:
 
       - name: Run the established 110-cycle native resource soak
         id: soak
-        if: ${{ !cancelled() && steps.updater.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.network-interruption.outcome == 'success' && steps.updater.outcome == 'success' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'

@@ -124,11 +124,18 @@ inline DownloadResult downloadVerified(const ReleaseAsset&asset,const std::wstri
     std::wstring current;try{current=std::wstring(asset.downloadUrl.begin(),asset.downloadUrl.end());}catch(...){removePartial();result.error="The official download address is invalid.";return result;}
     DWORD accessType=WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
 #ifdef EYEBREAK_TEST_BUILD
-    client_detail::Url initialUrl;if(client_detail::crackHttps(current,initialUrl)&&_wcsicmp(initialUrl.host.c_str(),L"localhost")==0)accessType=WINHTTP_ACCESS_TYPE_NO_PROXY;
+    client_detail::Url initialUrl;const bool loopbackTestSession=client_detail::crackHttps(current,initialUrl)&&_wcsicmp(initialUrl.host.c_str(),L"localhost")==0;
+    if(loopbackTestSession)accessType=WINHTTP_ACCESS_TYPE_NO_PROXY;
 #endif
     client_detail::Internet session{WinHttpOpen(L"Eye Break Reminder updater",accessType,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0)};
     if(!session.value){removePartial();result.error="Windows could not start the secure download service.";return result;}
-    WinHttpSetTimeouts(session.value,5000,5000,10000,15000);const ULONGLONG start=GetTickCount64();bool complete=false;
+#ifdef EYEBREAK_TEST_BUILD
+    if(loopbackTestSession)WinHttpSetTimeouts(session.value,1000,1000,1000,3000);
+    else WinHttpSetTimeouts(session.value,5000,5000,10000,15000);
+#else
+    WinHttpSetTimeouts(session.value,5000,5000,10000,15000);
+#endif
+    const ULONGLONG start=GetTickCount64();bool complete=false;
     for(unsigned redirect=0;redirect<=5&&!complete;++redirect){
         if(cancelled.load()){result.cancelled=true;break;}client_detail::Url url;if(!client_detail::crackHttps(current,url)){result.error="The download redirect left the approved HTTPS GitHub asset hosts.";break;}
         client_detail::Internet connection{WinHttpConnect(session.value,url.host.c_str(),url.port,0)};

@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
     throw 'This test temporarily trusts a unique localhost TLS certificate and may run only on an isolated GitHub Actions runner.'
 }
+Write-Host 'Starting isolated WinHTTP HTTPS interruption/retry acceptance.'
 
 $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP)
 $runDirectory = Join-Path $runnerTemp ('ebr-updater-https-' + [guid]::NewGuid().ToString('N'))
@@ -16,6 +17,8 @@ $trustedCertificate = $null
 $rootStore = $null
 $myStore = $null
 $server = $null
+$testProcess = $null
+$stage = $null
 $testPassed = $false
 $testOutput = ''
 $testExitCode = 1
@@ -24,11 +27,12 @@ $testError = $null
 if (-not $runDirectoryFull.StartsWith($runnerTemp.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
     throw 'The unique test directory did not resolve inside RUNNER_TEMP.'
 }
-New-Item -ItemType Directory -Path $runDirectoryFull | Out-Null
-$stage = Join-Path $runDirectoryFull 'stage'
-New-Item -ItemType Directory -Path $stage | Out-Null
 
 try {
+    New-Item -ItemType Directory -Path $runDirectoryFull | Out-Null
+    $stage = Join-Path $runDirectoryFull 'stage'
+    New-Item -ItemType Directory -Path $stage | Out-Null
+    Write-Host 'Creating the short-lived localhost TLS certificate.'
     $certificate = New-SelfSignedCertificate `
         -Subject 'CN=localhost' `
         -DnsName 'localhost' `
@@ -44,6 +48,7 @@ try {
     $rootStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
     $trustedCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certificate.RawData)
     $rootStore.Add($trustedCertificate)
+    Write-Host 'TLS certificate trusted only in the runner CurrentUser Root store.'
 
     Add-Type -TypeDefinition @'
 using System;
@@ -139,12 +144,31 @@ namespace EbrUpdaterNetworkInterruption {
     $bytes = [byte[]]::new(1MB)
     for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [byte](($i * 37 + 11) -band 255) }
     $server = [EbrUpdaterNetworkInterruption.TruncatingHttpsServer]::new($certificate, $bytes)
+    Write-Host "Loopback HTTPS server is listening on localhost:$($server.Port)."
     $exePath = [IO.Path]::GetFullPath($TestExecutable)
     if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { throw "Windows updater test executable is missing: $exePath" }
 
-    $testOutput = (& $exePath '--https-interruption' ([string]$server.Port) $stage 2>&1 | Out-String)
-    $testExitCode = $LASTEXITCODE
-    if (-not $server.Wait(10000)) { throw 'The HTTPS test server did not finish both expected requests.' }
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $exePath
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.ArgumentList.Add('--https-interruption')
+    $startInfo.ArgumentList.Add([string]$server.Port)
+    $startInfo.ArgumentList.Add($stage)
+    Write-Host 'Launching the updater test binary with a 60-second process bound.'
+    $testProcess = [Diagnostics.Process]::Start($startInfo)
+    if (-not $testProcess.WaitForExit(60000)) {
+        try { $testProcess.Kill() } catch { }
+        $testExitCode = 124
+        $testOutput = 'The WinHTTP updater test process exceeded its 60-second bound.'
+        throw $testOutput
+    }
+    $testProcess.WaitForExit()
+    $testExitCode = $testProcess.ExitCode
+    $testOutput = $testProcess.StandardOutput.ReadToEnd() + [Environment]::NewLine + $testProcess.StandardError.ReadToEnd()
+    Write-Host "Updater test process exited with code $testExitCode."
+    if (-not $server.Wait(3000)) { throw 'The HTTPS test server did not finish both expected requests within three seconds.' }
     if ($server.Error) { throw "The isolated HTTPS server failed: $($server.Error)" }
     if ($testExitCode -ne 0) { throw "The updater network interruption test exited $testExitCode. $testOutput" }
     if ($server.Requests -ne 2 -or $server.FirstResponseBytes -le 0 -or $server.SecondResponseBytes -ne $bytes.Length) {
@@ -154,13 +178,18 @@ namespace EbrUpdaterNetworkInterruption {
 }
 catch {
     $testError = $_.Exception.Message
+    Write-Host "HTTPS interruption test stopped: $testError"
     throw
 }
 finally {
+    if ($testProcess) {
+        try { if (-not $testProcess.HasExited) { $testProcess.Kill() } } catch { }
+        $testProcess.Dispose()
+    }
     if ($server) { $server.Dispose() }
-    if ($rootStore -and $trustedCertificate) {
-        try { $rootStore.Remove($trustedCertificate) } catch { }
-        $rootStore.Close()
+    if ($rootStore) {
+        if ($trustedCertificate) { try { $rootStore.Remove($trustedCertificate) } catch { } }
+        try { $rootStore.Close() } catch { }
     }
     if ($trustedCertificate) { $trustedCertificate.Dispose() }
     if ($certificate) {
