@@ -20,6 +20,7 @@ if((Test-Path -LiteralPath $scriptRoot) -or (Test-Path -LiteralPath $dataDir)){t
 [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
 [void][IO.Directory]::CreateDirectory($scriptRoot)
 $script:events=[Collections.Generic.List[object]]::new();$script:assertions=0
+$script:fixtureIdentities=@(foreach($entry in @(@{Role='installed baseline NSIS setup';Path=$BaselineInstaller},@{Role='installed baseline app';Path=$BaselineExecutable},@{Role='controlled update NSIS setup';Path=$UpdateInstaller},@{Role='controlled update app';Path=$UpdateExecutable},@{Role='controlled failing NSIS setup';Path=$FailingInstaller})){$item=Get-Item -LiteralPath $entry.Path;[pscustomobject]@{Role=$entry.Role;Name=$item.Name;ProductVersion=$item.VersionInfo.ProductVersion;Bytes=$item.Length;SHA256=(Get-FileHash -LiteralPath $entry.Path -Algorithm SHA256).Hash.ToLowerInvariant()}})
 $script:logPath=Join-Path $EvidenceDirectory 'updater-acceptance.log'
 Start-Transcript -LiteralPath $script:logPath -Force | Out-Null
 $native=@'
@@ -319,6 +320,7 @@ function Run-InteractiveUninstall([bool]$RemoveData){
 
 try{
   Assert (-not(Test-Path -LiteralPath $dataDir)) 'disposable runner starts without Eye Break Reminder profile data' $dataDir
+  Record 'Updater test fixture identities' 'INFO' $script:fixtureIdentities
   Assert ((Get-Item -LiteralPath $BaselineInstaller).VersionInfo.ProductVersion-eq'1.4.0') 'baseline installer file version';Assert ((Get-Item -LiteralPath $UpdateInstaller).VersionInfo.ProductVersion-eq'1.4.1') 'test update installer file version';Assert ((Get-Item -LiteralPath $UpdateExecutable).VersionInfo.ProductVersion-eq'1.4.1') 'test update standalone file version';Assert ((Get-Item -LiteralPath $FailingInstaller).VersionInfo.ProductVersion-eq'1.4.1') 'controlled failing installer has the expected version resource'
   Run-NormalUpdate
   Run-DialogThemes
@@ -351,6 +353,6 @@ finally{
   }
   Remove-Item Env:EBR_GUI_TEST_DATA_DIRECTORY,Env:EBR_GUI_TEST_UPDATE_ASSET_PATH,Env:EBR_GUI_TEST_UPDATE_DELAY_MS,Env:EBR_GUI_TEST_CONFIRM_TIMEOUT_MS,Env:EBR_GUI_TEST_SKIP_UPDATE_CONFIRM_VERSION,Env:EBR_GUI_TEST_HOLD_AFTER_CLEAN_MS -ErrorAction SilentlyContinue
   $resultStatus=if($hasFailures){'FAIL'}elseif($completedSuccessfully){'PASS'}else{'INCOMPLETE'}
-  $result=[pscustomobject]@{Status=$resultStatus;Assertions=$script:assertions;Events=@($script:events);RunId=$env:GITHUB_RUN_ID;Utc=[DateTime]::UtcNow.ToString('o')};$result|ConvertTo-Json -Depth 9|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'updater-acceptance-results.json') -Encoding UTF8
+  $result=[pscustomobject]@{Status=$resultStatus;Assertions=$script:assertions;FixtureIdentities=$script:fixtureIdentities;Events=@($script:events);RunId=$env:GITHUB_RUN_ID;Utc=[DateTime]::UtcNow.ToString('o')};$result|ConvertTo-Json -Depth 9|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'updater-acceptance-results.json') -Encoding UTF8
   try{Stop-Transcript|Out-Null}catch{}
 }

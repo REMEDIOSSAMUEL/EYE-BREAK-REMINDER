@@ -16,6 +16,7 @@ nodes = [
 namespace = {"Path": Path}
 exec(compile(ast.Module(body=nodes, type_ignores=[]), "scripts/package.py", "exec"), namespace)
 included = namespace["in_source"]
+verify_source = (root / "scripts" / "verify.py").read_text(encoding="utf-8")
 
 checks = {
     "exclude linked-worktree Git pointer": not included(Path(".git")),
@@ -38,6 +39,13 @@ checks = {
             "release/EyeBreakReminder.exe",
             "build/updater-metadata-tests.exe",
             "tests/core-tests.exe",
+        )
+    ),
+    "verifier excludes live v1.4.0 evidence from source completeness": all(
+        f"Path('{path}')" in verify_source for path in (
+            "docs/V1.4.0_AUTONOMOUS_COMPLETION_PROGRESS.md",
+            "docs/V1.4.0_ACCEPTANCE_MATRIX.json",
+            "docs/V1.4.0_FINAL_COMPLETION_AUDIT.md",
         )
     ),
 }

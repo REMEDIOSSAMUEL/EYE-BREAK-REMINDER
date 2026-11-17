@@ -3,41 +3,41 @@
   "generated_on": "2026-11-17",
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
-  "branch_head": "6646127ad9619c4bb306a85d01131a1bdc8bdeed",
+  "branch_head": "5d4beed2bc91667e0d792545ae0a3cc4c5ec42e8",
   "current_release_candidate": {
-    "status": "FAILED ACCEPTANCE — NOT AUTHORITATIVE",
-    "run_id": 44179592402,
-    "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44179592402",
-    "candidate_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
-    "pull_request_source_head": "6646127ad9619c4bb306a85d01131a1bdc8bdeed",
+    "status": "FAILED PACKAGE VERIFICATION — NOT AUTHORITATIVE",
+    "run_id": 44187600669,
+    "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44187600669",
+    "candidate_source_commit": "d62b6f36b24e15b510e0fbe4147c26518babd18e",
+    "pull_request_source_head": "5d4beed2bc91667e0d792545ae0a3cc4c5ec42e8",
     "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; PR merge ref 7/merge",
-    "failure": "Interactive NSIS uninstaller harness expected UI Automation Button/InvokePattern. The runner exposed the enabled native NSIS button as a Pane; no click was sent. Harness is corrected in uncommitted changes; rerun required.",
-    "resource_soak": "SKIPPED because updater acceptance failed",
+    "failure": "make package generated the source archive but scripts/verify.py still required three live evidence documents that scripts/package.py intentionally excluded. Corrected in uncommitted worktree and passed direct local package+verification; hosted rerun pending.",
+    "windows_acceptance": "Terminated before fixture preparation, GUI, updater/uninstaller transactions or resource soak; dependent ARM64 job skipped.",
     "files": [
       {
         "name": "EyeBreakReminder.exe",
         "bytes": 2823168,
-        "sha256": "b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e"
+        "sha256": "4004d3c2f373bd71ab6bc9c74f887359db4c425661e151c53cdb70c1a3290924"
       },
       {
         "name": "EyeBreakReminder-Setup-x64.exe",
-        "bytes": 1374458,
-        "sha256": "563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b"
+        "bytes": 1375278,
+        "sha256": "853b23bb3083867df5382bb6ae25c9025f76dd56bf3032b8b7a5634e5c408cb1"
       },
       {
         "name": "EyeBreakReminder-Portable-x64.zip",
         "bytes": 1545395,
-        "sha256": "517be7f3766adcd8ae18c4568c6544abaf3663ad034fedc7348891328462ccac"
+        "sha256": "1ff0139091cb7aee9fbcea65d96400e1e5e42cf40da260a7da241e5af713ad4e"
       },
       {
         "name": "EyeBreakReminder-Source.zip",
-        "bytes": 2436938,
-        "sha256": "efd1d10c0d51ccbc17344e64e17c8f97506ac6491fdda9252650aae80df3ab99"
+        "bytes": 2442984,
+        "sha256": "5f2a17e02bea6c8883a824d712e405bae868bc9f07bf54bd77f13fec2e5c8026"
       },
       {
         "name": "EyeBreakReminder-SHA256.txt",
         "bytes": 382,
-        "sha256": "cd93e27ba0f32848e2b08c3bc2f66313203e3ab4ca9526efdc841f9063ef9562"
+        "sha256": "6ea8c31d2820a4aa80bdc90a55aa672381f460e5a11ea0c9815f4c2576d332ef"
       }
     ]
   },
@@ -48,7 +48,7 @@
     "BLOCKED",
     "NOT APPLICABLE"
   ],
-  "warning": "The listed candidate is from an acceptance-failed run and must not be published or treated as authoritative. Requirement-level PASS means that a specific assertion passed before the overall workflow failed; suite PASS is not inferred.",
+  "warning": "The listed files were retained by a run that failed package verification. They are diagnostic outputs only, not an accepted candidate. Do not publish or treat them as authoritative.",
   "requirements": [
     {
       "requirement_id": "UPD-001",
@@ -1265,22 +1265,24 @@
       "description": "Upgrade published v1.3.0 to v1.4.0",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Actual legacy installer transition and profile file comparisons",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
-      "status": "PASS"
+      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative. Exact v1.4.0 candidate executable SHA-256: b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e; candidate installer SHA-256: 563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b. The overall acceptance workflow later failed in a separate uninstaller harness, so this is item-level evidence only.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; v1.3.0 to v1.4.0 candidate transition run 44179592402",
+      "tested_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
+      "tested_binary_sha256": "b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e",
+      "status": "PASS",
+      "tested_installer_sha256": "563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b"
     },
     {
       "requirement_id": "INST-003",
       "description": "Preserve existing settings and history on upgrade",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Legacy populated profile exact comparison",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
-      "status": "PASS"
+      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative. Exact v1.4.0 candidate executable SHA-256: b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e; candidate installer SHA-256: 563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b. The overall acceptance workflow later failed in a separate uninstaller harness, so this is item-level evidence only.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; v1.3.0 to v1.4.0 candidate transition run 44179592402",
+      "tested_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
+      "tested_binary_sha256": "b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e",
+      "status": "PASS",
+      "tested_installer_sha256": "563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b"
     },
     {
       "requirement_id": "INST-004",
@@ -1320,21 +1322,21 @@
       "description": "Interactive installer",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Wizard flow, install path, files and registration",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
+      "actual_verification_evidence": "The hosted v1.3.0 to v1.4.0 installer transition invokes both installers silently with /S. No interactive installation wizard was exercised; the interactive test currently covers uninstall only and did not progress past its first page.",
+      "environment": "Not exercised in the available interactive installer workflow",
+      "tested_source_commit": null,
       "tested_binary_sha256": null,
-      "status": "PASS"
+      "status": "NOT TESTED"
     },
     {
       "requirement_id": "INST-008",
       "description": "Supported silent installer",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Silent invocation, exit status and installed files",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44179592402 executed the v1.4.0 candidate NSIS installer with /S to upgrade a disposable installed v1.3.0 profile and verified exit status, files, version, registration, relaunch and data. The overall workflow failed later in a separate uninstaller test. Candidate installer SHA-256: 563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b",
+      "environment": "GitHub-hosted Windows Server 2025 x64; silent v1.3.0 to v1.4.0 upgrade run 44179592402",
+      "tested_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
+      "tested_binary_sha256": "563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b",
       "status": "PASS"
     },
     {
@@ -1386,33 +1388,35 @@
       "description": "Verify installed version and registry registration",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "File version, uninstall registration and install location",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
-      "status": "PASS"
+      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative. Exact v1.4.0 candidate executable SHA-256: b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e; candidate installer SHA-256: 563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b. The overall acceptance workflow later failed in a separate uninstaller harness, so this is item-level evidence only.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; v1.3.0 to v1.4.0 candidate transition run 44179592402",
+      "tested_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
+      "tested_binary_sha256": "b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e",
+      "status": "PASS",
+      "tested_installer_sha256": "563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b"
     },
     {
       "requirement_id": "INST-014",
       "description": "Verify Start Menu shortcut and startup registration",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Exact target/path/arguments and startup state",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
+      "actual_verification_evidence": "The Start Menu shortcut was verified after the v1.3.0 to v1.4.0 upgrade, and the prior startup Run entry was verified during interrupted-update recovery. The startup preference/registration was not directly verified after normal installer upgrade, so this combined requirement remains incomplete.",
+      "environment": "Partial evidence: Windows Server 2025 x64 runs 44179592402 and 44187600669",
+      "tested_source_commit": null,
       "tested_binary_sha256": null,
-      "status": "PASS"
+      "status": "NOT TESTED"
     },
     {
       "requirement_id": "INST-015",
       "description": "Verify updated app relaunch",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Process path/hash/version after install",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
-      "status": "PASS"
+      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative. Exact v1.4.0 candidate executable SHA-256: b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e; candidate installer SHA-256: 563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b. The overall acceptance workflow later failed in a separate uninstaller harness, so this is item-level evidence only.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; v1.3.0 to v1.4.0 candidate transition run 44179592402",
+      "tested_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
+      "tested_binary_sha256": "b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e",
+      "status": "PASS",
+      "tested_installer_sha256": "563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b"
     },
     {
       "requirement_id": "UN-001",
@@ -2244,11 +2248,11 @@
       "description": "make package",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Pinned NSIS production packaging and saved log",
-      "actual_verification_evidence": "Run 44179592402 hosted `make package` completed with pinned NSIS 3.11; candidate identity/manifest checks passed. The later UI harness failure does not invalidate package-target completion.",
-      "environment": "GitHub-hosted Windows Server 2025 x64; PR acceptance run 44179592402",
-      "tested_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
+      "actual_verification_evidence": "Run 44187600778 terminally failed in scripts/verify.py because its expected source-file set did not yet exclude the three live v1.4.0 evidence documents excluded by scripts/package.py. This mismatch was corrected in the worktree; direct local scripts/package.py + scripts/verify.py now passes 240 assertions. Hosted retry required.",
+      "environment": "GitHub-hosted Ubuntu; PR validation run 44187600778",
+      "tested_source_commit": "d62b6f36b24e15b510e0fbe4147c26518babd18e",
       "tested_binary_sha256": null,
-      "status": "PASS"
+      "status": "FAIL"
     },
     {
       "requirement_id": "SUITE-004",
@@ -2277,9 +2281,9 @@
       "description": "Hosted Windows acceptance",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Complete real installer/update/recovery workflow",
-      "actual_verification_evidence": "Run 44179592402 terminal workflow result was failure: interactive NSIS uninstall harness stopped at the confirmation Next button; Windows resource soak was skipped. Do not report hosted Windows acceptance as passing.",
-      "environment": "GitHub-hosted Windows Server 2025 x64; PR acceptance run 44179592402",
-      "tested_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
+      "actual_verification_evidence": "Windows acceptance run 44187600669 failed in candidate package verification before fixtures, GUI, updater/uninstaller transactions or resource soak. The dependent ARM64 job was skipped. See run 44187600669 and its retained evidence.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; PR acceptance run 44187600669",
+      "tested_source_commit": "d62b6f36b24e15b510e0fbe4147c26518babd18e",
       "tested_binary_sha256": null,
       "status": "FAIL"
     },
@@ -2288,7 +2292,7 @@
       "description": "Installer and uninstaller suites",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Actual install/upgrade/uninstall scenarios",
-      "actual_verification_evidence": "Run 44179592402 interactive installer/uninstaller acceptance did not complete; NSIS UI automation could not activate its native Next button. Silent uninstall and reinstallation subtests before that point passed.",
+      "actual_verification_evidence": "The latest full transaction attempt 44179592402 stopped at the interactive NSIS uninstaller UI harness before the actual uninstall. A later run 44187600669 stopped earlier in package verification. The native-button click fallback has not yet run hosted.",
       "environment": "GitHub-hosted Windows Server 2025 x64; PR acceptance run 44179592402",
       "tested_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
       "tested_binary_sha256": null,
@@ -2398,7 +2402,7 @@
       "description": "All applicable hosted Windows workflows reach terminal state",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Run statuses, job results and artifact evidence",
-      "actual_verification_evidence": "The Windows acceptance run reached terminal failure. Its dependent ARM64 job was skipped; a successful full set of hosted Windows acceptance jobs has not yet run.",
+      "actual_verification_evidence": "Runs 44187600669 and 44187600778 reached terminal failure. The dependent ARM64 job was skipped and has not been executed; successful completion of all applicable Windows checks is not established.",
       "environment": "Not verified; environment described in required test",
       "tested_source_commit": null,
       "tested_binary_sha256": null,
@@ -2486,7 +2490,7 @@
       "description": "Final candidate exact identity and hashes",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Clean downloaded artifacts, full manifest, version and source snapshot",
-      "actual_verification_evidence": "Run 44179592402 retained candidate hashes but failed acceptance; no authoritative final candidate or independent clean-directory verification exists.",
+      "actual_verification_evidence": "Run 44187600669 retained diagnostic candidate hashes, but package verification failed before runtime acceptance and the ARM job was skipped. No authoritative candidate was independently downloaded/verified.",
       "environment": "Not verified; environment described in required test",
       "tested_source_commit": null,
       "tested_binary_sha256": null,
@@ -2557,14 +2561,26 @@
       "tested_source_commit": null,
       "tested_binary_sha256": null,
       "status": "NOT TESTED"
+    },
+    {
+      "requirement_id": "INST-016",
+      "description": "Verify Start Menu shortcut after in-place v1.3.0 upgrade",
+      "implementation_status": "Installer preserves the app-owned Start Menu shortcut during in-place update.",
+      "required_tests": "Install v1.3.0, upgrade with the v1.4.0 candidate, verify shortcut path and target.",
+      "actual_verification_evidence": "The 19-assertion v1.3.0 to v1.4.0 transition in run 44179592402 verified the Start Menu shortcut remained registered after in-place upgrade. Candidate app SHA-256: b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e; candidate setup SHA-256: 563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; PR merge source a36a29143fd45076b741b9e85d2dc67b6d524916",
+      "tested_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
+      "tested_binary_sha256": "b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e",
+      "tested_installer_sha256": "563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b",
+      "status": "PASS"
     }
   ],
   "status_counts": {
-    "PASS": 139,
-    "FAIL": 2,
-    "NOT TESTED": 85,
+    "BLOCKED": 1,
     "NOT APPLICABLE": 1,
-    "BLOCKED": 1
+    "PASS": 137,
+    "FAIL": 3,
+    "NOT TESTED": 87
   },
-  "generated_at_utc": "2026-11-17T22:02:00Z"
+  "generated_at_utc": "2026-11-17T22:17:00Z"
 }
