@@ -1067,7 +1067,7 @@ try {
   Run-UpdateFixture 'same-version' 200 $stable 'none' 'up to date' 3000
   Switch-Settings 5
   Assert-That (([EBR_GUI_NATIVE]::Text($script:updateLatestHandle)) -eq "Latest stable version: $expectedVersion") 'Same-version latest label'
-  Run-UpdateFixture 'newer-version' 200 $newer 'none' 'update is available'
+  Run-UpdateFixture 'newer-version' 200 $newer 'none' 'newer stable version is available'
   Assert-That ((Get-Control $script:mainWindow 161 'Open official release').Enabled) 'Official release button enables for a newer version'
   Run-UpdateFixture 'older-version' 200 $older 'none' 'newer than the latest'
   Assert-That (-not (Get-Control $script:mainWindow 161 'Open official release').Enabled) 'Release link stays disabled when installed version is newer'
