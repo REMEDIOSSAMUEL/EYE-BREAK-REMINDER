@@ -133,6 +133,46 @@ jobs:
             -EvidencePath '.\build\v1.4.0-updater-evidence\https-interruption.json'
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Remove temporary localhost HTTPS trust after success or timeout
+        id: https-trust-cleanup
+        if: always()
+        timeout-minutes: 1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $thumbprintPath = Join-Path $env:RUNNER_TEMP 'ebr-updater-https-root-thumbprint.txt'
+          if (Test-Path -LiteralPath $thumbprintPath -PathType Leaf) {
+            $thumbprint = (Get-Content -LiteralPath $thumbprintPath -Raw).Trim()
+            if ($thumbprint -notmatch '^[A-Fa-f0-9]{40}$') { throw 'Refusing to remove a malformed HTTPS test certificate identity.' }
+            $certutil = Join-Path $env:WINDIR 'System32\certutil.exe'
+            if (-not (Test-Path -LiteralPath $certutil -PathType Leaf)) { throw 'Cannot safely clean the temporary HTTPS test root: certutil.exe is unavailable.' }
+            $startInfo = [Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $certutil
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            foreach ($argument in @('-user', '-delstore', 'Root', $thumbprint)) { $startInfo.ArgumentList.Add($argument) }
+            $process = [Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            try {
+              if (-not $process.Start()) { throw 'Could not start certutil.exe to remove the temporary HTTPS test root.' }
+              if (-not $process.WaitForExit(15000)) { try { $process.Kill($true) } catch { }; [void]$process.WaitForExit(5000); throw 'certutil.exe exceeded its 15-second HTTPS trust cleanup bound.' }
+              $deleteExitCode = $process.ExitCode
+            }
+            finally { $process.Dispose() }
+            $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+              [System.Security.Cryptography.X509Certificates.StoreName]::Root,
+              [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+            $storeOpened = $false
+            try {
+              $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+              $storeOpened = $true
+              $certificateMatches = @($store.Certificates | Where-Object { $_.Thumbprint -eq $thumbprint })
+              foreach ($certificate in $certificateMatches) { $certificate.Dispose() }
+              if ($certificateMatches.Count) { throw "The temporary HTTPS test root certificate remains installed (certutil exit $deleteExitCode)." }
+            }
+            finally { if ($storeOpened) { $store.Close() }; $store.Dispose(); Remove-Item -LiteralPath $thumbprintPath -Force -ErrorAction SilentlyContinue }
+          }
+
       - name: Probe availability of the interactive Windows desktop
         id: desktop
         if: always()
@@ -214,6 +254,7 @@ jobs:
           CANDIDATE_OUTCOME: ${{ steps.candidate.outcome }}
           FIXTURE_OUTCOME: ${{ steps.fixtures.outcome }}
           NETWORK_INTERRUPTION_OUTCOME: ${{ steps.network-interruption.outcome }}
+          HTTPS_TRUST_CLEANUP_OUTCOME: ${{ steps.https-trust-cleanup.outcome }}
           LEGACY_UPGRADE_OUTCOME: ${{ steps.legacy_upgrade.outcome }}
           DESKTOP_OUTCOME: ${{ steps.desktop.outcome }}
           GUI_OUTCOME: ${{ steps.gui.outcome }}
@@ -225,12 +266,12 @@ jobs:
           $probePath = 'build/pre-release-evidence/runner-capabilities.json'
           $desktopAvailable = $false
           if (Test-Path -LiteralPath $probePath) { $desktopAvailable = [bool](Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json).interactiveDesktopAvailable }
-          $status = if ($env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:SOAK_OUTCOME -eq 'success') {'PASS'} else {'NOT READY'}
-          [pscustomobject]@{Status=$status;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;Updater=$env:UPDATER_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
+          $status = if ($env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:HTTPS_TRUST_CLEANUP_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:SOAK_OUTCOME -eq 'success') {'PASS'} else {'NOT READY'}
+          [pscustomobject]@{Status=$status;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;HttpsTrustCleanup=$env:HTTPS_TRUST_CLEANUP_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;Updater=$env:UPDATER_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
             ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Encoding UTF8
           if ($status -ne 'PASS') {
             if (-not $desktopAvailable) { throw 'Windows updater release acceptance is NOT TESTED: this runner exposed no interactive Explorer desktop. The exact development candidate is retained as evidence but is not release-ready.' }
-            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; network interruption=$env:NETWORK_INTERRUPTION_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; updater=$env:UPDATER_OUTCOME; soak=$env:SOAK_OUTCOME; identity=$env:IDENTITY_OUTCOME."
+            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; network interruption=$env:NETWORK_INTERRUPTION_OUTCOME; HTTPS trust cleanup=$env:HTTPS_TRUST_CLEANUP_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; updater=$env:UPDATER_OUTCOME; soak=$env:SOAK_OUTCOME; identity=$env:IDENTITY_OUTCOME."
           }
 
       - name: Upload the exact candidate and all Windows evidence

@@ -155,7 +155,7 @@ function Run-InterruptedCleanRecovery(){
 function Run-CancelAndHashFailure([bool]$Mismatch){
   Install-Baseline;Seed-Profile;New-ReleaseFixture $UpdateInstaller $UpdateExecutable
   if($Mismatch){$assetPath=Join-Path $scriptRoot 'corrupt-setup.exe';Copy-Item -LiteralPath $UpdateInstaller -Destination $assetPath;$bytes=[IO.File]::ReadAllBytes($assetPath);$bytes[$bytes.Length-1]=$bytes[$bytes.Length-1]-bxor 0x01;[IO.File]::WriteAllBytes($assetPath,$bytes);$delay=0}
-  else{$assetPath=Join-Path $scriptRoot 'slow-fixture.bin';$bytes=[byte[]]::new(2*1024*1024);[Security.Cryptography.RandomNumberGenerator]::Fill($bytes);[IO.File]::WriteAllBytes($assetPath,$bytes);$delay=250;$fixturePath=Join-Path $installDir 'test-update-response.txt';$body=Get-Content -LiteralPath $fixturePath -Raw|ConvertFrom-Json;$body.assets[0].size=$bytes.Length;$body.assets[0].digest='sha256:'+((Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant());[IO.File]::WriteAllText($fixturePath,("status=200`r`nfailure=none`r`n`r`n"+($body|ConvertTo-Json -Compress -Depth 6)),[Text.UTF8Encoding]::new($false))}
+  else{$assetPath=Join-Path $scriptRoot 'slow-fixture.bin';$bytes=[byte[]]::new(2*1024*1024);[Security.Cryptography.RandomNumberGenerator]::Fill($bytes);[IO.File]::WriteAllBytes($assetPath,$bytes);$delay=250;$fixturePath=Join-Path $installDir 'test-update-response.txt';$fixture=Get-Content -LiteralPath $fixturePath -Raw;$separator=$fixture.IndexOf("`r`n`r`n");if($separator-lt0){throw 'The updater fixture response has no HTTP header/body separator.'};$headers=$fixture.Substring(0,$separator);$body=$fixture.Substring($separator+4)|ConvertFrom-Json;$body.assets[0].size=$bytes.Length;$body.assets[0].digest='sha256:'+((Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant());[IO.File]::WriteAllText($fixturePath,($headers+"`r`n`r`n"+($body|ConvertTo-Json -Compress -Depth 6)),[Text.UTF8Encoding]::new($false))}
   $before=(Get-FileHash -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe') -Algorithm SHA256).Hash;$appProcessId=Start-TestApp $assetPath $delay;$download=Begin-Download $appProcessId
   if($Mismatch){$failed=Find-Dialog 'failed GitHub' @($appProcessId) 60;Screenshot $failed 'hash-mismatch-rejected.png'}
   else{
@@ -244,8 +244,16 @@ try{
 }catch{Record 'Overall updater Windows integration' 'FAIL' $_.Exception.ToString();throw}
 finally{
   try{Stop-Application}catch{Record 'Safe process cleanup' 'FAIL' $_.Exception.Message}
-  if(-not@($script:events|Where-Object Status-eq'FAIL').Count-and(Test-Path -LiteralPath $scriptRoot)){$resolved=[IO.Path]::GetFullPath($scriptRoot);$prefix=$runnerTemp.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar;if(-not$resolved.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Refusing to clean the updater test folder outside RUNNER_TEMP.'};$attributes=[IO.File]::GetAttributes($resolved);if($attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Refusing to clean a reparse-point updater test folder.'};Remove-Item -LiteralPath $resolved -Recurse -Force}
+  $hasFailures=@($script:events|Where-Object{$_.Status -eq 'FAIL'}).Count -gt 0
+  if(-not$hasFailures-and(Test-Path -LiteralPath $scriptRoot)){
+    $resolved=[IO.Path]::GetFullPath($scriptRoot)
+    $prefix=$runnerTemp.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+    if(-not$resolved.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Refusing to clean the updater test folder outside RUNNER_TEMP.'}
+    $attributes=[IO.File]::GetAttributes($resolved)
+    if($attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Refusing to clean a reparse-point updater test folder.'}
+    Remove-Item -LiteralPath $resolved -Recurse -Force
+  }
   Remove-Item Env:EBR_GUI_TEST_DATA_DIRECTORY,Env:EBR_GUI_TEST_UPDATE_ASSET_PATH,Env:EBR_GUI_TEST_UPDATE_DELAY_MS,Env:EBR_GUI_TEST_CONFIRM_TIMEOUT_MS,Env:EBR_GUI_TEST_SKIP_UPDATE_CONFIRM_VERSION,Env:EBR_GUI_TEST_HOLD_AFTER_CLEAN_MS -ErrorAction SilentlyContinue
-  $result=[pscustomobject]@{Status=if(@($script:events|Where-Object Status-eq'FAIL').Count){'FAIL'}else{'PASS'};Assertions=$script:assertions;Events=@($script:events);RunId=$env:GITHUB_RUN_ID;Utc=[DateTime]::UtcNow.ToString('o')};$result|ConvertTo-Json -Depth 9|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'updater-acceptance-results.json') -Encoding UTF8
+  $result=[pscustomobject]@{Status=if($hasFailures){'FAIL'}else{'PASS'};Assertions=$script:assertions;Events=@($script:events);RunId=$env:GITHUB_RUN_ID;Utc=[DateTime]::UtcNow.ToString('o')};$result|ConvertTo-Json -Depth 9|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'updater-acceptance-results.json') -Encoding UTF8
   try{Stop-Transcript|Out-Null}catch{}
 }

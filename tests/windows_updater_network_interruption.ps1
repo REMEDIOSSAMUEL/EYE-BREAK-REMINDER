@@ -12,10 +12,10 @@ Write-Host 'Starting isolated WinHTTP HTTPS interruption/retry acceptance.'
 $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP)
 $runDirectory = Join-Path $runnerTemp ('ebr-updater-https-' + [guid]::NewGuid().ToString('N'))
 $runDirectoryFull = [IO.Path]::GetFullPath($runDirectory)
+$thumbprintPath = Join-Path $runnerTemp 'ebr-updater-https-root-thumbprint.txt'
+$certificatePath = Join-Path $runDirectoryFull 'localhost-test-root.cer'
 $certificate = $null
 $privateKey = $null
-$trustedCertificate = $null
-$rootStore = $null
 $server = $null
 $testProcess = $null
 $stage = $null
@@ -26,6 +26,28 @@ $testError = $null
 
 if (-not $runDirectoryFull.StartsWith($runnerTemp.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
     throw 'The unique test directory did not resolve inside RUNNER_TEMP.'
+}
+
+function Invoke-CertutilBounded([string[]]$Arguments, [int]$TimeoutSeconds) {
+    $certutilPath = Join-Path $env:WINDIR 'System32\certutil.exe'
+    if (-not (Test-Path -LiteralPath $certutilPath -PathType Leaf)) { throw 'Windows certutil.exe is unavailable for isolated temporary test trust.' }
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $certutilPath
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    foreach ($argument in $Arguments) { $startInfo.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) { throw 'Could not start certutil.exe for temporary HTTPS test trust.' }
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $process.Kill($true) } catch { }
+            [void]$process.WaitForExit(5000)
+            throw "certutil.exe exceeded its $TimeoutSeconds-second bound."
+        }
+        return $process.ExitCode
+    }
+    finally { $process.Dispose() }
 }
 
 try {
@@ -50,16 +72,22 @@ try {
     [void]$enhancedKeyUsages.Add([System.Security.Cryptography.Oid]::new('1.3.6.1.5.5.7.3.1'))
     $request.CertificateExtensions.Add([System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]::new($enhancedKeyUsages, $true))
     $certificate = $request.CreateSelfSigned((Get-Date).AddMinutes(-5), (Get-Date).AddHours(4))
-    Write-Host 'The TLS certificate was generated in memory; opening only the runner CurrentUser Root store.'
-
-    $rootStore = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+    [IO.File]::WriteAllText($thumbprintPath, $certificate.Thumbprint, [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllBytes($certificatePath, $certificate.RawData)
+    Write-Host 'The TLS certificate was generated in memory and exported without its private key.'
+    Write-Host 'Adding the unique localhost TLS certificate to only the runner CurrentUser Root store.'
+    $addExitCode = Invoke-CertutilBounded @('-user', '-addstore', '-f', 'Root', $certificatePath) 30
+    if ($addExitCode -ne 0) { throw "certutil could not add the temporary HTTPS test root (exit $addExitCode)." }
+    $verifyStore = [System.Security.Cryptography.X509Certificates.X509Store]::new(
         [System.Security.Cryptography.X509Certificates.StoreName]::Root,
         [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-    Write-Host 'Opening the runner CurrentUser Root certificate store.'
-    $rootStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-    Write-Host 'Adding the unique localhost TLS certificate to the runner CurrentUser Root store.'
-    $trustedCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certificate.RawData)
-    $rootStore.Add($trustedCertificate)
+    try {
+        $verifyStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+        $trustedEntries = @($verifyStore.Certificates | Where-Object { $_.Thumbprint -eq $certificate.Thumbprint })
+        foreach ($entry in $trustedEntries) { $entry.Dispose() }
+        if ($trustedEntries.Count -ne 1) { throw 'The unique localhost TLS certificate was not present in the runner CurrentUser Root store.' }
+    }
+    finally { $verifyStore.Close(); $verifyStore.Dispose() }
     Write-Host 'TLS certificate trusted only in the runner CurrentUser Root store.'
 
     Add-Type -TypeDefinition @'
@@ -199,13 +227,39 @@ finally {
         $testProcess.Dispose()
     }
     if ($server) { $server.Dispose() }
-    if ($rootStore) {
-        if ($trustedCertificate) { try { $rootStore.Remove($trustedCertificate) } catch { } }
-        try { $rootStore.Close() } catch { }
+    if (Test-Path -LiteralPath $thumbprintPath -PathType Leaf) {
+        $cleanupThumbprint = (Get-Content -LiteralPath $thumbprintPath -Raw).Trim()
+        if ($cleanupThumbprint -match '^[A-Fa-f0-9]{40}$') {
+            try {
+                $deleteExitCode = Invoke-CertutilBounded @('-user', '-delstore', 'Root', $cleanupThumbprint) 15
+                $checkStore = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+                    [System.Security.Cryptography.X509Certificates.StoreName]::Root,
+                    [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+                $checkOpened = $false
+                try {
+                    $checkStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+                    $checkOpened = $true
+                    $remaining = @($checkStore.Certificates | Where-Object { $_.Thumbprint -eq $cleanupThumbprint })
+                    foreach ($entry in $remaining) { $entry.Dispose() }
+                    if ($remaining.Count) {
+                        $testPassed = $false
+                        $testError = "Temporary HTTPS root cleanup failed (certutil exit $deleteExitCode); matching certificate remains in CurrentUser Root."
+                    }
+                }
+                finally { if ($checkOpened) { $checkStore.Close() }; $checkStore.Dispose() }
+            }
+            catch {
+                $testPassed = $false
+                $testError = "Could not verify temporary HTTPS root cleanup: $($_.Exception.Message)"
+            }
+        } else {
+            $testPassed = $false
+            $testError = 'The temporary HTTPS root thumbprint was malformed; cleanup was refused.'
+        }
     }
-    if ($trustedCertificate) { $trustedCertificate.Dispose() }
     if ($certificate) { $certificate.Dispose() }
     if ($privateKey) { $privateKey.Dispose() }
+    Remove-Item -LiteralPath $thumbprintPath -Force -ErrorAction SilentlyContinue
     $evidence = [pscustomobject]@{
         Status = if ($testPassed) { 'PASS' } else { 'FAIL' }
         Test = 'Actual WinHTTP HTTPS body interruption followed by a new verified retry'
