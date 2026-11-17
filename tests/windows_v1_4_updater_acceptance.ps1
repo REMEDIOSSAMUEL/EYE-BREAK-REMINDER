@@ -140,7 +140,14 @@ function Run-InterruptedCleanRecovery(){
   Assert ((Test-Path -LiteralPath (Join-Path $stage 'previous.exe'))-and((Get-FileHash -LiteralPath (Join-Path $stage 'previous.exe') -Algorithm SHA256).Hash.ToLowerInvariant()-eq$beforeExe)) 'durable recovery keeps the exact previous executable while settings are reset'
   Assert (-not(Test-Path -LiteralPath $settingsPath)-and-not(Test-Path -LiteralPath (Join-Path $dataDir 'timer.dat'))) 'interruption fixture reaches the destructive settings boundary before recovery'
   Remove-Item Env:EBR_GUI_TEST_UPDATE_ASSET_PATH,Env:EBR_GUI_TEST_HOLD_AFTER_CLEAN_MS -ErrorAction SilentlyContinue
-  $recovery=Start-Process -FilePath $coordinatorPath -ArgumentList ('--update-recover "'+$transactionPath+'"') -PassThru -Wait
+  $recovery=Start-Process -FilePath $coordinatorPath -ArgumentList ('--update-recover "'+$transactionPath+'"') -PassThru
+  if(-not$recovery.WaitForExit(60000)){
+    $dialogs=[Collections.Generic.List[string]]::new();foreach($hwnd in [EBR_UPD_NATIVE]::Windows($recovery.Id)){ $root=Get-Root $hwnd;if($root){$dialogs.Add((Get-Names $root)-join ' | ')} }
+    $diagnostics=$dialogs -join ' || '
+    Stop-Process -Id $recovery.Id -Force -ErrorAction SilentlyContinue
+    throw "Interrupted-update recovery coordinator did not exit within 60 seconds. Visible recovery UI: $diagnostics"
+  }
+  $recovery.Refresh()
   Assert ($recovery.ExitCode-eq0) 'registered recovery command completes after an interrupted clean update' $recovery.ExitCode
   Assert ((Wait-InstalledVersion '1.4.0')-eq'1.4.0') 'interrupted clean update restores the previous application version'
   Assert ((Get-FileHash -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe') -Algorithm SHA256).Hash.ToLowerInvariant()-eq$beforeExe) 'recovery restores the byte-identical previous executable'
