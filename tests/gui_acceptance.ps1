@@ -1070,7 +1070,9 @@ try {
   Run-UpdateFixture 'newer-version' 200 $newer 'none' 'newer stable version is available'
   Assert-That ((Get-Control $script:mainWindow 161 'Open official release').Enabled) 'Official release button enables for a newer version'
   Run-UpdateFixture 'older-version' 200 $older 'none' 'newer than the latest'
-  Assert-That (-not (Get-Control $script:mainWindow 161 'Open official release').Enabled) 'Release link stays disabled when installed version is newer'
+  Assert-That ((Get-Control $script:mainWindow 161 'Open official release').Enabled) 'Release notes remain available without offering a downgrade when installed version is newer'
+  $olderUpdateDialogs=@([EBR_GUI_NATIVE]::TopWindowsForProcess($script:testPid)|Where-Object{[EBR_GUI_NATIVE]::IsWindowVisible($_)-and[EBR_GUI_NATIVE]::Text($_)-eq'Eye Break Reminder Update'})
+  Assert-That ($olderUpdateDialogs.Count-eq0) 'Installed version newer than latest stable does not offer an update dialog' $olderUpdateDialogs.Count
   Run-UpdateFixture 'prerelease' 200 $prerelease 'none' 'stable release'
   Run-UpdateFixture 'private-or-not-found' 404 '' 'none' 'Private repositories'
   Run-UpdateFixture 'rate-limit' 429 '' 'none' 'rate limit'
