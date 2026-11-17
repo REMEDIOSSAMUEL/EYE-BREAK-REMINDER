@@ -441,7 +441,7 @@ public:
   }
   std::wstring releaseNotes(const std::string&notes){std::wstring text=wide(notes);std::wstring safe;safe.reserve(std::min<std::size_t>(text.size(),1800));for(wchar_t c:text){if(c==0)continue;if((c<0x20&&c!=L'\r'&&c!=L'\n'&&c!=L'\t')||c==0x7f)safe.push_back(L' ');else safe.push_back(c);if(safe.size()>=1800){safe+=L"\n…";break;}}return safe;}
   UpdateChoiceResult showUpdateChoice(const updates::ReleaseDetails&release,const updates::SelectedAsset&asset,bool ready){
-   UpdateChoiceState state{wide(release.releaseUrl),colors.dark,colors.systemContrast};TASKDIALOG_BUTTON buttons[]={{UPDATE_INSTALL_BUTTON,ready?L"Install Update":L"Download & Install"},{UPDATE_LATER_BUTTON,L"Remind Me Later"},{UPDATE_NOTES_BUTTON,L"View Release Notes"}};
+   UpdateChoiceState state{wide(release.releaseUrl),colors.dark,colors.systemContrast};TASKDIALOG_BUTTON buttons[]={{UPDATE_INSTALL_BUTTON,ready?L"Install Update":L"Download && Install"},{UPDATE_LATER_BUTTON,L"Remind Me Later"},{UPDATE_NOTES_BUTTON,L"View Release Notes"}};
    const TASKDIALOG_BUTTON radios[]={{UPDATE_PRESERVE_RADIO,L"Preserve my settings (Recommended)"},{UPDATE_CLEAN_RADIO,L"Clean install — reset previous settings"}};
    std::wstring content=L"Current version: "+installedVersion()+L"\nAvailable version: "+wide(release.tag)+L"\nDownload size: "+std::to_wstring((asset.asset.size+512*1024)/(1024*1024))+L" MB\n\nA newer stable version of Eye Break Reminder is available.";
    if(ready)content+=L"\n\nThe update has already been downloaded and verified.";

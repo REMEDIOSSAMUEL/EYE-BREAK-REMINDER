@@ -454,8 +454,7 @@ function Get-UiaElementDiagnostics($Root,[string]$Name) {
   $patterns=@(
     [pscustomobject]@{Name='Invoke';Pattern=[System.Windows.Automation.InvokePattern]::Pattern},
     [pscustomobject]@{Name='SelectionItem';Pattern=[System.Windows.Automation.SelectionItemPattern]::Pattern},
-    [pscustomobject]@{Name='Toggle';Pattern=[System.Windows.Automation.TogglePattern]::Pattern},
-    [pscustomobject]@{Name='LegacyIAccessible';Pattern=[System.Windows.Automation.LegacyIAccessiblePattern]::Pattern}
+    [pscustomobject]@{Name='Toggle';Pattern=[System.Windows.Automation.TogglePattern]::Pattern}
   )
   foreach($element in $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)){
     try{
@@ -473,7 +472,7 @@ function Find-UiaDialog([string]$Marker,[int]$TimeoutSeconds=15) {
   while($watch.Elapsed.TotalSeconds-lt$TimeoutSeconds){
     foreach($window in [EBR_GUI_NATIVE]::TopWindowsForProcess($script:testPid)){
       if(-not[EBR_GUI_NATIVE]::IsWindowVisible($window)){continue}
-      try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($window);$rootName=$root.Current.Name;$names=@($rootName)+@(Get-UiaNames $window);if(($names -join "`n").Contains($Marker)){return [pscustomobject]@{Handle=$window;Root=$root;Names=$names}}}catch{}
+      try{$windowTitle=[EBR_GUI_NATIVE]::Text($window);if($Marker-eq'Eye Break Reminder Update Available'-and$windowTitle-cne'Eye Break Reminder Update'){continue};$root=[System.Windows.Automation.AutomationElement]::FromHandle($window);$rootName=$root.Current.Name;$names=@($rootName)+@(Get-UiaNames $window);if(($names -join "`n").Contains($Marker)){return [pscustomobject]@{Handle=$window;Root=$root;Names=$names;WindowTitle=$windowTitle}}}catch{}
     }
     Start-Sleep -Milliseconds 100
   }
@@ -622,12 +621,14 @@ function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Fai
   }
   if($Name-eq'newer-version'){
     $dialog=Find-UiaDialog 'Eye Break Reminder Update Available'
+    Assert-That ($dialog.WindowTitle-eq'Eye Break Reminder Update') 'UI Automation targets the actual update Task Dialog window' $dialog.WindowTitle
     $names=@($dialog.Names);$summary=$names -join ' | '
     $hasCurrent=@($names|Where-Object{$_.Contains("Current version: $expectedVersion")}).Count-gt0
     $hasAvailableLabel=@($names|Where-Object{$_.Contains('Available version:')}).Count-gt0
     $hasAvailableVersion=@($names|Where-Object{$_.Contains("v$newerVersion")}).Count-gt0
     $hasReleaseNotes=@($names|Where-Object{$_.Contains('Release notes')}).Count-gt0
-    Assert-That ($hasCurrent-and$hasAvailableLabel-and$hasAvailableVersion-and$hasReleaseNotes) 'Update dialog exposes current/available versions and release notes' $summary
+    $hasDownloadInstallLabel=@($names|Where-Object{$_.Contains('Download & Install')}).Count-gt0
+    Assert-That ($hasCurrent-and$hasAvailableLabel-and$hasAvailableVersion-and$hasReleaseNotes-and$hasDownloadInstallLabel) 'Update dialog exposes current/available versions, install action and release notes' $summary
     Save-Screenshot $dialog.Handle 'update-dialog-newer-release.png'
     Invoke-UiaButton $dialog 'Remind Me Later'
   }
