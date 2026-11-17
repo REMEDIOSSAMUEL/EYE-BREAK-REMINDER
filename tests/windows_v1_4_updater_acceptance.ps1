@@ -113,7 +113,24 @@ function Run-CancelAndHashFailure([bool]$Mismatch){
   else{$assetPath=Join-Path $scriptRoot 'slow-fixture.bin';$bytes=[byte[]]::new(2*1024*1024);[Security.Cryptography.RandomNumberGenerator]::Fill($bytes);[IO.File]::WriteAllBytes($assetPath,$bytes);$delay=250;$fixturePath=Join-Path $installDir 'test-update-response.txt';$body=Get-Content -LiteralPath $fixturePath -Raw|ConvertFrom-Json;$body.assets[0].size=$bytes.Length;$body.assets[0].digest='sha256:'+((Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant());[IO.File]::WriteAllText($fixturePath,("status=200`r`nfailure=none`r`n`r`n"+($body|ConvertTo-Json -Compress -Depth 6)),[Text.UTF8Encoding]::new($false))}
   $before=(Get-FileHash -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe') -Algorithm SHA256).Hash;$appProcessId=Start-TestApp $assetPath $delay;$download=Begin-Download $appProcessId
   if($Mismatch){$failed=Find-Dialog 'failed GitHub' @($appProcessId) 60;Screenshot $failed 'hash-mismatch-rejected.png'}
-  else{Screenshot $download 'download-cancel-progress.png';$watch=[Diagnostics.Stopwatch]::StartNew();$observed=$false;while($watch.Elapsed.TotalSeconds-lt10){$download.Names=Get-Names $download.Root;if(($download.Names -join ' ')-match'Downloaded:\s*[1-9]'){$observed=$true;break};Start-Sleep -Milliseconds 100};Assert $observed 'cancel test observed nonzero byte progress';Start-Sleep -Seconds 3;$download.Names=Get-Names $download.Root;Assert (($download.Names -join ' ')-match'Downloaded:\s*[1-9]') 'slow download continues reporting progress before cancellation';Invoke-Element $download 'Cancel';$failed=Find-Dialog 'Download cancelled' @($appProcessId) 30}
+  else{
+    Screenshot $download 'download-cancel-progress.png'
+    $watch=[Diagnostics.Stopwatch]::StartNew();$observed=$false
+    while($watch.Elapsed.TotalSeconds-lt10){$download.Names=Get-Names $download.Root;if(($download.Names -join ' ')-match'Downloaded:\s*[1-9]'){$observed=$true;break};Start-Sleep -Milliseconds 100}
+    Assert $observed 'cancel test observed nonzero byte progress'
+    $progressBars=@($download.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)|Where-Object{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::ProgressBar})
+    Assert ($progressBars.Count-eq1) 'in-progress dialog exposes one accessible progress bar'
+    $range=$null
+    if(-not$progressBars[0].TryGetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern,[ref]$range)){throw 'Progress bar lacks the accessible RangeValue pattern.'}
+    $initialValue=$range.Current.Value
+    Assert ($initialValue-gt0) 'accessible progress range reports nonzero download progress' $initialValue
+    Start-Sleep -Seconds 3
+    $nextValue=$range.Current.Value
+    Assert ($nextValue-gt$initialValue) 'accessible progress range advances during the download' ([pscustomobject]@{Before=$initialValue;After=$nextValue})
+    $download.Names=Get-Names $download.Root
+    Assert (($download.Names -join ' ')-match'Downloaded:\s*[1-9]') 'slow download continues reporting byte progress before cancellation'
+    Invoke-Element $download 'Cancel';$failed=Find-Dialog 'Download cancelled' @($appProcessId) 30
+  }
   $text=$failed.Names -join ' | ';Assert ($text.Contains('currently installed application and its settings are unchanged')) $(if($Mismatch){'hash mismatch reports rejection without execution'}else{'cancel reports that current application remains unchanged'}) $text;Invoke-Element $failed 'Cancel';Start-Sleep -Milliseconds 500
   Assert ((Get-FileHash -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe') -Algorithm SHA256).Hash-eq$before) $(if($Mismatch){'invalid digest never executes installer'}else{'cancelling download leaves baseline executable unchanged'});Assert (-not(Get-Process -Name coordinator -ErrorAction SilentlyContinue)) 'verification failure/cancellation does not start an installer coordinator';Assert ((Get-Content -LiteralPath (Join-Path $dataDir 'history.dat') -Raw)-eq$script:historyText) 'failed/cancelled download preserves existing history';Stop-Application
   if(-not$Mismatch){$timerFields=(Get-Content -LiteralPath (Join-Path $dataDir 'timer.dat') -Raw).Trim() -split '\s+';$remaining=[double]::Parse($timerFields[2],[Globalization.CultureInfo]::InvariantCulture);Assert ($remaining-lt1197) 'the timer countdown advances while the slow update download runs' $remaining}
