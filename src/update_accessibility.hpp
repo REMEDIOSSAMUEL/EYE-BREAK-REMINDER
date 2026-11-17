@@ -8,12 +8,34 @@
 #include <oleauto.h>
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <new>
 #include <string>
 
 namespace eye::update_accessibility {
 
 enum class Kind { Button, Radio, CheckBox, Text, Progress };
+
+inline HMODULE automationCoreModule() {
+    static HMODULE module = LoadLibraryExW(L"uiautomationcore.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    return module;
+}
+
+template <typename Function>
+inline Function resolveAutomationCoreFunction(const char* name) {
+    const FARPROC address = GetProcAddress(automationCoreModule(), name);
+    Function function{};
+    static_assert(sizeof(function) == sizeof(address));
+    std::memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+inline decltype(&UiaReturnRawElementProvider) returnRawElementProvider() {
+    return resolveAutomationCoreFunction<decltype(&UiaReturnRawElementProvider)>("UiaReturnRawElementProvider");
+}
+inline decltype(&UiaHostProviderFromHwnd) hostProviderFromHwnd() {
+    return resolveAutomationCoreFunction<decltype(&UiaHostProviderFromHwnd)>("UiaHostProviderFromHwnd");
+}
 
 class Provider final : public IRawElementProviderSimple,
                        public IInvokeProvider,
@@ -136,7 +158,8 @@ public:
         if (!result) return E_POINTER;
         *result = nullptr;
         if (!IsWindow(window_)) return UIA_E_ELEMENTNOTAVAILABLE;
-        return UiaHostProviderFromHwnd(window_, result);
+        const auto hostProvider = hostProviderFromHwnd();
+        return hostProvider ? hostProvider(window_, result) : UIA_E_NOTSUPPORTED;
     }
 
     HRESULT STDMETHODCALLTYPE Invoke() override { return click(); }
@@ -158,7 +181,8 @@ public:
         if (!result) return E_POINTER;
         *result = nullptr;
         if (!IsWindow(window_)) return UIA_E_ELEMENTNOTAVAILABLE;
-        return UiaHostProviderFromHwnd(GetParent(window_), result);
+        const auto hostProvider = hostProviderFromHwnd();
+        return hostProvider ? hostProvider(GetParent(window_), result) : UIA_E_NOTSUPPORTED;
     }
 
     HRESULT STDMETHODCALLTYPE Toggle() override { return click(); }
@@ -238,7 +262,8 @@ inline LRESULT CALLBACK controlProc(HWND window, UINT message, WPARAM wParam, LP
                                     UINT_PTR subclassId, DWORD_PTR reference) {
     auto* provider = reinterpret_cast<Provider*>(reference);
     if (message == WM_GETOBJECT && static_cast<LONG>(lParam) == UiaRootObjectId && provider) {
-        return UiaReturnRawElementProvider(window, wParam, lParam, provider);
+        const auto returnProvider = returnRawElementProvider();
+        if (returnProvider) return returnProvider(window, wParam, lParam, provider);
     }
     if (message == WM_NCDESTROY) {
         RemoveWindowSubclass(window, controlProc, subclassId);
