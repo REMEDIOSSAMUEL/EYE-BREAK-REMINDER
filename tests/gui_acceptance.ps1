@@ -462,7 +462,8 @@ function Get-UiaElementDiagnostics($Root,[string]$Name) {
       if($current.Name-cne$Name){continue}
       $available=[Collections.Generic.List[string]]::new()
       foreach($check in $patterns){$value=$null;try{if($element.TryGetCurrentPattern($check.Pattern,[ref]$value)){$available.Add($check.Name)}}catch{}}
-      $rows.Add([pscustomobject]@{Name=$current.Name;ControlType=$current.ControlType.ProgrammaticName;ClassName=$current.ClassName;AutomationId=$current.AutomationId;ProcessId=$current.ProcessId;NativeWindowHandle=$current.NativeWindowHandle;Enabled=$current.IsEnabled;KeyboardFocusable=$current.IsKeyboardFocusable;HasKeyboardFocus=$current.HasKeyboardFocus;Patterns=@($available)})
+      $supported=@();try{$supported=@($element.GetSupportedPatterns()|ForEach-Object{$_.ProgrammaticName})}catch{}
+      $rows.Add([pscustomobject]@{Name=$current.Name;ControlType=$current.ControlType.ProgrammaticName;ClassName=$current.ClassName;AutomationId=$current.AutomationId;ProcessId=$current.ProcessId;NativeWindowHandle=$current.NativeWindowHandle;Enabled=$current.IsEnabled;KeyboardFocusable=$current.IsKeyboardFocusable;HasKeyboardFocus=$current.HasKeyboardFocus;Patterns=@($available);SupportedPatterns=$supported})
     }catch{}
   }
   return ,@($rows)
