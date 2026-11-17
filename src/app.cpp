@@ -321,11 +321,11 @@ public:
   return DefSubclassProc(h,msg,w,l);
  }
  // ---- settings content ----------------------------------------------------------------------------------------------
- HWND control(const wchar_t*cls,const wchar_t*text,DWORD style,int id,int onPage,Kind kind=Kind::Plain,HWND parent=nullptr){
+ HWND control(const wchar_t*cls,const wchar_t*text,DWORD style,int id,int onPage,Kind kind=Kind::Plain,HWND parent=nullptr,const wchar_t*accessibleLabel=nullptr){
   // The settings pane controls inherit page visibility from their parent.
   HWND h=CreateWindowExW(0,cls,text,WS_CHILD|WS_VISIBLE|(wcscmp(cls,L"STATIC")==0?0:WS_TABSTOP)|style,0,0,1,1,parent?parent:main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);
   if(!h)throw std::runtime_error("Could not create native control");
-  if(wcscmp(cls,L"EDIT")==0)SetWindowSubclass(h,editProc,1,0);
+  if(wcscmp(cls,L"EDIT")==0)SetWindowSubclass(h,editProc,1,0);else if(wcscmp(cls,L"BUTTON")==0)update_accessibility::attachButton(h,accessibleLabel);
   SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(normalFont),TRUE);Control c;c.handle=h;c.id=id;c.page=onPage;c.kind=kind;c.section=buildSection;controls.push_back(c);themeControl(h);return h;
  }
  HWND label(const wchar_t*text,Kind kind=Kind::Plain,bool indent=false){
@@ -352,11 +352,11 @@ public:
   HWND h=control(L"EDIT",wide(formatClock(minutes)).c_str(),ES_CENTER|ES_AUTOHSCROLL,id,2,Kind::Inline,settingsPane);auto&c=controls.back();c.sameRow=true;c.group=day;
   SendMessageW(h,EM_SETLIMITTEXT,5,0);SendMessageW(h,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELPARAM(px(6),px(6)));accessibleName(h,name+L", 24-hour");
  }
- void rowButton(const wchar_t*text,int id,int day,const std::wstring&name){HWND h=control(L"BUTTON",text,BS_PUSHBUTTON,id,2,Kind::Inline,settingsPane);auto&c=controls.back();c.sameRow=true;c.group=day;accessibleName(h,name);}
+ void rowButton(const wchar_t*text,int id,int day,const std::wstring&name){HWND h=control(L"BUTTON",text,BS_PUSHBUTTON,id,2,Kind::Inline,settingsPane,name.c_str());auto&c=controls.back();c.sameRow=true;c.group=day;accessibleName(h,name);}
  void accentRow(const wchar_t*caption,int swatchId,int buttonId,const wchar_t*accessible){
   label(caption,Kind::Inline);controls.back().keep=true;
   control(L"STATIC",L"#000000",SS_OWNERDRAW|SS_NOPREFIX|SS_CENTERIMAGE,swatchId,2,Kind::Inline,settingsPane);controls.back().sameRow=true;
-  HWND choose=control(L"BUTTON",L"Choose Colour...",BS_PUSHBUTTON,buttonId,2,Kind::Inline,settingsPane);controls.back().sameRow=true;accessibleName(choose,accessible);
+  HWND choose=control(L"BUTTON",L"Choose Colour...",BS_PUSHBUTTON,buttonId,2,Kind::Inline,settingsPane,accessible);controls.back().sameRow=true;accessibleName(choose,accessible);
  }
  // One day of the weekly hours: its check box, then one row per period ("From [start] to [end] [Remove]") with Add on the last row.
  void scheduleDay(int d){
@@ -667,14 +667,14 @@ public:
 #pragma GCC diagnostic pop
  void createControls(){
   dpi=GetDpiForWindow(main);createFonts();
-  for(int i=0;i<3;++i){nav[i]=CreateWindowExW(0,L"BUTTON",i==0?L"&Timer":i==1?L"&History":L"&Settings",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(NAV_TIMER+i)),instance,nullptr);SendMessageW(nav[i],WM_SETFONT,reinterpret_cast<WPARAM>(tabFont),TRUE);}
+  for(int i=0;i<3;++i){nav[i]=CreateWindowExW(0,L"BUTTON",i==0?L"&Timer":i==1?L"&History":L"&Settings",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(NAV_TIMER+i)),instance,nullptr);update_accessibility::attachButton(nav[i]);SendMessageW(nav[i],WM_SETFONT,reinterpret_cast<WPARAM>(tabFont),TRUE);}
   control(L"STATIC",L"Running",SS_CENTER|SS_CENTERIMAGE|SS_ENDELLIPSIS,TIMER_STATE,0);control(L"STATIC",L"Next eye break",SS_CENTER|SS_CENTERIMAGE|SS_ENDELLIPSIS,COUNT_CAPTION,0);control(L"STATIC",L"20:00",SS_CENTER|SS_CENTERIMAGE|SS_ENDELLIPSIS,COUNTDOWN,0);
   control(L"BUTTON",L"Take a break now",BS_DEFPUSHBUTTON,TAKE_BREAK,0);control(L"BUTTON",L"Pause",BS_PUSHBUTTON,PAUSE,0);control(L"BUTTON",L"Reset",BS_PUSHBUTTON,RESET,0);
   historyList=CreateWindowExW(WS_EX_CLIENTEDGE,WC_LISTVIEWW,L"Eye break history",WS_CHILD|WS_TABSTOP|LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS,0,0,1,1,main,reinterpret_cast<HMENU>(200),instance,nullptr);ListView_SetExtendedListViewStyle(historyList,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
   for(int i=0;i<3;++i){LVCOLUMNW col{};col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_SUBITEM;col.pszText=const_cast<LPWSTR>(i==0?L"Date":i==1?L"Break":L"Seconds");col.cx=px(i==0?240:140);col.iSubItem=i;ListView_InsertColumn(historyList,i,&col);}
   checkbox(L"Save history on this device",HISTORY_TOGGLE,1,settings.history,main);control(L"BUTTON",L"Clear history",BS_PUSHBUTTON,CLEAR_HISTORY,1);
   {const wchar_t*names[SECTION_COUNT]={L"Intervals",L"Schedule",L"Alarm",L"Reminders",L"General",L"About"};
-   for(int i=0;i<SECTION_COUNT;++i){sectionNav[i]=CreateWindowExW(0,L"BUTTON",names[i],WS_CHILD|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(SECTION_BASE+i)),instance,nullptr);SendMessageW(sectionNav[i],WM_SETFONT,reinterpret_cast<WPARAM>(smallFont),TRUE);}}
+   for(int i=0;i<SECTION_COUNT;++i){sectionNav[i]=CreateWindowExW(0,L"BUTTON",names[i],WS_CHILD|WS_TABSTOP|BS_AUTORADIOBUTTON|BS_PUSHLIKE|(i==0?WS_GROUP:0),0,0,0,0,main,reinterpret_cast<HMENU>(static_cast<INT_PTR>(SECTION_BASE+i)),instance,nullptr);update_accessibility::attachButton(sectionNav[i]);SendMessageW(sectionNav[i],WM_SETFONT,reinterpret_cast<WPARAM>(smallFont),TRUE);}}
   settingsPane=CreateWindowExW(WS_EX_CONTROLPARENT,L"EyeBreakReminder.Settings",L"Settings",WS_CHILD|WS_VSCROLL|WS_CLIPCHILDREN|WS_GROUP,0,0,1,1,main,nullptr,instance,nullptr);buildSettings();selectSection(0);switchPage(0);
  }
  // Settings show one section at a time; each section's controls are laid out and scrolled on their own.
@@ -1060,7 +1060,7 @@ public:
   SendMessageW(breakWindow,WM_SETICON,ICON_BIG,reinterpret_cast<LPARAM>(icon));SendMessageW(breakWindow,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(icon));
   // Snoozing schedules an automatic reminder, so a break outside operating hours offers no snooze.
   breakSnooze=settings.snooze&&!engine->snapshot().held;
-  auto button=[&](const wchar_t* name,int id){HWND child=CreateWindowExW(0,L"BUTTON",name,WS_CHILD|WS_VISIBLE|WS_TABSTOP|(id==COMPLETE?BS_DEFPUSHBUTTON:BS_PUSHBUTTON)|BS_MULTILINE,0,0,0,0,breakWindow,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(breakFont),TRUE);return child;};button(L"I'm back",COMPLETE);button(L"Skip",SKIP);if(breakSnooze){button(L"Snooze 1 min",SNOOZE1);button(L"3 min",SNOOZE3);button(L"5 min",SNOOZE5);}
+  auto button=[&](const wchar_t* name,int id){HWND child=CreateWindowExW(0,L"BUTTON",name,WS_CHILD|WS_VISIBLE|WS_TABSTOP|(id==COMPLETE?BS_DEFPUSHBUTTON:BS_PUSHBUTTON)|BS_MULTILINE,0,0,0,0,breakWindow,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);update_accessibility::attachButton(child);SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(breakFont),TRUE);return child;};button(L"I'm back",COMPLETE);button(L"Skip",SKIP);if(breakSnooze){button(L"Snooze 1 min",SNOOZE1);button(L"3 min",SNOOZE3);button(L"5 min",SNOOZE5);}
   auto caption=[&](const wchar_t*name,int id,HFONT font){HWND child=CreateWindowExW(0,L"STATIC",name,WS_CHILD|WS_VISIBLE|SS_CENTER|(id==COUNTDOWN?SS_CENTERIMAGE:0),0,0,1,1,breakWindow,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);};
   caption(L"Taking an eye break",BREAK_TITLE,breakTitleFont);caption(L"Look at something at least 20 feet / 6 metres away.",BREAK_INSTRUCTION,breakFont);caption(timeText(engine->snapshot().remaining).c_str(),COUNTDOWN,breakCountFont);caption(L"Keep looking into the distance.",BREAK_GUIDANCE,breakFont);
   layoutBreak();applyTheme();ShowWindow(breakWindow,SW_SHOW);SetForegroundWindow(breakWindow);FLASHWINFO flash{sizeof(flash),breakWindow,FLASHW_TRAY,3,0};FlashWindowEx(&flash);SetFocus(GetDlgItem(breakWindow,COMPLETE));updateRenderTimer();

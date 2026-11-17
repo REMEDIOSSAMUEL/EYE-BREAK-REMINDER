@@ -289,17 +289,17 @@ inline bool attach(HWND window, Kind kind, bool stripMnemonic = false, const wch
     return true;
 }
 
-inline bool attachButton(HWND window) {
+inline bool attachButton(HWND window, const wchar_t* accessibleName = nullptr) {
     const DWORD type = DWORD(GetWindowLongPtrW(window, GWL_STYLE)) & BS_TYPEMASK;
     switch (type) {
         case BS_RADIOBUTTON:
-        case BS_AUTORADIOBUTTON: return attach(window, Kind::Radio, true);
+        case BS_AUTORADIOBUTTON: return attach(window, Kind::Radio, true, accessibleName);
         case BS_CHECKBOX:
         case BS_AUTOCHECKBOX:
         case BS_3STATE:
-        case BS_AUTO3STATE: return attach(window, Kind::CheckBox, true);
+        case BS_AUTO3STATE: return attach(window, Kind::CheckBox, true, accessibleName);
         case BS_PUSHBUTTON:
-        case BS_DEFPUSHBUTTON: return attach(window, Kind::Button, true);
+        case BS_DEFPUSHBUTTON: return attach(window, Kind::Button, true, accessibleName);
         default: return false;
     }
 }

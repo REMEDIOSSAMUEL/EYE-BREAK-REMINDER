@@ -170,6 +170,13 @@ inline int runRecovery(const std::wstring&transactionPath){
     return 0;
 }
 
+inline void testHoldAfterCleanForRecovery(){
+#ifdef EYEBREAK_TEST_BUILD
+    wchar_t text[16]{};DWORD length=GetEnvironmentVariableW(L"EBR_GUI_TEST_HOLD_AFTER_CLEAN_MS",text,DWORD(std::size(text)));
+    if(length&&length<std::size(text)){wchar_t*end=nullptr;unsigned long value=std::wcstoul(text,&end,10);if(end&&!*end&&value>=1000&&value<=30000)Sleep(DWORD(value));}
+#endif
+}
+
 inline void performTransaction(Transaction t,UiState&ui){
     auto fail=[&](const std::wstring&message){coordinatorMessage(ui,message);ui.success=false;ui.done=true;};
     std::string error;if(!validateTransaction(t,t.stagingDirectory+L"\\transaction.ini",t.stagingDirectory+L"\\coordinator.exe",error)){fail(eye::win::wide(error));return;}
@@ -197,7 +204,7 @@ inline void performTransaction(Transaction t,UiState&ui){
     }
     std::string installedHash;if(!installed||productVersion(t.targetExecutable)!=t.version||!hashFile(t.targetExecutable,installedHash)||installedHash!=t.expectedApplicationSha256){rollback(L"The update failed. The previous version was restored and restarted with its data.");return;}
     if(!writeJournal(t,L"installed")){rollback(L"The update could not save its installation state. The previous version was restored and restarted.");return;}
-    if(t.clean){coordinatorMessage(ui,L"Applying the confirmed clean-install settings…");if(!writeJournal(t,L"cleaning")||!applyCleanPolicy(t)||!setStartupRegistration(t,false)){rollback(L"The clean install could not finish. The previous version and its data were restored.");return;}}
+    if(t.clean){coordinatorMessage(ui,L"Applying the confirmed clean-install settings…");if(!writeJournal(t,L"cleaning")||!applyCleanPolicy(t)||!setStartupRegistration(t,false)){rollback(L"The clean install could not finish. The previous version and its data were restored.");return;}testHoldAfterCleanForRecovery();}
     if(!writeJournal(t,L"starting")){rollback(L"The update could not save its startup state. The previous version was restored and restarted.");return;}
     coordinatorMessage(ui,L"Starting the updated application and waiting for its startup confirmation…");
     const std::wstring eventName=L"Local\\EyeBreakReminder.UpdateConfirm."+t.nonce;HANDLE confirmed=CreateEventW(nullptr,TRUE,FALSE,eventName.c_str());PROCESS_INFORMATION app{};const std::wstring args=L"--update-confirm "+t.nonce+L" --update-cleanup "+quoteArgument(t.stagingDirectory)+L" "+std::to_wstring(GetCurrentProcessId());
