@@ -449,6 +449,24 @@ function Get-UiaNames([IntPtr]$Window) {
   $items=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
   @($items | Where-Object { $_.Current.ProcessId -eq $script:testPid } | ForEach-Object { try { $_.Current.Name } catch { '' } } | Where-Object { $_ })
 }
+function Find-UiaDialog([string]$Marker,[int]$TimeoutSeconds=15) {
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds-lt$TimeoutSeconds){
+    foreach($window in [EBR_GUI_NATIVE]::TopWindowsForProcess($script:testPid)){
+      if(-not[EBR_GUI_NATIVE]::IsWindowVisible($window)){continue}
+      try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($window);$rootName=$root.Current.Name;$names=@($rootName)+@(Get-UiaNames $window);if(($names -join "`n").Contains($Marker)){return [pscustomobject]@{Handle=$window;Root=$root;Names=$names}}}catch{}
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  throw "Timed out waiting for UI Automation dialog text '$Marker'."
+}
+function Invoke-UiaButton($Dialog,[string]$Name) {
+  $items=$Dialog.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+  foreach($element in $items){
+    try{if($element.Current.ProcessId-ne$script:testPid-or$element.Current.Name-cne$Name-or$element.Current.ControlType-ne[System.Windows.Automation.ControlType]::Button){continue};$pattern=$null;if($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$pattern)){$pattern.Invoke();return}}catch{}
+  }
+  throw "Accessible dialog button '$Name' was not found in: $($Dialog.Names -join ' | ')"
+}
 function Save-Screenshot([IntPtr]$Window,[string]$Name,[switch]$PreserveForeground) {
   if (-not [EBR_GUI_NATIVE]::IsWindowVisible($Window)) { throw "Screenshot window is not visible: $Name" }
   if(-not $PreserveForeground){[void][EBR_GUI_NATIVE]::SetForegroundWindow($Window);Start-Sleep -Milliseconds 180}
@@ -581,6 +599,16 @@ function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Fai
     $after=Get-TimerSeconds
     Assert-That ($after -lt $before-5) "$Name timer continues during network request" ([pscustomobject]@{Before=$before;After=$after})
     Switch-Settings 5
+  }
+  if($Name-eq'newer-version'){
+    $dialog=Find-UiaDialog 'Eye Break Reminder Update Available'
+    $names=@($dialog.Names);$summary=$names -join ' | '
+    $hasCurrent=@($names|Where-Object{$_.Contains("Current version: $expectedVersion")}).Count-gt0
+    $hasAvailableLabel=@($names|Where-Object{$_.Contains('Available version:')}).Count-gt0
+    $hasAvailableVersion=@($names|Where-Object{$_.Contains("v$newerVersion")}).Count-gt0
+    $hasReleaseNotes=@($names|Where-Object{$_.Contains('Release notes')}).Count-gt0
+    Assert-That ($hasCurrent-and$hasAvailableLabel-and$hasAvailableVersion-and$hasReleaseNotes) 'Update dialog exposes current/available versions and release notes' $summary
+    Invoke-UiaButton $dialog 'Remind Me Later'
   }
   $watch=[Diagnostics.Stopwatch]::StartNew();$enabled=$false
   while ($watch.Elapsed.TotalSeconds -lt 12) { try { $enabled=(Get-Control $script:mainWindow 160 'Check for Updates').Enabled } catch { };if($enabled){break};Start-Sleep -Milliseconds 100 }
@@ -1001,7 +1029,14 @@ try {
   elseif($installedVersion.Minor -gt 0){$olderVersion='{0}.{1}.0' -f $installedVersion.Major,($installedVersion.Minor-1)}
   elseif($installedVersion.Major -gt 0){$olderVersion='{0}.0.0' -f ($installedVersion.Major-1)}
   else{throw 'Cannot construct a stable version older than 0.0.0 for the comparison fixture.'}
-  function Release-Fixture([string]$Tag,[bool]$Prerelease=$false){return ([ordered]@{tag_name="v$Tag";html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v$Tag";draft=$false;prerelease=$Prerelease}|ConvertTo-Json -Compress)}
+  function Release-Fixture([string]$Tag,[bool]$Prerelease=$false){
+    $tagName="v$Tag";$downloadBase="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/$tagName/";$digest='sha256:'+('a'*64)
+    $assets=@(
+      [ordered]@{name='EyeBreakReminder-Setup-x64.exe';browser_download_url=($downloadBase+'EyeBreakReminder-Setup-x64.exe');size=2097152;digest=$digest},
+      [ordered]@{name='EyeBreakReminder.exe';browser_download_url=($downloadBase+'EyeBreakReminder.exe');size=1048576;digest=$digest}
+    )
+    return ([ordered]@{tag_name=$tagName;html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/$tagName";draft=$false;prerelease=$Prerelease;body='Controlled GUI acceptance fixture release notes.';assets=$assets}|ConvertTo-Json -Compress -Depth 6)
+  }
   $stable=Release-Fixture $expectedVersion
   $newer=Release-Fixture $newerVersion
   $older=Release-Fixture $olderVersion
