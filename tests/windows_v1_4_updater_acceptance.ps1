@@ -35,6 +35,7 @@ public static class EBR_UPD_NATIVE {
  [DllImport("user32.dll",SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool IsWindowVisible(IntPtr hwnd);
  [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern int GetWindowTextW(IntPtr hwnd,StringBuilder text,int count);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern int GetClassNameW(IntPtr hwnd,StringBuilder text,int count);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd,out EBR_UPD_RECT rect);
  [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern IntPtr FindWindowW(string className,string windowName);
  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetDlgItem(IntPtr parent,int id);
@@ -49,6 +50,7 @@ public static class EBR_UPD_NATIVE {
  public static bool HighContrastState(out bool enabled){var value=new EBR_UPD_HIGHCONTRAST();value.cbSize=(uint)Marshal.SizeOf(typeof(EBR_UPD_HIGHCONTRAST));bool ok=SystemParametersInfoGetHighContrast(0x0042,value.cbSize,ref value,0);enabled=(value.dwFlags&1)!=0;return ok;}
  public static bool SetHighContrastState(bool enabled){var value=new EBR_UPD_HIGHCONTRAST();value.cbSize=(uint)Marshal.SizeOf(typeof(EBR_UPD_HIGHCONTRAST));if(!SystemParametersInfoGetHighContrast(0x0042,value.cbSize,ref value,0))return false;if(enabled)value.dwFlags|=1;else value.dwFlags&=~1u;return SystemParametersInfoSetHighContrast(0x0043,value.cbSize,ref value,2);}
  public static string Title(IntPtr h){var b=new StringBuilder(512);GetWindowTextW(h,b,b.Capacity);return b.ToString();}
+ public static string ClassName(IntPtr h){var b=new StringBuilder(256);GetClassNameW(h,b,b.Capacity);return b.ToString();}
  public static bool ExitWindow(IntPtr h){uint message=RegisterWindowMessageW("EyeBreakReminder.Exit.Native.1");return PostMessageW(h,message,IntPtr.Zero,IntPtr.Zero);}
 }
 '@
@@ -191,9 +193,21 @@ function Run-InterruptedCleanRecovery(){
   Assert ((Get-Content -LiteralPath (Join-Path $dataDir 'history.dat') -Raw)-eq$script:historyText-and(Get-FileHash -LiteralPath (Join-Path $dataDir 'history.dat') -Algorithm SHA256).Hash.ToLowerInvariant()-eq$beforeHistory) 'recovery preserves history byte-for-byte'
   $restoredRun=Get-ItemPropertyValue -LiteralPath $runKey -Name 'EyeBreakReminder' -ErrorAction Stop;Assert ($restoredRun-ceq$startupCommand) 'recovery restores the prior Windows startup registration' $restoredRun
   $remaining=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue;Assert (-not$remaining) 'successful recovery removes its one-time RunOnce registration'
-  $restoredExe=[IO.Path]::GetFullPath((Join-Path $installDir 'EyeBreakReminder.exe'));$launchWatch=[Diagnostics.Stopwatch]::StartNew();$runningPid=0;$runningPath='';$runningWindow=[IntPtr]::Zero
-  while($launchWatch.Elapsed.TotalSeconds-lt20-and$runningPid-eq0){$window=[EBR_UPD_NATIVE]::FindWindowW('EyeBreakReminder.Native',$null);if($window-ne[IntPtr]::Zero){$windowPid=[uint32]0;[void][EBR_UPD_NATIVE]::GetWindowThreadProcessId($window,[ref]$windowPid);$candidate=Get-CimInstance Win32_Process -Filter "ProcessId=$windowPid" -ErrorAction SilentlyContinue;if($candidate-and$candidate.ExecutablePath-and([IO.Path]::GetFullPath([string]$candidate.ExecutablePath)-ieq$restoredExe)){$runningPid=[int]$windowPid;$runningPath=[string]$candidate.ExecutablePath;$runningWindow=$window;break}};Start-Sleep -Milliseconds 100}
-  $launchDetails=[pscustomobject]@{ElapsedSeconds=[Math]::Round($launchWatch.Elapsed.TotalSeconds,2);ExpectedPath=$restoredExe;ProcessId=$runningPid;ProcessPath=$runningPath;WindowHandle=('0x{0:X}' -f $runningWindow.ToInt64());WindowTitle=$(if($runningWindow-ne[IntPtr]::Zero){[EBR_UPD_NATIVE]::Title($runningWindow)}else{$null});MatchingProcesses=@(Get-TestOwnedApplications|ForEach-Object{[pscustomobject]@{ProcessId=$_.Id;Path=$_.Path;MainWindowHandle=('0x{0:X}' -f $_.MainWindowHandle.ToInt64())}})}
+  $restoredExe=[IO.Path]::GetFullPath((Join-Path $installDir 'EyeBreakReminder.exe'));$launchWatch=[Diagnostics.Stopwatch]::StartNew();$runningPid=0;$runningPath='';$runningWindow=[IntPtr]::Zero;$runningWindowClass=''
+  while($launchWatch.Elapsed.TotalSeconds-lt20-and$runningPid-eq0){
+    # FindWindow returns only the first desktop window with a class name. During transaction tests another app instance can
+    # own that class, so enumerate windows by the exact restored process and verify its own class/title and image path.
+    foreach($candidate in @(Get-TestOwnedApplications)){
+      $candidate.Refresh();if($candidate.HasExited-or([IO.Path]::GetFullPath([string]$candidate.Path)-ine$restoredExe)){continue}
+      foreach($window in [EBR_UPD_NATIVE]::Windows($candidate.Id)){
+        $className=[EBR_UPD_NATIVE]::ClassName($window);$title=[EBR_UPD_NATIVE]::Title($window)
+        if($className-ceq'EyeBreakReminder.Native'-and$title-ceq'Eye Break Reminder'){$runningPid=$candidate.Id;$runningPath=[string]$candidate.Path;$runningWindow=$window;$runningWindowClass=$className;break}
+      }
+      if($runningPid-gt0){break}
+    }
+    if($runningPid-eq0){Start-Sleep -Milliseconds 100}
+  }
+  $launchDetails=[pscustomobject]@{ElapsedSeconds=[Math]::Round($launchWatch.Elapsed.TotalSeconds,2);ExpectedPath=$restoredExe;ProcessId=$runningPid;ProcessPath=$runningPath;WindowHandle=('0x{0:X}' -f $runningWindow.ToInt64());WindowClass=$runningWindowClass;WindowTitle=$(if($runningWindow-ne[IntPtr]::Zero){[EBR_UPD_NATIVE]::Title($runningWindow)}else{$null});MatchingProcesses=@(Get-TestOwnedApplications|ForEach-Object{[pscustomobject]@{ProcessId=$_.Id;Path=$_.Path;MainWindowHandle=('0x{0:X}' -f $_.MainWindowHandle.ToInt64())}})}
   Assert ($runningPid-gt0-and$runningWindow-ne[IntPtr]::Zero) 'the restored previous version launched after durable recovery' $launchDetails
   Stop-Application;$currentStartup=Get-ItemPropertyValue -LiteralPath $runKey -Name 'EyeBreakReminder' -ErrorAction SilentlyContinue;if($currentStartup-ceq$startupCommand){Remove-ItemProperty -LiteralPath $runKey -Name 'EyeBreakReminder' -ErrorAction Stop};Record 'Interrupted clean update and RunOnce recovery' 'PASS' ([pscustomobject]@{Phase='cleaning';RestoredVersion='1.4.0';SettingsRestored=$true;HistoryPreserved=$true;StartupRestored=$true;ComputerRebooted=$false})
 }
