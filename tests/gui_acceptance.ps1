@@ -449,6 +449,25 @@ function Get-UiaNames([IntPtr]$Window) {
   $items=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
   @($items | Where-Object { $_.Current.ProcessId -eq $script:testPid } | ForEach-Object { try { $_.Current.Name } catch { '' } } | Where-Object { $_ })
 }
+function Get-UiaElementDiagnostics($Root,[string]$Name) {
+  $rows=[Collections.Generic.List[object]]::new()
+  $patterns=@(
+    [pscustomobject]@{Name='Invoke';Pattern=[System.Windows.Automation.InvokePattern]::Pattern},
+    [pscustomobject]@{Name='SelectionItem';Pattern=[System.Windows.Automation.SelectionItemPattern]::Pattern},
+    [pscustomobject]@{Name='Toggle';Pattern=[System.Windows.Automation.TogglePattern]::Pattern},
+    [pscustomobject]@{Name='LegacyIAccessible';Pattern=[System.Windows.Automation.LegacyIAccessiblePattern]::Pattern}
+  )
+  foreach($element in $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)){
+    try{
+      $current=$element.Current
+      if($current.Name-cne$Name){continue}
+      $available=[Collections.Generic.List[string]]::new()
+      foreach($check in $patterns){$value=$null;try{if($element.TryGetCurrentPattern($check.Pattern,[ref]$value)){$available.Add($check.Name)}}catch{}}
+      $rows.Add([pscustomobject]@{Name=$current.Name;ControlType=$current.ControlType.ProgrammaticName;ClassName=$current.ClassName;AutomationId=$current.AutomationId;ProcessId=$current.ProcessId;NativeWindowHandle=$current.NativeWindowHandle;Enabled=$current.IsEnabled;KeyboardFocusable=$current.IsKeyboardFocusable;HasKeyboardFocus=$current.HasKeyboardFocus;Patterns=@($available)})
+    }catch{}
+  }
+  return ,@($rows)
+}
 function Find-UiaDialog([string]$Marker,[int]$TimeoutSeconds=15) {
   $watch=[Diagnostics.Stopwatch]::StartNew()
   while($watch.Elapsed.TotalSeconds-lt$TimeoutSeconds){
@@ -465,7 +484,8 @@ function Invoke-UiaButton($Dialog,[string]$Name) {
   foreach($element in $items){
     try{if($element.Current.ProcessId-ne$script:testPid-or$element.Current.Name-cne$Name-or$element.Current.ControlType-ne[System.Windows.Automation.ControlType]::Button){continue};$pattern=$null;if($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$pattern)){$pattern.Invoke();return}}catch{}
   }
-  throw "Accessible dialog button '$Name' was not found in: $($Dialog.Names -join ' | ')"
+  $diagnostics=ConvertTo-Json -InputObject (Get-UiaElementDiagnostics $Dialog.Root $Name) -Depth 5 -Compress
+  throw "Accessible dialog button '$Name' could not be invoked. Matching UI Automation elements: $diagnostics. Dialog names: $($Dialog.Names -join ' | ')"
 }
 function Save-Screenshot([IntPtr]$Window,[string]$Name,[switch]$PreserveForeground) {
   if (-not [EBR_GUI_NATIVE]::IsWindowVisible($Window)) { throw "Screenshot window is not visible: $Name" }
@@ -608,6 +628,7 @@ function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Fai
     $hasAvailableVersion=@($names|Where-Object{$_.Contains("v$newerVersion")}).Count-gt0
     $hasReleaseNotes=@($names|Where-Object{$_.Contains('Release notes')}).Count-gt0
     Assert-That ($hasCurrent-and$hasAvailableLabel-and$hasAvailableVersion-and$hasReleaseNotes) 'Update dialog exposes current/available versions and release notes' $summary
+    Save-Screenshot $dialog.Handle 'update-dialog-newer-release.png'
     Invoke-UiaButton $dialog 'Remind Me Later'
   }
   $watch=[Diagnostics.Stopwatch]::StartNew();$enabled=$false
