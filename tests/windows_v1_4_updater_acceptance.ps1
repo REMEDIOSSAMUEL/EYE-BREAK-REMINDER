@@ -363,10 +363,10 @@ function Run-InteractiveUninstall([bool]$RemoveData){
   # MUI_UNPAGE_FINISH deliberately waits for the user to close the wizard. Reaching
   # the finish page proves the uninstall section ran; click its real native Finish
   # button before waiting for the verified NSIS child process to exit.
-  $finish=Find-TestUninstallerDialog 'Uninstallation Complete' $uninstallerPath $p 90
+  $finish=Find-TestUninstallerDialog 'Click Finish to close Setup.' $uninstallerPath $p 90
   $finishProcess=Get-TestUninstallerProcess $finish $uninstallerPath $p.Id
   Assert ($finishProcess.Id-eq$uninstallerProcess.Id) 'uninstall finish page remains in the same NSIS process'
-  Assert ($finish.Names -contains 'Finish') 'interactive uninstall displays the explicit completion page'
+  Assert (($finish.Names -contains 'Finish')-and($finish.Names -contains 'Completing Eye Break Reminder Uninstall')) 'interactive uninstall displays the explicit completion page'
   Assert (-not(Test-Path -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe'))) 'uninstaller removes application files before the finish page'
   Assert (-not(Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder' -ErrorAction SilentlyContinue)) 'uninstaller removes Installed Apps registration before the finish page'
   [void](Invoke-TestUninstallerButton $finish @('Finish'))
