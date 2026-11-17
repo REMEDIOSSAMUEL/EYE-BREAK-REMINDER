@@ -43,8 +43,8 @@ class Provider final : public IRawElementProviderSimple,
                        public IToggleProvider,
                        public IRangeValueProvider {
 public:
-    Provider(HWND window, Kind kind, bool stripMnemonic)
-        : window_(window), kind_(kind), stripMnemonic_(stripMnemonic) {}
+    Provider(HWND window, Kind kind, bool stripMnemonic, const wchar_t* accessibleName)
+        : window_(window), kind_(kind), stripMnemonic_(stripMnemonic), accessibleName_(accessibleName ? accessibleName : L"") {}
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override {
         if (!result) return E_POINTER;
@@ -112,10 +112,13 @@ public:
                 case Kind::ProgressActivity: value->lVal = UIA_ProgressBarControlTypeId; break;
             }
         } else if (property == UIA_NamePropertyId) {
-            const int count = GetWindowTextLengthW(window_);
-            std::wstring name(std::size_t(std::max(0, count)) + 1, L'\0');
-            if (count) GetWindowTextW(window_, name.data(), count + 1);
-            name.resize(std::size_t(std::max(0, count)));
+            std::wstring name = accessibleName_;
+            if (name.empty()) {
+                const int count = GetWindowTextLengthW(window_);
+                name.resize(std::size_t(std::max(0, count)) + 1, L'\0');
+                if (count) GetWindowTextW(window_, name.data(), count + 1);
+                name.resize(std::size_t(std::max(0, count)));
+            }
             if (stripMnemonic_) name = plainLabel(name);
             value->vt = VT_BSTR;
             value->bstrVal = SysAllocStringLen(name.data(), UINT(name.size()));
@@ -257,6 +260,7 @@ private:
     HWND window_{};
     Kind kind_{};
     bool stripMnemonic_{};
+    std::wstring accessibleName_;
 };
 
 inline LRESULT CALLBACK controlProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
@@ -273,8 +277,10 @@ inline LRESULT CALLBACK controlProc(HWND window, UINT message, WPARAM wParam, LP
     return DefSubclassProc(window, message, wParam, lParam);
 }
 
-inline bool attach(HWND window, Kind kind, bool stripMnemonic = false) {
-    auto* provider = new (std::nothrow) Provider(window, kind, stripMnemonic);
+inline bool attach(HWND window, Kind kind, bool stripMnemonic = false, const wchar_t* accessibleName = nullptr) {
+    Provider* provider = nullptr;
+    try { provider = new (std::nothrow) Provider(window, kind, stripMnemonic, accessibleName); }
+    catch (...) { return false; }
     if (!provider) return false;
     if (!SetWindowSubclass(window, controlProc, 1, reinterpret_cast<DWORD_PTR>(provider))) {
         provider->Release();
@@ -298,8 +304,8 @@ inline bool attachButton(HWND window) {
     }
 }
 
-inline bool attachActivityProgress(HWND window) {
-    return attach(window, Kind::ProgressActivity);
+inline bool attachActivityProgress(HWND window, const wchar_t* accessibleName) {
+    return attach(window, Kind::ProgressActivity, false, accessibleName);
 }
 
 } // namespace eye::update_accessibility

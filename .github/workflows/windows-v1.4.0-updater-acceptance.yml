@@ -175,7 +175,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           & .\tests\windows_break_user_resource_soak.ps1 `
-            -ExecutablePath '.\build\gui-test\EyeBreakReminder.exe' `
+            -ExecutablePath '.\release\EyeBreakReminder.exe' `
             -EvidenceDirectory '.\build\v1.4.0-updater-evidence\resource-soak' `
             -Cycles 110 -ExpectedProductVersion '1.4.0' -ExpectedResourceBehavior NoGrowth
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
