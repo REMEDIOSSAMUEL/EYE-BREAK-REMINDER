@@ -13,13 +13,19 @@ int assertions=0;
 bool check(bool value,const char*name){++assertions;if(!value)std::cerr<<"FAIL: "<<name<<'\n';return value;}
 bool writeBytes(const std::wstring&path,const std::string&value){HANDLE file=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return false;DWORD wrote=0;const bool ok=WriteFile(file,value.data(),DWORD(value.size()),&wrote,nullptr)&&wrote==value.size();CloseHandle(file);return ok;}
 int runHttpsInterruption(int argc,char**argv){
+    std::cerr<<"HTTPS test stage: entered runHttpsInterruption"<<std::endl;
     if(argc!=4){std::cerr<<"Usage: updater-windows-tests --https-interruption <proxy-port> <staging-directory>\n";return 2;}
     const unsigned long port=std::strtoul(argv[2],nullptr,10);if(port<1024||port>65535){std::cerr<<"Invalid loopback test proxy port.\n";return 2;}
+    std::cerr<<"HTTPS test stage: parsed proxy port"<<std::endl;
     const std::wstring stage=std::filesystem::path(argv[3]).wstring();bool ok=true;
+    std::cerr<<"HTTPS test stage: converted isolated staging path"<<std::endl;
     wchar_t configuredProxy[128]{};const DWORD proxyLength=GetEnvironmentVariableW(L"EBR_TEST_HTTPS_PROXY",configuredProxy,DWORD(std::size(configuredProxy)));
     const std::wstring expectedProxy=L"127.0.0.1:"+std::to_wstring(port);
+    std::cerr<<"HTTPS test stage: read the process proxy setting"<<std::endl;
     ok&=check(proxyLength==expectedProxy.size()&&std::wstring(configuredProxy,proxyLength)==expectedProxy,"test process uses only the isolated loopback HTTPS CONNECT proxy");
+    std::cerr<<"HTTPS test stage: querying the real public GitHub release API"<<std::endl;
     const auto response=eye::updates::latestStableReleaseResponse();eye::updates::ReleaseDetails release;
+    std::cerr<<"HTTPS test stage: GitHub release API request returned"<<std::endl;
     const auto checked=eye::updates::evaluate(response,"1.4.0",&release);
     ok&=check(response.status==200&&checked.state==eye::updates::State::InstalledNewer&&release.tag=="v1.3.0","discover the current official stable release from the real GitHub API without credentials");
     const auto selected=eye::updates::selectAsset(release,eye::updates::PackageKind::Portable);
@@ -29,14 +35,18 @@ int runHttpsInterruption(int argc,char**argv){
     const auto digestSeparator=asset.digest.find(':');const std::string expected=eye::updates::client_detail::lower(asset.digest.substr(digestSeparator+1));
     std::atomic_bool cancelled{false};const std::wstring sentinel=stage+L"\\working-app.sentinel";
     ok&=check(writeBytes(sentinel,"installed-v1.4.0"),"create isolated prior-install sentinel");
+    std::cerr<<"HTTPS test stage: requesting the first official asset through the proxy"<<std::endl;
     auto interrupted=eye::updates::downloadVerified(asset,stage,L"EyeBreakReminder.exe",cancelled);
+    std::cerr<<"HTTPS test stage: first transfer returned"<<std::endl;
     std::string oldContents;eye::win::read(sentinel,oldContents,128);
     ok&=check(!interrupted.ok&&!interrupted.cancelled&&interrupted.received>0&&interrupted.received<asset.size&&
               GetFileAttributesW((stage+L"\\EyeBreakReminder.exe.part").c_str())==INVALID_FILE_ATTRIBUTES&&
               GetFileAttributesW((stage+L"\\EyeBreakReminder.exe").c_str())==INVALID_FILE_ATTRIBUTES&&oldContents=="installed-v1.4.0",
               "unexpected mid-body HTTPS interruption rejects and removes partial bytes while preserving the prior app sentinel");
     bool sawVerify=false;std::uint64_t finalProgress=0;
+    std::cerr<<"HTTPS test stage: requesting a fresh verified asset retry"<<std::endl;
     auto retried=eye::updates::downloadVerified(asset,stage,L"EyeBreakReminder.exe",cancelled,[&](auto p){finalProgress=p.received;if(p.verifying)sawVerify=true;});
+    std::cerr<<"HTTPS test stage: verified retry returned"<<std::endl;
     ok&=check(retried.ok&&retried.received==asset.size&&retried.sha256==expected&&finalProgress==asset.size&&sawVerify,
               "a fresh HTTPS retry downloads the real public asset, reports byte progress and verifies GitHub's SHA-256 digest");
     ok&=check(oldContents=="installed-v1.4.0"&&DeleteFileW(sentinel.c_str())!=FALSE,"successful retry still leaves the existing application untouched before installer coordination");

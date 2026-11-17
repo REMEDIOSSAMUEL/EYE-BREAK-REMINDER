@@ -217,11 +217,12 @@ namespace EbrUpdaterNetworkInterruption {
     $testExitCode = $testProcess.ExitCode
     $testOutput = $testProcess.StandardOutput.ReadToEnd() + [Environment]::NewLine + $testProcess.StandardError.ReadToEnd()
     Write-Host "Updater test process exited with code $testExitCode."
+    if ($testOutput) { Write-Host $testOutput }
+    if ($testExitCode -ne 0) { throw "The real GitHub HTTPS interruption/retry test exited $testExitCode. $testOutput" }
     if ($proxy.Error) { throw "The isolated HTTPS proxy failed: $($proxy.Error)" }
     if ($proxy.AssetConnections -lt 2 -or -not $proxy.FirstAssetTruncated -or $proxy.FirstAssetForwardedBytes -lt 65536) {
         throw "The public asset interruption/retry sequence was incomplete: assetConnections=$($proxy.AssetConnections), firstAssetTruncated=$($proxy.FirstAssetTruncated), forwardedEncryptedBytes=$($proxy.FirstAssetForwardedBytes)."
     }
-    if ($testExitCode -ne 0) { throw "The real GitHub HTTPS interruption/retry test exited $testExitCode. $testOutput" }
     $testPassed = $true
 }
 catch {
