@@ -816,7 +816,7 @@ try {
   Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 125 'Work accent swatch').Handle)) -eq '#22C55E') 'Cancel leaves the visible swatch unchanged'
   Switch-Timer;$cancelShot=Save-Screenshot $script:mainWindow 'custom-cancel-keeps-green.png';Assert-TimerRingPixel $cancelShot '#22C55E' 'Cancelled Work Mode selection'
 
-  Switch-Settings 4;$resourceWarmup=5;$resourceCycles=40
+  Switch-Settings 4;$resourceWarmup=5;$resourceCycles=100
   for($i=0;$i -lt ($resourceWarmup+$resourceCycles);$i++){
     $beforeValue=Get-SettingLine 'workAccentColor';$dialog=Open-ColorPicker 127 'Repeated Work Mode colour picker'
     $accept=($i%2 -eq 0)

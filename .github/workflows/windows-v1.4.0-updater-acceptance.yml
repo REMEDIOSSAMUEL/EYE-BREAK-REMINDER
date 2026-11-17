@@ -87,6 +87,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $event = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
+          $prHeadCommit = if ($event.pull_request) { [string]$event.pull_request.head.sha } else { $null }
           $files = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
           $identities = foreach ($name in $files) {
             $path = Join-Path 'release' $name
@@ -105,7 +107,7 @@ jobs:
           $os = Get-CimInstance Win32_OperatingSystem
           [pscustomobject]@{
             Application='Eye Break Reminder';Version=(Get-Content -LiteralPath 'VERSION' -Raw).Trim()
-            SourceCommit=$env:GITHUB_SHA;Branch=$env:GITHUB_REF_NAME;RunId=$env:GITHUB_RUN_ID
+            SourceCommit=$env:GITHUB_SHA;PRHeadCommit=$prHeadCommit;Branch=$(if($env:GITHUB_HEAD_REF){$env:GITHUB_HEAD_REF}else{$env:GITHUB_REF_NAME});RunId=$env:GITHUB_RUN_ID
             RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
             Runner=[pscustomobject]@{Image=$env:ImageOS;ImageVersion=$env:ImageVersion;Caption=$os.Caption;Version=$os.Version;Build=$os.BuildNumber}
             Compiler='x86_64-w64-mingw32-g++ C++17, Win11 API target';NSIS='3.11 x86 Unicode';CandidateFiles=@($identities)
@@ -247,5 +249,86 @@ jobs:
             build/v1.4.0-updater-evidence/**
             build/pre-release-evidence/runner-capabilities.json
             build/gui-test/evidence/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  windows-11-arm64-x64-emulation:
+    name: Exact candidate under Windows 11 ARM64 x64 emulation
+    if: github.event_name == 'pull_request'
+    needs: windows-updater-acceptance
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the acceptance harness from the tested PR merge commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the exact candidate retained by the successful x64 acceptance job
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.4.0-candidate-${{ github.run_id }}
+          path: candidate-artifact
+
+      - name: Verify candidate provenance and recover the exact tested files
+        shell: pwsh
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'candidate-artifact'
+          $releaseSource = Join-Path $root 'release'
+          $evidence = Join-Path $root 'build/v1.4.0-updater-evidence'
+          $expectedNames = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $files = @(Get-ChildItem -LiteralPath $releaseSource -Force)
+          if ($files.Count -ne $expectedNames.Count -or @($files | Where-Object PSIsContainer).Count -ne 0) { throw 'The retained candidate must contain exactly the five expected release files.' }
+          if ((@($files | Sort-Object Name | Select-Object -ExpandProperty Name) -join "`n") -cne (($expectedNames | Sort-Object) -join "`n")) { throw 'The retained candidate file set is unexpected.' }
+          $provenance = Get-Content -LiteralPath (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          $gate = Get-Content -LiteralPath (Join-Path $evidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
+          $identities = Get-Content -LiteralPath (Join-Path $evidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json
+          if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.RunId -ne $env:GITHUB_RUN_ID -or $provenance.SourceCommit -cne $env:GITHUB_SHA -or $provenance.PRHeadCommit -cne $env:PR_HEAD_SHA) { throw 'The retained candidate provenance does not identify this successful PR acceptance run, PR head and merge commit.' }
+          if ($gate.Status -cne 'PASS') { throw "The x64 hosted acceptance gate is not PASS: $($gate.Status)." }
+          if ($identities.Count -ne 5 -or $provenance.CandidateFiles.Count -ne 5) { throw 'Candidate provenance does not contain exactly five release identities.' }
+          New-Item -ItemType Directory -Force -Path 'release' | Out-Null
+          foreach ($name in $expectedNames) {
+            $source = Join-Path $releaseSource $name
+            $identity = @($identities | Where-Object Name -CEQ $name)
+            if ($identity.Count -ne 1) { throw "Candidate identity is missing or duplicated: $name" }
+            $file = Get-Item -LiteralPath $source
+            $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($file.Length -ne [long]$identity[0].Bytes -or $hash -cne $identity[0].SHA256) { throw "Retained candidate bytes do not match the accepted run identity: $name" }
+            Copy-Item -LiteralPath $source -Destination (Join-Path 'release' $name)
+          }
+          foreach ($item in $identities) {
+            $manifestEntry = Select-String -LiteralPath 'release/EyeBreakReminder-SHA256.txt' -Pattern ('^' + [regex]::Escape($item.SHA256) + '  ' + [regex]::Escape($item.Name) + '$')
+            if ($item.Name -ne 'EyeBreakReminder-SHA256.txt' -and @($manifestEntry).Count -ne 1) { throw "Release SHA-256 manifest mismatch: $($item.Name)" }
+          }
+          [pscustomobject]@{RunId=$provenance.RunId;CandidateSourceCommit=$provenance.SourceCommit;PRHeadCommit=$env:PR_HEAD_SHA;AcceptanceMergeCommit=$env:GITHUB_SHA;RunnerOS=(Get-CimInstance Win32_OperatingSystem).Caption;RunnerArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();CandidateFiles=$identities} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'candidate-identity.json' -Encoding UTF8
+
+      - name: Exercise the exact x64 installer guard and application under Windows 11 ARM64 emulation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = Get-Content -LiteralPath 'candidate-identity.json' -Raw | ConvertFrom-Json
+          & .\tests\windows_arm64_emulation_acceptance.ps1 `
+            -InstallerPath (Join-Path (Get-Location) 'release/EyeBreakReminder-Setup-x64.exe') `
+            -StandaloneExecutable (Join-Path (Get-Location) 'release/EyeBreakReminder.exe') `
+            -PortableArchive (Join-Path (Get-Location) 'release/EyeBreakReminder-Portable-x64.zip') `
+            -EvidenceDirectory (Join-Path (Get-Location) 'build/arm64-emulation-evidence') `
+            -CandidateSourceCommit $identity.CandidateSourceCommit `
+            -ExpectedVersion '1.4.0'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows 11 ARM64 x64-emulation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-arm64-emulation-${{ github.run_id }}
+          path: |
+            candidate-identity.json
+            build/arm64-emulation-evidence/**
           if-no-files-found: warn
           retention-days: 90
