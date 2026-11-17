@@ -47,6 +47,7 @@ public static class EBR_UPD_NATIVE {
  [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern IntPtr FindWindowW(string className,string windowName);
  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetDlgItem(IntPtr parent,int id);
  [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageW(IntPtr hwnd,uint message,IntPtr wParam,IntPtr lParam);
+ [DllImport("user32.dll",EntryPoint="GetWindowLongW",SetLastError=true)] public static extern int GetWindowLongW(IntPtr hwnd,int index);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint message,IntPtr wp,IntPtr lp);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern uint RegisterWindowMessageW(string name);
@@ -127,7 +128,39 @@ function Invoke-TestUninstallerButton($Dialog,[string[]]$Names){
   }
   throw "No enabled native NSIS button matched [$($Names -join ', ')]. Dialog names: $($Dialog.Names -join ' | '). Controls: $(ConvertTo-Json @($controls) -Depth 5 -Compress)"
 }
-function Select-Radio($Dialog,[string]$Name){$element=Find-Element $Dialog $Name 'ControlType.RadioButton';$pattern=$null;if(-not$element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$pattern)){throw "Radio '$Name' has no accessible selection action."};$pattern.Select();return $element}
+function Get-NsisNativeRadio($Dialog,[string]$Name){
+  foreach($element in $Dialog.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)){
+    try{$current=$element.Current}catch{continue}
+    if($current.ProcessId-ne$Dialog.ProcessId-or$current.Name-cne$Name-or$current.ClassName-cne'Button'-or-not$current.IsEnabled){continue}
+    $handle=[IntPtr]$current.NativeWindowHandle
+    if($handle-eq[IntPtr]::Zero-or-not[EBR_UPD_NATIVE]::IsWindow($handle)-or-not[EBR_UPD_NATIVE]::IsWindowVisible($handle)-or-not[EBR_UPD_NATIVE]::IsWindowEnabled($handle)){continue}
+    $owner=[uint32]0;[void][EBR_UPD_NATIVE]::GetWindowThreadProcessId($handle,[ref]$owner)
+    if($owner-ne[uint32]$Dialog.ProcessId-or[EBR_UPD_NATIVE]::GetParent($handle)-ne$Dialog.Handle){continue}
+    $style=[EBR_UPD_NATIVE]::GetWindowLongW($handle,-16);$buttonType=$style-band0xF
+    if($buttonType-notin@(4,9)){continue}
+    return [pscustomobject]@{Element=$element;Handle=$handle;Name=$current.Name;AutomationId=$current.AutomationId;ProcessId=$current.ProcessId;Style=$style;ButtonType=$buttonType}
+  }
+  $diagnostics=ConvertTo-Json -InputObject (Get-ElementDiagnostics $Dialog $Name) -Depth 5 -Compress
+  throw "Verified NSIS radio '$Name' was not found as an enabled native radio button owned by the isolated uninstaller dialog. Matches: $diagnostics"
+}
+function Test-NsisNativeRadioSelected($Dialog,[string]$Name){$control=Get-NsisNativeRadio $Dialog $Name;return ([EBR_UPD_NATIVE]::SendMessageW($control.Handle,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()-eq1)}
+function Select-Radio($Dialog,[string]$Name){
+  $element=$null;try{$element=Find-Element $Dialog $Name 'ControlType.RadioButton'}catch{}
+  if($element){$pattern=$null;if($element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$pattern)){$pattern.Select();return $element}}
+  # NSIS's native radio controls are exposed by the Windows Server UIA provider as
+  # Pane elements without SelectionItemPattern. Resolve only the exact radio HWND
+  # owned by the already-verified isolated uninstaller, then use desktop mouse input.
+  $control=Get-NsisNativeRadio $Dialog $Name
+  [void][EBR_UPD_NATIVE]::SetForegroundWindow($Dialog.Handle);Start-Sleep -Milliseconds 100
+  if([EBR_UPD_NATIVE]::GetForegroundWindow()-ne$Dialog.Handle){throw "Could not activate the verified NSIS wizard before selecting '$Name'."}
+  $rect=[EBR_UPD_RECT]::new();if(-not[EBR_UPD_NATIVE]::GetWindowRect($control.Handle,[ref]$rect)){throw "Could not read the native NSIS radio bounds for '$Name'."}
+  $x=[int](($rect.Left+$rect.Right)/2);$y=[int](($rect.Top+$rect.Bottom)/2)
+  if(-not[EBR_UPD_NATIVE]::SetCursorPos($x,$y)){throw "Could not place the pointer over the verified NSIS radio '$Name'."}
+  [EBR_UPD_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 60;[EBR_UPD_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 100
+  if(-not(Test-NsisNativeRadioSelected $Dialog $Name)){throw "The native NSIS radio '$Name' did not become checked after desktop input."}
+  Record 'NSIS native data-retention radio selected on the verified Windows desktop' 'INFO' ([pscustomobject]@{Name=$Name;AutomationId=$control.AutomationId;ProcessId=$control.ProcessId;NativeWindowHandle=$control.Handle.ToInt64();Bounds=$rect;ButtonType=$control.ButtonType;Method='Interactive desktop mouse input; BM_GETCHECK confirmed'})
+  return $control.Element
+}
 function Toggle-Check($Dialog,[string]$Name){$element=Find-Element $Dialog $Name 'ControlType.CheckBox';$pattern=$null;if(-not$element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern,[ref]$pattern)){throw "Checkbox '$Name' has no accessible toggle action."};$before=$pattern.Current.ToggleState;$pattern.Toggle();return $before}
 function Screenshot($Dialog,[string]$Name){$hwnd=$Dialog.Handle;[void][EBR_UPD_NATIVE]::SetForegroundWindow($hwnd);Start-Sleep -Milliseconds 150;$rect=[EBR_UPD_RECT]::new();if(-not[EBR_UPD_NATIVE]::GetWindowRect($hwnd,[ref]$rect)){throw 'Could not read update dialog bounds.'};$w=$rect.Right-$rect.Left;$h=$rect.Bottom-$rect.Top;if($w-lt100-or$h-lt80){throw 'Update dialog has unusable screenshot bounds.'};$bitmap=[Drawing.Bitmap]::new($w,$h);$graphics=[Drawing.Graphics]::FromImage($bitmap);try{$graphics.CopyFromScreen($rect.Left,$rect.Top,0,0,[Drawing.Size]::new($w,$h));$bitmap.Save((Join-Path $EvidenceDirectory $Name),[Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()}}
 function Verify-WindowsSettingsEntry([string]$Version){
@@ -312,8 +345,8 @@ function Run-InteractiveUninstall([bool]$RemoveData){
   $uninstallerPath=Join-Path $installDir 'Uninstall.exe';$p=Start-Process -FilePath $uninstallerPath -PassThru
   $confirm=Find-TestUninstallerDialog 'Eye Break Reminder' $uninstallerPath $p 30
   $uninstallerProcess=Get-TestUninstallerProcess $confirm $uninstallerPath $p.Id;[void](Invoke-TestUninstallerButton $confirm @('Uninstall','Yes','Next >','Next'))
-  $page=Find-TestUninstallerDialog 'Application data' $uninstallerPath $p 30;$pageProcess=Get-TestUninstallerProcess $page $uninstallerPath $p.Id;Assert ($pageProcess.Id-eq$uninstallerProcess.Id) 'application-data page remains in the same NSIS uninstall process';$keep=Find-Element $page 'Keep my settings and history (Recommended)' 'ControlType.RadioButton';$keepPattern=$null;if(-not$keep.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$keepPattern)){throw 'Uninstaller Keep choice is not accessible.'};Assert ($keepPattern.Current.IsSelected) 'interactive uninstall defaults to keeping settings and history'
-  if($RemoveData){[void](Select-Radio $page 'Remove my settings and history')};[void](Invoke-TestUninstallerButton $page @('Uninstall','Next >','Next'));if($uninstallerProcess.WaitForExit(90000)-eq$false){throw 'Interactive NSIS uninstall did not complete.'};$uninstallerProcess.Refresh();Assert ($uninstallerProcess.ExitCode-eq0-and-not(Test-Path -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe'))) 'interactive uninstall after automatic update removes installed files';$uninstallKey=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder' -ErrorAction SilentlyContinue;Assert (-not$uninstallKey) 'interactive uninstall removes the Installed Apps entry'
+  $page=Find-TestUninstallerDialog 'Application data' $uninstallerPath $p 30;$pageProcess=Get-TestUninstallerProcess $page $uninstallerPath $p.Id;Assert ($pageProcess.Id-eq$uninstallerProcess.Id) 'application-data page remains in the same NSIS uninstall process';[void](Get-NsisNativeRadio $page 'Keep my settings and history (Recommended)');Assert (Test-NsisNativeRadioSelected $page 'Keep my settings and history (Recommended)') 'interactive uninstall defaults to keeping settings and history'
+  if($RemoveData){[void](Select-Radio $page 'Remove my settings and history');Assert (Test-NsisNativeRadioSelected $page 'Remove my settings and history') 'explicit interactive Remove choice becomes the selected native radio';Assert (-not(Test-NsisNativeRadioSelected $page 'Keep my settings and history (Recommended)')) 'explicit interactive Remove choice deselects Keep'};[void](Invoke-TestUninstallerButton $page @('Uninstall','Next >','Next'));if($uninstallerProcess.WaitForExit(90000)-eq$false){throw 'Interactive NSIS uninstall did not complete.'};$uninstallerProcess.Refresh();Assert ($uninstallerProcess.ExitCode-eq0-and-not(Test-Path -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe'))) 'interactive uninstall after automatic update removes installed files';$uninstallKey=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder' -ErrorAction SilentlyContinue;Assert (-not$uninstallKey) 'interactive uninstall removes the Installed Apps entry'
   if($RemoveData){Assert (-not(Test-Path -LiteralPath (Join-Path $dataDir 'settings.ini'))-and-not(Test-Path -LiteralPath (Join-Path $dataDir 'history.dat'))) 'explicit interactive Remove choice deletes only settings and history';Assert ((Get-Content -LiteralPath (Join-Path $dataDir 'user-not-owned.txt') -Raw)-eq'unrelated disposable test document') 'interactive data removal leaves unrelated profile files untouched'}else{Assert ((Get-Content -LiteralPath (Join-Path $dataDir 'settings.ini') -Raw)-match'(?m)^workMinutes=37$'-and(Get-Content -LiteralPath (Join-Path $dataDir 'history.dat') -Raw)-eq$script:historyText) 'interactive Keep choice preserves settings and history';Assert (Test-Path -LiteralPath (Join-Path $dataDir 'user-not-owned.txt')) 'interactive Keep choice preserves unrelated files'}
   Remove-ExactTestData;Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue;Record $(if($RemoveData){'Interactive uninstall removes selected user data'}else{'Interactive uninstall keeps user data'}) 'PASS'
 }
