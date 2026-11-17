@@ -129,19 +129,31 @@ function Invoke-TestUninstallerButton($Dialog,[string[]]$Names){
   throw "No enabled native NSIS button matched [$($Names -join ', ')]. Dialog names: $($Dialog.Names -join ' | '). Controls: $(ConvertTo-Json @($controls) -Depth 5 -Compress)"
 }
 function Get-NsisNativeRadio($Dialog,[string]$Name){
+  $nativeCandidates=[Collections.Generic.List[object]]::new()
   foreach($element in $Dialog.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)){
     try{$current=$element.Current}catch{continue}
-    if($current.ProcessId-ne$Dialog.ProcessId-or$current.Name-cne$Name-or$current.ClassName-cne'Button'-or-not$current.IsEnabled){continue}
+    if($current.ProcessId-ne$Dialog.ProcessId-or$current.Name-cne$Name-or$current.ClassName-cne'Button'){continue}
     $handle=[IntPtr]$current.NativeWindowHandle
-    if($handle-eq[IntPtr]::Zero-or-not[EBR_UPD_NATIVE]::IsWindow($handle)-or-not[EBR_UPD_NATIVE]::IsWindowVisible($handle)-or-not[EBR_UPD_NATIVE]::IsWindowEnabled($handle)){continue}
-    $owner=[uint32]0;[void][EBR_UPD_NATIVE]::GetWindowThreadProcessId($handle,[ref]$owner)
-    if($owner-ne[uint32]$Dialog.ProcessId-or[EBR_UPD_NATIVE]::GetParent($handle)-ne$Dialog.Handle){continue}
-    $style=[EBR_UPD_NATIVE]::GetWindowLongW($handle,-16);$buttonType=$style-band0xF
+    $owner=[uint32]0;$isWindow=$false;$isVisible=$false;$isEnabled=$false;$style=0;$buttonType=-1;$parentChain=[Collections.Generic.List[object]]::new();$descendsFromDialog=$false
+    if($handle-ne[IntPtr]::Zero){
+      $isWindow=[EBR_UPD_NATIVE]::IsWindow($handle);$isVisible=[EBR_UPD_NATIVE]::IsWindowVisible($handle);$isEnabled=[EBR_UPD_NATIVE]::IsWindowEnabled($handle);[void][EBR_UPD_NATIVE]::GetWindowThreadProcessId($handle,[ref]$owner);$style=[EBR_UPD_NATIVE]::GetWindowLongW($handle,-16);$buttonType=$style-band0xF
+      $ancestor=[EBR_UPD_NATIVE]::GetParent($handle)
+      for($depth=0;$depth-lt16-and$ancestor-ne[IntPtr]::Zero;$depth++){
+        $ancestorPid=[uint32]0;[void][EBR_UPD_NATIVE]::GetWindowThreadProcessId($ancestor,[ref]$ancestorPid)
+        $parentChain.Add([pscustomobject]@{Handle=$ancestor.ToInt64();ProcessId=$ancestorPid;ClassName=[EBR_UPD_NATIVE]::ClassName($ancestor)})
+        if($ancestor-eq$Dialog.Handle){$descendsFromDialog=($ancestorPid-eq[uint32]$Dialog.ProcessId);break}
+        if($ancestorPid-ne[uint32]$Dialog.ProcessId){break}
+        $ancestor=[EBR_UPD_NATIVE]::GetParent($ancestor)
+      }
+    }
+    $nativeCandidates.Add([pscustomobject]@{Name=$current.Name;AutomationId=$current.AutomationId;ProcessId=$current.ProcessId;NativeWindowHandle=$handle.ToInt64();OwnerProcessId=$owner;Enabled=$current.IsEnabled;IsWindow=$isWindow;IsVisible=$isVisible;IsEnabled=$isEnabled;Style=$style;ButtonType=$buttonType;DescendsFromVerifiedDialog=$descendsFromDialog;ParentChain=@($parentChain)})
+    if($handle-eq[IntPtr]::Zero-or-not$current.IsEnabled-or-not$isWindow-or-not$isVisible-or-not$isEnabled-or$owner-ne[uint32]$Dialog.ProcessId-or-not$descendsFromDialog){continue}
     if($buttonType-notin@(4,9)){continue}
-    return [pscustomobject]@{Element=$element;Handle=$handle;Name=$current.Name;AutomationId=$current.AutomationId;ProcessId=$current.ProcessId;Style=$style;ButtonType=$buttonType}
+    return [pscustomobject]@{Element=$element;Handle=$handle;Name=$current.Name;AutomationId=$current.AutomationId;ProcessId=$current.ProcessId;Style=$style;ButtonType=$buttonType;ParentChain=@($parentChain)}
   }
   $diagnostics=ConvertTo-Json -InputObject (Get-ElementDiagnostics $Dialog $Name) -Depth 5 -Compress
-  throw "Verified NSIS radio '$Name' was not found as an enabled native radio button owned by the isolated uninstaller dialog. Matches: $diagnostics"
+  $nativeDiagnostics=ConvertTo-Json -InputObject @($nativeCandidates) -Depth 6 -Compress
+  throw "Verified NSIS radio '$Name' was not found as an enabled native radio button owned by the isolated uninstaller dialog. UIA matches: $diagnostics. Native candidates: $nativeDiagnostics"
 }
 function Test-NsisNativeRadioSelected($Dialog,[string]$Name){$control=Get-NsisNativeRadio $Dialog $Name;return ([EBR_UPD_NATIVE]::SendMessageW($control.Handle,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()-eq1)}
 function Select-Radio($Dialog,[string]$Name){
@@ -158,7 +170,7 @@ function Select-Radio($Dialog,[string]$Name){
   if(-not[EBR_UPD_NATIVE]::SetCursorPos($x,$y)){throw "Could not place the pointer over the verified NSIS radio '$Name'."}
   [EBR_UPD_NATIVE]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 60;[EBR_UPD_NATIVE]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 100
   if(-not(Test-NsisNativeRadioSelected $Dialog $Name)){throw "The native NSIS radio '$Name' did not become checked after desktop input."}
-  Record 'NSIS native data-retention radio selected on the verified Windows desktop' 'INFO' ([pscustomobject]@{Name=$Name;AutomationId=$control.AutomationId;ProcessId=$control.ProcessId;NativeWindowHandle=$control.Handle.ToInt64();Bounds=$rect;ButtonType=$control.ButtonType;Method='Interactive desktop mouse input; BM_GETCHECK confirmed'})
+  Record 'NSIS native data-retention radio selected on the verified Windows desktop' 'INFO' ([pscustomobject]@{Name=$Name;AutomationId=$control.AutomationId;ProcessId=$control.ProcessId;NativeWindowHandle=$control.Handle.ToInt64();Bounds=$rect;ButtonType=$control.ButtonType;ParentChain=$control.ParentChain;Method='Interactive desktop mouse input; BM_GETCHECK confirmed'})
   return $control.Element
 }
 function Toggle-Check($Dialog,[string]$Name){$element=Find-Element $Dialog $Name 'ControlType.CheckBox';$pattern=$null;if(-not$element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern,[ref]$pattern)){throw "Checkbox '$Name' has no accessible toggle action."};$before=$pattern.Current.ToggleState;$pattern.Toggle();return $before}
