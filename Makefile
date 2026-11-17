@@ -6,7 +6,7 @@ PYTHON ?= python3
 STRIP ?= x86_64-w64-mingw32-strip
 UPDATER_SMOKE_ARGS ?=
 FLAGS = -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -municode -mwindows -static -static-libgcc -static-libstdc++ -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE
-LIBS = -lcomctl32 -lcomdlg32 -ldwmapi -lwtsapi32 -lwinmm -lgdiplus -lshell32 -lole32 -luuid -ladvapi32 -luxtheme -lwinhttp -lversion -lbcrypt
+LIBS = -lcomctl32 -lcomdlg32 -ldwmapi -lwtsapi32 -lwinmm -lgdiplus -lshell32 -lole32 -loleaut32 -luuid -ladvapi32 -luxtheme -luiautomationcore -lwinhttp -lversion -lbcrypt
 .PHONY: all test package gui-test updater-windows-test updater-test-artifacts github-updater-smoke clean
 all: test release/EyeBreakReminder.exe
 release:
@@ -15,12 +15,12 @@ build:
 	mkdir -p build
 release/resources.o: src/resources.rc src/app.manifest $(wildcard assets/*.ico assets/*.wav) | release
 	$(WINDRES) src/resources.rc -O coff -o $@
-release/EyeBreakReminder.exe: src/app.cpp src/core.hpp src/theme.hpp src/update_checker.hpp src/update_client.hpp src/update_coordinator.hpp src/windows_services.hpp release/resources.o
+release/EyeBreakReminder.exe: src/app.cpp src/core.hpp src/theme.hpp src/update_checker.hpp src/update_client.hpp src/update_coordinator.hpp src/update_accessibility.hpp src/windows_services.hpp release/resources.o
 	$(CROSS_CXX) $(FLAGS) src/app.cpp release/resources.o -o $@ $(LIBS) -Wl,--dynamicbase,--nxcompat,--high-entropy-va
 	$(STRIP) $@
 build/gui-test: | build
 	mkdir -p $@
-build/gui-test/EyeBreakReminder.exe: src/app.cpp src/core.hpp src/theme.hpp src/update_checker.hpp src/update_client.hpp src/update_coordinator.hpp src/windows_services.hpp release/resources.o | build/gui-test
+build/gui-test/EyeBreakReminder.exe: src/app.cpp src/core.hpp src/theme.hpp src/update_checker.hpp src/update_client.hpp src/update_coordinator.hpp src/update_accessibility.hpp src/windows_services.hpp release/resources.o | build/gui-test
 	$(CROSS_CXX) $(FLAGS) -DEYEBREAK_TEST_BUILD src/app.cpp release/resources.o -o $@ $(LIBS) -Wl,--dynamicbase,--nxcompat,--high-entropy-va
 	$(STRIP) $@
 gui-test: build/gui-test/EyeBreakReminder.exe
