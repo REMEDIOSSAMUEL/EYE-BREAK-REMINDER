@@ -417,7 +417,7 @@ function Get-StaticHandle([string]$Text,[string]$Name) {
 }
 function Initialize-UpdateHandles {
   if($script:updateStatusHandle -ne [IntPtr]::Zero){return}
-  $script:updateStatusHandle=Get-StaticHandle 'Select Check for Updates to query the official public GitHub Releases API.' 'Initial update status'
+  $script:updateStatusHandle=Get-StaticHandle 'Check for Updates queries the official public GitHub Releases API.' 'Initial update status'
   $script:updateLatestHandle=Get-StaticHandle 'Latest stable version: not checked' 'Initial latest version'
   $script:updateInstalledHandle=Get-StaticHandle ("Installed version: $version") 'Installed version'
 }

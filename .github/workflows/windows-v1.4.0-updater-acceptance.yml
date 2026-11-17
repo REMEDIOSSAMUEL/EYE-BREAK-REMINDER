@@ -161,7 +161,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & .\tests\windows_v1_4_updater_acceptance.ps1 `
             -BaselineInstaller '.\build\gui-test\baseline-test-setup.exe' `
-            -BaselineExecutable '.\build\gui-test\EyeBreakReminder.exe' `
+            -BaselineExecutable '.\build\gui-test\baseline-test-executable.exe' `
             -UpdateInstaller '.\build\gui-test\update-test-setup.exe' `
             -UpdateExecutable '.\build\gui-test\update-test-executable.exe' `
             -FailingInstaller '.\build\gui-test\failing-test-setup.exe' `

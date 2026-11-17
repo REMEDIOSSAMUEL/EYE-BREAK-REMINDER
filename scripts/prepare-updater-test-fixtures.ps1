@@ -18,7 +18,9 @@ try{
   [void][IO.Directory]::CreateDirectory((Join-Path $root 'build/v1.4.0-updater-evidence'))
   foreach($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe')){$source=Join-Path $release $name;if(-not(Test-Path -LiteralPath $source -PathType Leaf)){throw "Packaged candidate is missing: $source"};$destination=if($name-eq'EyeBreakReminder.exe'){$originalExe}else{$originalSetup};Copy-Item -LiteralPath $source -Destination $destination}
   Invoke-Make 'gui-test'
-  Copy-Item -LiteralPath (Join-Path $build 'EyeBreakReminder.exe') -Destination (Join-Path $release 'EyeBreakReminder.exe') -Force
+  $baselineTestExecutable=Join-Path $build 'baseline-test-executable.exe'
+  Copy-Item -LiteralPath (Join-Path $build 'EyeBreakReminder.exe') -Destination $baselineTestExecutable -Force
+  Copy-Item -LiteralPath $baselineTestExecutable -Destination (Join-Path $release 'EyeBreakReminder.exe') -Force
   & $NsisCompiler -NOCD (Join-Path $root 'installer/setup.nsi');if($LASTEXITCODE-ne0){throw 'NSIS failed to create the disposable 1.4.0 baseline test installer.'}
   Copy-Item -LiteralPath (Join-Path $release 'EyeBreakReminder-Setup-x64.exe') -Destination (Join-Path $build 'baseline-test-setup.exe') -Force
   Set-SourceVersion '1.4.1'
@@ -37,6 +39,6 @@ try{
   & python (Join-Path $root 'scripts/verify.py');if($LASTEXITCODE-ne0){throw 'Release package verification failed after restoring the exact candidate files.'}
   $resolvedTemp=[IO.Path]::GetFullPath($temp);$runnerPrefix=$runnerTemp.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar;if(-not$resolvedTemp.StartsWith($runnerPrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Refusing to clean a fixture folder outside RUNNER_TEMP.'};Remove-Item -LiteralPath $resolvedTemp -Recurse -Force
 }
-$identities=foreach($name in @('baseline-test-setup.exe','EyeBreakReminder.exe','update-test-setup.exe','update-test-executable.exe','failing-test-setup.exe')){$path=Join-Path $build $name;if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Prepared updater fixture is missing: $name"};$item=Get-Item -LiteralPath $path;[pscustomobject]@{Name=$name;Bytes=$item.Length;SHA256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant();ProductVersion=$item.VersionInfo.ProductVersion}}
+$identities=foreach($name in @('baseline-test-setup.exe','baseline-test-executable.exe','EyeBreakReminder.exe','update-test-setup.exe','update-test-executable.exe','failing-test-setup.exe')){$path=Join-Path $build $name;if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Prepared updater fixture is missing: $name"};$item=Get-Item -LiteralPath $path;[pscustomobject]@{Name=$name;Bytes=$item.Length;SHA256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant();ProductVersion=$item.VersionInfo.ProductVersion}}
 $identities|ConvertTo-Json -Depth 4|Set-Content -LiteralPath (Join-Path $root 'build/v1.4.0-updater-evidence/updater-fixture-identities.json') -Encoding UTF8
 Write-Output ($identities|Format-Table -AutoSize|Out-String)
