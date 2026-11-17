@@ -14,7 +14,7 @@
 
 namespace eye::update_accessibility {
 
-enum class Kind { Button, Radio, CheckBox, Text, Progress };
+enum class Kind { Button, Radio, CheckBox, Text, Progress, ProgressActivity };
 
 inline HMODULE automationCoreModule() {
     static HMODULE module = LoadLibraryExW(L"uiautomationcore.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -109,6 +109,7 @@ public:
                 case Kind::CheckBox: value->lVal = UIA_CheckBoxControlTypeId; break;
                 case Kind::Text: value->lVal = UIA_TextControlTypeId; break;
                 case Kind::Progress: value->lVal = UIA_ProgressBarControlTypeId; break;
+                case Kind::ProgressActivity: value->lVal = UIA_ProgressBarControlTypeId; break;
             }
         } else if (property == UIA_NamePropertyId) {
             const int count = GetWindowTextLengthW(window_);
@@ -295,6 +296,10 @@ inline bool attachButton(HWND window) {
         case BS_DEFPUSHBUTTON: return attach(window, Kind::Button, true);
         default: return false;
     }
+}
+
+inline bool attachActivityProgress(HWND window) {
+    return attach(window, Kind::ProgressActivity);
 }
 
 } // namespace eye::update_accessibility
