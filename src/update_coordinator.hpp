@@ -141,7 +141,18 @@ inline bool backupInstalledFiles(Transaction&t){if(t.kind!="installed")return tr
 inline bool restoreInstalledFiles(const Transaction&t){if(t.kind!="installed")return true;const wchar_t*names[]={L"Uninstall.exe",L"README.md",L"PRIVACY.md",L"VERIFICATION.md"};for(unsigned i=0;i<4;++i){const std::wstring target=parentPath(t.targetExecutable)+L"\\"+names[i];if(t.ownedFileMask&(1u<<i)){const std::wstring backup=t.stagingDirectory+L"\\previous-owned-"+std::to_wstring(i)+L".dat";if(!safeFile(backup)||!copyAtomic(backup,target))return false;}else{DWORD attr=GetFileAttributesW(target.c_str());if(attr!=INVALID_FILE_ATTRIBUTES){if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!DeleteFileW(target.c_str()))return false;}else if(GetLastError()!=ERROR_FILE_NOT_FOUND)return false;}}return true;}
 inline bool restoreData(const Transaction&t,bool restoringClean){const wchar_t*names[]={L"settings.ini",L"timer.dat",L"history.dat"};for(unsigned i=0;i<3;++i){const bool affected=restoringClean&&(i<2||t.deleteHistory);if(!affected&&!(t.backupMask&(1u<<i)))continue;const std::wstring target=t.dataDirectory+L"\\"+names[i],backup=t.stagingDirectory+L"\\backup-"+std::to_wstring(i)+L".dat";if(t.backupMask&(1u<<i)){if(!safeFile(backup,32ull*1024*1024)||!copyAtomic(backup,target))return false;}else if(affected){DWORD attr=GetFileAttributesW(target.c_str());if(attr!=INVALID_FILE_ATTRIBUTES){if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!DeleteFileW(target.c_str()))return false;}else if(GetLastError()!=ERROR_FILE_NOT_FOUND)return false;}}return true;}
 inline bool applyCleanPolicy(const Transaction&t){const wchar_t*names[]={L"settings.ini",L"timer.dat",L"history.dat"};for(int i=0;i<3;++i){if(i==2&&!t.deleteHistory)continue;const std::wstring path=t.dataDirectory+L"\\"+names[i];DWORD attr=GetFileAttributesW(path.c_str());if(attr==INVALID_FILE_ATTRIBUTES&&GetLastError()==ERROR_FILE_NOT_FOUND)continue;if(attr==INVALID_FILE_ATTRIBUTES||(attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!DeleteFileW(path.c_str()))return false;}return true;}
-inline bool startPrevious(const Transaction&t){if(productVersion(t.targetExecutable)!=t.previousVersion)return false;const std::wstring args=L"--update-cleanup "+quoteArgument(t.stagingDirectory)+L" "+std::to_wstring(GetCurrentProcessId());PROCESS_INFORMATION pi{};if(!launchProcess(t.targetExecutable,args,pi))return false;CloseHandle(pi.hThread);const DWORD pid=pi.dwProcessId;bool started=false;for(int i=0;i<150;++i){if(WaitForSingleObject(pi.hProcess,0)==WAIT_OBJECT_0)break;HWND window=FindWindowW(L"EyeBreakReminder.Native",nullptr);DWORD found=0;if(window)GetWindowThreadProcessId(window,&found);if(found==pid){started=true;break;}Sleep(100);}CloseHandle(pi.hProcess);return started;}
+inline bool targetApplicationRunning(const Transaction&t,DWORD expectedPid=0){HWND window=FindWindowW(L"EyeBreakReminder.Native",nullptr);if(!window)return false;DWORD pid=0;GetWindowThreadProcessId(window,&pid);if(!pid||(expectedPid&&pid!=expectedPid))return false;HANDLE process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!process)return false;wchar_t path[32768]{};DWORD length=DWORD(std::size(path));const bool same=QueryFullProcessImageNameW(process,0,path,&length)&&samePath(path,t.targetExecutable);CloseHandle(process);return same;}
+inline bool startPrevious(const Transaction&t){
+    if(productVersion(t.targetExecutable)!=t.previousVersion)return false;
+    if(targetApplicationRunning(t))return true;
+    const std::wstring eventName=L"Local\\EyeBreakReminder.UpdateConfirm."+t.nonce;HANDLE confirmed=CreateEventW(nullptr,TRUE,FALSE,eventName.c_str());if(!confirmed)return false;const DWORD eventError=GetLastError();if(eventError==ERROR_ALREADY_EXISTS){CloseHandle(confirmed);return false;}
+    const std::wstring args=L"--update-confirm "+quoteArgument(t.nonce)+L" --update-cleanup "+quoteArgument(t.stagingDirectory)+L" "+std::to_wstring(GetCurrentProcessId());PROCESS_INFORMATION pi{};
+    if(!launchProcess(t.targetExecutable,args,pi)){CloseHandle(confirmed);return false;}
+    CloseHandle(pi.hThread);const DWORD wait=WaitForSingleObject(confirmed,confirmationWaitMilliseconds());CloseHandle(confirmed);
+    const bool alive=wait==WAIT_OBJECT_0&&WaitForSingleObject(pi.hProcess,2000)==WAIT_TIMEOUT&&targetApplicationRunning(t,pi.dwProcessId);
+    if(!alive){HWND window=FindWindowW(L"EyeBreakReminder.Native",nullptr);DWORD owner=0;if(window)GetWindowThreadProcessId(window,&owner);if(window&&owner==pi.dwProcessId){const UINT quit=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");DWORD_PTR ignored=0;SendMessageTimeoutW(window,quit,0,0,SMTO_ABORTIFHUNG,5000,&ignored);}WaitForSingleObject(pi.hProcess,10000);}
+    CloseHandle(pi.hProcess);return alive;
+}
 inline bool stopRunningApplication(){HWND window=FindWindowW(L"EyeBreakReminder.Native",nullptr);if(!window)return true;DWORD pid=0;GetWindowThreadProcessId(window,&pid);if(!pid||pid==GetCurrentProcessId())return false;HANDLE process=OpenProcess(SYNCHRONIZE,FALSE,pid);if(!process)return GetLastError()==ERROR_INVALID_PARAMETER;const UINT quit=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");DWORD_PTR ignored=0;SendMessageTimeoutW(window,quit,0,0,SMTO_ABORTIFHUNG,5000,&ignored);const DWORD wait=WaitForSingleObject(process,60000);CloseHandle(process);return wait==WAIT_OBJECT_0;}
 inline bool restorePreviousVersion(const Transaction&t){
     const std::wstring backup=t.stagingDirectory+L"\\previous.exe";std::string digest;
@@ -154,15 +165,20 @@ inline bool restorePreviousVersion(const Transaction&t){
     const bool startupRestored=versionRestored&&(!t.clean||setStartupRegistration(t,t.previousStartup));
     if(!startupRestored)return false;
     if(!writeJournal(t,L"recovered"))return false;
-    if(!setRecoveryRegistration(t,false))return false;
-    return startPrevious(t);
+    if(!startPrevious(t))return false;
+    return setRecoveryRegistration(t,false);
 }
 inline int runRecovery(const std::wstring&transactionPath){
     Transaction t;if(!readTransaction(transactionPath,t)){MessageBoxW(nullptr,L"The saved update recovery record is invalid. No files were changed; keep the recovery folder for manual review.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 2;}
     std::string error;if(!validateTransaction(t,transactionPath,t.stagingDirectory+L"\\coordinator.exe",error,true)){MessageBoxW(nullptr,eye::win::wide(error).c_str(),L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 2;}
     const std::wstring phase=journalPhase(t);
-    if(phase==L"complete"||phase==L"recovered"){setRecoveryRegistration(t,false);return 0;}
-    if(phase==L"verified"){setRecoveryRegistration(t,false);return 0;}
+    if(phase==L"complete"){setRecoveryRegistration(t,false);return 0;}
+    if(phase==L"recovered"||phase==L"verified"){
+        HANDLE single{};if(!acquireCoordinatorMutex(single))return 3;
+        const bool registered=setRecoveryRegistration(t,true);const bool started=registered&&startPrevious(t);const bool cleared=started&&setRecoveryRegistration(t,false);CloseHandle(single);
+        if(cleared)return 0;
+        setRecoveryRegistration(t,true);MessageBoxW(nullptr,L"Eye Break Reminder restored the previous files but could not confirm that the application started. The recovery record remains available; close any error dialog and run the saved recovery command again, or contact support with the recovery folder contents.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 1;
+    }
     if(phase!=L"installing"&&phase!=L"installed"&&phase!=L"cleaning"&&phase!=L"starting")return 2;
     HANDLE single{};if(!acquireCoordinatorMutex(single))return 3;
     const bool restored=restorePreviousVersion(t);CloseHandle(single);
