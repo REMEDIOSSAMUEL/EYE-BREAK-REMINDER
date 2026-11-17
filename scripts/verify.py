@@ -70,7 +70,7 @@ require(app.subsystem==2,'Application must use Windows GUI subsystem')
 require(app.flags&0x160==0x160,'ASLR, NX and high-entropy VA flags')
 require(app.directory(4)==(0,0),'Expected unsigned release')
 imports=app.imports()
-allowed={'advapi32.dll','bcrypt.dll','comctl32.dll','comdlg32.dll','dwmapi.dll','gdi32.dll','gdiplus.dll','kernel32.dll','msvcrt.dll','ole32.dll','shell32.dll','user32.dll','wtsapi32.dll','winmm.dll','uxtheme.dll','winhttp.dll','version.dll'}
+allowed={'advapi32.dll','bcrypt.dll','comctl32.dll','comdlg32.dll','dwmapi.dll','gdi32.dll','gdiplus.dll','kernel32.dll','msvcrt.dll','ole32.dll','oleaut32.dll','shell32.dll','user32.dll','wtsapi32.dll','winmm.dll','uxtheme.dll','winhttp.dll','version.dll'}
 require(all(d.lower() in allowed or d.lower().startswith(('api-ms-win-','ext-ms-win-')) for d in imports),'Only built-in Windows DLLs and OS API-set contracts')
 require('comdlg32.dll' in {d.lower() for d in imports},'Native Windows common-dialog library is linked for ChooseColorW')
 require(not any('libgcc' in d.lower() or 'libstdc++' in d.lower() for d in imports),'No external GCC/C++ runtime DLLs')
