@@ -47,7 +47,7 @@ struct Colors {
 };
 struct UpdateDispatch {std::mutex mutex;HWND target{};bool alive=true;};
 struct UpdateMessage {updates::CheckResult result;updates::ReleaseDetails release;bool automatic=false;};
-struct DownloadDialogState {std::atomic_bool cancelled{false},done{false};mutable std::mutex mutex;updates::DownloadProgress progress;updates::DownloadResult result;std::wstring phase=L"Downloading";bool install=false;};
+struct DownloadDialogState {std::atomic_bool cancelled{false},done{false};mutable std::mutex mutex;updates::DownloadProgress progress;updates::DownloadResult result;std::wstring phase=L"Downloading";};
 struct UpdateChoiceResult {bool install=false,clean=false,deferred=false;};
 class Application;
 enum class UpdateModalKind {Choice,CleanInstall,Download};
@@ -450,7 +450,7 @@ public:
      SetTimer(hwnd,UPDATE_MODAL_BREAK_TIMER,250,nullptr);return 0;}
    case WM_SIZE:layoutModal(*state);return 0;
     case WM_DPICHANGED:{state->dpi=HIWORD(w);modalCreateFonts(*state);for(HWND child:{state->heading,state->body,state->options,state->preserve,state->clean,state->notesLabel,state->notesText,state->deleteHistory,state->primary,state->secondary,state->notesButton,state->progressBar})if(child)SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(child==state->heading?state->headingFont:state->normalFont),TRUE);auto*r=reinterpret_cast<RECT*>(l);SetWindowPos(hwnd,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER|SWP_NOACTIVATE);layoutModal(*state);return 0;}
-    case WM_TIMER:if(w==UPDATE_MODAL_BREAK_TIMER){const bool breaking=state->owner->engine&&state->owner->engine->snapshot().phase==Phase::Break;if(state->kind!=UpdateModalKind::Download&&breaking){state->deferred=true;finishModal(*state,IDCANCEL);return 0;}if(state->kind==UpdateModalKind::Download&&state->download){if(breaking&&!state->breakHidden){state->breakHidden=true;ShowWindow(hwnd,SW_HIDE);}else if(!breaking&&state->breakHidden){state->breakHidden=false;ShowWindow(hwnd,SW_SHOWNORMAL);SetForegroundWindow(hwnd);}updates::DownloadProgress p;bool done=false,ok=false;{std::lock_guard<std::mutex>lock(state->download->mutex);p=state->download->progress;done=state->download->done.load();ok=state->download->result.ok;}if(p.total){SendMessageW(state->progressBar,PBM_SETMARQUEE,FALSE,0);SendMessageW(state->progressBar,PBM_SETPOS,WPARAM(std::min<std::uint64_t>(1000,p.received*1000/p.total)),0);}else if(!done)SendMessageW(state->progressBar,PBM_SETMARQUEE,TRUE,50);else{SendMessageW(state->progressBar,PBM_SETMARQUEE,FALSE,0);SendMessageW(state->progressBar,PBM_SETPOS,0,0);}auto status=progressText(*state->download);SetWindowTextW(state->body,status.c_str());if(done)EnableWindow(state->primary,ok);else if(state->download->cancelled.load())EnableWindow(state->secondary,FALSE);}return 0;}return 0;
+    case WM_TIMER:if(w==UPDATE_MODAL_BREAK_TIMER){const bool breaking=state->owner->engine&&state->owner->engine->snapshot().phase==Phase::Break;if(state->kind!=UpdateModalKind::Download&&breaking){state->deferred=true;finishModal(*state,IDCANCEL);return 0;}if(state->kind==UpdateModalKind::Download&&state->download){if(breaking&&!state->breakHidden){state->breakHidden=true;ShowWindow(hwnd,SW_HIDE);}else if(!breaking&&state->breakHidden){state->breakHidden=false;ShowWindow(hwnd,SW_SHOWNORMAL);SetForegroundWindow(hwnd);}updates::DownloadProgress p;bool done=false,ok=false;{std::lock_guard<std::mutex>lock(state->download->mutex);p=state->download->progress;done=state->download->done.load();ok=state->download->result.ok;}if(p.total){SendMessageW(state->progressBar,PBM_SETMARQUEE,FALSE,0);SendMessageW(state->progressBar,PBM_SETPOS,WPARAM(std::min<std::uint64_t>(1000,p.received*1000/p.total)),0);}else if(!done)SendMessageW(state->progressBar,PBM_SETMARQUEE,TRUE,50);else{SendMessageW(state->progressBar,PBM_SETMARQUEE,FALSE,0);SendMessageW(state->progressBar,PBM_SETPOS,0,0);}auto status=progressText(*state->download);SetWindowTextW(state->body,status.c_str());if(done){EnableWindow(state->primary,ok);EnableWindow(state->secondary,TRUE);}else if(state->download->cancelled.load())EnableWindow(state->secondary,FALSE);}return 0;}return 0;
    case WM_NOTIFY:return state->owner->drawButton(reinterpret_cast<NMHDR*>(l));
    case WM_ERASEBKGND:{RECT r{};GetClientRect(hwnd,&r);FillRect(reinterpret_cast<HDC>(w),&r,state->owner->backgroundBrush);return 1;}
    case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return state->owner->color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:return state->owner->color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);
@@ -494,9 +494,9 @@ public:
     state.releaseNotes=releaseNotes(release.notes);state.releaseUrl=wide(release.releaseUrl);state.primaryText=ready?L"Install Update":L"Download & Install";
     if(!runUpdateModal(state)){
      if(state.deferred)return{false,false,true};
-     if(state.result==UPDATE_LATER_BUTTON)dismissedUpdateVersion=release.tag;
      return{};
     }
+    if(state.result==UPDATE_LATER_BUTTON){dismissedUpdateVersion=release.tag;return{};}
     return{state.install,state.cleanInstall,false};
    }
    bool confirmCleanInstall(bool&deleteHistory,bool&deferred){
@@ -523,7 +523,7 @@ public:
      if(!fixturePath.empty())result=updates::downloadVerifiedFixture(asset,fixturePath,stage,path.substr(path.find_last_of(L"\\")+1),state.cancelled,[&state](updates::DownloadProgress p){std::lock_guard<std::mutex>lock(state.mutex);state.progress=p;state.phase=p.verifying?L"Verifying":L"Downloading";});else
 #endif
      result=updates::downloadVerified(asset,stage,path.substr(path.find_last_of(L"\\")+1),state.cancelled,[&state](updates::DownloadProgress p){std::lock_guard<std::mutex>lock(state.mutex);state.progress=p;state.phase=p.verifying?L"Verifying":L"Downloading";});}catch(...){result.error="The update download could not be completed.";}{std::lock_guard<std::mutex>lock(state.mutex);state.result=std::move(result);state.phase=state.result.ok?L"Ready to install":state.result.cancelled?L"Cancelled":L"Failed";state.done=true;}});worker=std::move(task);}catch(...){error(L"Windows could not start the update download.");return false;}
-    UpdateModalState dialog;dialog.owner=this;dialog.kind=UpdateModalKind::Download;dialog.download=&state;dialog.headingText=L"Downloading Eye Break Reminder";dialog.bodyText=L"Starting secure download…";const bool shown=runUpdateModal(dialog);if(!shown&&!state.done.load())state.cancelled=true;if(worker.joinable())worker.join();return shown&&dialog.result==UPDATE_INSTALL_BUTTON&&state.result.ok&&state.install;
+    UpdateModalState dialog;dialog.owner=this;dialog.kind=UpdateModalKind::Download;dialog.download=&state;dialog.headingText=L"Downloading Eye Break Reminder";dialog.bodyText=L"Starting secure download…";const bool shown=runUpdateModal(dialog);if(!shown&&!state.done.load())state.cancelled=true;if(worker.joinable())worker.join();return shown&&dialog.install&&dialog.result==UPDATE_INSTALL_BUTTON&&state.result.ok;
   }
   bool launchUpdateCoordinator(const updates::ReleaseDetails&release,const updates::SelectedAsset&asset,const updates::SelectedAsset&applicationAsset,const std::wstring&stage,const std::wstring&artifact,bool clean,bool deleteHistory){
    if(engine->snapshot().phase==Phase::Break){inform(main,L"Finish your active break first",L"Eye Break Reminder will not close during an active eye break. You can install this verified update after the break.",colors.dark,colors.systemContrast);return false;}
