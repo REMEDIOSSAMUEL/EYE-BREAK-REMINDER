@@ -19,7 +19,7 @@ constexpr wchar_t CLASS[]=L"EyeBreakReminder.Native";
 constexpr wchar_t BREAK_CLASS[]=L"EyeBreakReminder.Break";
 constexpr wchar_t TRAY_MENU_CLASS[]=L"EyeBreakReminder.TrayMenu";
 constexpr UINT TRAY_MESSAGE=WM_APP+1, ENGINE_MESSAGE=WM_APP+2, PREVIEW_REFRESH=WM_APP+5, RESIZE_REFRESH=WM_APP+6;
-constexpr UINT UPDATE_RESULT=WM_APP+7;
+constexpr UINT UPDATE_RESULT=WM_APP+7, DEFERRED_UPDATE=WM_APP+8;
 constexpr int NAV_TIMER=10,NAV_HISTORY=11,NAV_SETTINGS=12,PAUSE=20,RESET=21,TAKE_BREAK=22,COMPLETE=23,SKIP=24,SNOOZE1=25,SNOOZE3=26,SNOOZE5=27;
 constexpr int COUNTDOWN=40,TIMER_STATE=41,COUNT_CAPTION=42,BREAK_TITLE=43,BREAK_INSTRUCTION=44,BREAK_GUIDANCE=45,HISTORY_TOGGLE=30,CLEAR_HISTORY=31,ALARM_TOGGLE=32,WORK=100,BREAK_SECONDS=101,SOUND=102,VOLUME=103,MODE=104,MONITOR=105,THEME=106,REPEAT=107,NOTIFY=108,SNOOZE=109,AUTO_START=110,STARTUP=111,TRAY=112,RESTORE=113,PAUSE_LOCK=114,SELECT_MONITOR=115,PREVIEW=116,STOP_AUDIO=117,RESET_SETTINGS=118,VOLUME_VALUE=119;
 constexpr int SCHEDULE_TOGGLE=120,PRESET_WEEKDAYS=121,PRESET_EVERYDAY=122,SCHEDULE_STATUS=123,BREAK_COLORS=124;
@@ -562,6 +562,13 @@ public:
    setUpdateLabel(UPDATE_STATUS,L"Ready to install. The current application will close and restart automatically.");
    if(!launchUpdateCoordinator(message.release,selected,applicationAsset,stage,artifact,choice.clean,deleteHistory)){cleanupStage(stage);return;}
   }
+  void dispatchDeferredAutomaticUpdate(){
+   if(!deferredAutomaticUpdate||!engine||engine->snapshot().phase==Phase::Break)return;
+   UpdateMessage deferred=std::move(*deferredAutomaticUpdate);deferredAutomaticUpdate.reset();handleAvailableUpdate(deferred);
+  }
+  void queueDeferredAutomaticUpdate(){
+   if(deferredAutomaticUpdate&&engine&&engine->snapshot().phase!=Phase::Break&&main&&!quitting)PostMessageW(main,DEFERRED_UPDATE,0,0);
+  }
   void applyUpdateResult(UpdateMessage message){
    updateCheckActive=false;EnableWindow(find(UPDATE_CHECK),TRUE);SetWindowTextW(find(UPDATE_CHECK),L"Check for Updates");
    const auto&result=message.result;updateReleaseUrl.clear();
@@ -1037,7 +1044,7 @@ public:
   if(snap.phase!=Phase::Break)dismissBreak();
   // Operating hours closed during a break the user started: it may finish, but no alarm, notification or snooze outside hours.
   else if(snap.held){if(audio->playing&&!audio->preview)audio->stop();clearNotification();if(breakWindow)for(int id:{SNOOZE1,SNOOZE3,SNOOZE5})if(HWND b=GetDlgItem(breakWindow,id))EnableWindow(b,FALSE);}
-  updateScheduleStatus();SetWindowTextW(find(PAUSE),engine->snapshot().paused?L"Resume":L"Pause");schedule();saveTimer();updateTray();updateRenderTimer();InvalidateRect(main,nullptr,TRUE);if(breakWindow){SetWindowTextW(GetDlgItem(breakWindow,BREAK_GUIDANCE),engine->snapshot().paused?L"Break paused. Resume from the main window.":L"Keep looking into the distance.");InvalidateRect(breakWindow,nullptr,TRUE);}}
+  updateScheduleStatus();SetWindowTextW(find(PAUSE),engine->snapshot().paused?L"Resume":L"Pause");schedule();saveTimer();updateTray();updateRenderTimer();InvalidateRect(main,nullptr,TRUE);if(breakWindow){SetWindowTextW(GetDlgItem(breakWindow,BREAK_GUIDANCE),engine->snapshot().paused?L"Break paused. Resume from the main window.":L"Keep looking into the distance.");InvalidateRect(breakWindow,nullptr,TRUE);}queueDeferredAutomaticUpdate();}
  // Outside operating hours the only break is one the user asked for: the engine sends it without the alarm and it is not notified.
  void breakDue(std::uint64_t cycle,bool alarm){if(locked||sleeping||engine->isSuspended())return;if(alarm&&!audio->play(settings))error(L"The alarm couldn't play. Check your Windows audio output.");if((hidden||IsIconic(main))&&!engine->snapshot().held)notify(cycle);showBreak();}
  // The completion alarm reuses the selected sound, volume and mute setting. It is asynchronous (waveOut) and keyed to the
@@ -1139,7 +1146,8 @@ public:
    case WM_COMMAND:a.command(LOWORD(w),HIWORD(w));return 0;
    case WM_TIMER:if(w==RENDER)a.refreshTimerDisplay();else if(w==CHECKPOINT){a.saveTimer();if(a.dirtySettings)a.saveSettings();}else if(w==SCROLL)a.stepScroll();return 0;
    case UPDATE_RESULT:{std::unique_ptr<UpdateMessage> result(reinterpret_cast<UpdateMessage*>(l));if(result)a.applyUpdateResult(std::move(*result));return 0;}
-    case ENGINE_MESSAGE:if(!a.quitting){a.engine->tick();a.schedule();if(a.deferredAutomaticUpdate&&a.engine->snapshot().phase!=Phase::Break){auto deferred=std::move(*a.deferredAutomaticUpdate);a.deferredAutomaticUpdate.reset();a.handleAvailableUpdate(deferred);}if(a.engine->scheduled()){a.updateAccessibleTimer();a.updateScheduleStatus();if(!a.hidden&&a.page==0)InvalidateRect(hwnd,nullptr,FALSE);}}return 0;
+    case DEFERRED_UPDATE:a.dispatchDeferredAutomaticUpdate();return 0;
+    case ENGINE_MESSAGE:if(!a.quitting){a.engine->tick();a.schedule();a.dispatchDeferredAutomaticUpdate();if(a.engine->scheduled()){a.updateAccessibleTimer();a.updateScheduleStatus();if(!a.hidden&&a.page==0)InvalidateRect(hwnd,nullptr,FALSE);}}return 0;
    case WM_APP+3:a.error(L"Eye Break Reminder couldn't load some saved data. Defaults or a fresh timer have been restored.");return 0;
    case WM_APP+4:a.hideMain();return 0;
     case PREVIEW_REFRESH:a.previewRefreshPosted=false;a.refreshPreview();return 0;

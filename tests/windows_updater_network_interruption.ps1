@@ -13,9 +13,9 @@ $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP)
 $runDirectory = Join-Path $runnerTemp ('ebr-updater-https-' + [guid]::NewGuid().ToString('N'))
 $runDirectoryFull = [IO.Path]::GetFullPath($runDirectory)
 $certificate = $null
+$privateKey = $null
 $trustedCertificate = $null
 $rootStore = $null
-$myStore = $null
 $server = $null
 $testProcess = $null
 $stage = $null
@@ -33,19 +33,31 @@ try {
     $stage = Join-Path $runDirectoryFull 'stage'
     New-Item -ItemType Directory -Path $stage | Out-Null
     Write-Host 'Creating the short-lived localhost TLS certificate.'
-    $certificate = New-SelfSignedCertificate `
-        -Subject 'CN=localhost' `
-        -DnsName 'localhost' `
-        -CertStoreLocation 'Cert:\CurrentUser\My' `
-        -Type SSLServerAuthentication `
-        -KeyAlgorithm RSA `
-        -KeyLength 2048 `
-        -NotAfter (Get-Date).AddHours(4)
+    $privateKey = [System.Security.Cryptography.RSA]::Create(2048)
+    $subject = [System.Security.Cryptography.X509Certificates.X500DistinguishedName]::new('CN=localhost')
+    $request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+        $subject,
+        $privateKey,
+        [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+        [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    $request.CertificateExtensions.Add([System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension]::new($false, $false, 0, $true))
+    $keyUsage = [System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::DigitalSignature -bor [System.Security.Cryptography.X509Certificates.X509KeyUsageFlags]::KeyEncipherment
+    $request.CertificateExtensions.Add([System.Security.Cryptography.X509Certificates.X509KeyUsageExtension]::new($keyUsage, $true))
+    $subjectAlternativeNames = [System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder]::new()
+    $subjectAlternativeNames.AddDnsName('localhost')
+    $request.CertificateExtensions.Add($subjectAlternativeNames.Build())
+    $enhancedKeyUsages = [System.Security.Cryptography.OidCollection]::new()
+    [void]$enhancedKeyUsages.Add([System.Security.Cryptography.Oid]::new('1.3.6.1.5.5.7.3.1'))
+    $request.CertificateExtensions.Add([System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]::new($enhancedKeyUsages, $true))
+    $certificate = $request.CreateSelfSigned((Get-Date).AddMinutes(-5), (Get-Date).AddHours(4))
+    Write-Host 'The TLS certificate was generated in memory; opening only the runner CurrentUser Root store.'
 
     $rootStore = [System.Security.Cryptography.X509Certificates.X509Store]::new(
         [System.Security.Cryptography.X509Certificates.StoreName]::Root,
         [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+    Write-Host 'Opening the runner CurrentUser Root certificate store.'
     $rootStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+    Write-Host 'Adding the unique localhost TLS certificate to the runner CurrentUser Root store.'
     $trustedCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certificate.RawData)
     $rootStore.Add($trustedCertificate)
     Write-Host 'TLS certificate trusted only in the runner CurrentUser Root store.'
@@ -192,16 +204,8 @@ finally {
         try { $rootStore.Close() } catch { }
     }
     if ($trustedCertificate) { $trustedCertificate.Dispose() }
-    if ($certificate) {
-        $myStore = [System.Security.Cryptography.X509Certificates.X509Store]::new(
-            [System.Security.Cryptography.X509Certificates.StoreName]::My,
-            [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-        try {
-            $myStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-            $myStore.Remove($certificate)
-        } catch { }
-        finally { if ($myStore) { $myStore.Close() } }
-    }
+    if ($certificate) { $certificate.Dispose() }
+    if ($privateKey) { $privateKey.Dispose() }
     $evidence = [pscustomobject]@{
         Status = if ($testPassed) { 'PASS' } else { 'FAIL' }
         Test = 'Actual WinHTTP HTTPS body interruption followed by a new verified retry'
