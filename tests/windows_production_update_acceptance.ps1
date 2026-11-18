@@ -199,7 +199,7 @@ try {
   Record 'Temporary isolated test TLS trust material is ready' 'INFO'
   $rootThumbprint=(Get-FileHash -LiteralPath $rootCertificatePath -Algorithm SHA1).Hash.ToUpperInvariant()
   Record 'Test-root certificate thumbprint computed from its DER bytes' 'INFO' $rootThumbprint
-  $rootImport=Invoke-CertUtilBounded @('-user','-addstore','Root',$rootCertificatePath) 'add the disposable test root only to the isolated runner current-user store'
+$rootImport=Invoke-CertUtilBounded @('-f','-user','-addstore','Root',$rootCertificatePath) 'add the disposable test root only to the isolated runner current-user store'
   Assert ($rootImport.ExitCode-eq0) 'temporary test trust anchor import is accepted by Windows certutil in the disposable current-user store' $rootImport.Output
   $rootPresence=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify the disposable test root current-user store entry'
   Assert ($rootPresence.ExitCode-eq0-and$rootPresence.Output-match[regex]::Escape($rootThumbprint)) 'temporary test root is retrievable by its exact certificate thumbprint from the current-user store'
@@ -226,8 +226,8 @@ try {
   # validation path below. Reinstall the temporary root only after rejection.
   $rootRemoveBeforeRejection=Invoke-CertUtilBounded @('-user','-delstore','Root',$rootThumbprint) 'remove the disposable test root before invalid-certificate rejection'
   Assert ($rootRemoveBeforeRejection.ExitCode-eq0) 'the test-only TLS issuer is removed before invalid-certificate rejection' $rootThumbprint
-  $rootAbsentBeforeRejection=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify test-root absence before the invalid-certificate request' @(0,1,-2147024894)
-  Assert ($rootAbsentBeforeRejection.ExitCode-ne0-and$rootAbsentBeforeRejection.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified') 'the test-only TLS issuer is absent before the invalid-certificate rejection case' $rootThumbprint
+$rootAbsentBeforeRejection=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify test-root absence before the invalid-certificate request' @(0,1,-2147024894,-2146893807)
+Assert ($rootAbsentBeforeRejection.ExitCode-ne0-and$rootAbsentBeforeRejection.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified|0x80090011|NTE_NOT_FOUND|Object was not found') 'the test-only TLS issuer is absent before the invalid-certificate rejection case' $rootThumbprint
   $pretrustProbeFailed=$false;$pretrustProbeMessage=''
   try { [void](Invoke-WebRequest -Uri 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' -UseBasicParsing -TimeoutSec 10) }
   catch { $pretrustProbeFailed=$true;$pretrustProbeMessage=$_.Exception.ToString() }
@@ -274,11 +274,11 @@ try {
   Assert (-not(Test-Path -LiteralPath (Join-Path $dataDir 'updates'))) 'invalid TLS certificate rejection creates no update staging directory'
   Assert ((Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()-eq(Get-FileHash -LiteralPath $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()) 'invalid TLS certificate rejection does not replace the installed production candidate'
   Assert ([Convert]::ToBase64String($historyBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'history.dat')))-and[Convert]::ToBase64String($sentinelBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'unrelated-sentinel.txt')))) 'invalid TLS certificate rejection leaves existing history and unrelated user data byte-for-byte unchanged'
-  $rootStillAbsent=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify the untrusted feed did not install its temporary issuer' @(0,1,-2147024894)
-  Assert ($rootStillAbsent.ExitCode-ne0-and$rootStillAbsent.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified') 'unverified feed does not acquire a trusted-root installation or bypass certificate validation' $rootThumbprint
+$rootStillAbsent=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify the untrusted feed did not install its temporary issuer' @(0,1,-2147024894,-2146893807)
+Assert ($rootStillAbsent.ExitCode-ne0-and$rootStillAbsent.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified|0x80090011|NTE_NOT_FOUND|Object was not found') 'unverified feed does not acquire a trusted-root installation or bypass certificate validation' $rootThumbprint
   Stop-ProductionApplication
   $appProcess=$null
-  $rootImportAfterRejection=Invoke-CertUtilBounded @('-user','-addstore','Root',$rootCertificatePath) 'reinstall the disposable test root only after invalid-certificate rejection is verified'
+$rootImportAfterRejection=Invoke-CertUtilBounded @('-f','-user','-addstore','Root',$rootCertificatePath) 'reinstall the disposable test root only after invalid-certificate rejection is verified'
   Assert ($rootImportAfterRejection.ExitCode-eq0) 'temporary test CA is installed only after the invalid-certificate rejection is verified' $rootImportAfterRejection.Output
   $rootPresenceAfterRejection=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify controlled update feed test root after explicit installation'
   Assert ($rootPresenceAfterRejection.ExitCode-eq0-and$rootPresenceAfterRejection.Output-match[regex]::Escape($rootThumbprint)) 'trusted controlled update feed has only the disposable current-user TLS test root'
@@ -345,14 +345,14 @@ finally {
   }else{$hostsRestoreStatus='NOT NEEDED'}
   if($rootThumbprint){
     try{
-      $rootLookup=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'inspect the disposable current-user root store during cleanup' @(0,1,-2147024894)
+$rootLookup=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'inspect the disposable current-user root store during cleanup' @(0,1,-2147024894,-2146893807)
       $rootPresent=$rootLookup.ExitCode-eq0-and$rootLookup.Output-match[regex]::Escape($rootThumbprint)
-      $rootAbsent=$rootLookup.ExitCode-ne0-and$rootLookup.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified'
+$rootAbsent=$rootLookup.ExitCode-ne0-and$rootLookup.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified|0x80090011|NTE_NOT_FOUND|Object was not found'
       if($rootPresent){
         $rootDelete=Invoke-CertUtilBounded @('-user','-delstore','Root',$rootThumbprint) 'remove the disposable current-user root during cleanup'
         if($rootDelete.ExitCode-ne0){throw 'Windows certutil did not remove the disposable test root.'}
-        $rootVerify=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify the disposable current-user root was removed' @(0,1,-2147024894)
-        if(-not($rootVerify.ExitCode-ne0-and$rootVerify.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified')){throw 'The temporary root remains in the current-user root store after cleanup.'}
+$rootVerify=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify the disposable current-user root was removed' @(0,1,-2147024894,-2146893807)
+if(-not($rootVerify.ExitCode-ne0-and$rootVerify.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified|0x80090011|NTE_NOT_FOUND|Object was not found')){throw 'The temporary root remains in the current-user root store after cleanup.'}
       }elseif(-not$rootAbsent){throw 'The current-user root-store query failed without proving the test root absent.'}
       $trustRootCleanupStatus='PASS';Record 'Remove temporary TLS trust root' 'PASS' $rootThumbprint
     }catch{$trustRootCleanupStatus='FAIL';Record 'Remove temporary TLS trust root' 'FAIL' $_.Exception.Message}
