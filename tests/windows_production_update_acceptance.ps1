@@ -101,11 +101,16 @@ function Find-Dialog([string]$Marker,[int]$ProcessId=0,[int]$TimeoutSeconds=120)
 }
 function Find-Button($Dialog,[string]$Name) {
   $items=$Dialog.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
-  foreach($item in $items){try{if($item.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$item.Current.Name-ceq$Name){return $item}}catch{}}
-  throw "The production update UI did not expose the '$Name' button."
+  foreach($item in $items){try{if($item.Current.Name-ceq$Name-and($item.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-or$item.Current.ControlType-eq[System.Windows.Automation.ControlType]::RadioButton)){return $item}}catch{}}
+  $observed=@($items|ForEach-Object{try{"$($_.Current.ControlType.ProgrammaticName):$($_.Current.Name)"}catch{}}|Where-Object{$_}) -join ' | '
+  throw "The production update UI did not expose the '$Name' button or tab. Observed controls: $observed"
 }
 function Invoke-Button($Dialog,[string]$Name) {
   $button=Find-Button $Dialog $Name;$pattern=$null
+  if($button.Current.ControlType-eq[System.Windows.Automation.ControlType]::RadioButton){
+    if(-not$button.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$pattern)){throw "The production update tab '$Name' has no accessible SelectionItem action."}
+    $pattern.Select();return
+  }
   if(-not$button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$pattern)){throw "The production update button '$Name' has no accessible Invoke action."}
   $pattern.Invoke()
 }
@@ -406,7 +411,16 @@ finally {
       $un=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
       if(-not$un.WaitForExit(90000)){Stop-Process -Id $un.Id -Force -ErrorAction SilentlyContinue;[void]$un.WaitForExit(5000);throw 'Disposable production acceptance uninstall exceeded its ninety-second cleanup bound.'}
       $uninstallExitCode=$un.ExitCode;if($un.ExitCode-ne0){throw "Disposable production acceptance uninstall returned $($un.ExitCode)."}
-      if(Test-Path -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe')){throw 'Silent cleanup uninstall left the application executable behind.'}
+      $remainingExecutable=Join-Path $installDir 'EyeBreakReminder.exe'
+      if(Test-Path -LiteralPath $remainingExecutable){
+        $remainingProcesses=@(Get-CimInstance Win32_Process -Filter "Name='EyeBreakReminder.exe'" -ErrorAction SilentlyContinue|Where-Object{try{[IO.Path]::GetFullPath([string]$_.ExecutablePath).StartsWith($installDir.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)}catch{$false}}|ForEach-Object{[pscustomobject]@{ProcessId=$_.ProcessId;ExecutablePath=$_.ExecutablePath;CommandLine=$_.CommandLine}})
+        $exclusiveOpen=$false;$exclusiveOpenError=$null;$stream=$null
+        try{$stream=[IO.File]::Open($remainingExecutable,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None);$exclusiveOpen=$true}catch{$exclusiveOpenError=$_.Exception.Message}finally{if($stream){$stream.Dispose()}}
+        $remainingFiles=@(Get-ChildItem -LiteralPath $installDir -Force -ErrorAction SilentlyContinue|ForEach-Object{[pscustomobject]@{Name=$_.Name;Length=if(-not$_.PSIsContainer){$_.Length}else{$null}}})
+        $registration=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder' -ErrorAction SilentlyContinue
+        $diagnostic=[pscustomobject]@{UninstallerExitCode=$uninstallExitCode;ExecutableStillPresent=$true;ExecutableExclusiveOpen=$exclusiveOpen;ExclusiveOpenError=$exclusiveOpenError;PathScopedProcesses=$remainingProcesses;RemainingFiles=$remainingFiles;UninstallRegistrationPresent=[bool]$registration;RegisteredUninstallString=if($registration){$registration.UninstallString}else{$null}}
+        throw "Silent cleanup uninstall left the application executable behind. Diagnostics: $(ConvertTo-Json $diagnostic -Depth 6 -Compress)"
+      }
       if(Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder' -ErrorAction SilentlyContinue){throw 'Silent cleanup uninstall left the Installed Apps registration behind.'}
       if(Test-Path -LiteralPath $installDir){Remove-Item -LiteralPath $installDir -Recurse -Force}
       Record 'Disposable production installation cleanup' 'PASS' $uninstallExitCode
