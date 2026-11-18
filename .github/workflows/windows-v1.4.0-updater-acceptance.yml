@@ -246,16 +246,16 @@ jobs:
           & .\tests\windows_resource_telemetry_tests.ps1 -EvidencePath '.\build\v1.4.0-updater-evidence\resource-telemetry-unit-tests.json' -ProbeLiveCmdlet
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Download the prior hosted 110-cycle soak evidence for exact-hash reuse
+      - name: Download the prior exact-candidate hosted 110-cycle soak evidence for exact-hash reuse
         id: soak_reference_download
         if: ${{ !cancelled() && steps.resource_telemetry.outcome == 'success' }}
         continue-on-error: true
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: eye-break-reminder-v1.4.0-candidate-44227925926
+          name: eye-break-reminder-v1.4.0-candidate-44288305236
           path: build/prior-v1.4.0-soak-candidate
           repository: ${{ github.repository }}
-          run-id: '44227925926'
+          run-id: '44288305236'
           github-token: ${{ github.token }}
 
       - name: Reuse soak only when candidate hash and complete hosted evidence match
@@ -271,9 +271,17 @@ jobs:
           $reason = ''
           try {
             $provenance = Get-Content -LiteralPath (Join-Path $referenceEvidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
-            $identities = @(Get-Content -LiteralPath (Join-Path $referenceEvidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json)
+            $identityDocument = Get-Content -LiteralPath (Join-Path $referenceEvidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json
+            $identityList = [System.Collections.Generic.List[object]]::new()
+            foreach ($entry in $identityDocument) {
+              if ($entry -is [array]) { foreach ($asset in $entry) { $identityList.Add($asset) } }
+              else { $identityList.Add($entry) }
+            }
+            $identities = $identityList.ToArray()
             $referenceGate = Get-Content -LiteralPath (Join-Path $referenceEvidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
             $summary = Get-Content -LiteralPath (Join-Path $referenceSoak 'soak-summary.json') -Raw | ConvertFrom-Json
+            $productionRun = Get-Content -LiteralPath (Join-Path $referenceEvidence 'production-update-acceptance-results.json') -Raw | ConvertFrom-Json
+            $productionLog = Get-Content -LiteralPath (Join-Path $referenceEvidence 'production-update-acceptance.log') -Raw
             $candidate = Get-Item -LiteralPath 'release/EyeBreakReminder.exe'
             $candidateHash = (Get-FileHash -LiteralPath $candidate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             $referenceIdentity = @($identities | Where-Object Name -CEQ 'EyeBreakReminder.exe')
@@ -286,11 +294,19 @@ jobs:
             $screenshotsPresent = $screenshotNames.Count -ge 3 -and @($screenshotNames | ForEach-Object { Test-Path -LiteralPath (Join-Path $referenceSoak $_) -PathType Leaf } | Where-Object { -not $_ }).Count -eq 0
             $eventsClean = @($summary.Events | Where-Object { $_.Status -in @('FAIL','NOT TESTED') }).Count -eq 0
             $cyclesClean = $cycles.Count -eq 110 -and @($cycles | Where-Object { [int]$_.BreakWindowsOpened -lt 1 -or [int]$_.BreakWindowsAfter -ne 0 -or $_.StatusAfter -cne 'Running' }).Count -eq 0
-            $valid = $provenance.RunId -eq '44227925926' -and
-              $provenance.PRHeadCommit -ceq 'f2131f483751712f1b041e635c31cd34053a575a' -and
+            $harnessOnlyFailure = $productionRun.Status -ceq 'FAIL' -and [int]$productionRun.Assertions -eq 0 -and
+              $productionLog -match [regex]::Escape("certificate operation 'add the disposable test root only to the isolated runner current-user store' exceeded its 20-second bound") -and
+              $productionLog -match 'NTE_NOT_FOUND|0x80090011'
+            $valid = $provenance.RunId -eq '44288305236' -and
+              $provenance.PRHeadCommit -ceq 'f996e013976a1068cbebc5f3a813629ed0625505' -and
               $referenceGate.Status -ceq 'NOT READY' -and $referenceGate.Candidate -ceq 'success' -and
+              $referenceGate.Fixtures -ceq 'success' -and $referenceGate.ProductionUpdateFixture -ceq 'success' -and
+              $referenceGate.NetworkInterruption -ceq 'success' -and $referenceGate.LegacyV130Upgrade -ceq 'success' -and
+              $referenceGate.DesktopAvailable -eq $true -and $referenceGate.Gui -ceq 'success' -and
+              $referenceGate.StandardUser -ceq 'success' -and $referenceGate.Updater -ceq 'success' -and
+              $referenceGate.ProductionBinaryUpdate -ceq 'failure' -and $harnessOnlyFailure -and
               $referenceGate.ResourceTelemetry -ceq 'success' -and $referenceGate.ResourceSoak -ceq 'success' -and
-              $referenceGate.CandidateIdentity -ceq 'success' -and $referenceGate.ProductionUpdateFixture -ceq 'failure' -and
+              $referenceGate.CandidateIdentity -ceq 'success' -and
               $referenceIdentity.Count -eq 1 -and
               $candidate.VersionInfo.ProductVersion -match '^1\.4\.0(?:\.0)?$' -and
               $candidateHash -ceq [string]$referenceIdentity[0].SHA256 -and
@@ -314,7 +330,7 @@ jobs:
               New-Item -ItemType Directory -Force -Path $destination | Out-Null
               Copy-Item -Path (Join-Path $referenceSoak '*') -Destination $destination -Recurse -Force
               $files = @(Get-ChildItem -LiteralPath $destination -File -Recurse | ForEach-Object { [pscustomobject]@{Path=$_.FullName.Substring((Get-Location).Path.Length + 1);Bytes=$_.Length;SHA256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()} })
-              [pscustomobject]@{Status='PASS';Reused=$true;ReferenceRunId='44227925926';ReferenceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44227925926';ReferencePRHead=$provenance.PRHeadCommit;ReferenceMergeCommit=$provenance.SourceCommit;CurrentSourceCommit=$env:GITHUB_SHA;CurrentPRHeadCommit=if($env:GITHUB_EVENT_PATH){(Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw|ConvertFrom-Json).pull_request.head.sha}else{$null};CandidateSHA256=$candidateHash;Soak=$summary;CopiedEvidenceFiles=$files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse.json' -Encoding UTF8
+              [pscustomobject]@{Status='PASS';Reused=$true;ReferenceRunId='44288305236';ReferenceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44288305236';ReferencePRHead=$provenance.PRHeadCommit;ReferenceMergeCommit=$provenance.SourceCommit;CurrentSourceCommit=$env:GITHUB_SHA;CurrentPRHeadCommit=if($env:GITHUB_EVENT_PATH){(Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw|ConvertFrom-Json).pull_request.head.sha}else{$null};CandidateSHA256=$candidateHash;Soak=$summary;CopiedEvidenceFiles=$files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse.json' -Encoding UTF8
               $reused = $true
             }
           } catch { $reason = $_.Exception.Message }
