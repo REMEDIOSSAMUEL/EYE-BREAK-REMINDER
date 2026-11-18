@@ -3,6 +3,7 @@ param(
   [Parameter(Mandatory=$true)][string]$CandidateExecutable,
   [Parameter(Mandatory=$true)][string]$ControlledInstaller,
   [Parameter(Mandatory=$true)][string]$ControlledExecutable,
+  [Parameter(Mandatory=$true)][string]$LaunchSentinelExecutable,
   [string]$EvidenceDirectory = 'build/v1.4.0-updater-evidence'
 )
 $ErrorActionPreference = 'Stop'
@@ -12,7 +13,8 @@ $candidateInstallerPath = [IO.Path]::GetFullPath($CandidateInstaller)
 $candidateExecutablePath = [IO.Path]::GetFullPath($CandidateExecutable)
 $controlledInstallerPath = [IO.Path]::GetFullPath($ControlledInstaller)
 $controlledExecutablePath = [IO.Path]::GetFullPath($ControlledExecutable)
-foreach ($path in @($candidateInstallerPath, $candidateExecutablePath, $controlledInstallerPath, $controlledExecutablePath)) {
+ $launchSentinelPath = [IO.Path]::GetFullPath($LaunchSentinelExecutable)
+foreach ($path in @($candidateInstallerPath, $candidateExecutablePath, $controlledInstallerPath, $controlledExecutablePath, $launchSentinelPath)) {
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required production-update transaction input is missing: $path" }
 }
 $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP)
@@ -233,7 +235,11 @@ $leafCsrPath=Join-Path $testRoot 'server.csr'
 $leafPrivateKeyPath=Join-Path $testRoot 'server.key'
 $leafCertificatePath=Join-Path $testRoot 'server.pem'
 $leafExtensionPath=Join-Path $testRoot 'server.ext'
+$wrongLeafCsrPath=Join-Path $testRoot 'wrong-host.csr'
+$wrongLeafCertificatePath=Join-Path $testRoot 'wrong-host.pem'
+$wrongLeafExtensionPath=Join-Path $testRoot 'wrong-host.ext'
 $readyPath=Join-Path $testRoot 'feed-ready.txt'
+$wrongReadyPath=Join-Path $testRoot 'wrong-host-feed-ready.txt'
 
 try {
   Write-Host "EBR_UPDATE_STAGE begin production binary transaction run=$env:GITHUB_RUN_ID commit=$env:GITHUB_SHA"
@@ -253,6 +259,9 @@ try {
   Add-Check $openssl @('req','-new','-newkey','rsa:2048','-nodes','-keyout',$leafPrivateKeyPath,'-out',$leafCsrPath,'-sha256','-subj','/CN=api.github.com') 'create disposable official-host TLS leaf request'
   [IO.File]::WriteAllText($leafExtensionPath,"[server_cert]`r`nbasicConstraints=critical,CA:FALSE`r`nkeyUsage=critical,digitalSignature,keyEncipherment`r`nextendedKeyUsage=serverAuth`r`nsubjectAltName=DNS:api.github.com,DNS:github.com`r`n",[Text.Encoding]::ASCII)
   Add-Check $openssl @('x509','-req','-in',$leafCsrPath,'-CA',$rootPemPath,'-CAkey',$rootPrivateKeyPath,'-CAcreateserial','-out',$leafCertificatePath,'-days','1','-sha256','-extfile',$leafExtensionPath,'-extensions','server_cert') 'sign disposable official-host TLS leaf with the temporary test root'
+  Add-Check $openssl @('req','-new','-key',$leafPrivateKeyPath,'-out',$wrongLeafCsrPath,'-sha256','-subj','/CN=wrong-host.invalid') 'create a disposable wrong-host TLS leaf request'
+  [IO.File]::WriteAllText($wrongLeafExtensionPath,"[server_cert]`r`nbasicConstraints=critical,CA:FALSE`r`nkeyUsage=critical,digitalSignature,keyEncipherment`r`nextendedKeyUsage=serverAuth`r`nsubjectAltName=DNS:wrong-host.invalid`r`n",[Text.Encoding]::ASCII)
+  Add-Check $openssl @('x509','-req','-in',$wrongLeafCsrPath,'-CA',$rootPemPath,'-CAkey',$rootPrivateKeyPath,'-CAcreateserial','-out',$wrongLeafCertificatePath,'-days','1','-sha256','-extfile',$wrongLeafExtensionPath,'-extensions','server_cert') 'sign a trusted TLS leaf that deliberately does not name either GitHub hostname'
   Add-Check $openssl @('x509','-in',$rootPemPath,'-outform','DER','-out',$rootCertificatePath) 'export temporary test-root certificate'
   Record 'Temporary isolated test TLS trust material is ready' 'INFO'
   $rootThumbprint=(Get-FileHash -LiteralPath $rootCertificatePath -Algorithm SHA1).Hash.ToUpperInvariant()
@@ -343,12 +352,49 @@ try {
   Assert ($rootImportAfterRejection.Present-and$rootImportAfterRejection.Thumbprint-ceq$rootThumbprint) 'temporary test CA is installed only after the invalid-certificate rejection is verified' $rootImportAfterRejection
   $rootPresenceAfterRejection=Get-TemporaryRootCertificate $rootThumbprint
   Assert ($rootPresenceAfterRejection.Present-and$rootPresenceAfterRejection.RawDataBase64-ceq[Convert]::ToBase64String($script:temporaryRootCertificateRawData)) 'trusted controlled update feed has only the disposable current-user TLS test root'
+
+  if($serverProcess){$serverProcess.Kill();if(-not$serverProcess.WaitForExit(5000)){throw 'Trusted-host TLS feed did not stop before the wrong-host case.'};$serverProcess.Dispose();$serverProcess=$null;$serverStopped=$true}
+  Remove-Item -LiteralPath $wrongReadyPath -Force -ErrorAction SilentlyContinue
+  $wrongServerArgs=@($scriptPath,'--certificate',$wrongLeafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$controlledInstallerPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$wrongReadyPath)
+  $wrongServerStdout=Join-Path $EvidenceDirectory 'wrong-host-feed.stdout.log';$wrongServerStderr=Join-Path $EvidenceDirectory 'wrong-host-feed.stderr.log'
+  $serverProcess=Start-Process -FilePath $python -ArgumentList $wrongServerArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $wrongServerStdout -RedirectStandardError $wrongServerStderr;$serverStopped=$false
+  $wrongListenWatch=[Diagnostics.Stopwatch]::StartNew()
+  while($wrongListenWatch.Elapsed.TotalSeconds-lt15-and-not(Test-Path -LiteralPath $wrongReadyPath)){if($serverProcess.HasExited){throw "Wrong-host HTTPS feed exited before it became ready. $([IO.File]::ReadAllText($wrongServerStderr))"};Start-Sleep -Milliseconds 100}
+  if(-not(Test-Path -LiteralPath $wrongReadyPath)){throw 'Wrong-host HTTPS feed did not become ready on IPv4 and IPv6 loopback port 443.'}
+  $wrongHostProbeFailed=$false;$wrongHostProbeMessage=''
+  try{[void](Invoke-WebRequest -Uri 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' -UseBasicParsing -TimeoutSec 10)}catch{$wrongHostProbeFailed=$true;$wrongHostProbeMessage=$_.Exception.ToString()}
+  Assert ($wrongHostProbeFailed-and$wrongHostProbeMessage-match'RemoteCertificateNameMismatch|name mismatch|target name|NameMismatch') 'Windows rejects a trusted certificate whose SAN does not match the GitHub request hostname' $wrongHostProbeMessage
+  Assert (@(Get-Content -LiteralPath $requestLogPath -ErrorAction SilentlyContinue).Count-eq0) 'a trusted wrong-host TLS handshake sends no HTTP request to the isolated release feed'
+  $wrongHostSettingsPath=Join-Path $dataDir 'settings.ini';$wrongHostSettingsRaw=[regex]::Replace((Get-Content -LiteralPath $wrongHostSettingsPath -Raw),'(?m)^updateLastCheck=\d+$','updateLastCheck=0');if($wrongHostSettingsRaw-ceq(Get-Content -LiteralPath $wrongHostSettingsPath -Raw)){throw 'Could not reset the disposable update-check timestamp before the wrong-host rejection test.'};[IO.File]::WriteAllText($wrongHostSettingsPath,$wrongHostSettingsRaw,[Text.UTF8Encoding]::new($false));$wrongHostSettingsBefore=Read-SettingsMap $wrongHostSettingsPath
+  $appProcess=Start-Process -FilePath $installedExe -PassThru
+  Record 'Actual installed production app launched against trusted wrong-host TLS certificate' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;ServerCertificate=$wrongLeafCertificatePath;ExpectedHostname='api.github.com'})
+  $wrongHostAbout=Find-Dialog 'About' $appProcess.Id 15;Invoke-Button $wrongHostAbout 'About'
+  $wrongHostTlsError=Find-Dialog 'A secure connection to GitHub could not be verified.' $appProcess.Id 30
+  Assert ($wrongHostTlsError.WindowTitle-eq'Eye Break Reminder') 'production updater displays a meaningful error for a trusted certificate with the wrong hostname' ($wrongHostTlsError.Names -join ' | ')
+  Assert (@(Get-Content -LiteralPath $requestLogPath -ErrorAction SilentlyContinue).Count-eq0) 'production WinHTTP rejects the trusted wrong-host certificate before sending release metadata'
+  Assert (-not(Test-Path -LiteralPath (Join-Path $dataDir 'updates'))) 'trusted wrong-host certificate rejection creates no update staging directory'
+  Assert ((Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()-eq(Get-FileHash -LiteralPath $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()) 'trusted wrong-host certificate rejection does not replace the installed production candidate'
+  $wrongHostSettingsAfter=Read-SettingsMap $wrongHostSettingsPath;$wrongHostSettingKeys=@($wrongHostSettingsBefore.Keys|Where-Object{$_-cne'updateLastCheck'});$wrongHostSettingChanges=@($wrongHostSettingKeys|Where-Object{-not$wrongHostSettingsAfter.ContainsKey($_)-or[string]$wrongHostSettingsBefore[$_]-cne[string]$wrongHostSettingsAfter[$_]})
+  Assert ($wrongHostSettingChanges.Count-eq0-and[Convert]::ToBase64String($historyBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'history.dat')))-and[Convert]::ToBase64String($sentinelBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'unrelated-sentinel.txt')))) 'trusted wrong-host rejection preserves settings, history and unrelated profile data byte-for-byte (except the check timestamp)' ([pscustomobject]@{ChangedSettings=$wrongHostSettingChanges;HistoryUnchanged=$true;UnrelatedSentinelUnchanged=$true})
+  Stop-ProductionApplication;$appProcess=$null
+  if($serverProcess){$serverProcess.Kill();if(-not$serverProcess.WaitForExit(5000)){throw 'Wrong-host HTTPS feed did not stop before restoring the trusted feed.'};$serverProcess.Dispose();$serverProcess=$null;$serverStopped=$true}
+  Remove-Item -LiteralPath $readyPath -Force -ErrorAction SilentlyContinue
+  $serverArgs=@($scriptPath,'--certificate',$leafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$controlledInstallerPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$readyPath)
+  $serverProcess=Start-Process -FilePath $python -ArgumentList $serverArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr;$serverStopped=$false
+  $listenWatch=[Diagnostics.Stopwatch]::StartNew()
+  while($listenWatch.Elapsed.TotalSeconds-lt15-and-not(Test-Path -LiteralPath $readyPath)){if($serverProcess.HasExited){throw "Trusted-host TLS feed exited before it became ready. $([IO.File]::ReadAllText($serverStderr))"};Start-Sleep -Milliseconds 100}
+  if(-not(Test-Path -LiteralPath $readyPath)){throw 'Trusted-host HTTPS feed did not become ready after wrong-host rejection.'}
   $feedProbe=Invoke-WebRequest -Uri 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' -UseBasicParsing -TimeoutSec 10
   $feedContent=if($feedProbe.Content-is[byte[]]){[Text.Encoding]::UTF8.GetString($feedProbe.Content)}else{[string]$feedProbe.Content}
   $feedRelease=ConvertFrom-Json -InputObject $feedContent
   $feedProbeDetails=[pscustomobject]@{StatusCode=[int]$feedProbe.StatusCode;TagName=[string]$feedRelease.tag_name;ResponseContent=$feedContent;Requests=@(Get-Content -LiteralPath $requestLogPath -ErrorAction SilentlyContinue|ForEach-Object{$_|ConvertFrom-Json})}
   Assert (($feedProbeDetails.StatusCode-eq200)-and($feedProbeDetails.TagName-ceq'v1.4.1')) 'ephemeral CA validates HTTPS to the isolated controlled official-host release feed' $feedProbeDetails
   Record 'Trusted controlled HTTPS feed probe completed' 'INFO'
+  $launchSentinelMarker=Join-Path $EvidenceDirectory 'unverified-installer-launch-marker.txt'
+  if(Test-Path -LiteralPath $launchSentinelMarker){throw 'The test-only launch-sentinel marker unexpectedly exists before the payload replacement test.'}
+  $env:EBR_TEST_UNVERIFIED_LAUNCH_MARKER=$launchSentinelMarker
+  $sentinelBytes=[IO.File]::ReadAllBytes($launchSentinelPath)
+  Record 'Test-only unverified-executable sentinel identity' 'INFO' ([pscustomobject]@{Path=$launchSentinelPath;Bytes=$sentinelBytes.Length;SHA256=(Get-FileHash -LiteralPath $launchSentinelPath -Algorithm SHA256).Hash.ToLowerInvariant();MarkerPath=$launchSentinelMarker})
   $appProcess=Start-Process -FilePath $installedExe -PassThru
   Record 'Actual installed production app relaunched after TLS rejection' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;ProductVersion=(Get-Item $installedExe).VersionInfo.ProductVersion})
   $choice=Find-Dialog 'Eye Break Reminder Update Available' $appProcess.Id 90
@@ -358,6 +404,33 @@ try {
   Invoke-Button $choice 'Download & Install'
   $ready=Find-Dialog 'Ready to install.' $appProcess.Id 120
   Assert ((@($ready.Names)-join' ').Contains('(100%)')-and(@($ready.Names)-join' ').Contains('SHA-256 digest matches GitHub')) 'production downloader reaches complete byte progress and digest verification' ($ready.Names -join ' | ')
+  Save-Screenshot $ready 'production-update-ready-to-install.png'
+
+  $updatesRoot=Join-Path $dataDir 'updates';$stagedSetups=@(Get-ChildItem -LiteralPath $updatesRoot -Directory -ErrorAction Stop|ForEach-Object{Get-ChildItem -LiteralPath $_.FullName -File -Filter 'EyeBreakReminder-Setup-x64.exe' -ErrorAction SilentlyContinue})
+  Assert ($stagedSetups.Count-eq1) 'the verified update installer exists at one uniquely staged path before the replacement attack' $stagedSetups.FullName
+  $expectedSetupSize=(Get-Item -LiteralPath $controlledInstallerPath).Length
+  if($sentinelBytes.Length-gt$expectedSetupSize){throw 'The test sentinel executable is unexpectedly larger than the controlled installer payload.'}
+  $replacementBytes=[byte[]]::new([int]$expectedSetupSize);[Array]::Copy($sentinelBytes,0,$replacementBytes,0,$sentinelBytes.Length)
+  [IO.File]::WriteAllBytes($stagedSetups[0].FullName,$replacementBytes)
+  $replacementHash=(Get-FileHash -LiteralPath $stagedSetups[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant();$expectedSetupHash=(Get-FileHash -LiteralPath $controlledInstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  Assert ((Get-Item -LiteralPath $stagedSetups[0].FullName).Length-eq$expectedSetupSize-and$replacementHash-cne$expectedSetupHash) 'post-verification replacement preserves the expected size but changes the installer digest' ([pscustomobject]@{ExpectedSize=$expectedSetupSize;ActualSize=(Get-Item -LiteralPath $stagedSetups[0].FullName).Length;ExpectedSHA256=$expectedSetupHash;ReplacementSHA256=$replacementHash})
+  Invoke-Button $ready 'Install Update'
+  $replacementRejected=Find-Dialog 'The staged update failed its final size or SHA-256 verification.' 0 180
+  Assert ($replacementRejected.WindowTitle-eq'Eye Break Reminder Update') 'the coordinator reports that the staged installer changed after its download verification' ($replacementRejected.Names -join ' | ')
+  Assert (-not(Test-Path -LiteralPath $launchSentinelMarker)) 'the replaced unverified installer was not launched at the coordinator execution boundary'
+  Assert ((Get-Item -LiteralPath $installedExe).VersionInfo.ProductVersion-match'^1\.4\.0(\.0)?$'-and(Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()-eq(Get-FileHash -LiteralPath $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()) 'post-verification payload replacement leaves the installed v1.4.0 executable byte-identical'
+  Assert ((Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Stop).DisplayVersion-eq'1.4.0') 'post-verification payload replacement leaves the Installed Apps version unchanged'
+  Assert ([Convert]::ToBase64String($historyBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'history.dat')))-and[Convert]::ToBase64String($sentinelBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'unrelated-sentinel.txt')))) 'post-verification payload replacement preserves history and unrelated user data byte-for-byte'
+  Invoke-Button $replacementRejected 'Close';Stop-ProductionApplication;$appProcess=$null
+  $settingsPath=Join-Path $dataDir 'settings.ini';$settingsRaw=[regex]::Replace((Get-Content -LiteralPath $settingsPath -Raw),'(?m)^updateLastCheck=\d+$','updateLastCheck=0');[IO.File]::WriteAllText($settingsPath,$settingsRaw,[Text.UTF8Encoding]::new($false))
+  $appProcess=Start-Process -FilePath $installedExe -PassThru
+  Record 'Production app restarted after rejecting the changed update payload' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;Version=(Get-Item $installedExe).VersionInfo.ProductVersion})
+  $choice=Find-Dialog 'Eye Break Reminder Update Available' $appProcess.Id 90
+  Assert ($choice.WindowTitle-eq'Eye Break Reminder Update') 'production updater rediscovered the stable release after safely rejecting the substituted payload' $choice.WindowTitle
+  Save-Screenshot $choice 'production-update-available.png'
+  Invoke-Button $choice 'Download & Install'
+  $ready=Find-Dialog 'Ready to install.' $appProcess.Id 120
+  Assert ((@($ready.Names)-join' ').Contains('(100%)')-and(@($ready.Names)-join' ').Contains('SHA-256 digest matches GitHub')) 'clean retry completes download progress and SHA-256 verification after substitution rejection' ($ready.Names -join ' | ')
   Save-Screenshot $ready 'production-update-ready-to-install.png'
   Invoke-Button $ready 'Install Update'
   $success=Find-Dialog 'Update complete.' 0 180
@@ -403,6 +476,7 @@ finally {
       try{$processPath=[IO.Path]::GetFullPath([string]$process.ExecutablePath);$installPrefix=$installDir.TrimEnd('\')+'\';if($processPath.StartsWith($installPrefix,[StringComparison]::OrdinalIgnoreCase)){Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop;Record 'Force-stop disposable installation after recorded graceful-shutdown failure' 'INFO' ([pscustomobject]@{Pid=$process.ProcessId;Path=$processPath})}}catch{}
     }
   }
+  Remove-Item Env:EBR_TEST_UNVERIFIED_LAUNCH_MARKER -ErrorAction SilentlyContinue
   if($serverProcess){try{if(-not$serverProcess.HasExited){$serverProcess.Kill();[void]$serverProcess.WaitForExit(5000)};$serverStopped=$serverProcess.HasExited;$serverProcess.Dispose();if(-not$serverStopped){throw 'Loopback HTTPS feed did not terminate.'}}catch{Record 'Stop isolated HTTPS feed' 'FAIL' $_.Exception.Message}}
   if($hostsChanged){
     try{[IO.File]::WriteAllBytes($hostsPath,$originalHostsBytes);& ipconfig.exe /flushdns|Out-Null;if($LASTEXITCODE-ne0){throw 'DNS flush after restoring hosts file failed.'};$restored=[IO.File]::ReadAllBytes($hostsPath);$equal=([Convert]::ToBase64String($originalHostsBytes)-ceq[Convert]::ToBase64String($restored));if(-not$equal){throw 'Hosts file did not return byte-for-byte to its original contents.'};$hostsRestoreStatus='PASS';Record 'Restore runner hosts file' 'PASS' ([pscustomobject]@{ByteIdentical=$equal})}catch{$hostsRestoreStatus='FAIL';Record 'Restore runner hosts file' 'FAIL' $_.Exception.Message}

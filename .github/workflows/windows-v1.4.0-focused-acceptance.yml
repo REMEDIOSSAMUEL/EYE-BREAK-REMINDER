@@ -179,6 +179,16 @@ jobs:
           & .\tests\build_production_update_fixture.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Build the test-only executable-launch sentinel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $compiler = Join-Path $env:MSYS2_ROOT 'mingw64\bin\gcc.exe'
+          $sentinel = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-Unverified-Launch-Sentinel.exe'
+          & $compiler -Wall -Wextra -Werror -Os -s tests/update_launch_sentinel.c -o $sentinel
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $sentinel -PathType Leaf)) { throw 'The test-only executable-launch sentinel did not build.' }
+          "UPDATE_LAUNCH_SENTINEL_PATH=$sentinel" | Add-Content -LiteralPath $env:GITHUB_ENV
+
       - name: Run the actual exact-candidate automatic updater transaction
         id: production_update
         timeout-minutes: 25
@@ -190,6 +200,7 @@ jobs:
             -CandidateExecutable '.\release\EyeBreakReminder.exe' `
             -ControlledInstaller "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder-Setup-x64.exe" `
             -ControlledExecutable "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder.exe" `
+            -LaunchSentinelExecutable "$env:UPDATE_LAUNCH_SENTINEL_PATH" `
             -EvidenceDirectory '.\build\v1.4.0-updater-evidence'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
