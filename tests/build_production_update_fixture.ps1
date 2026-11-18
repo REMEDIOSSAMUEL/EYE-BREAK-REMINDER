@@ -44,10 +44,24 @@ $installerText = [IO.File]::ReadAllText($installerPath).Replace('1.4.0', '1.4.1'
 if (-not $installerText.Contains('VIProductVersion "1.4.1.0"')) { throw 'The controlled successor installer version was not rewritten.' }
 [IO.File]::WriteAllText($installerPath, $installerText, [Text.UTF8Encoding]::new($false))
 
-$windres = (Get-Command windres -ErrorAction Stop).Source
-$compiler = (Get-Command x86_64-w64-mingw32-g++ -ErrorAction Stop).Source
-$strip = (Get-Command x86_64-w64-mingw32-strip -ErrorAction Stop).Source
+$msysRoot = $env:MSYS2_ROOT
+$mingwBin = if (-not [string]::IsNullOrWhiteSpace($msysRoot)) { Join-Path $msysRoot 'mingw64\bin' } else { $null }
+function Resolve-MingwTool([string[]]$Names) {
+  foreach ($name in $Names) {
+    if ($mingwBin) {
+      $candidate = Join-Path $mingwBin $name
+      if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    $command = Get-Command $name -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+  }
+  throw "Required MSYS2 tool not found: $($Names -join ' or ')"
+}
+$windres = Resolve-MingwTool @('windres.exe')
+$compiler = Resolve-MingwTool @('x86_64-w64-mingw32-g++.exe')
+$strip = Resolve-MingwTool @('x86_64-w64-mingw32-strip.exe', 'strip.exe')
 $makensis = Join-Path $env:NSISDIR 'makensis.exe'
+Write-Host "MSYS2 tool root: $mingwBin"
 if (-not (Test-Path -LiteralPath $makensis -PathType Leaf)) { throw "Pinned NSIS 3.11 compiler was not found: $makensis" }
 
 $compilerArgs = @(
