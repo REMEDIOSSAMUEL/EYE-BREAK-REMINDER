@@ -368,6 +368,10 @@ try {
   $wrongHostSettingsPath=Join-Path $dataDir 'settings.ini';$wrongHostSettingsRaw=Get-Content -LiteralPath $wrongHostSettingsPath -Raw;$wrongHostTimestamp=[regex]::Match($wrongHostSettingsRaw,'(?m)^updateLastCheck=(\d+)$');if(-not$wrongHostTimestamp.Success){throw 'The disposable update-check timestamp is missing before the wrong-host rejection test.'};if($wrongHostTimestamp.Groups[1].Value-cne'0'){$wrongHostSettingsRaw=[regex]::Replace($wrongHostSettingsRaw,'(?m)^updateLastCheck=\d+$','updateLastCheck=0');[IO.File]::WriteAllText($wrongHostSettingsPath,$wrongHostSettingsRaw,[Text.UTF8Encoding]::new($false))};$wrongHostSettingsBefore=Read-SettingsMap $wrongHostSettingsPath
   $appProcess=Start-Process -FilePath $installedExe -PassThru
   Record 'Actual installed production app launched against trusted wrong-host TLS certificate' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;ServerCertificate=$wrongLeafCertificatePath;ExpectedHostname='api.github.com'})
+  $wrongHostSettingsTab=Find-Dialog 'Eye Break Reminder' $appProcess.Id 30
+  Invoke-Button $wrongHostSettingsTab 'Settings'
+  Start-Sleep -Milliseconds 250
+  $wrongHostSettingsTab=Find-Dialog 'Eye Break Reminder' $appProcess.Id 5
   $wrongHostAbout=Find-Dialog 'About' $appProcess.Id 15;Invoke-Button $wrongHostAbout 'About'
   $wrongHostTlsError=Find-Dialog 'A secure connection to GitHub could not be verified.' $appProcess.Id 30
   Assert ($wrongHostTlsError.WindowTitle-eq'Eye Break Reminder') 'production updater displays a meaningful error for a trusted certificate with the wrong hostname' ($wrongHostTlsError.Names -join ' | ')
