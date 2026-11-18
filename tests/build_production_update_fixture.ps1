@@ -46,6 +46,7 @@ if (-not $installerText.Contains('VIProductVersion "1.4.1.0"')) { throw 'The con
 
 $msysRoot = $env:MSYS2_ROOT
 $mingwBin = if (-not [string]::IsNullOrWhiteSpace($msysRoot)) { Join-Path $msysRoot 'mingw64\bin' } else { $null }
+if ([string]::IsNullOrWhiteSpace($mingwBin) -or -not (Test-Path -LiteralPath $mingwBin -PathType Container)) { throw 'The disposable Windows runner did not expose the MSYS2 MINGW64 tool directory.' }
 function Resolve-MingwTool([string[]]$Names) {
   foreach ($name in $Names) {
     if ($mingwBin) {
@@ -70,13 +71,21 @@ $compilerArgs = @(
   '-lcomctl32', '-lcomdlg32', '-ldwmapi', '-lwtsapi32', '-lwinmm', '-lgdiplus', '-lshell32', '-lole32', '-loleaut32', '-luuid', '-ladvapi32', '-luxtheme', '-lwinhttp', '-lversion', '-lbcrypt',
   '-Wl,--dynamicbase,--nxcompat,--high-entropy-va'
 )
-Push-Location $fixtureRoot
+$originalPath = $env:PATH
 try {
-  Invoke-Checked $windres @('src/resources.rc', '-O', 'coff', '-o', 'release/resources.o') 'compile controlled successor Windows resources'
-  Invoke-Checked $compiler $compilerArgs 'compile the unmodified production updater as controlled v1.4.1'
-  Invoke-Checked $strip @('release/EyeBreakReminder.exe') 'strip controlled successor application'
-  Invoke-Checked $makensis @('-NOCD', 'installer/setup.nsi') 'build controlled successor installer with pinned NSIS 3.11'
-} finally { Pop-Location }
+  $env:PATH = $mingwBin + [IO.Path]::PathSeparator + $originalPath
+  Push-Location $fixtureRoot
+  try {
+    Invoke-Checked $windres @('src/resources.rc', '-O', 'coff', '-o', 'release/resources.o') 'compile controlled successor Windows resources'
+    Invoke-Checked $compiler $compilerArgs 'compile the unmodified production updater as controlled v1.4.1'
+    Invoke-Checked $strip @('release/EyeBreakReminder.exe') 'strip controlled successor application'
+    Invoke-Checked $makensis @('-NOCD', 'installer/setup.nsi') 'build controlled successor installer with pinned NSIS 3.11'
+  } finally {
+    Pop-Location
+  }
+} finally {
+  $env:PATH = $originalPath
+}
 
 $app = Get-Item -LiteralPath (Join-Path $fixtureRoot 'release\EyeBreakReminder.exe')
 $setup = Get-Item -LiteralPath (Join-Path $fixtureRoot 'release\EyeBreakReminder-Setup-x64.exe')
