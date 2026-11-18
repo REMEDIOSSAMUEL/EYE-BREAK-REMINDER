@@ -31,8 +31,14 @@ checks = {
     "include public acceptance workflow": included(
         Path(".github/workflows/windows-v1.4.0-updater-acceptance.yml")
     ),
+    "include focused exact-candidate acceptance workflow": included(
+        Path(".github/workflows/windows-v1.4.0-focused-acceptance.yml")
+    ),
     "include updater metadata regression test": included(
         Path("tests/updater_metadata_tests.cpp")
+    ),
+    "include bounded certificate-store worker": included(
+        Path("tests/windows_certificate_store_worker.ps1")
     ),
     "exclude generated executables": all(
         not included(Path(path)) for path in (

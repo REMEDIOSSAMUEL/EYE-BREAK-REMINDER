@@ -498,13 +498,13 @@
     {
       "requirement_id": "UPD-041",
       "description": "Preserve resource-leak protection",
-      "implementation_status": "Resource leak protection and the native soak are implemented; the latest complete 110-cycle candidate soak has one test-harness telemetry failure.",
+      "implementation_status": "Resource-leak protection passed the exact production-candidate 110-cycle soak with complete diagnostic telemetry.",
       "required_tests": "110-cycle soak; native picker operations; timer transitions; USER/GDI/handle/private-byte time series; child-process, TCP-session and updater-staging telemetry; exact binary hash.",
-      "actual_verification_evidence": "Run 44206674085 (PR head c0340067213527adc1fbbe131facddaec127af52) completed 110 cycles on Windows Server 2025 x64. Raw CSV shows USER median 167→167 (slope -0.00122/cycle), GDI median 57→59 (slope 0.01366/cycle), handles 246→246, private bytes median 3,715,072→4,435,968 (slope 6,228 bytes/cycle), no child processes and no staging files. One collector assertion failed: Get-NetTCPConnection returned ObjectNotFound for 375 samples with no sessions; the harness marked valid zero sessions unavailable. Corrected collector plus 8 focused PowerShell assertions is in the current unpushed worktree; hosted rerun pending. https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44206674085",
-      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64 (win25-vs2026 image 20261103.298.1).",
-      "tested_source_commit": "65132be9c77ccc98e59a2cfc9a8636cf3d16bfdd",
-      "tested_binary_sha256": "b1aa4b26ec863af106d262ccf18af9a42d4d9a71358fe268f69eb9c81cbd19ae",
-      "status": "FAIL"
+      "actual_verification_evidence": "GitHub Windows acceptance run 44345729932 completed 110 scheduled real reminder cycles in 7,559.5 seconds on Windows Server 2025 x64. Result: 264 PASS, 0 FAIL, 0 NOT TESTED; 375 diagnostic samples and complete telemetry. Exact candidate SHA-256 3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe. USER median 167→167 (slope 0.00112/cycle), GDI slope 0.00417/cycle, handles slope -0.00094/cycle, private bytes slope 6,085 bytes/cycle, working-set slope -20,064 bytes/cycle. Resource time series and cycle CSV are retained in the run artifact. https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44345729932",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; exact production v1.4.0 executable; 110 scheduled timer cycles plus picker/window interactions.",
+      "tested_source_commit": "80fcd8904f8aaeef790d194a13caa21e303d36b2",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
+      "status": "PASS"
     },
     {
       "requirement_id": "SEC-001",
@@ -2251,13 +2251,13 @@
     {
       "requirement_id": "SUITE-003",
       "description": "make package",
-      "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
+      "implementation_status": "Hosted make package passed; Windows production candidate packaging with NSIS 3.11 also built successfully.",
       "required_tests": "Pinned NSIS production packaging and saved log",
-      "actual_verification_evidence": "Run 44187600778 terminally failed in scripts/verify.py because its expected source-file set did not yet exclude the three live v1.4.0 evidence documents excluded by scripts/package.py. This mismatch was corrected in the worktree; direct local scripts/package.py + scripts/verify.py now passes 240 assertions. Hosted retry required.",
-      "environment": "GitHub-hosted Ubuntu; PR validation run 44187600778",
-      "tested_source_commit": "d62b6f36b24e15b510e0fbe4147c26518babd18e",
+      "actual_verification_evidence": "Current PR head cdfc4c40f6bbe4ad46467d87297d7ae5f0e7566b: required CI run 44351609015 executed make package with POSIX MinGW, core=6,715, metadata=78, package verifier=247 assertions; saved log build/overnight-2026-11-18/pr-run-44351609015.log. Exact Windows candidate build on source 69408fb in acceptance run 44345729932 used pinned NSIS 3.11 and completed candidate package/provenance step successfully. The current candidate artifact remains pending final acceptance.",
+      "environment": "GitHub Actions ubuntu-24.04 required CI for cdfc4c4; GitHub-hosted Windows Server 2025 x64 candidate packaging with NSIS 3.11 in run 44345729932.",
+      "tested_source_commit": "cdfc4c40f6bbe4ad46467d87297d7ae5f0e7566b (required CI); 69408fb0f0dbc7166e98628d1f117b688b96d434 (pinned-NSIS candidate build)",
       "tested_binary_sha256": null,
-      "status": "FAIL"
+      "status": "PASS"
     },
     {
       "requirement_id": "SUITE-004",
@@ -2295,13 +2295,13 @@
     {
       "requirement_id": "SUITE-007",
       "description": "Installer and uninstaller suites",
-      "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
+      "implementation_status": "Interactive per-user install/uninstall, v1.3.0 upgrade, and silent update/uninstall transaction coverage passed on the hosted disposable Windows runner.",
       "required_tests": "Actual install/upgrade/uninstall scenarios",
-      "actual_verification_evidence": "The latest full transaction attempt 44179592402 stopped at the interactive NSIS uninstaller UI harness before the actual uninstall. A later run 44187600669 stopped earlier in package verification. The native-button click fallback has not yet run hosted.",
-      "environment": "GitHub-hosted Windows Server 2025 x64; PR acceptance run 44179592402",
-      "tested_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
-      "tested_binary_sha256": null,
-      "status": "FAIL"
+      "actual_verification_evidence": "Run 44345729932 passed the actual published-v1.3.0-to-v1.4.0 upgrade (step 12), standard-user interactive installation/uninstallation (step 13; 11 PASS events, account/profile cleanup verified), and updater installation/uninstallation/data policy transactions (step 14; result PASS, 702 PASS events, one separate Windows Settings > Apps observation recorded NOT TESTED because the runner did not expose that page). The installed exact-production-candidate updater transaction is tracked separately under SUITE-006 and still awaits the focused retest. https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44345729932",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; disposable profiles; exact candidate run 44345729932.",
+      "tested_source_commit": "80fcd8904f8aaeef790d194a13caa21e303d36b2",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
+      "status": "PASS"
     },
     {
       "requirement_id": "SUITE-008",
@@ -2583,7 +2583,7 @@
       "implementation_status": "Implemented fail-closed in src/update_client.hpp; failure removes staged partial output before returning.",
       "actual_verification_evidence": "Local Windows test-only binary passed the asserted fault-injection case; tests/updater_windows_tests.cpp. Log: build/overnight-2026-11-18/direct-updater-tests/updater.stdout.log. Test-only binary SHA-256: 4475d9f9ef855ade8b78844a9aa541ebc062e47da3a737002298784e7559a90c. This is not production-binary acceptance.",
       "environment": "Local Windows host OS build 26300; test-only native Windows binary; not claimed as a named Windows release.",
-      "tested_source_commit": null,
+      "tested_source_commit": "69408fb0f0dbc7166e98628d1f117b688b96d434",
       "working_tree_base_commit": "ffb8d9d11e886f89bf43512820816bcb69586c78",
       "tested_binary_sha256": "4475d9f9ef855ade8b78844a9aa541ebc062e47da3a737002298784e7559a90c",
       "status": "PASS",
@@ -2595,7 +2595,7 @@
       "implementation_status": "Implemented fail-closed in src/update_client.hpp; failure removes staged partial output before returning.",
       "actual_verification_evidence": "Local Windows test-only binary passed the asserted fault-injection case; tests/updater_windows_tests.cpp. Log: build/overnight-2026-11-18/direct-updater-tests/updater.stdout.log. Test-only binary SHA-256: 4475d9f9ef855ade8b78844a9aa541ebc062e47da3a737002298784e7559a90c. This is not production-binary acceptance.",
       "environment": "Local Windows host OS build 26300; test-only native Windows binary; not claimed as a named Windows release.",
-      "tested_source_commit": null,
+      "tested_source_commit": "69408fb0f0dbc7166e98628d1f117b688b96d434",
       "working_tree_base_commit": "ffb8d9d11e886f89bf43512820816bcb69586c78",
       "tested_binary_sha256": "4475d9f9ef855ade8b78844a9aa541ebc062e47da3a737002298784e7559a90c",
       "status": "PASS",
@@ -2605,23 +2605,24 @@
     }
   ],
   "status_counts": {
+    "PASS": 142,
+    "FAIL": 1,
     "NOT TESTED": 86,
-    "PASS": 139,
-    "FAIL": 4,
     "BLOCKED": 1,
     "NOT APPLICABLE": 1
   },
-  "generated_at_utc": "2026-11-18T16:40:00Z",
+  "generated_at_utc": "2026-11-18T19:03:30Z",
   "latest_validation": {
-    "required_ci_run_id": 44345730045,
-    "required_ci_status": "cancelled at the 20-minute job timeout during dependency install; package/tests not run; workflow narrowed to POSIX MinGW with bounded retries and extended timeout; rerun pending",
-    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44345730045",
+    "required_ci_run_id": 44351609015,
+    "required_ci_status": "success on current feature head cdfc4c40f6bbe4ad46467d87297d7ae5f0e7566b; 6,715 core assertions, 78 release metadata/asset assertions, 247 binary/package assertions",
+    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44351609015",
     "windows_acceptance_run_id": 44345729932,
-    "windows_acceptance_status": "in progress on source 69408fb; steps 1-14 passed; exact production-candidate update step 15 failed in 63 seconds; 110-cycle soak step 19 in progress; terminal logs/artifact pending",
+    "windows_acceptance_status": "terminal failure at exact production updater transaction before app install or launch: disposable CA add to CurrentUser Root store exceeded 60-second bound; the remaining full-run tests and exact candidate 110-cycle soak passed. Narrow harness correction and workflow-dispatch focused retest are in the worktree; hosted retest pending.",
     "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44345729932",
-    "source_commit": "69408fb0f0dbc7166e98628d1f117b688b96d434",
-    "older_obsolete_windows_run_id": 44329029310,
-    "older_obsolete_windows_run_status": "cancelled as stale after same production-update-step failure; not release evidence",
-    "older_obsolete_windows_run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44329029310"
+    "windows_duplicate_run_id": 44351608851,
+    "windows_duplicate_run_status": "cancelled during compiler setup; triggered only by CI/progress changes; no test evidence relied upon",
+    "windows_duplicate_run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44351608851",
+    "source_commit": "cdfc4c40f6bbe4ad46467d87297d7ae5f0e7566b",
+    "windows_candidate_source_commit": "69408fb0f0dbc7166e98628d1f117b688b96d434"
   }
 }

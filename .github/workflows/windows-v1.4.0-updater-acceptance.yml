@@ -4,6 +4,31 @@ on:
   pull_request:
     branches:
       - main
+    # Full GUI/installer/soak acceptance runs for product and package inputs.
+    # The targeted certificate-store harness and final documentation are
+    # exercised by the focused workflow/required PR CI without repeating the
+    # two-hour 110-cycle soak.
+    paths:
+      - 'src/**'
+      - 'assets/**'
+      - 'installer/**'
+      - 'Makefile'
+      - 'VERSION'
+      - 'README.md'
+      - 'CHANGELOG.md'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'scripts/package.py'
+      - 'scripts/verify.py'
+      - 'docs/**'
+      - '!docs/V1.4.0_AUTONOMOUS_COMPLETION_PROGRESS.md'
+      - '!docs/V1.4.0_ACCEPTANCE_MATRIX.json'
+      - '!docs/V1.4.0_FINAL_COMPLETION_AUDIT.md'
+      - '!docs/V1.4.0_FINAL_PRE_RELEASE_VERIFICATION.md'
+      - 'tests/**'
+      - '!tests/windows_certificate_store_worker.ps1'
+      - '!tests/windows_production_update_acceptance.ps1'
+      - '!tests/package_source_policy_tests.py'
   workflow_dispatch:
 
 permissions:

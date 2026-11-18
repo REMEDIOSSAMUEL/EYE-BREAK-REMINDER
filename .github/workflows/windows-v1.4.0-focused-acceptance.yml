@@ -1,0 +1,272 @@
+name: Windows v1.4.0 focused updater acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      reference_run_id:
+        description: Completed Windows run containing the exact v1.4.0 production executable and installer
+        required: true
+        type: string
+        default: '44345729932'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  production-update:
+    name: Exact-candidate production update transaction (Windows Server x64)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out the harness and final source archive inputs
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install only the tools required for the controlled successor fixture
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+
+      - name: Install upstream NSIS 3.11 with the x86 Unicode plugin set
+        uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1
+        with:
+          version: '3.11'
+
+      - name: Record MSYS2 root for the isolated fixture builder
+        shell: msys2 {0}
+        run: |
+          printf 'MSYS2_ROOT=%s\n' "$(cygpath -aw /)" >> "$GITHUB_ENV"
+
+      - name: Download the exact prior production candidate and full-run evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.4.0-candidate-${{ inputs.reference_run_id }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.reference_run_id }}
+          github-token: ${{ github.token }}
+          path: reference
+
+      - name: Rebuild final source and portable archives while preserving the hash-tested application and installer
+        id: candidate
+        shell: pwsh
+        env:
+          REFERENCE_RUN_ID: ${{ inputs.reference_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $referenceRelease = 'reference/release'
+          $referenceEvidence = 'reference/build/v1.4.0-updater-evidence'
+          $expectedNames = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $referenceFiles = @(Get-ChildItem -LiteralPath $referenceRelease -Force)
+          if ($referenceFiles.Count -ne 5 -or @($referenceFiles | Where-Object PSIsContainer).Count -ne 0) { throw 'Reference artifact must contain exactly the five named release files.' }
+          if ((@($referenceFiles | Sort-Object Name | Select-Object -ExpandProperty Name) -join "`n") -cne (($expectedNames | Sort-Object) -join "`n")) { throw 'Reference artifact file set differs from the v1.4.0 release contract.' }
+          $referenceProvenance = Get-Content -LiteralPath (Join-Path $referenceEvidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          if ([string]$referenceProvenance.RunId -cne $env:REFERENCE_RUN_ID -or $referenceProvenance.Application -cne 'Eye Break Reminder' -or $referenceProvenance.Version -cne '1.4.0' -or $referenceProvenance.SourceCommit -cne '80fcd8904f8aaeef790d194a13caa21e303d36b2' -or $referenceProvenance.PRHeadCommit -cne '69408fb0f0dbc7166e98628d1f117b688b96d434') { throw 'Reference candidate provenance does not identify the approved v1.4.0 build run and source.' }
+          $referenceIdentities = Get-Content -LiteralPath (Join-Path $referenceEvidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json
+          if ($referenceIdentities.Count -ne 5) { throw 'Reference artifact identity inventory does not contain exactly five files.' }
+          $expectedHashes = @{
+            'EyeBreakReminder.exe' = '3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe'
+            'EyeBreakReminder-Setup-x64.exe' = 'c4aad0412d04ff352117af4f8ab09458d9e5c1b7691ac89c3b930e3495288002'
+            'EyeBreakReminder-Portable-x64.zip' = '73c14f0869d36dad36a3f2f857ab143de299a762896fee4e064dcb8e69aaf770'
+            'EyeBreakReminder-Source.zip' = 'b2654294c886a4790c76e4a7b0920ec4552600282993fcbc40e9f4e8b5973d35'
+            'EyeBreakReminder-SHA256.txt' = '4db19ea97fec190ec33bef5edc1ee0b0b7877a2f7c61c27f9bed47678097797f'
+          }
+          foreach ($name in $expectedNames) {
+            $identity = @($referenceIdentities | Where-Object Name -CEQ $name)
+            if ($identity.Count -ne 1 -or $identity[0].SHA256 -cne $expectedHashes[$name]) { throw "Reference evidence hash differs from the verified prior candidate: $name" }
+            $actual = (Get-FileHash -LiteralPath (Join-Path $referenceRelease $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -cne $expectedHashes[$name]) { throw "Downloaded reference candidate hash mismatch: $name" }
+          }
+          $soakPath = Join-Path $referenceEvidence 'resource-soak/soak-summary.json'
+          $soak = Get-Content -LiteralPath $soakPath -Raw | ConvertFrom-Json
+          if ($soak.Application -cne 'Eye Break Reminder' -or $soak.Version -cne '1.4.0' -or $soak.RequestedCycles -ne 110 -or $soak.CompletedCycles -ne 110 -or $soak.Pass -ne 264 -or $soak.Fail -ne 0 -or $soak.NotTested -ne 0 -or -not $soak.DiagnosticTelemetryComplete -or $soak.SHA256 -cne $expectedHashes['EyeBreakReminder.exe']) { throw 'Reference 110-cycle soak does not prove zero failures, complete telemetry, and the exact retained executable hash.' }
+
+          # Confirm production inputs have not changed since the candidate executable and installer were built.
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $sourceArchive = [IO.Compression.ZipFile]::OpenRead((Join-Path $referenceRelease 'EyeBreakReminder-Source.zip'))
+          try {
+            $currentPaths = @()
+            foreach ($directory in @('src','assets','installer')) {
+              $currentPaths += @(Get-ChildItem -LiteralPath $directory -Recurse -File | ForEach-Object { $_.FullName.Substring((Get-Location).Path.Length + 1).Replace('\','/') })
+            }
+            $currentPaths += @('Makefile','VERSION')
+            foreach ($relative in $currentPaths) {
+              $entry = $sourceArchive.GetEntry("EyeBreakReminder/$relative")
+              if (-not $entry) { throw "Reference source archive does not contain production input $relative" }
+              $stream = $entry.Open()
+              $sha = [Security.Cryptography.SHA256]::Create()
+              try { $oldHash = [Convert]::ToHexString($sha.ComputeHash($stream)).ToLowerInvariant() } finally { $sha.Dispose(); $stream.Dispose() }
+              $newHash = (Get-FileHash -LiteralPath $relative -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($oldHash -cne $newHash) { throw "Production source input changed since the accepted candidate build: $relative" }
+            }
+          } finally { $sourceArchive.Dispose() }
+
+          New-Item -ItemType Directory -Force -Path release,build/v1.4.0-updater-evidence | Out-Null
+          foreach ($name in $expectedNames) { Copy-Item -LiteralPath (Join-Path $referenceRelease $name) -Destination (Join-Path 'release' $name) }
+          $beforeApp = $expectedHashes['EyeBreakReminder.exe']
+          $beforeSetup = $expectedHashes['EyeBreakReminder-Setup-x64.exe']
+          $oldPortable = Join-Path $referenceRelease 'EyeBreakReminder-Portable-x64.zip'
+          & "$env:MSYS2_ROOT\mingw64\bin\python.exe" .\scripts\package.py
+          if ($LASTEXITCODE -ne 0) { throw "Current-source package step failed with exit code $LASTEXITCODE." }
+          if ((Get-FileHash 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant() -cne $beforeApp -or (Get-FileHash 'release/EyeBreakReminder-Setup-x64.exe' -Algorithm SHA256).Hash.ToLowerInvariant() -cne $beforeSetup) { throw 'Source packaging unexpectedly replaced the exact candidate executable or installer.' }
+
+          function Get-ZipHashes([string]$Path) {
+            $zip = [IO.Compression.ZipFile]::OpenRead($Path)
+            try {
+              $map = @{}
+              foreach ($entry in $zip.Entries) {
+                if ($entry.FullName.StartsWith('/') -or $entry.FullName.Contains('..') -or $entry.FullName.Contains('\')) { throw "Unsafe path in package ZIP: $($entry.FullName)" }
+                $stream = $entry.Open(); $sha = [Security.Cryptography.SHA256]::Create()
+                try { $map[$entry.FullName] = [Convert]::ToHexString($sha.ComputeHash($stream)).ToLowerInvariant() } finally { $sha.Dispose(); $stream.Dispose() }
+              }
+              return $map
+            } finally { $zip.Dispose() }
+          }
+          $oldPortableEntries = Get-ZipHashes $oldPortable
+          $newPortableEntries = Get-ZipHashes 'release/EyeBreakReminder-Portable-x64.zip'
+          if (($oldPortableEntries.Keys | Sort-Object) -join "`n" -cne (($newPortableEntries.Keys | Sort-Object) -join "`n")) { throw 'Final portable package content set differs from the previously accepted portable package.' }
+          foreach ($entryName in $oldPortableEntries.Keys) { if ($oldPortableEntries[$entryName] -cne $newPortableEntries[$entryName]) { throw "Final portable package content changed: $entryName" } }
+          if ($newPortableEntries['EyeBreakReminder.exe'] -cne $beforeApp) { throw 'Final portable package does not contain the exact tested standalone executable.' }
+
+          $sourceZip = [IO.Compression.ZipFile]::OpenRead((Join-Path (Get-Location) 'release/EyeBreakReminder-Source.zip'))
+          try {
+            foreach ($entry in $sourceZip.Entries) {
+              if ($entry.FullName -match '(^|/)\.git(/|$)|\.(pfx|pem|p12|key)$' -or $entry.FullName -match '(^|/)build(/|$)|(^|/)release(/|$)') { throw "Forbidden build, Git, or signing file in source archive: $($entry.FullName)" }
+              if ($entry.Length -gt 0 -and $entry.Length -lt 5000000 -and $entry.FullName -match '\.(txt|md|ps1|py|cpp|hpp|yml|yaml|nsi|json|ini|bat|sh)$') {
+                $reader = [IO.StreamReader]::new($entry.Open())
+                try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
+                if ($text -match '-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|C:\\Users\\remed\\OneDrive') { throw "Possible secret or personal path in source archive: $($entry.FullName)" }
+              }
+            }
+          } finally { $sourceZip.Dispose() }
+
+          $identities = foreach ($name in $expectedNames) {
+            $file = Get-Item -LiteralPath (Join-Path 'release' $name)
+            [pscustomobject]@{Name=$name;Bytes=$file.Length;SHA256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant();ProductVersion=if($name.EndsWith('.exe')){$file.VersionInfo.ProductVersion}else{$null}}
+          }
+          $identities | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/release-artifact-identities.json' -Encoding UTF8
+          $manifest = Get-Content 'release/EyeBreakReminder-SHA256.txt'
+          if ($manifest.Count -ne 4) { throw 'Final candidate checksum manifest must cover exactly four payloads.' }
+          foreach ($item in $identities | Where-Object Name -ne 'EyeBreakReminder-SHA256.txt') {
+            $expected = $item.SHA256 + '  ' + $item.Name
+            if (@($manifest | Where-Object { $_ -ceq $expected }).Count -ne 1) { throw "Final candidate checksum manifest mismatch: $($item.Name)" }
+          }
+          if ($identities[0].ProductVersion -notmatch '^1\.4\.0(\.0)?$' -or $identities[1].ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw 'Final candidate executable and installer are not version 1.4.0.' }
+          Copy-Item -LiteralPath $referenceEvidence -Destination 'build/v1.4.0-updater-evidence/reference-run-44345729932' -Recurse
+          [pscustomobject]@{Application='Eye Break Reminder';Version='1.4.0';RunId=$env:GITHUB_RUN_ID;RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID";BinarySourceCommit=$referenceProvenance.SourceCommit;SourceArchiveCommit=$env:GITHUB_SHA;ReferenceRunId=$env:REFERENCE_RUN_ID;ReferencePRHead=$referenceProvenance.PRHeadCommit;CandidateFiles=$identities;ProductionInputsCompared=@($currentPaths);Prior110CycleSoakReused=$true;SoakSHA256=$soak.SHA256;Published=$false;Tagged=$false;Merged=$false} | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/candidate-provenance.json' -Encoding UTF8
+
+      - name: Build a controlled v1.4.1 successor fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\build_production_update_fixture.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run the actual exact-candidate automatic updater transaction
+        id: production_update
+        timeout-minutes: 25
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_production_update_acceptance.ps1 `
+            -CandidateInstaller '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -CandidateExecutable '.\release\EyeBreakReminder.exe' `
+            -ControlledInstaller "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder-Setup-x64.exe" `
+            -ControlledExecutable "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder.exe" `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Confirm the exact candidate files remained unchanged after the update transaction
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identityPath = 'build/v1.4.0-updater-evidence/release-artifact-identities.json'
+          if (-not (Test-Path -LiteralPath $identityPath)) { throw 'Candidate identity evidence is missing.' }
+          foreach ($item in (Get-Content $identityPath -Raw | ConvertFrom-Json)) {
+            $path = Join-Path 'release' $item.Name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item $path).Length -ne [long]$item.Bytes -or (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $item.SHA256) { throw "Test transaction changed or removed candidate asset $($item.Name)." }
+          }
+
+      - name: Upload the final candidate and focused Windows evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-focused-candidate-${{ github.run_id }}
+          path: |
+            release/EyeBreakReminder.exe
+            release/EyeBreakReminder-Setup-x64.exe
+            release/EyeBreakReminder-Portable-x64.zip
+            release/EyeBreakReminder-Source.zip
+            release/EyeBreakReminder-SHA256.txt
+            build/v1.4.0-updater-evidence/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  arm64-emulation:
+    name: Exact final candidate under Windows 11 ARM64 x64 emulation
+    needs: production-update
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - name: Check out the ARM64 acceptance harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the exact candidate retained by the x64 updater job
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.4.0-focused-candidate-${{ github.run_id }}
+          path: .
+
+      - name: Verify the five final candidate hashes before runtime checks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $files = @(Get-ChildItem -LiteralPath 'release' -Force)
+          if ($files.Count -ne 5 -or @($files | Where-Object PSIsContainer).Count -ne 0 -or (@($files | Sort-Object Name | Select-Object -ExpandProperty Name) -join "`n") -cne (($expected | Sort-Object) -join "`n")) { throw 'Downloaded final candidate does not contain exactly the expected five assets.' }
+          $manifest = Get-Content 'release/EyeBreakReminder-SHA256.txt'
+          if ($manifest.Count -ne 4) { throw 'Final candidate manifest does not contain four payload hashes.' }
+          foreach ($line in $manifest) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw 'Malformed final candidate checksum line.' }
+            $path = Join-Path 'release' $Matches[2]
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Matches[1]) { throw "Final candidate hash mismatch: $($Matches[2])" }
+          }
+          $identity = Get-Content 'build/v1.4.0-updater-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
+          if ($identity.Version -cne '1.4.0' -or -not $identity.Prior110CycleSoakReused) { throw 'Candidate provenance does not identify the v1.4.0 candidate and exact-hash soak reuse.' }
+
+      - name: Run final candidate under Windows 11 ARM64 x64 emulation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = Get-Content 'build/v1.4.0-updater-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
+          & .\tests\windows_arm64_emulation_acceptance.ps1 `
+            -InstallerPath (Join-Path (Get-Location) 'release/EyeBreakReminder-Setup-x64.exe') `
+            -StandaloneExecutable (Join-Path (Get-Location) 'release/EyeBreakReminder.exe') `
+            -PortableArchive (Join-Path (Get-Location) 'release/EyeBreakReminder-Portable-x64.zip') `
+            -EvidenceDirectory (Join-Path (Get-Location) 'build/arm64-emulation-evidence') `
+            -CandidateSourceCommit $identity.BinarySourceCommit `
+            -ExpectedVersion '1.4.0'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload final-candidate ARM64 emulation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-arm64-focused-${{ github.run_id }}
+          path: |
+            build/arm64-emulation-evidence/**
+            build/v1.4.0-updater-evidence/candidate-provenance.json
+          if-no-files-found: warn
+          retention-days: 90

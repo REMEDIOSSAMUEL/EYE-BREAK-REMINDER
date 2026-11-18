@@ -136,9 +136,11 @@ function Stop-ProductionApplication {
 function Add-Check($Executable,[string[]]$Arguments,[string]$Description){& $Executable @Arguments;if($LASTEXITCODE-ne0){throw "$Description failed with exit code $LASTEXITCODE."}}
 # Root-store work is isolated in a child PowerShell process so a stalled
 # CryptoAPI/certificate service cannot strand the entire hosted acceptance job.
-# The worker's exit status and byte-for-byte certificate identity are checked
-# before any test root is trusted or removed.
+# This script requires the disposable hosted runner's administrator token;
+# the test root is installed only in that runner's machine store and removed
+# only after byte-for-byte identity verification.
 function Invoke-TemporaryRootStoreOperation([string]$Operation,[string]$Thumbprint,[string]$CertificatePath=$null,[byte[]]$ExpectedCertificateBytes=$null,[int]$TimeoutSeconds=60) {
+  if($script:certificateStoreWorkerStuck){throw 'The previous certificate-store worker could not be confirmed stopped; refusing to start a concurrent trust-store worker.'}
   $workerPath=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'windows_certificate_store_worker.ps1'))
   if(-not(Test-Path -LiteralPath $workerPath -PathType Leaf)){throw "The bounded certificate-store worker is missing: $workerPath"}
   $id=[guid]::NewGuid().ToString('N')
@@ -160,14 +162,16 @@ function Invoke-TemporaryRootStoreOperation([string]$Operation,[string]$Thumbpri
     $stderrTask=$process.StandardError.ReadToEndAsync()
     if(-not$process.WaitForExit($TimeoutSeconds*1000)){
       try{$process.Kill($true)}catch{try{$process.Kill()}catch{}}
-      [void]$process.WaitForExit(5000)
-      throw "Windows current-user root-store $Operation operation exceeded its $TimeoutSeconds-second bound."
+      $workerStopped=$false
+      try{$workerStopped=$process.WaitForExit(5000)}catch{}
+      if(-not$workerStopped){$script:certificateStoreWorkerStuck=$true;throw "The certificate-store worker remained alive after its $TimeoutSeconds-second bound and termination request; concurrent trust-store cleanup is refused."}
+      throw "Windows isolated-runner machine root-store $Operation operation exceeded its $TimeoutSeconds-second bound."
     }
     [void]$process.WaitForExit(5000)
     $stdout=$stdoutTask.GetAwaiter().GetResult()
     $stderr=$stderrTask.GetAwaiter().GetResult()
     Write-Host ('EBR_CERTSTORE_EVENT '+([pscustomobject]@{Operation=$Operation;ExitCode=$process.ExitCode;Stdout=$stdout;Stderr=$stderr}|ConvertTo-Json -Depth 4 -Compress))
-    if($process.ExitCode-ne0){throw "Windows current-user root-store $Operation operation failed with exit code $($process.ExitCode). $stderr $stdout"}
+    if($process.ExitCode-ne0){throw "Windows isolated-runner machine root-store $Operation operation failed with exit code $($process.ExitCode). $stderr $stdout"}
     if(-not(Test-Path -LiteralPath $resultPath -PathType Leaf)){throw "The certificate-store worker did not produce its result for $Operation."}
     $result=Get-Content -LiteralPath $resultPath -Raw|ConvertFrom-Json
     if(-not$result.Success){throw "The certificate-store worker rejected $Operation`: $($result.Error)"}
@@ -207,6 +211,7 @@ $rootCertificatePath=Join-Path $testRoot 'test-root.cer'
 $temporaryRootCertificate=$null
 $script:temporaryRootCertificateRawData=$null
 $script:temporaryRootCertificateAdded=$false
+$script:certificateStoreWorkerStuck=$false
 $rootPrivateKeyPath=Join-Path $testRoot 'test-root.key'
 $rootPemPath=Join-Path $testRoot 'test-root.pem'
 $leafCsrPath=Join-Path $testRoot 'server.csr'
@@ -238,7 +243,7 @@ try {
   $rootThumbprint=(Get-FileHash -LiteralPath $rootCertificatePath -Algorithm SHA1).Hash.ToUpperInvariant()
   Record 'Test-root certificate thumbprint computed from its DER bytes' 'INFO' $rootThumbprint
   $temporaryRootCertificate=Add-TemporaryRootCertificate $rootCertificatePath $rootThumbprint
-  Assert ($temporaryRootCertificate.Thumbprint-ceq$rootThumbprint) 'temporary test trust anchor is accepted by the isolated runner current-user root store without an interactive prompt' $rootThumbprint
+  Assert ($temporaryRootCertificate.Thumbprint-ceq$rootThumbprint) 'temporary test trust anchor is accepted by the disposable runner machine root store without an interactive prompt' $rootThumbprint
 
   $tail=[Text.Encoding]::ASCII.GetBytes("`r`n127.0.0.1 api.github.com github.com`r`n::1 api.github.com github.com`r`n")
   $newHosts=[byte[]]::new($originalHostsBytes.Length+$tail.Length)
@@ -383,12 +388,12 @@ finally {
     try{
       $remaining=Get-TemporaryRootCertificate $rootThumbprint
       if($remaining.Present){
-        if(-not$script:temporaryRootCertificateRawData-or$remaining.RawDataBase64-cne[Convert]::ToBase64String($script:temporaryRootCertificateRawData)){throw 'The current-user root-store certificate does not exactly match the generated disposable test root; refusing cleanup.'}
+        if(-not$script:temporaryRootCertificateRawData-or$remaining.RawDataBase64-cne[Convert]::ToBase64String($script:temporaryRootCertificateRawData)){throw 'The machine root-store certificate does not exactly match the generated disposable test root; refusing cleanup.'}
         $removed=Remove-TemporaryRootCertificate $rootThumbprint $script:temporaryRootCertificateRawData
         if(-not$removed){throw 'The generated disposable root was present but the bounded cleanup worker did not remove it.'}
       }
       $verifiedAbsent=Get-TemporaryRootCertificate $rootThumbprint
-      if($verifiedAbsent.Present){throw 'The disposable test root remains in the current-user root store after bounded cleanup.'}
+      if($verifiedAbsent.Present){throw 'The disposable test root remains in the isolated runner machine root store after bounded cleanup.'}
       $script:temporaryRootCertificateAdded=$false
       $temporaryRootCertificate=$null
       $trustRootCleanupStatus='PASS';Record 'Remove temporary TLS trust root' 'PASS' $rootThumbprint
