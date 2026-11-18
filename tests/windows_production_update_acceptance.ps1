@@ -191,8 +191,17 @@ try {
   $listenWatch=[Diagnostics.Stopwatch]::StartNew()
   while($listenWatch.Elapsed.TotalSeconds-lt15-and-not(Test-Path -LiteralPath $readyPath)){if($serverProcess.HasExited){throw "Loopback TLS feed exited before it became ready. $([IO.File]::ReadAllText($serverStderr))"};Start-Sleep -Milliseconds 100}
   if(-not(Test-Path -LiteralPath $readyPath)){throw 'Loopback TLS feed did not become ready on IPv4 and IPv6 loopback port 443.'}
-  $feedProbe=Invoke-WebRequest -Uri 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' -UseBasicParsing -TimeoutSec 10
-  Assert ($feedProbe.StatusCode-eq200-and($feedProbe.Content|ConvertFrom-Json).tag_name-eq'v1.4.1') 'ephemeral CA validates HTTPS to the isolated controlled official-host release feed'
+  # First remove the test-only issuer and prove Windows rejects the endpoint.
+  # The production application will exercise the same WinHTTP certificate
+  # validation path below. Reinstall the temporary root only after rejection.
+  $certPath="Cert:\CurrentUser\Root\$rootThumbprint"
+  Remove-Item -LiteralPath $certPath -Force
+  Assert (-not(Test-Path -LiteralPath $certPath)) 'the test-only TLS issuer is absent before the invalid-certificate rejection case' $rootThumbprint
+  $pretrustProbeFailed=$false;$pretrustProbeMessage=''
+  try { [void](Invoke-WebRequest -Uri 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' -UseBasicParsing -TimeoutSec 10) }
+  catch { $pretrustProbeFailed=$true;$pretrustProbeMessage=$_.Exception.ToString() }
+  Assert ($pretrustProbeFailed-and$pretrustProbeMessage-match'certificate|trust|secure|SSL|TLS') 'Windows rejects the isolated feed certificate while its issuer is untrusted' $pretrustProbeMessage
+  Assert (@(Get-Content -LiteralPath $requestLogPath -ErrorAction SilentlyContinue).Count-eq0) 'an untrusted TLS handshake sends no HTTP request to the isolated release feed'
 
   [void][IO.Directory]::CreateDirectory($installDir)
   $setup=Start-Process -FilePath $candidateInstallerPath -ArgumentList @('/S',"/D=$installDir") -PassThru -Wait
@@ -222,6 +231,24 @@ try {
   $sentinelBefore=[IO.File]::ReadAllBytes((Join-Path $dataDir 'unrelated-sentinel.txt'))
   $appProcess=Start-Process -FilePath $installedExe -PassThru
   Record 'Actual installed production app launched' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;SHA256=(Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant();ProductVersion=(Get-Item $installedExe).VersionInfo.ProductVersion;BuildMacro='EYEBREAK_TEST_BUILD absent'})
+  $settingsTab=Find-Dialog 'Eye Break Reminder' $appProcess.Id 30
+  Invoke-Button $settingsTab 'Settings'
+  $about=Find-Dialog 'About' $appProcess.Id 15
+  Invoke-Button $about 'About'
+  $tlsError=Find-Dialog 'A secure connection to GitHub could not be verified.' $appProcess.Id 30
+  Assert ($tlsError.WindowTitle-eq'Eye Break Reminder') 'production updater presents a meaningful TLS certificate validation error in the About settings UI' ($tlsError.Names -join ' | ')
+  Assert (-not(Test-Path -LiteralPath (Join-Path $dataDir 'updates'))) 'invalid TLS certificate rejection creates no update staging directory'
+  Assert ((Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()-eq(Get-FileHash -LiteralPath $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()) 'invalid TLS certificate rejection does not replace the installed production candidate'
+  Assert ([Convert]::ToBase64String($historyBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'history.dat')))-and[Convert]::ToBase64String($sentinelBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'unrelated-sentinel.txt')))) 'invalid TLS certificate rejection leaves existing history and unrelated user data byte-for-byte unchanged'
+  Assert (-not(Test-Path -LiteralPath $certPath)) 'unverified feed does not acquire a trusted-root installation or bypass certificate validation' $rootThumbprint
+  Stop-ProductionApplication
+  $appProcess=$null
+  Import-Certificate -FilePath $rootCertificatePath -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
+  Assert ((Get-ChildItem 'Cert:\CurrentUser\Root' | Where-Object Thumbprint -EQ $rootThumbprint).Count-eq1) 'temporary test CA is installed only after the invalid-certificate rejection is verified'
+  $feedProbe=Invoke-WebRequest -Uri 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' -UseBasicParsing -TimeoutSec 10
+  Assert ($feedProbe.StatusCode-eq200-and($feedProbe.Content|ConvertFrom-Json).tag_name-eq'v1.4.1') 'ephemeral CA validates HTTPS to the isolated controlled official-host release feed'
+  $appProcess=Start-Process -FilePath $installedExe -PassThru
+  Record 'Actual installed production app relaunched after TLS rejection' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;ProductVersion=(Get-Item $installedExe).VersionInfo.ProductVersion})
   $choice=Find-Dialog 'Eye Break Reminder Update Available' $appProcess.Id 90
   Assert ($choice.WindowTitle-eq'Eye Break Reminder Update') 'production binary discovered the controlled stable release and opened its native update dialog' $choice.WindowTitle
   Assert ((@($choice.Names)-join' ').Contains('Current version: 1.4.0')-and(@($choice.Names)-join' ').Contains('v1.4.1')-and(@($choice.Names)-join' ').Contains('Release notes')) 'production update dialog shows installed/available versions and release notes' ($choice.Names -join ' | ')
