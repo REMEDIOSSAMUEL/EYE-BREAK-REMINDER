@@ -338,7 +338,9 @@ try {
   $rootPresenceAfterRejection=Get-TemporaryRootCertificate $rootThumbprint
   Assert ($rootPresenceAfterRejection.Present-and$rootPresenceAfterRejection.RawDataBase64-ceq[Convert]::ToBase64String($script:temporaryRootCertificateRawData)) 'trusted controlled update feed has only the disposable current-user TLS test root'
   $feedProbe=Invoke-WebRequest -Uri 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' -UseBasicParsing -TimeoutSec 10
-  Assert ($feedProbe.StatusCode-eq200-and($feedProbe.Content|ConvertFrom-Json).tag_name-eq'v1.4.1') 'ephemeral CA validates HTTPS to the isolated controlled official-host release feed'
+  $feedRelease=$feedProbe.Content|ConvertFrom-Json
+  $feedProbeDetails=[pscustomobject]@{StatusCode=[int]$feedProbe.StatusCode;TagName=[string]$feedRelease.tag_name;ResponseContent=[string]$feedProbe.Content;Requests=@(Get-Content -LiteralPath $requestLogPath -ErrorAction SilentlyContinue|ForEach-Object{$_|ConvertFrom-Json})}
+  Assert (($feedProbeDetails.StatusCode-eq200)-and($feedProbeDetails.TagName-ceq'v1.4.1')) 'ephemeral CA validates HTTPS to the isolated controlled official-host release feed' $feedProbeDetails
   Record 'Trusted controlled HTTPS feed probe completed' 'INFO'
   $appProcess=Start-Process -FilePath $installedExe -PassThru
   Record 'Actual installed production app relaunched after TLS rejection' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;ProductVersion=(Get-Item $installedExe).VersionInfo.ProductVersion})
