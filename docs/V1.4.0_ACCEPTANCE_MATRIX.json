@@ -3,7 +3,7 @@
   "generated_on": "2026-11-18",
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
-  "branch_head": "ffb8d9d11e886f89bf43512820816bcb69586c78",
+  "branch_head": "69408fb0f0dbc7166e98628d1f117b688b96d434",
   "current_release_candidate": {
     "status": "FAILED WINDOWS ACCEPTANCE — NON-AUTHORITATIVE",
     "run_id": 44206674085,
@@ -2611,14 +2611,17 @@
     "BLOCKED": 1,
     "NOT APPLICABLE": 1
   },
-  "generated_at_utc": "2026-11-18T16:16:16Z",
+  "generated_at_utc": "2026-11-18T16:40:00Z",
   "latest_validation": {
-    "required_ci_run_id": 44329028930,
-    "required_ci_status": "success",
-    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44329028930",
-    "windows_acceptance_run_id": 44329029310,
-    "windows_acceptance_status": "in_progress; production updater stage failed at the 30-minute step timeout; 110-cycle resource soak in progress; terminal artifact/logs not yet available",
-    "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44329029310",
-    "source_commit": "ffb8d9d11e886f89bf43512820816bcb69586c78"
+    "required_ci_run_id": 44345730045,
+    "required_ci_status": "cancelled at the 20-minute job timeout during dependency install; package/tests not run; workflow narrowed to POSIX MinGW with bounded retries and extended timeout; rerun pending",
+    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44345730045",
+    "windows_acceptance_run_id": 44345729932,
+    "windows_acceptance_status": "in progress on source 69408fb; steps 1-14 passed; exact production-candidate update step 15 failed in 63 seconds; 110-cycle soak step 19 in progress; terminal logs/artifact pending",
+    "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44345729932",
+    "source_commit": "69408fb0f0dbc7166e98628d1f117b688b96d434",
+    "older_obsolete_windows_run_id": 44329029310,
+    "older_obsolete_windows_run_status": "cancelled as stale after same production-update-step failure; not release evidence",
+    "older_obsolete_windows_run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44329029310"
   }
 }
