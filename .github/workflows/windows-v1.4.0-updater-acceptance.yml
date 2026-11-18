@@ -226,6 +226,7 @@ jobs:
         id: production_update
         if: ${{ !cancelled() && steps.production_update_fixture.outcome == 'success' && steps.legacy_upgrade.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
         shell: pwsh
+        timeout-minutes: 30
         run: |
           $ErrorActionPreference = 'Stop'
           & .\tests\windows_production_update_acceptance.ps1 `
