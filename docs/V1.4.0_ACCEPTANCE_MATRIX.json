@@ -1,43 +1,48 @@
 {
   "schema_version": "1.0",
-  "generated_on": "2026-11-17",
+  "generated_on": "2026-11-18",
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
-  "branch_head": "5d4beed2bc91667e0d792545ae0a3cc4c5ec42e8",
+  "branch_head": "a8a95aec215fcae1e287438bdde8319f25ada43b",
   "current_release_candidate": {
-    "status": "FAILED PACKAGE VERIFICATION — NOT AUTHORITATIVE",
-    "run_id": 44187600669,
-    "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44187600669",
-    "candidate_source_commit": "d62b6f36b24e15b510e0fbe4147c26518babd18e",
-    "pull_request_source_head": "5d4beed2bc91667e0d792545ae0a3cc4c5ec42e8",
-    "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; PR merge ref 7/merge",
-    "failure": "make package generated the source archive but scripts/verify.py still required three live evidence documents that scripts/package.py intentionally excluded. Corrected in uncommitted worktree and passed direct local package+verification; hosted rerun pending.",
-    "windows_acceptance": "Terminated before fixture preparation, GUI, updater/uninstaller transactions or resource soak; dependent ARM64 job skipped.",
+    "status": "FAILED WINDOWS ACCEPTANCE — NON-AUTHORITATIVE",
+    "run_id": 44206674085,
+    "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44206674085",
+    "candidate_source_commit": "65132be9c77ccc98e59a2cfc9a8636cf3d16bfdd",
+    "pull_request_source_head": "c0340067213527adc1fbbe131facddaec127af52",
+    "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; win25-vs2026 image 20261103.298.1",
+    "failure": "The 110-cycle soak completed, but the harness failed its TCP telemetry completeness assertion because Get-NetTCPConnection reported ObjectNotFound for a process with no active TCP sessions. 375 samples were recorded as NOT TESTED. Resource time-series otherwise showed stable USER/GDI/handle counts. Do not treat the failed run as a passing acceptance.",
+    "windows_acceptance": "Candidate/package/provenance, public HTTPS transfer interruption/retry, GUI/themes/accessibility/timer, v1.3.0-to-v1.4.0 installer transition, updater transactions, and exact candidate identity passed. The soak gate failed; dependent ARM64 job skipped.",
     "files": [
       {
         "name": "EyeBreakReminder.exe",
         "bytes": 2823168,
-        "sha256": "4004d3c2f373bd71ab6bc9c74f887359db4c425661e151c53cdb70c1a3290924"
+        "sha256": "b1aa4b26ec863af106d262ccf18af9a42d4d9a71358fe268f69eb9c81cbd19ae",
+        "product_version": "1.4.0"
       },
       {
         "name": "EyeBreakReminder-Setup-x64.exe",
-        "bytes": 1375278,
-        "sha256": "853b23bb3083867df5382bb6ae25c9025f76dd56bf3032b8b7a5634e5c408cb1"
+        "bytes": 1376903,
+        "sha256": "5ead5db376a559e009389643c1354b2573a27e72cc72e17a12a5dfe7bab804ea",
+        "product_version": "1.4.0"
       },
       {
         "name": "EyeBreakReminder-Portable-x64.zip",
         "bytes": 1545395,
-        "sha256": "1ff0139091cb7aee9fbcea65d96400e1e5e42cf40da260a7da241e5af713ad4e"
+        "sha256": "9eb0eaad205d70eaa21166c8a5c742b28011098737f7618b47a6d7b3088f57a3",
+        "product_version": null
       },
       {
         "name": "EyeBreakReminder-Source.zip",
-        "bytes": 2442984,
-        "sha256": "5f2a17e02bea6c8883a824d712e405bae868bc9f07bf54bd77f13fec2e5c8026"
+        "bytes": 2446918,
+        "sha256": "24011138df7a9fe3e39649f1ea24aed03416d7faa934c27027222d04cb7f40ba",
+        "product_version": null
       },
       {
         "name": "EyeBreakReminder-SHA256.txt",
         "bytes": 382,
-        "sha256": "6ea8c31d2820a4aa80bdc90a55aa672381f460e5a11ea0c9815f4c2576d332ef"
+        "sha256": "74a54195e03ca84875db73b7bcc44c848a1a46415cc477f1a4de938711d85f6a",
+        "product_version": null
       }
     ]
   },
@@ -48,7 +53,7 @@
     "BLOCKED",
     "NOT APPLICABLE"
   ],
-  "warning": "The listed files were retained by a run that failed package verification. They are diagnostic outputs only, not an accepted candidate. Do not publish or treat them as authoritative.",
+  "warning": "The listed candidate was retained from a failed Windows acceptance run and is diagnostic only. The current feature head is later. Do not publish or treat any failed-run artifact as authoritative.",
   "requirements": [
     {
       "requirement_id": "UPD-001",
@@ -493,13 +498,13 @@
     {
       "requirement_id": "UPD-041",
       "description": "Preserve resource-leak protection",
-      "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
-      "required_tests": "110-cycle soak and time-series resource inspection",
-      "actual_verification_evidence": "No passing evidence yet. Hosted run 44179592402 on branch commit 6646127ad9619c4bb306a85d01131a1bdc8bdeed is still running; update only after terminal logs and artifacts.",
-      "environment": "Not verified; environment described in required test",
-      "tested_source_commit": null,
-      "tested_binary_sha256": null,
-      "status": "NOT TESTED"
+      "implementation_status": "Resource leak protection and the native soak are implemented; the latest complete 110-cycle candidate soak has one test-harness telemetry failure.",
+      "required_tests": "110-cycle soak; native picker operations; timer transitions; USER/GDI/handle/private-byte time series; child-process, TCP-session and updater-staging telemetry; exact binary hash.",
+      "actual_verification_evidence": "Run 44206674085 (PR head c0340067213527adc1fbbe131facddaec127af52) completed 110 cycles on Windows Server 2025 x64. Raw CSV shows USER median 167→167 (slope -0.00122/cycle), GDI median 57→59 (slope 0.01366/cycle), handles 246→246, private bytes median 3,715,072→4,435,968 (slope 6,228 bytes/cycle), no child processes and no staging files. One collector assertion failed: Get-NetTCPConnection returned ObjectNotFound for 375 samples with no sessions; the harness marked valid zero sessions unavailable. Corrected collector plus 8 focused PowerShell assertions is in the current unpushed worktree; hosted rerun pending. https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44206674085",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64 (win25-vs2026 image 20261103.298.1).",
+      "tested_source_commit": "65132be9c77ccc98e59a2cfc9a8636cf3d16bfdd",
+      "tested_binary_sha256": "b1aa4b26ec863af106d262ccf18af9a42d4d9a71358fe268f69eb9c81cbd19ae",
+      "status": "FAIL"
     },
     {
       "requirement_id": "SEC-001",
@@ -2576,11 +2581,11 @@
     }
   ],
   "status_counts": {
-    "BLOCKED": 1,
+    "NOT TESTED": 86,
     "NOT APPLICABLE": 1,
-    "PASS": 137,
-    "FAIL": 3,
-    "NOT TESTED": 87
+    "BLOCKED": 1,
+    "FAIL": 4,
+    "PASS": 137
   },
-  "generated_at_utc": "2026-11-17T22:17:00Z"
+  "generated_at_utc": "2026-11-18T02:52:00Z"
 }

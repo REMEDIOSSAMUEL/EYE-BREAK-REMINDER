@@ -6,6 +6,7 @@ param(
   [ValidateSet('Growth','NoGrowth')][string]$ExpectedResourceBehavior='NoGrowth'
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'windows_resource_telemetry.ps1')
 [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
@@ -68,7 +69,9 @@ function Sample([int]$Cycle,[string]$Stage){
  $childProcesses=@();$tcpConnectionCount=$null;$updateStagingFileCount=$null
  if($diagnosticSample){
   try{$childProcesses=@(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($proc.Id)" -ErrorAction Stop)}catch{Add-Event 'Child-process telemetry unavailable' 'NOT TESTED' $_.Exception.Message}
-  try{$tcpConnectionCount=@(Get-NetTCPConnection -OwningProcess $proc.Id -ErrorAction Stop).Count}catch{Add-Event 'TCP-connection telemetry unavailable' 'NOT TESTED' $_.Exception.Message}
+  $tcpSample=Get-ProcessTcpConnectionCount -ProcessId $proc.Id
+  $tcpConnectionCount=$tcpSample.Count
+  if(-not $tcpSample.Available){Add-Event 'TCP-connection telemetry unavailable' 'NOT TESTED' $tcpSample.Error}
   try{$updatesRoot=Join-Path $script:dataPath 'updates';$updateStagingFileCount=if(Test-Path -LiteralPath $updatesRoot -PathType Container){@(Get-ChildItem -LiteralPath $updatesRoot -Force -File -Recurse -ErrorAction Stop).Count}else{0}}catch{Add-Event 'Update-staging telemetry unavailable' 'NOT TESTED' $_.Exception.Message}
  }
  $row=[pscustomobject]@{

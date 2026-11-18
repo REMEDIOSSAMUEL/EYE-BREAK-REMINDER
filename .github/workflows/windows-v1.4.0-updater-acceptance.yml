@@ -206,9 +206,18 @@ jobs:
             -EvidenceDirectory '.\build\v1.4.0-updater-evidence'
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify Windows resource telemetry zero-session handling
+        id: resource_telemetry
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_resource_telemetry_tests.ps1 -EvidencePath '.\build\v1.4.0-updater-evidence\resource-telemetry-unit-tests.json' -ProbeLiveCmdlet
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run the established 110-cycle native resource soak
         id: soak
-        if: ${{ !cancelled() && steps.network-interruption.outcome == 'success' && steps.updater.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.network-interruption.outcome == 'success' && steps.updater.outcome == 'success' && steps.resource_telemetry.outcome == 'success' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -246,6 +255,7 @@ jobs:
           GUI_OUTCOME: ${{ steps.gui.outcome }}
           UPDATER_OUTCOME: ${{ steps.updater.outcome }}
           PRODUCTION_UPDATE_OUTCOME: ${{ steps.production_update.outcome }}
+          RESOURCE_TELEMETRY_OUTCOME: ${{ steps.resource_telemetry.outcome }}
           SOAK_OUTCOME: ${{ steps.soak.outcome }}
           IDENTITY_OUTCOME: ${{ steps.verify-candidate.outcome }}
         run: |
@@ -253,12 +263,12 @@ jobs:
           $probePath = 'build/pre-release-evidence/runner-capabilities.json'
           $desktopAvailable = $false
           if (Test-Path -LiteralPath $probePath) { $desktopAvailable = [bool](Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json).interactiveDesktopAvailable }
-          $status = if ($env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $env:SOAK_OUTCOME -eq 'success') {'PASS'} else {'NOT READY'}
-          [pscustomobject]@{Status=$status;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;ProductionUpdateFixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;Updater=$env:UPDATER_OUTCOME;ProductionBinaryUpdate=$env:PRODUCTION_UPDATE_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
+          $status = if ($env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $env:SOAK_OUTCOME -eq 'success' -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success') {'PASS'} else {'NOT READY'}
+          [pscustomobject]@{Status=$status;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;ProductionUpdateFixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;Updater=$env:UPDATER_OUTCOME;ProductionBinaryUpdate=$env:PRODUCTION_UPDATE_OUTCOME;ResourceTelemetry=$env:RESOURCE_TELEMETRY_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
             ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Encoding UTF8
           if ($status -ne 'PASS') {
             if (-not $desktopAvailable) { throw 'Windows updater release acceptance is NOT TESTED: this runner exposed no interactive Explorer desktop. The exact development candidate is retained as evidence but is not release-ready.' }
-            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; production update fixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME; network interruption=$env:NETWORK_INTERRUPTION_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; updater=$env:UPDATER_OUTCOME; production binary update=$env:PRODUCTION_UPDATE_OUTCOME; soak=$env:SOAK_OUTCOME; identity=$env:IDENTITY_OUTCOME."
+            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; production update fixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME; network interruption=$env:NETWORK_INTERRUPTION_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; updater=$env:UPDATER_OUTCOME; production binary update=$env:PRODUCTION_UPDATE_OUTCOME; resource telemetry=$env:RESOURCE_TELEMETRY_OUTCOME; soak=$env:SOAK_OUTCOME; identity=$env:IDENTITY_OUTCOME."
           }
 
       - name: Upload the exact candidate and all Windows evidence
