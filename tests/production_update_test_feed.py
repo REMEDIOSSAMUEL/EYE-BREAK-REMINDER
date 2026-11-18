@@ -56,9 +56,17 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def make_handler(setup_path: Path, app_path: Path, request_log: Path):
+def make_handler(
+    setup_path: Path,
+    app_path: Path,
+    request_log: Path,
+    redirect_marker: Path | None = None,
+    redirect_location: str = "https://unexpected-updates.example.invalid/unsafe.exe",
+):
     setup_path = setup_path.resolve(strict=True)
     app_path = app_path.resolve(strict=True)
+    if redirect_marker is not None:
+        redirect_marker = redirect_marker.resolve()
     assets = {
         "EyeBreakReminder-Setup-x64.exe": setup_path,
         "EyeBreakReminder.exe": app_path,
@@ -98,11 +106,14 @@ def make_handler(setup_path: Path, app_path: Path, request_log: Path):
                 "path": self.path,
                 "method": "GET",
             }
-            with log_lock:
-                with request_log.open("a", encoding="utf-8") as log:
-                    log.write(json.dumps(record, separators=(",", ":")) + "\n")
+            def log_request() -> None:
+                with log_lock:
+                    with request_log.open("a", encoding="utf-8") as log:
+                        log.write(json.dumps(record, separators=(",", ":")) + "\n")
 
             if host == "api.github.com" and self.path == API_PATH:
+                record["response_status"] = 200
+                log_request()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/vnd.github+json")
                 self.send_header("Content-Length", str(len(encoded_release)))
@@ -115,6 +126,23 @@ def make_handler(setup_path: Path, app_path: Path, request_log: Path):
                 name = self.path[len(ASSET_ROOT):]
                 path = assets.get(name)
                 if path is not None and "/" not in name:
+                    if name == "EyeBreakReminder-Setup-x64.exe" and redirect_marker is not None:
+                        with log_lock:
+                            if redirect_marker.is_file():
+                                redirect_marker.unlink()
+                                record["response_status"] = 302
+                                record["location"] = redirect_location
+                                with request_log.open("a", encoding="utf-8") as log:
+                                    log.write(json.dumps(record, separators=(",", ":")) + "\n")
+                                self.send_response(302)
+                                self.send_header("Location", redirect_location)
+                                self.send_header("Content-Length", "0")
+                                self.send_header("Connection", "close")
+                                self.end_headers()
+                                return
+
+                    record["response_status"] = 200
+                    log_request()
                     size = path.stat().st_size
                     self.send_response(200)
                     self.send_header("Content-Type", "application/octet-stream")
@@ -126,6 +154,8 @@ def make_handler(setup_path: Path, app_path: Path, request_log: Path):
                             self.wfile.write(block)
                     return
 
+            record["response_status"] = 404
+            log_request()
             body = b"not found\n"
             self.send_response(404)
             self.send_header("Content-Type", "text/plain")
@@ -145,9 +175,20 @@ def main() -> int:
     parser.add_argument("--app", required=True, type=Path)
     parser.add_argument("--request-log", required=True, type=Path)
     parser.add_argument("--ready-file", required=True, type=Path)
+    parser.add_argument("--redirect-marker", type=Path)
+    parser.add_argument(
+        "--redirect-location",
+        default="https://unexpected-updates.example.invalid/unsafe.exe",
+    )
     args = parser.parse_args()
 
-    handler = make_handler(args.setup, args.app, args.request_log)
+    handler = make_handler(
+        args.setup,
+        args.app,
+        args.request_log,
+        args.redirect_marker,
+        args.redirect_location,
+    )
     servers = [
         TLSHTTPServer(("127.0.0.1", 443), handler),
         IPv6ThreadingHTTPServer(("::1", 443), handler),

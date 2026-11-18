@@ -240,10 +240,11 @@ $wrongLeafCertificatePath=Join-Path $testRoot 'wrong-host.pem'
 $wrongLeafExtensionPath=Join-Path $testRoot 'wrong-host.ext'
 $readyPath=Join-Path $testRoot 'feed-ready.txt'
 $wrongReadyPath=Join-Path $testRoot 'wrong-host-feed-ready.txt'
+$redirectMarkerPath=Join-Path $testRoot 'redirect-setup-once.marker'
 
 try {
   Write-Host "EBR_UPDATE_STAGE begin production binary transaction run=$env:GITHUB_RUN_ID commit=$env:GITHUB_SHA"
-  if ($originalHostsText -match '(?im)^\s*(127\.0\.0\.1|::1)\s+.*\b(api\.github\.com|github\.com)\b') { throw 'The hosted runner already has an api.github.com/github.com loopback mapping; refusing to replace it.' }
+  if ($originalHostsText -match '(?im)^\s*(127\.0\.0\.1|::1)\s+.*\b(api\.github\.com|github\.com|unexpected-updates\.example\.invalid)\b') { throw 'The hosted runner already has a controlled update-feed hostname loopback mapping; refusing to replace it.' }
   if (Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder') { throw 'The disposable hosted profile already contains an Eye Break Reminder uninstall registration.' }
   Record 'Input identities' 'INFO' ([pscustomobject]@{
     CandidateExecutable=[pscustomobject]@{Path=$candidateExecutablePath;Version=(Get-Item $candidateExecutablePath).VersionInfo.ProductVersion;Bytes=(Get-Item $candidateExecutablePath).Length;SHA256=(Get-FileHash $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}
@@ -257,7 +258,7 @@ try {
   if(-not(Test-Path -LiteralPath $python -PathType Leaf)){throw "The workflow's pinned MSYS2 Python was not found: $python"}
   Add-Check $openssl @('req','-x509','-newkey','rsa:2048','-nodes','-keyout',$rootPrivateKeyPath,'-out',$rootPemPath,'-days','1','-sha256','-subj','/CN=Eye Break Reminder isolated production updater test CA','-addext','basicConstraints=critical,CA:TRUE','-addext','keyUsage=critical,keyCertSign,cRLSign') 'create disposable test-only TLS root'
   Add-Check $openssl @('req','-new','-newkey','rsa:2048','-nodes','-keyout',$leafPrivateKeyPath,'-out',$leafCsrPath,'-sha256','-subj','/CN=api.github.com') 'create disposable official-host TLS leaf request'
-  [IO.File]::WriteAllText($leafExtensionPath,"[server_cert]`r`nbasicConstraints=critical,CA:FALSE`r`nkeyUsage=critical,digitalSignature,keyEncipherment`r`nextendedKeyUsage=serverAuth`r`nsubjectAltName=DNS:api.github.com,DNS:github.com`r`n",[Text.Encoding]::ASCII)
+  [IO.File]::WriteAllText($leafExtensionPath,"[server_cert]`r`nbasicConstraints=critical,CA:FALSE`r`nkeyUsage=critical,digitalSignature,keyEncipherment`r`nextendedKeyUsage=serverAuth`r`nsubjectAltName=DNS:api.github.com,DNS:github.com,DNS:unexpected-updates.example.invalid`r`n",[Text.Encoding]::ASCII)
   Add-Check $openssl @('x509','-req','-in',$leafCsrPath,'-CA',$rootPemPath,'-CAkey',$rootPrivateKeyPath,'-CAcreateserial','-out',$leafCertificatePath,'-days','1','-sha256','-extfile',$leafExtensionPath,'-extensions','server_cert') 'sign disposable official-host TLS leaf with the temporary test root'
   Add-Check $openssl @('req','-new','-key',$leafPrivateKeyPath,'-out',$wrongLeafCsrPath,'-sha256','-subj','/CN=wrong-host.invalid') 'create a disposable wrong-host TLS leaf request'
   [IO.File]::WriteAllText($wrongLeafExtensionPath,"[server_cert]`r`nbasicConstraints=critical,CA:FALSE`r`nkeyUsage=critical,digitalSignature,keyEncipherment`r`nextendedKeyUsage=serverAuth`r`nsubjectAltName=DNS:wrong-host.invalid`r`n",[Text.Encoding]::ASCII)
@@ -269,7 +270,7 @@ try {
   $temporaryRootCertificate=Add-TemporaryRootCertificate $rootCertificatePath $rootThumbprint
   Assert ($temporaryRootCertificate.Thumbprint-ceq$rootThumbprint) 'temporary test trust anchor is accepted by the disposable runner machine root store without an interactive prompt' $rootThumbprint
 
-  $tail=[Text.Encoding]::ASCII.GetBytes("`r`n127.0.0.1 api.github.com github.com`r`n::1 api.github.com github.com`r`n")
+  $tail=[Text.Encoding]::ASCII.GetBytes("`r`n127.0.0.1 api.github.com github.com unexpected-updates.example.invalid`r`n::1 api.github.com github.com unexpected-updates.example.invalid`r`n")
   $newHosts=[byte[]]::new($originalHostsBytes.Length+$tail.Length)
   [Array]::Copy($originalHostsBytes,0,$newHosts,0,$originalHostsBytes.Length);[Array]::Copy($tail,0,$newHosts,$originalHostsBytes.Length,$tail.Length)
   $hostsChanged=$true;[IO.File]::WriteAllBytes($hostsPath,$newHosts)
@@ -278,9 +279,11 @@ try {
   Assert ($apiResolvedAddresses.Count-eq2-and($apiResolvedAddresses-contains'127.0.0.1')-and($apiResolvedAddresses-contains'::1')) 'official GitHub API hostname resolves only to the isolated IPv4/IPv6 loopback test feed during this transaction' $apiResolvedAddresses
   $assetResolvedAddresses=@([Net.Dns]::GetHostAddresses('github.com')|ForEach-Object{$_.IPAddressToString})
   Assert ($assetResolvedAddresses.Count-eq2-and($assetResolvedAddresses-contains'127.0.0.1')-and($assetResolvedAddresses-contains'::1')) 'official GitHub asset hostname resolves only to the isolated IPv4/IPv6 loopback test feed during this transaction' $assetResolvedAddresses
+  $unexpectedRedirectAddresses=@([Net.Dns]::GetHostAddresses('unexpected-updates.example.invalid')|ForEach-Object{$_.IPAddressToString})
+  Assert ($unexpectedRedirectAddresses.Count-eq2-and($unexpectedRedirectAddresses-contains'127.0.0.1')-and($unexpectedRedirectAddresses-contains'::1')) 'unexpected HTTPS redirect hostname resolves only to the isolated IPv4/IPv6 loopback test feed so a followed redirect is observable' $unexpectedRedirectAddresses
 
   $scriptPath=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'production_update_test_feed.py'))
-  $serverArgs=@($scriptPath,'--certificate',$leafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$controlledInstallerPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$readyPath)
+  $serverArgs=@($scriptPath,'--certificate',$leafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$controlledInstallerPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$readyPath,'--redirect-marker',$redirectMarkerPath)
   $serverStopped=$false
   $serverProcess=Start-Process -FilePath $python -ArgumentList $serverArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr
   $listenWatch=[Diagnostics.Stopwatch]::StartNew()
@@ -383,7 +386,7 @@ try {
   Stop-ProductionApplication;$appProcess=$null
   if($serverProcess){$serverProcess.Kill();if(-not$serverProcess.WaitForExit(5000)){throw 'Wrong-host HTTPS feed did not stop before restoring the trusted feed.'};$serverProcess.Dispose();$serverProcess=$null;$serverStopped=$true}
   Remove-Item -LiteralPath $readyPath -Force -ErrorAction SilentlyContinue
-  $serverArgs=@($scriptPath,'--certificate',$leafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$controlledInstallerPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$readyPath)
+  $serverArgs=@($scriptPath,'--certificate',$leafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$controlledInstallerPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$readyPath,'--redirect-marker',$redirectMarkerPath)
   $serverProcess=Start-Process -FilePath $python -ArgumentList $serverArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr;$serverStopped=$false
   $listenWatch=[Diagnostics.Stopwatch]::StartNew()
   while($listenWatch.Elapsed.TotalSeconds-lt15-and-not(Test-Path -LiteralPath $readyPath)){if($serverProcess.HasExited){throw "Trusted-host TLS feed exited before it became ready. $([IO.File]::ReadAllText($serverStderr))"};Start-Sleep -Milliseconds 100}
@@ -399,8 +402,36 @@ try {
   $env:EBR_TEST_UNVERIFIED_LAUNCH_MARKER=$launchSentinelMarker
   $sentinelBytes=[IO.File]::ReadAllBytes($launchSentinelPath)
   Record 'Test-only unverified-executable sentinel identity' 'INFO' ([pscustomobject]@{Path=$launchSentinelPath;Bytes=$sentinelBytes.Length;SHA256=(Get-FileHash -LiteralPath $launchSentinelPath -Algorithm SHA256).Hash.ToLowerInvariant();MarkerPath=$launchSentinelMarker})
+
+  if(Test-Path -LiteralPath $redirectMarkerPath){throw 'The one-shot unexpected-redirect fixture marker already exists.'}
+  [IO.File]::WriteAllText($redirectMarkerPath,'redirect the next setup asset response once',[Text.Encoding]::ASCII)
+  $unexpectedRedirect='https://unexpected-updates.example.invalid/unsafe.exe'
   $appProcess=Start-Process -FilePath $installedExe -PassThru
-  Record 'Actual installed production app relaunched after TLS rejection' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;ProductVersion=(Get-Item $installedExe).VersionInfo.ProductVersion})
+  Record 'Actual installed production app launched for the unexpected HTTPS redirect rejection scenario' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;ProductVersion=(Get-Item $installedExe).VersionInfo.ProductVersion})
+  $redirectChoice=Find-Dialog 'Eye Break Reminder Update Available' $appProcess.Id 90
+  Assert ($redirectChoice.WindowTitle-eq'Eye Break Reminder Update') 'production binary discovered the controlled stable release before the redirect rejection test' $redirectChoice.WindowTitle
+  Invoke-Button $redirectChoice 'Download & Install'
+  $redirectFailure=Find-Dialog 'GitHub returned an unsafe or invalid HTTPS download redirect.' $appProcess.Id 120
+  $redirectFailureText=$redirectFailure.Names -join ' '
+  Assert ($redirectFailure.WindowTitle-eq'Eye Break Reminder Update'-and$redirectFailureText.Contains('Download failed.')-and$redirectFailureText.Contains('The currently installed application and its settings are unchanged.')) 'production updater shows a meaningful error explaining the unsafe HTTPS redirect and that current app/settings are unchanged' $redirectFailureText
+  $redirectRequests=@(Get-Content -LiteralPath $requestLogPath|ForEach-Object{$_|ConvertFrom-Json})
+  $setupRedirects=@($redirectRequests|Where-Object{$_.host-eq'github.com'-and$_.path-eq'/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder-Setup-x64.exe'-and[int]$_.response_status-eq302-and$_.location-ceq$unexpectedRedirect})
+  Assert ($setupRedirects.Count-eq1-and-not(Test-Path -LiteralPath $redirectMarkerPath)) 'the controlled HTTPS asset endpoint returned exactly one logged HTTP 302 to the unexpected host and consumed its one-shot fixture marker' ([pscustomobject]@{Redirects=$setupRedirects;MarkerConsumed=(-not(Test-Path -LiteralPath $redirectMarkerPath))})
+  Assert (@($redirectRequests|Where-Object{$_.host-eq'unexpected-updates.example.invalid'}).Count-eq0) 'the production downloader rejected the redirect before making a request to the unexpected host' $redirectRequests
+  Assert (-not(Test-Path -LiteralPath $launchSentinelMarker)) 'the rejected HTTPS redirect never launched the unverified installer sentinel' $launchSentinelMarker
+  Assert ((Get-Item -LiteralPath $installedExe).VersionInfo.ProductVersion-match'^1\.4\.0(\.0)?$' -and (Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()-eq(Get-FileHash -LiteralPath $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()) 'unexpected redirect rejection retains the exact installed v1.4.0 candidate executable'
+  Assert ((Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Stop).DisplayVersion-eq'1.4.0') 'unexpected redirect rejection leaves the Installed Apps version unchanged'
+  $redirectSettingsAfter=Read-SettingsMap (Join-Path $dataDir 'settings.ini');$redirectSettingKeys=@($settingsBefore.Keys|Where-Object{$_-cne'updateLastCheck'});$redirectSettingChanges=@($redirectSettingKeys|Where-Object{-not$redirectSettingsAfter.ContainsKey($_)-or[string]$settingsBefore[$_]-cne[string]$redirectSettingsAfter[$_]})
+  Assert ($redirectSettingChanges.Count-eq0-and[Convert]::ToBase64String($historyBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'history.dat')))-and[Convert]::ToBase64String($sentinelBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'unrelated-sentinel.txt')))) 'unexpected redirect rejection preserves settings (except the normal update-check timestamp), history and unrelated user data byte-for-byte' ([pscustomobject]@{ChangedSettings=$redirectSettingChanges;HistoryUnchanged=$true;UnrelatedSentinelUnchanged=$true})
+  $redirectUpdatesRoot=Join-Path $dataDir 'updates';$redirectStageDirectories=@();$redirectPayloads=@()
+  if(Test-Path -LiteralPath $redirectUpdatesRoot){$redirectStageDirectories=@(Get-ChildItem -LiteralPath $redirectUpdatesRoot -Directory -Force -ErrorAction SilentlyContinue);$redirectPayloads=@(Get-ChildItem -LiteralPath $redirectUpdatesRoot -File -Recurse -Force -ErrorAction SilentlyContinue|Where-Object{$_.Name -like 'EyeBreakReminder*'})}
+  Assert ($redirectStageDirectories.Count-eq0-and$redirectPayloads.Count-eq0) 'failed redirect download cleans the transaction staging folder and leaves no executable or partial payload' ([pscustomobject]@{StageDirectories=$redirectStageDirectories.Count;PayloadFiles=$redirectPayloads.Count})
+  Record 'Unexpected HTTPS update redirect rejection' 'PASS' ([pscustomobject]@{HttpStatus=302;Location=$unexpectedRedirect;NoRedirectedRequest=$true;NoInstallerLaunch=(-not(Test-Path -LiteralPath $launchSentinelMarker));InstalledVersion=(Get-Item $installedExe).VersionInfo.ProductVersion;NoStagedPayload=($redirectStageDirectories.Count-eq0-and$redirectPayloads.Count-eq0)})
+  Invoke-Button $redirectFailure 'Cancel'
+  Stop-ProductionApplication;$appProcess=$null
+  $redirectSettingsPath=Join-Path $dataDir 'settings.ini';$redirectSettingsRaw=[regex]::Replace((Get-Content -LiteralPath $redirectSettingsPath -Raw),'(?m)^updateLastCheck=\d+$','updateLastCheck=0');[IO.File]::WriteAllText($redirectSettingsPath,$redirectSettingsRaw,[Text.UTF8Encoding]::new($false))
+  $appProcess=Start-Process -FilePath $installedExe -PassThru
+  Record 'Production app relaunched after safely rejecting an unexpected HTTPS redirect' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;ProductVersion=(Get-Item $installedExe).VersionInfo.ProductVersion})
   $choice=Find-Dialog 'Eye Break Reminder Update Available' $appProcess.Id 90
   Assert ($choice.WindowTitle-eq'Eye Break Reminder Update') 'production binary discovered the controlled stable release and opened its native update dialog' $choice.WindowTitle
   Assert ((@($choice.Names)-join' ').Contains('Current version: 1.4.0')-and(@($choice.Names)-join' ').Contains('v1.4.1')-and(@($choice.Names)-join' ').Contains('Release notes')) 'production update dialog shows installed/available versions and release notes' ($choice.Names -join ' | ')
