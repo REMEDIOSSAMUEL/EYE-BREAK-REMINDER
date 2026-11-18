@@ -1,6 +1,14 @@
 name: Windows v1.4.0 focused updater acceptance
 
 on:
+  push:
+    branches:
+      - feature/v1.4.0-automatic-updater
+    paths:
+      - '.github/workflows/windows-v1.4.0-focused-acceptance.yml'
+      - 'tests/windows_certificate_store_worker.ps1'
+      - 'tests/windows_production_update_acceptance.ps1'
+      - 'tests/package_source_policy_tests.py'
   workflow_dispatch:
     inputs:
       reference_run_id:
@@ -49,9 +57,9 @@ jobs:
       - name: Download the exact prior production candidate and full-run evidence
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: eye-break-reminder-v1.4.0-candidate-${{ inputs.reference_run_id }}
+          name: eye-break-reminder-v1.4.0-candidate-${{ inputs.reference_run_id || '44345729932' }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.reference_run_id }}
+          run-id: ${{ inputs.reference_run_id || '44345729932' }}
           github-token: ${{ github.token }}
           path: reference
 
@@ -59,7 +67,7 @@ jobs:
         id: candidate
         shell: pwsh
         env:
-          REFERENCE_RUN_ID: ${{ inputs.reference_run_id }}
+          REFERENCE_RUN_ID: ${{ inputs.reference_run_id || '44345729932' }}
         run: |
           $ErrorActionPreference = 'Stop'
           $referenceRelease = 'reference/release'
