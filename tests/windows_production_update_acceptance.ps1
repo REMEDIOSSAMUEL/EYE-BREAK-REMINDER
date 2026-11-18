@@ -1,0 +1,309 @@
+param(
+  [Parameter(Mandatory=$true)][string]$CandidateInstaller,
+  [Parameter(Mandatory=$true)][string]$CandidateExecutable,
+  [Parameter(Mandatory=$true)][string]$ControlledInstaller,
+  [Parameter(Mandatory=$true)][string]$ControlledExecutable,
+  [string]$EvidenceDirectory = 'build/v1.4.0-updater-evidence'
+)
+$ErrorActionPreference = 'Stop'
+if ($env:GITHUB_ACTIONS -ne 'true') { throw 'This production-binary update transaction runs only on a disposable GitHub Actions Windows runner.' }
+
+$candidateInstallerPath = [IO.Path]::GetFullPath($CandidateInstaller)
+$candidateExecutablePath = [IO.Path]::GetFullPath($CandidateExecutable)
+$controlledInstallerPath = [IO.Path]::GetFullPath($ControlledInstaller)
+$controlledExecutablePath = [IO.Path]::GetFullPath($ControlledExecutable)
+foreach ($path in @($candidateInstallerPath, $candidateExecutablePath, $controlledInstallerPath, $controlledExecutablePath)) {
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required production-update transaction input is missing: $path" }
+}
+$runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP)
+$testRoot = [IO.Path]::GetFullPath((Join-Path $runnerTemp 'EyeBreakReminder-Production-Update-Acceptance'))
+$runnerPrefix = $runnerTemp.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+if (-not $testRoot.StartsWith($runnerPrefix,[StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $testRoot)) { throw 'Production update transaction requires a new isolated RUNNER_TEMP directory.' }
+$installDir = Join-Path $testRoot 'install'
+$dataDir = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'))
+$expectedDataDir = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'))
+$runKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$startupValueAdded = $false
+$startupCommand = $null
+$EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
+$allowedEvidence = [IO.Path]::GetFullPath((Join-Path (Get-Location) 'build/v1.4.0-updater-evidence'))
+if ($EvidenceDirectory -ine $allowedEvidence) { throw "Evidence path must be the isolated build folder: $allowedEvidence" }
+if ($dataDir -ine $expectedDataDir -or (Test-Path -LiteralPath $dataDir)) { throw "Refusing to use an existing or unexpected app-data profile: $dataDir" }
+if (Test-Path -LiteralPath $installDir) { throw "Refusing to reuse an install folder: $installDir" }
+foreach ($path in @($candidateExecutablePath,$candidateInstallerPath)) {
+  if ((Get-Item -LiteralPath $path).VersionInfo.ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw "Candidate file is not version 1.4.0: $path" }
+}
+foreach ($path in @($controlledExecutablePath,$controlledInstallerPath)) {
+  if ((Get-Item -LiteralPath $path).VersionInfo.ProductVersion -notmatch '^1\.4\.1(\.0)?$') { throw "Controlled successor file is not version 1.4.1: $path" }
+}
+
+$principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'The disposable runner did not provide the administrator rights needed for temporary hosts-file routing.' }
+[void][IO.Directory]::CreateDirectory($EvidenceDirectory)
+[void][IO.Directory]::CreateDirectory($testRoot)
+$script:events = [Collections.Generic.List[object]]::new()
+$script:assertions = 0
+$startedUtc = [DateTime]::UtcNow
+$hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+$originalHostsBytes = [IO.File]::ReadAllBytes($hostsPath)
+$originalHostsText = [Text.Encoding]::ASCII.GetString($originalHostsBytes)
+$hostsChanged = $false
+$rootThumbprint = $null
+$serverProcess = $null
+$appProcess = $null
+$setupExitCode = $null
+$uninstallExitCode = $null
+$transcriptPath = Join-Path $EvidenceDirectory 'production-update-acceptance.log'
+Start-Transcript -LiteralPath $transcriptPath -Force | Out-Null
+
+$native = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public struct EBR_PROD_RECT { public int Left,Top,Right,Bottom; }
+public static class EBR_PROD_UI {
+ public delegate bool EnumProc(IntPtr hwnd,IntPtr data);
+ [DllImport("user32.dll",SetLastError=true)] static extern bool EnumWindows(EnumProc callback,IntPtr data);
+ [DllImport("user32.dll",SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern int GetWindowTextW(IntPtr hwnd,StringBuilder text,int count);
+ [DllImport("user32.dll",SetLastError=true)] public static extern bool IsWindowVisible(IntPtr hwnd);
+ [DllImport("user32.dll",SetLastError=true)] public static extern bool GetWindowRect(IntPtr hwnd,out EBR_PROD_RECT rect);
+ [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll",SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hwnd);
+ [DllImport("user32.dll",SetLastError=true)] public static extern bool SetCursorPos(int x,int y);
+ [DllImport("user32.dll",SetLastError=true)] public static extern void mouse_event(uint flags,uint dx,uint dy,uint data,UIntPtr extra);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern uint RegisterWindowMessageW(string name);
+ [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd,uint message,IntPtr wp,IntPtr lp);
+ public static string Title(IntPtr hwnd){var text=new StringBuilder(512);GetWindowTextW(hwnd,text,text.Capacity);return text.ToString();}
+ public static IntPtr[] Windows(int pid){var list=new List<IntPtr>();EnumProc cb=delegate(IntPtr hwnd,IntPtr data){uint owner;GetWindowThreadProcessId(hwnd,out owner);if(owner==(uint)pid&&IsWindowVisible(hwnd))list.Add(hwnd);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return list.ToArray();}
+ public static IntPtr[] WindowsAll(){var list=new List<IntPtr>();EnumProc cb=delegate(IntPtr hwnd,IntPtr data){if(IsWindowVisible(hwnd))list.Add(hwnd);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return list.ToArray();}
+ public static bool ExitWindow(IntPtr hwnd){uint message=RegisterWindowMessageW("EyeBreakReminder.Exit.Native.1");return PostMessageW(hwnd,message,IntPtr.Zero,IntPtr.Zero);}
+}
+'@
+Add-Type -TypeDefinition $native -ErrorAction Stop
+Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
+Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
+Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+
+function Record([string]$Name,[string]$Status,$Details=$null) { $script:events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')}) }
+function Assert([bool]$Ok,[string]$Name,$Details=$null) { if(-not $Ok){Record $Name 'FAIL' $Details;throw "Production updater acceptance failed: $Name ($Details)"};$script:assertions++;Record $Name 'PASS' $Details }
+function Read-SettingsMap([string]$Path) { $map=@{};foreach($line in Get-Content -LiteralPath $Path){$separator=$line.IndexOf('=');if($separator-gt0){$map[$line.Substring(0,$separator)]=$line.Substring($separator+1)}};return $map }
+function Get-UiaNames($Root) { $names=[Collections.Generic.List[string]]::new();try{if($Root.Current.Name){$names.Add($Root.Current.Name)}}catch{};try{$all=$Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($item in $all){try{if($item.Current.Name){$names.Add($item.Current.Name)}}catch{}}}catch{};return ,$names.ToArray() }
+function Find-Dialog([string]$Marker,[int]$ProcessId=0,[int]$TimeoutSeconds=120) {
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds-lt$TimeoutSeconds){
+    $handles=if($ProcessId){[EBR_PROD_UI]::Windows($ProcessId)}else{[EBR_PROD_UI]::WindowsAll()}
+    foreach($hwnd in $handles){try{$title=[EBR_PROD_UI]::Title($hwnd);$root=[System.Windows.Automation.AutomationElement]::FromHandle($hwnd);$names=@(Get-UiaNames $root);if((($names -join "`n")+"`n"+$title).Contains($Marker)){return [pscustomobject]@{Handle=$hwnd;Root=$root;Names=$names;WindowTitle=$title}}}catch{}}
+    Start-Sleep -Milliseconds 100
+  }
+  throw "Timed out waiting for actual application UI text '$Marker'."
+}
+function Find-Button($Dialog,[string]$Name) {
+  $items=$Dialog.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+  foreach($item in $items){try{if($item.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$item.Current.Name-ceq$Name){return $item}}catch{}}
+  throw "The production update UI did not expose the '$Name' button."
+}
+function Invoke-Button($Dialog,[string]$Name) {
+  $button=Find-Button $Dialog $Name;$pattern=$null
+  if(-not$button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$pattern)){throw "The production update button '$Name' has no accessible Invoke action."}
+  $pattern.Invoke()
+}
+function Save-Screenshot($Dialog,[string]$Name) {
+  [void][EBR_PROD_UI]::SetForegroundWindow($Dialog.Handle);Start-Sleep -Milliseconds 150
+  $rect=[EBR_PROD_RECT]::new();if(-not[EBR_PROD_UI]::GetWindowRect($Dialog.Handle,[ref]$rect)){throw 'Could not read production update dialog bounds.'}
+  $width=$rect.Right-$rect.Left;$height=$rect.Bottom-$rect.Top;if($width-lt100-or$height-lt80){throw 'Production update dialog has unusable screenshot bounds.'}
+  $bitmap=[Drawing.Bitmap]::new($width,$height);$graphics=[Drawing.Graphics]::FromImage($bitmap)
+  try{$graphics.CopyFromScreen($rect.Left,$rect.Top,0,0,[Drawing.Size]::new($width,$height));$bitmap.Save((Join-Path $EvidenceDirectory $Name),[Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()}
+}
+function Stop-ProductionApplication {
+  if($script:appProcess){try{$script:appProcess.Refresh()}catch{}}
+  foreach($process in @(Get-CimInstance Win32_Process -Filter "Name='EyeBreakReminder.exe'" -ErrorAction SilentlyContinue)){
+    if(-not$process.ExecutablePath){continue}
+    if(-not([IO.Path]::GetFullPath([string]$process.ExecutablePath).StartsWith($installDir.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase))){continue}
+    foreach($hwnd in [EBR_PROD_UI]::Windows([int]$process.ProcessId)){[void][EBR_PROD_UI]::ExitWindow($hwnd)}
+  }
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds-lt15){
+    $remaining=@(Get-CimInstance Win32_Process -Filter "Name='EyeBreakReminder.exe'" -ErrorAction SilentlyContinue|Where-Object{
+      $_.ExecutablePath -and ([IO.Path]::GetFullPath([string]$_.ExecutablePath).StartsWith($installDir.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase))
+    })
+    if(-not$remaining.Count){return}
+    Start-Sleep -Milliseconds 100
+  }
+  throw 'The production candidate application did not exit through its registered safe-shutdown message.'
+}
+function Add-Check($Executable,[string[]]$Arguments,[string]$Description){& $Executable @Arguments;if($LASTEXITCODE-ne0){throw "$Description failed with exit code $LASTEXITCODE."}}
+
+$resultStatus='FAIL'
+$hostsRestoreStatus='NOT RUN'
+$trustRootCleanupStatus='NOT RUN'
+$serverStopped=$true
+$requestLogPath=Join-Path $EvidenceDirectory 'production-update-feed-requests.jsonl'
+$serverStdout=Join-Path $EvidenceDirectory 'production-update-feed.stdout.log'
+$serverStderr=Join-Path $EvidenceDirectory 'production-update-feed.stderr.log'
+$rootCertificatePath=Join-Path $testRoot 'test-root.cer'
+$rootPrivateKeyPath=Join-Path $testRoot 'test-root.key'
+$rootPemPath=Join-Path $testRoot 'test-root.pem'
+$leafCsrPath=Join-Path $testRoot 'server.csr'
+$leafPrivateKeyPath=Join-Path $testRoot 'server.key'
+$leafCertificatePath=Join-Path $testRoot 'server.pem'
+$leafExtensionPath=Join-Path $testRoot 'server.ext'
+$readyPath=Join-Path $testRoot 'feed-ready.txt'
+
+try {
+  if ($originalHostsText -match '(?im)^\s*(127\.0\.0\.1|::1)\s+.*\b(api\.github\.com|github\.com)\b') { throw 'The hosted runner already has an api.github.com/github.com loopback mapping; refusing to replace it.' }
+  if (Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder') { throw 'The disposable hosted profile already contains an Eye Break Reminder uninstall registration.' }
+  Record 'Input identities' 'INFO' ([pscustomobject]@{
+    CandidateExecutable=[pscustomobject]@{Path=$candidateExecutablePath;Version=(Get-Item $candidateExecutablePath).VersionInfo.ProductVersion;Bytes=(Get-Item $candidateExecutablePath).Length;SHA256=(Get-FileHash $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}
+    CandidateInstaller=[pscustomobject]@{Path=$candidateInstallerPath;Version=(Get-Item $candidateInstallerPath).VersionInfo.ProductVersion;Bytes=(Get-Item $candidateInstallerPath).Length;SHA256=(Get-FileHash $candidateInstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+    ControlledExecutable=[pscustomobject]@{Path=$controlledExecutablePath;Version=(Get-Item $controlledExecutablePath).VersionInfo.ProductVersion;Bytes=(Get-Item $controlledExecutablePath).Length;SHA256=(Get-FileHash $controlledExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}
+    ControlledInstaller=[pscustomobject]@{Path=$controlledInstallerPath;Version=(Get-Item $controlledInstallerPath).VersionInfo.ProductVersion;Bytes=(Get-Item $controlledInstallerPath).Length;SHA256=(Get-FileHash $controlledInstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+  })
+
+  $openssl=(Get-Command openssl.exe -ErrorAction Stop).Source
+  $python=Join-Path $env:MSYS2_ROOT 'mingw64\bin\python.exe'
+  if(-not(Test-Path -LiteralPath $python -PathType Leaf)){throw "The workflow's pinned MSYS2 Python was not found: $python"}
+  Add-Check $openssl @('req','-x509','-newkey','rsa:2048','-nodes','-keyout',$rootPrivateKeyPath,'-out',$rootPemPath,'-days','1','-sha256','-subj','/CN=Eye Break Reminder isolated production updater test CA','-addext','basicConstraints=critical,CA:TRUE','-addext','keyUsage=critical,keyCertSign,cRLSign') 'create disposable test-only TLS root'
+  Add-Check $openssl @('req','-new','-newkey','rsa:2048','-nodes','-keyout',$leafPrivateKeyPath,'-out',$leafCsrPath,'-sha256','-subj','/CN=api.github.com') 'create disposable official-host TLS leaf request'
+  [IO.File]::WriteAllText($leafExtensionPath,"[server_cert]`r`nbasicConstraints=critical,CA:FALSE`r`nkeyUsage=critical,digitalSignature,keyEncipherment`r`nextendedKeyUsage=serverAuth`r`nsubjectAltName=DNS:api.github.com,DNS:github.com`r`n",[Text.Encoding]::ASCII)
+  Add-Check $openssl @('x509','-req','-in',$leafCsrPath,'-CA',$rootPemPath,'-CAkey',$rootPrivateKeyPath,'-CAcreateserial','-out',$leafCertificatePath,'-days','1','-sha256','-extfile',$leafExtensionPath,'-extensions','server_cert') 'sign disposable official-host TLS leaf with the temporary test root'
+  Add-Check $openssl @('x509','-in',$rootPemPath,'-outform','DER','-out',$rootCertificatePath) 'export temporary test-root certificate'
+  $rootCertificate=[Security.Cryptography.X509Certificates.X509Certificate2]::new($rootCertificatePath)
+  $rootThumbprint=$rootCertificate.Thumbprint
+  Import-Certificate -FilePath $rootCertificatePath -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
+  Assert ((Get-ChildItem 'Cert:\CurrentUser\Root' | Where-Object Thumbprint -EQ $rootThumbprint).Count-eq1) 'temporary test trust anchor is present only in the disposable current-user store' $rootThumbprint
+
+  $tail=[Text.Encoding]::ASCII.GetBytes("`r`n127.0.0.1 api.github.com github.com`r`n::1 api.github.com github.com`r`n")
+  $newHosts=[byte[]]::new($originalHostsBytes.Length+$tail.Length)
+  [Array]::Copy($originalHostsBytes,0,$newHosts,0,$originalHostsBytes.Length);[Array]::Copy($tail,0,$newHosts,$originalHostsBytes.Length,$tail.Length)
+  $hostsChanged=$true;[IO.File]::WriteAllBytes($hostsPath,$newHosts)
+  & ipconfig.exe /flushdns | Out-Host;if($LASTEXITCODE-ne0){throw 'Could not flush the disposable runner DNS cache after temporary feed routing.'}
+  $apiResolvedAddresses=@([Net.Dns]::GetHostAddresses('api.github.com')|ForEach-Object{$_.IPAddressToString})
+  Assert ($apiResolvedAddresses.Count-eq2-and($apiResolvedAddresses-contains'127.0.0.1')-and($apiResolvedAddresses-contains'::1')) 'official GitHub API hostname resolves only to the isolated IPv4/IPv6 loopback test feed during this transaction' $apiResolvedAddresses
+  $assetResolvedAddresses=@([Net.Dns]::GetHostAddresses('github.com')|ForEach-Object{$_.IPAddressToString})
+  Assert ($assetResolvedAddresses.Count-eq2-and($assetResolvedAddresses-contains'127.0.0.1')-and($assetResolvedAddresses-contains'::1')) 'official GitHub asset hostname resolves only to the isolated IPv4/IPv6 loopback test feed during this transaction' $assetResolvedAddresses
+
+  $scriptPath=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'production_update_test_feed.py'))
+  $serverArgs=@($scriptPath,'--certificate',$leafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$controlledInstallerPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$readyPath)
+  $serverStopped=$false
+  $serverProcess=Start-Process -FilePath $python -ArgumentList $serverArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr
+  $listenWatch=[Diagnostics.Stopwatch]::StartNew()
+  while($listenWatch.Elapsed.TotalSeconds-lt15-and-not(Test-Path -LiteralPath $readyPath)){if($serverProcess.HasExited){throw "Loopback TLS feed exited before it became ready. $([IO.File]::ReadAllText($serverStderr))"};Start-Sleep -Milliseconds 100}
+  if(-not(Test-Path -LiteralPath $readyPath)){throw 'Loopback TLS feed did not become ready on IPv4 and IPv6 loopback port 443.'}
+  $feedProbe=Invoke-WebRequest -Uri 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' -UseBasicParsing -TimeoutSec 10
+  Assert ($feedProbe.StatusCode-eq200-and($feedProbe.Content|ConvertFrom-Json).tag_name-eq'v1.4.1') 'ephemeral CA validates HTTPS to the isolated controlled official-host release feed'
+
+  [void][IO.Directory]::CreateDirectory($installDir)
+  $setup=Start-Process -FilePath $candidateInstallerPath -ArgumentList @('/S',"/D=$installDir") -PassThru -Wait
+  $setupExitCode=$setup.ExitCode
+  Assert ($setupExitCode-eq0) 'the exact authoritative v1.4.0 NSIS installer completed a fresh per-user installation' $setupExitCode
+  $installedExe=Join-Path $installDir 'EyeBreakReminder.exe'
+  Assert ((Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()-eq(Get-FileHash -LiteralPath $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()) 'fresh install contains the exact candidate production executable'
+  Assert ((Get-Item -LiteralPath $installedExe).VersionInfo.ProductVersion-match'^1\.4\.0(\.0)?$') 'fresh install executable reports the v1.4.0 product version'
+  $uninstallKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder'
+  Assert ((Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Stop).DisplayVersion-eq'1.4.0') 'fresh v1.4.0 install has the correct Installed Apps version'
+
+  [void][IO.Directory]::CreateDirectory($dataDir)
+  $settings=@('workMinutes=37','breakSeconds=33','volume=32','theme=2','alarm=0','repeat=1','notifications=0','snooze=0','autoStart=0','startup=1','history=1','breakModeColors=1','customWorkAccent=1','workAccentColor=3900150','customBreakAccent=1','breakAccentColor=16746496','autoCheckUpdates=1','autoDownloadUpdates=0','updateLastCheck=0','restore=1','schedule=1','scheduleMonday=1','scheduleMonday1=09001700') -join "`n"
+  [IO.File]::WriteAllText((Join-Path $dataDir 'settings.ini'),$settings+"`n",[Text.UTF8Encoding]::new($false))
+  $now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();$historyText="$($now-120) 1 20`n"
+  [IO.File]::WriteAllText((Join-Path $dataDir 'history.dat'),$historyText,[Text.UTF8Encoding]::new($false))
+  [IO.File]::WriteAllText((Join-Path $dataDir 'unrelated-sentinel.txt'),'unrelated runner profile data',[Text.UTF8Encoding]::new($false))
+  $existingStartup=Get-ItemProperty -LiteralPath $runKeyPath -Name EyeBreakReminder -ErrorAction SilentlyContinue
+  if($null-ne$existingStartup){throw 'The disposable runner already has an Eye Break Reminder startup value; refusing to replace it.'}
+  $startupCommand='"'+$installedExe+'" --startup'
+  $startupValueAdded=$true
+  New-ItemProperty -LiteralPath $runKeyPath -Name EyeBreakReminder -PropertyType String -Value $startupCommand -ErrorAction Stop | Out-Null
+  Assert ((Get-ItemProperty -LiteralPath $runKeyPath -Name EyeBreakReminder -ErrorAction Stop).EyeBreakReminder-ceq$startupCommand) 'disposable profile starts with an explicit Eye Break Reminder startup registration before updating'
+  $settingsBeforeHash=(Get-FileHash -LiteralPath (Join-Path $dataDir 'settings.ini') -Algorithm SHA256).Hash.ToLowerInvariant()
+  $settingsBefore=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
+  $historyBefore=[IO.File]::ReadAllBytes((Join-Path $dataDir 'history.dat'))
+  $sentinelBefore=[IO.File]::ReadAllBytes((Join-Path $dataDir 'unrelated-sentinel.txt'))
+  $appProcess=Start-Process -FilePath $installedExe -PassThru
+  Record 'Actual installed production app launched' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;SHA256=(Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant();ProductVersion=(Get-Item $installedExe).VersionInfo.ProductVersion;BuildMacro='EYEBREAK_TEST_BUILD absent'})
+  $choice=Find-Dialog 'Eye Break Reminder Update Available' $appProcess.Id 90
+  Assert ($choice.WindowTitle-eq'Eye Break Reminder Update') 'production binary discovered the controlled stable release and opened its native update dialog' $choice.WindowTitle
+  Assert ((@($choice.Names)-join' ').Contains('Current version: 1.4.0')-and(@($choice.Names)-join' ').Contains('v1.4.1')-and(@($choice.Names)-join' ').Contains('Release notes')) 'production update dialog shows installed/available versions and release notes' ($choice.Names -join ' | ')
+  Save-Screenshot $choice 'production-update-available.png'
+  Invoke-Button $choice 'Download & Install'
+  $ready=Find-Dialog 'Ready to install.' $appProcess.Id 120
+  Assert ((@($ready.Names)-join' ').Contains('(100%)')-and(@($ready.Names)-join' ').Contains('SHA-256 digest matches GitHub')) 'production downloader reaches complete byte progress and digest verification' ($ready.Names -join ' | ')
+  Save-Screenshot $ready 'production-update-ready-to-install.png'
+  Invoke-Button $ready 'Install Update'
+  $success=Find-Dialog 'Update complete.' 0 180
+  Assert ((@($success.Names)-join' ').Contains('Installation progress')) 'production update coordinator reports the completed installer transaction' ($success.Names -join ' | ')
+  Save-Screenshot $success 'production-update-result.png'
+  Invoke-Button $success 'Close'
+
+  $watch=[Diagnostics.Stopwatch]::StartNew();$running=@();$installedVersion=''
+  while($watch.Elapsed.TotalSeconds-lt90){
+    $installedVersion=(Get-Item -LiteralPath $installedExe).VersionInfo.ProductVersion
+    $running=@(Get-CimInstance Win32_Process -Filter "Name='EyeBreakReminder.exe'" -ErrorAction SilentlyContinue|Where-Object{$_.ExecutablePath-and[IO.Path]::GetFullPath([string]$_.ExecutablePath)-ieq$installedExe})
+    if($installedVersion-match'^1\.4\.1(\.0)?$'-and$running.Count){break}
+    Start-Sleep -Milliseconds 250
+  }
+  $newHash=(Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()
+  $expectedHash=(Get-FileHash -LiteralPath $controlledExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()
+  Assert ($installedVersion-match'^1\.4\.1(\.0)?$') 'the existing installed executable was replaced by the controlled v1.4.1 production successor' $installedVersion
+  Assert ($newHash-eq$expectedHash) 'installed production successor is byte-identical to the verified download payload' ([pscustomobject]@{Actual=$newHash;Expected=$expectedHash})
+  Assert ($running.Count-gt0-and[int]$running[0].ProcessId-ne$appProcess.Id) 'the updater relaunched a new process from the verified installed path' $running
+  Assert ((Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Stop).DisplayVersion-eq'1.4.1') 'the update maintained the correct Installed Apps version registration'
+  Assert ((Get-ItemProperty -LiteralPath $runKeyPath -Name EyeBreakReminder -ErrorAction Stop).EyeBreakReminder-ceq$startupCommand) 'production Preserve Settings updates the startup registration to the new executable at the same installed path'
+  $settingsAfter=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
+  $keysBefore=@($settingsBefore.Keys|Where-Object{$_-cne'updateLastCheck'}|Sort-Object)
+  $settingsMissing=@($keysBefore|Where-Object{-not$settingsAfter.ContainsKey($_)-or[string]$settingsBefore[$_]-cne[string]$settingsAfter[$_]})
+  Assert ($settingsMissing.Count-eq0-and$settingsAfter['schedule']-ceq'1'-and$settingsAfter['scheduleMonday']-ceq'1'-and$settingsAfter['scheduleMonday1']-ceq'09001700') 'production Preserve Settings keeps every seeded setting, operating schedule and value in the real settings file (excluding the expected update-check timestamp)' ([pscustomobject]@{Before=$settingsBefore;After=$settingsAfter;MissingOrChanged=$settingsMissing;TimestampMayAdvance=$true;OriginalFileSHA256=$settingsBeforeHash})
+  Assert ([Convert]::ToBase64String($historyBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'history.dat')))) 'production Preserve Settings keeps history byte-for-byte'
+  Assert ([Convert]::ToBase64String($sentinelBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'unrelated-sentinel.txt')))) 'production update leaves unrelated profile files byte-for-byte unchanged'
+  $updatesRoot=Join-Path $dataDir 'updates';$stageWatch=[Diagnostics.Stopwatch]::StartNew()
+  while($stageWatch.Elapsed.TotalSeconds-lt20-and(Test-Path -LiteralPath $updatesRoot)-and@(Get-ChildItem -LiteralPath $updatesRoot -Force -ErrorAction SilentlyContinue).Count-gt0){Start-Sleep -Milliseconds 100}
+  Assert (-not(Test-Path -LiteralPath $updatesRoot)-or@(Get-ChildItem -LiteralPath $updatesRoot -Force -ErrorAction SilentlyContinue).Count-eq0) 'successful production update cleans its private staging directory'
+  $requests=@(Get-Content -LiteralPath $requestLogPath|ForEach-Object{$_|ConvertFrom-Json})
+  $apiRequests=@($requests|Where-Object{$_.host-eq'api.github.com'-and$_.path-eq'/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest'})
+  $assetRequests=@($requests|Where-Object{$_.host-eq'github.com'-and$_.path-eq'/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder-Setup-x64.exe'})
+  Assert ($apiRequests.Count-ge2-and$assetRequests.Count-ge1) 'feed log records controlled HTTPS release discovery and the verified installer download' ([pscustomobject]@{APIRequests=$apiRequests.Count;InstallerRequests=$assetRequests.Count;Paths=$requests})
+  Record 'Exact in-app production update' 'PASS' ([pscustomobject]@{Baseline='v1.4.0';Updated='v1.4.1';ProcessId=$running[0].ProcessId;InstalledPath=$installedExe;InstalledSHA256=$newHash;InstallerExitStatus='Update complete UI plus file/version/hash/registry verification';PreserveSettings='All persisted setting names/values and history bytes verified; update-check timestamp allowed to advance';Feed='Isolated TLS feed at exact official HTTPS hostnames; temporary test CA is not production signing evidence'})
+  $script:resultStatus='PASS'
+}
+catch { Record 'Overall production-binary update acceptance' 'FAIL' $_.Exception.ToString(); throw }
+finally {
+  try { Stop-ProductionApplication; Record 'Safe production-app shutdown' 'PASS' } catch { Record 'Safe production-app shutdown' 'FAIL' $_.Exception.Message }
+  if($serverProcess){try{if(-not$serverProcess.HasExited){$serverProcess.Kill();[void]$serverProcess.WaitForExit(5000)};$serverStopped=$serverProcess.HasExited;$serverProcess.Dispose();if(-not$serverStopped){throw 'Loopback HTTPS feed did not terminate.'}}catch{Record 'Stop isolated HTTPS feed' 'FAIL' $_.Exception.Message}}
+  if($hostsChanged){
+    try{[IO.File]::WriteAllBytes($hostsPath,$originalHostsBytes);& ipconfig.exe /flushdns|Out-Null;if($LASTEXITCODE-ne0){throw 'DNS flush after restoring hosts file failed.'};$restored=[IO.File]::ReadAllBytes($hostsPath);$equal=([Convert]::ToBase64String($originalHostsBytes)-ceq[Convert]::ToBase64String($restored));if(-not$equal){throw 'Hosts file did not return byte-for-byte to its original contents.'};$hostsRestoreStatus='PASS';Record 'Restore runner hosts file' 'PASS' ([pscustomobject]@{ByteIdentical=$equal})}catch{$hostsRestoreStatus='FAIL';Record 'Restore runner hosts file' 'FAIL' $_.Exception.Message}
+  }else{$hostsRestoreStatus='NOT NEEDED'}
+  if($rootThumbprint){
+    try{$certPath="Cert:\CurrentUser\Root\$rootThumbprint";if(Test-Path -LiteralPath $certPath){Remove-Item -LiteralPath $certPath -Force};if(Test-Path -LiteralPath $certPath){throw 'Temporary root remains in CurrentUser Root.'};$trustRootCleanupStatus='PASS';Record 'Remove temporary TLS trust root' 'PASS' $rootThumbprint}catch{$trustRootCleanupStatus='FAIL';Record 'Remove temporary TLS trust root' 'FAIL' $_.Exception.Message}
+  }else{$trustRootCleanupStatus='NOT CREATED'}
+  if(Test-Path -LiteralPath $installDir){
+    try{
+      $uninstaller=Join-Path $installDir 'Uninstall.exe'
+      if(-not(Test-Path -LiteralPath $uninstaller)){throw 'The candidate installer did not register its normal uninstaller.'}
+      $un=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait;$uninstallExitCode=$un.ExitCode;if($un.ExitCode-ne0){throw "Disposable production acceptance uninstall returned $($un.ExitCode)."}
+      if(Test-Path -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe')){throw 'Silent cleanup uninstall left the application executable behind.'}
+      if(Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder' -ErrorAction SilentlyContinue){throw 'Silent cleanup uninstall left the Installed Apps registration behind.'}
+      if(Test-Path -LiteralPath $installDir){Remove-Item -LiteralPath $installDir -Recurse -Force}
+      Record 'Disposable production installation cleanup' 'PASS' $uninstallExitCode
+    }catch{Record 'Disposable production installation cleanup' 'FAIL' $_.Exception.Message}
+  }
+  if($startupValueAdded){
+    try{
+      $currentStartup=Get-ItemProperty -LiteralPath $runKeyPath -Name EyeBreakReminder -ErrorAction SilentlyContinue
+      if($null-ne$currentStartup){
+        if([string]$currentStartup.EyeBreakReminder-cne$startupCommand){throw 'The Eye Break Reminder startup value changed to an unexpected command; refusing to remove it.'}
+        Remove-ItemProperty -LiteralPath $runKeyPath -Name EyeBreakReminder -ErrorAction Stop
+      }
+      Record 'Remove disposable startup registration' 'PASS' 'Only the exact runner-owned Eye Break Reminder command was removed; an already-removed value is accepted.'
+    }catch{Record 'Remove disposable startup registration' 'FAIL' $_.Exception.Message}
+  }
+  if(Test-Path -LiteralPath $dataDir){
+    try{$resolved=[IO.Path]::GetFullPath($dataDir);if($resolved-ine$expectedDataDir){throw 'Refusing to remove an unexpected user-data path.'};if((Get-Item -LiteralPath $resolved).Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Refusing to remove a reparse-point user-data path.'};Remove-Item -LiteralPath $resolved -Recurse -Force;Record 'Remove disposable Eye Break Reminder profile fixture' 'PASS' $resolved}catch{Record 'Remove disposable Eye Break Reminder profile fixture' 'FAIL' $_.Exception.Message}
+  }
+  try{$resolvedTestRoot=[IO.Path]::GetFullPath($testRoot);if($resolvedTestRoot-ine$testRoot-or-not$resolvedTestRoot.StartsWith($runnerPrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Refusing to remove files outside the isolated production-update runner folder.'};if(Test-Path -LiteralPath $resolvedTestRoot){if((Get-Item -LiteralPath $resolvedTestRoot).Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Refusing to remove a reparse-point test folder.'};Remove-Item -LiteralPath $resolvedTestRoot -Recurse -Force};if(Test-Path -LiteralPath $resolvedTestRoot){throw 'Disposable TLS keys and transaction files remain in RUNNER_TEMP.'};Record 'Remove disposable TLS private keys and test folder' 'PASS' $resolvedTestRoot}catch{Record 'Remove disposable TLS private keys and test folder' 'FAIL' $_.Exception.Message}
+  if($hostsRestoreStatus-eq'FAIL'-or$trustRootCleanupStatus-eq'FAIL'-or@($script:events|Where-Object Status -EQ 'FAIL').Count){ $script:resultStatus='FAIL' }
+  $script:events.Add([pscustomobject]@{Name='Isolated feed cleanup';Status=$(if($hostsRestoreStatus-ne'FAIL'-and$trustRootCleanupStatus-ne'FAIL'-and$serverStopped){'PASS'}else{'FAIL'});Details=[pscustomobject]@{HostsFile=$hostsRestoreStatus;TemporaryTrustRoot=$trustRootCleanupStatus;ServerProcessStopped=$serverStopped;TestCAOrKeysUploaded=$false};Utc=[DateTime]::UtcNow.ToString('o')})
+  $report=[pscustomobject]@{Status=$script:resultStatus;Assertions=$script:assertions;RunId=$env:GITHUB_RUN_ID;SourceCommit=$env:GITHUB_SHA;StartedUtc=$startedUtc.ToString('o');CompletedUtc=[DateTime]::UtcNow.ToString('o');CandidateBaselineVersion='1.4.0';ControlledSuccessorVersion='1.4.1';TestTrustAnchor=$rootThumbprint;TemporaryTestRootRemoved=($trustRootCleanupStatus-eq'PASS');HostsRestoredByteIdentically=($hostsRestoreStatus-eq'PASS');ProductionTestEndpointOverrideCompiled=$false;Events=@($script:events)}
+  $report|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'production-update-acceptance-results.json') -Encoding UTF8
+  try{Stop-Transcript|Out-Null}catch{}
+}

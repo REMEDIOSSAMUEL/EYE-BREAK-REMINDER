@@ -334,6 +334,27 @@ function Run-InterruptedDownloadRecovery(){
 function Run-InstallerFailure(){Install-Baseline;Seed-Profile;New-ReleaseFixture $FailingInstaller $UpdateExecutable;$appProcessId=Start-TestApp;$progress=Begin-Download $appProcessId;Complete-DownloadAndWait $appProcessId $progress 'The update failed.';Assert ((Wait-InstalledVersion '1.4.0')-eq'1.4.0') 'failed installer transaction restores the exact previous executable';$key=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder';Assert ($key.DisplayVersion-eq'1.4.0') 'failed installer restores Installed Apps version registration';Assert-PreservedProfile;Stop-Application;Record 'Controlled installer exit failure and rollback' 'PASS'}
 function Run-StartupFailure(){Install-Baseline;Seed-Profile;New-ReleaseFixture $UpdateInstaller $UpdateExecutable;$appProcessId=Start-TestApp $script:setupSource 0 '1.4.1';$progress=Begin-Download $appProcessId;Complete-DownloadAndWait $appProcessId $progress 'The updated application did not start.';Assert ((Wait-InstalledVersion '1.4.0')-eq'1.4.0') 'missing startup confirmation triggers previous-version rollback';Assert-PreservedProfile;Stop-Application;$uninstall=Start-Process -FilePath (Join-Path $installDir 'Uninstall.exe') -ArgumentList '/S' -PassThru -Wait;Assert ($uninstall.ExitCode-eq0-and-not(Test-Path -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe'))) 'application can be uninstalled normally after startup-failure recovery';Assert (((Get-Content -LiteralPath (Join-Path $dataDir 'settings.ini') -Raw)-match'(?m)^workMinutes=37$')-and((Get-Content -LiteralPath (Join-Path $dataDir 'history.dat') -Raw)-eq$script:historyText)) 'uninstall after recovery preserves the restored settings and history';Record 'New executable startup confirmation rollback and subsequent uninstall' 'PASS'}
 function Run-PortableUpdate(){Reset-Installation;Remove-Item -LiteralPath $scriptRoot -Recurse -Force -ErrorAction SilentlyContinue;[void][IO.Directory]::CreateDirectory($scriptRoot);[void][IO.Directory]::CreateDirectory($installDir);$portable=Join-Path $scriptRoot 'portable';[void][IO.Directory]::CreateDirectory($portable);$app=Join-Path $portable 'EyeBreakReminder.exe';Copy-Item -LiteralPath $BaselineExecutable -Destination $app;[IO.File]::WriteAllText((Join-Path $portable 'keep-user-document.txt'),'keep this unrelated file');Seed-Profile;New-ReleaseFixture $UpdateInstaller $UpdateExecutable;Copy-Item -LiteralPath (Join-Path $installDir 'test-update-response.txt') -Destination (Join-Path $portable 'test-update-response.txt');$appProcessId=Start-TestApp $script:appSource 0 '' $app;[void](Begin-Download $appProcessId);$ready=Find-Dialog 'Ready to install.' @($appProcessId) 120;$names=Get-Names $ready.Root -join ' | ';Assert (($names-match'Downloaded:')-and($names-match'\(100%\)')) 'portable update displays completed byte progress in the native dialog' $names;Screenshot $ready 'portable-update-progress-ready.png';Complete-DownloadAndWait $appProcessId $ready;Assert ((Get-Item -LiteralPath $app).VersionInfo.ProductVersion-eq'1.4.1') 'portable update atomically replaces and relaunches the standalone executable';Assert ((Get-Content -LiteralPath (Join-Path $portable 'keep-user-document.txt') -Raw)-eq'keep this unrelated file') 'portable update preserves unrelated files';Assert (-not(Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder')) 'portable update does not register an installed application';Assert-PreservedProfile;Stop-Application;Record 'Portable standalone update' 'PASS'}
+function Run-PortableCleanUpdate([bool]$DeleteHistory){
+  Reset-Installation
+  $portable=Join-Path $scriptRoot 'portable';[void][IO.Directory]::CreateDirectory($portable)
+  $app=Join-Path $portable 'EyeBreakReminder.exe';Copy-Item -LiteralPath $BaselineExecutable -Destination $app
+  [IO.File]::WriteAllText((Join-Path $portable 'keep-user-document.txt'),'portable unrelated sentinel')
+  Seed-Profile 1;New-ReleaseFixture $UpdateInstaller $UpdateExecutable
+  Copy-Item -LiteralPath (Join-Path $installDir 'test-update-response.txt') -Destination (Join-Path $portable 'test-update-response.txt')
+  $appProcessId=Start-TestApp $script:appSource 0 '' $app
+  $progress=Begin-Download $appProcessId $true $DeleteHistory
+  Complete-DownloadAndWait $appProcessId $progress
+  Assert ((Get-Item -LiteralPath $app).VersionInfo.ProductVersion-eq'1.4.1') 'portable Clean Install replaces and relaunches the controlled successor'
+  Stop-Application
+  $settingsPath=Join-Path $dataDir 'settings.ini';$settingsRaw=Get-Content -LiteralPath $settingsPath -Raw
+  Assert ($settingsRaw-match'(?m)^workMinutes=20$'-and$settingsRaw-match'(?m)^breakSeconds=20$'-and$settingsRaw-match'(?m)^volume=55$'-and$settingsRaw-match'(?m)^theme=2$') 'portable Clean Install restores default timer, volume and theme settings'
+  Assert ($settingsRaw-match'(?m)^customWorkAccent=0$'-and$settingsRaw-match'(?m)^customBreakAccent=0$'-and$settingsRaw-match'(?m)^schedule=0$'-and$settingsRaw-match'(?m)^autoCheckUpdates=0$'-and$settingsRaw-match'(?m)^autoDownloadUpdates=0$') 'portable Clean Install clears custom accents, operating schedule and update preferences'
+  if($DeleteHistory){Assert (-not(Test-Path -LiteralPath (Join-Path $dataDir 'history.dat'))) 'portable Clean Install deletes history only after separately confirmed selection'}
+  else{Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'history.dat')))-ceq[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($script:historyText))) 'portable Clean Install preserves history byte-for-byte when deletion is not selected'}
+  Assert ((Get-Content -LiteralPath (Join-Path $portable 'keep-user-document.txt') -Raw)-eq'portable unrelated sentinel') 'portable Clean Install preserves unrelated neighboring files'
+  Assert (-not(Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder')) 'portable Clean Install does not create an Installed Apps registration'
+  Record $(if($DeleteHistory){'Portable Clean Install with explicit history deletion'}else{'Portable Clean Install preserving history'}) 'PASS'
+}
 function Run-UninstallChecks(){
   Install-Baseline;Seed-Profile;New-ReleaseFixture $UpdateInstaller $UpdateExecutable
   $appProcessId=Start-TestApp;$progress=Begin-Download $appProcessId;Complete-DownloadAndWait $appProcessId $progress;[void](Wait-InstalledVersion '1.4.1');Verify-WindowsSettingsEntry '1.4.1';Stop-Application
@@ -401,6 +422,8 @@ try{
   Run-StartupFailure
   Run-InterruptedCleanRecovery
   Run-PortableUpdate
+  Run-PortableCleanUpdate $false
+  Run-PortableCleanUpdate $true
   Run-UninstallChecks
   Run-InteractiveUninstall $false
   Run-InteractiveUninstall $true

@@ -30,6 +30,8 @@ During work the timer uses the familiar blue accent and says **Running**. During
 
 Settings → About includes **Check for Updates**, **Automatically check for updates**, and **Automatically download updates**. The optional automatic checks run at most daily; downloads and installation are always explained to and confirmed by the user. An available stable release opens a native themed dialog with release notes, versions, size, Preserve Settings (selected by default), and Clean Install. Downloads stream over HTTPS with Windows certificate validation, progress, cancellation, strict GitHub asset URL checks and SHA-256 verification. A separate per-user coordinator waits for the app to close before invoking the existing NSIS installer; portable copies replace only their executable. Recovery backups and a next-sign-in recovery entry protect interrupted installs. See the [updater architecture](docs/V1.4.0_UPDATER_ARCHITECTURE.md), [security model](docs/V1.4.0_UPDATE_SECURITY.md), [update guide](docs/UPDATES.md), and [installer behavior](docs/INSTALLER.md).
 
+**v1.4.0 is still under development and is not approved for release.** GitHub's HTTPS connection and SHA-256 asset digest do not independently authenticate the publisher if the repository/account or GitHub release metadata is compromised. The production publisher-authentication trust root remains unprovisioned; see the security model.
+
 The currently published v1.3.0 build only links to the release page, so its one-time upgrade to v1.4.0 still requires downloading and running the v1.4.0 setup file. After v1.4.0 is installed, future supported releases can be installed in the app.
 
 ## Operating schedule
