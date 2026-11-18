@@ -4,6 +4,7 @@
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
   "branch_head": "29a35b25ce4a92af28c6bac53937af84e0d322a9",
+  "branch_head_scope": "Release-candidate source/build input head; the later remote PR head is recorded separately under latest_validation.final_remote_audit.",
   "current_release_candidate": {
     "status": "RETAINED AND HASH-VERIFIED; NOT PUBLISHED; RELEASE GATE NOT READY",
     "run_id": 44392534668,
@@ -1083,11 +1084,11 @@
       "description": "Handle missing digest",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Metadata rejection and cleanup",
-      "actual_verification_evidence": "As of 2026-11-18: NOT TESTED. No qualifying completed verification evidence for this requirement is recorded in the current evidence set.",
-      "environment": "Not verified; environment described in required test",
-      "tested_source_commit": null,
-      "tested_binary_sha256": null,
-      "status": "NOT TESTED"
+      "actual_verification_evidence": "PASS: focused local disposable Windows helper check, 12 assertions, 0 failures. The helper used src/update_client.hpp at source head 23a842cd54afddc8dfb0b355cf4d96335991d7b1 and verified the missing SHA-256 is rejected before network access or staged-file creation; both the .part file and final executable path remained absent. Console evidence: build/overnight-2026-11-18/safe-helper-check-rerun-20261118-2145.log (SHA-256 f1a98681a37684ed2eea1e7f643a09370ce06a90830134c8a553d6186714e3f3). This is helper-level rejection/cleanup evidence, not production installer acceptance.",
+      "environment": "Local Windows host, PowerShell, disposable test profile under build/overnight-2026-11-18; no installed application, registry profile, or personal app data was used.",
+      "tested_source_commit": "23a842cd54afddc8dfb0b355cf4d96335991d7b1",
+      "tested_binary_sha256": "f9153bd4fd691ce09b9f044ead9ab178953fcedd0cc5886f2b51532d3109c5fa",
+      "status": "PASS"
     },
     {
       "requirement_id": "FAIL-009",
@@ -2539,9 +2540,9 @@
       "description": "Autonomous completion progress and final audit complete",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Evidence links, limits and continuation state",
-      "actual_verification_evidence": "Reviewed docs/V1.4.0_AUTONOMOUS_COMPLETION_PROGRESS.md and docs/V1.4.0_FINAL_COMPLETION_AUDIT.md for terminal run/CI links, candidate provenance, historical harness failures, known limitations and continuation state. Reconciled row-level acceptance matrix totals: 176 PASS, 0 FAIL, 50 NOT TESTED, 3 BLOCKED, 2 NOT APPLICABLE (231 rows). The matrix is the source of truth for per-requirement status.",
-      "environment": "Documentation review and JSON validation in the feature worktree at head 29a35b25ce4a92af28c6bac53937af84e0d322a9.",
-      "tested_source_commit": "29a35b25ce4a92af28c6bac53937af84e0d322a9",
+      "actual_verification_evidence": "Reviewed the refreshed progress, completion audit and pre-release report for terminal run/CI links, candidate provenance, exact failure classifications, current 177 PASS / 0 FAIL / 49 NOT TESTED / 3 BLOCKED / 2 NOT APPLICABLE totals, and the required next step. Reconciled the machine-readable matrix against all 231 requirement rows and validated every required field.",
+      "environment": "Documentation and JSON validation in the authorized feature worktree; source/build inputs remain at 29a35b25ce4a92af28c6bac53937af84e0d322a9 and the last remotely audited PR head was 23a842cd54afddc8dfb0b355cf4d96335991d7b1.",
+      "tested_source_commit": "23a842cd54afddc8dfb0b355cf4d96335991d7b1",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2616,17 +2617,16 @@
     }
   ],
   "status_counts": {
-    "PASS": 176,
-    "FAIL": 0,
-    "NOT TESTED": 50,
-    "BLOCKED": 3,
-    "NOT APPLICABLE": 2
+    "PASS": 177,
+    "NOT TESTED": 49,
+    "NOT APPLICABLE": 2,
+    "BLOCKED": 3
   },
-  "generated_at_utc": "2026-11-18T20:48:00Z",
+  "generated_at_utc": "2026-11-18T21:51:11Z",
   "latest_validation": {
-    "required_ci_run_id": 44392550742,
-    "required_ci_status": "PASS on final feature head 29a35b25ce4a92af28c6bac53937af84e0d322a9 (Core tests and Windows package)",
-    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44392550742",
+    "required_ci_run_id": 44398670795,
+    "required_ci_status": "PASS on feature head 23a842cd54afddc8dfb0b355cf4d96335991d7b1 (Core tests and Windows package)",
+    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44398670795",
     "windows_acceptance_run_id": 44392534668,
     "windows_acceptance_status": "SUCCESS; focused exact-candidate production transaction passed and ARM64 emulation job passed; previous 110-cycle soak reused only because candidate executable SHA-256 is identical.",
     "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44392534668",
@@ -2658,8 +2658,55 @@
     "duplicate_full_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44392550713",
     "latest_focused_updater_production_job_status": "PASS (production-update-acceptance-results.json: Status PASS, Assertions 51)",
     "latest_focused_updater_overall_status": "SUCCESS",
-    "required_ci_head": "29a35b25ce4a92af28c6bac53937af84e0d322a9",
+    "required_ci_head": "23a842cd54afddc8dfb0b355cf4d96335991d7b1",
     "required_ci_final_state": "PASS",
+    "final_remote_audit": {
+      "checked_at_utc": "2026-11-18T21:39:28Z",
+      "pull_request": {
+        "number": 7,
+        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7",
+        "state": "OPEN",
+        "draft": true,
+        "head_sha": "23a842cd54afddc8dfb0b355cf4d96335991d7b1",
+        "base_sha": "f4d01a341c90027fb506baa8fac5f6d1cef8cd55",
+        "merge_state_status": "UNSTABLE because the optional Windows acceptance check was cancelled"
+      },
+      "required_check": {
+        "name": "Core tests and Windows package",
+        "run_id": 44398670795,
+        "status": "SUCCESS",
+        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44398670795"
+      },
+      "optional_windows_acceptance": {
+        "run_id": 44398670800,
+        "status": "CANCELLED before candidate build or product tests; no acceptance evidence",
+        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44398670800"
+      },
+      "main_ruleset": {
+        "id": 27397921,
+        "enforcement": "active",
+        "required_check": "Core tests and Windows package"
+      },
+      "v1_4_0_tag": "NOT FOUND",
+      "v1_4_0_release": "NOT FOUND",
+      "prior_release_assets_match_checkpoint": {
+        "checkpoint_path": "build/overnight-2026-11-18/remote-state-checkpoint.json",
+        "current_audit_path": "build/overnight-2026-11-18/remote-state-final-audit.json",
+        "v1_3_0_release_id": 447384077,
+        "v1_3_0_assets_match": true,
+        "v1_2_1_release_id": 444152104,
+        "v1_2_1_assets_match": true
+      },
+      "candidate_artifact": {
+        "id": 14469062609,
+        "name": "eye-break-reminder-v1.4.0-focused-candidate-44392534668",
+        "size_bytes": 8448342,
+        "expired": false,
+        "expires_at": "2027-02-16T20:34:57Z",
+        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44392534668/artifacts/14469062609"
+      },
+      "personal_laptop_power_actions": "None. No restart, shutdown, lock, suspend, or hibernate command was issued."
+    },
     "arm64_run_id": 44392534668,
     "arm64_status": "PASS on Windows 11 Enterprise ARM64 using x64 emulation: 27 PASS, 0 FAIL, 2 screenshot-only NOT TESTED because a foreground Microsoft account window blocked capture. Native Windows 11 x64 remains BLOCKED.",
     "candidate_artifact_download_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44392534668",
