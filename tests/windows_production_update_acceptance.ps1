@@ -24,6 +24,7 @@ $dataDir = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'EyeBreakReminder
 $expectedDataDir = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'))
 $runKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $startupValueAdded = $false
+$runKeyCreated = $false
 $startupCommand = $null
 $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 $allowedEvidence = [IO.Path]::GetFullPath((Join-Path (Get-Location) 'build/v1.4.0-updater-evidence'))
@@ -298,6 +299,7 @@ try {
   $now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();$historyText="$($now-120) 1 20`n"
   [IO.File]::WriteAllText((Join-Path $dataDir 'history.dat'),$historyText,[Text.UTF8Encoding]::new($false))
   [IO.File]::WriteAllText((Join-Path $dataDir 'unrelated-sentinel.txt'),'unrelated runner profile data',[Text.UTF8Encoding]::new($false))
+  if(-not(Test-Path -LiteralPath $runKeyPath)){New-Item -Path $runKeyPath -Force -ErrorAction Stop|Out-Null;$runKeyCreated=$true}
   $existingStartup=Get-ItemProperty -LiteralPath $runKeyPath -Name EyeBreakReminder -ErrorAction SilentlyContinue
   if($null-ne$existingStartup){throw 'The disposable runner already has an Eye Break Reminder startup value; refusing to replace it.'}
   $startupCommand='"'+$installedExe+'" --startup'
@@ -412,6 +414,8 @@ finally {
       if(-not$un.WaitForExit(90000)){Stop-Process -Id $un.Id -Force -ErrorAction SilentlyContinue;[void]$un.WaitForExit(5000);throw 'Disposable production acceptance uninstall exceeded its ninety-second cleanup bound.'}
       $uninstallExitCode=$un.ExitCode;if($un.ExitCode-ne0){throw "Disposable production acceptance uninstall returned $($un.ExitCode)."}
       $remainingExecutable=Join-Path $installDir 'EyeBreakReminder.exe'
+      $removeWatch=[Diagnostics.Stopwatch]::StartNew()
+      while((Test-Path -LiteralPath $remainingExecutable)-and$removeWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 200}
       if(Test-Path -LiteralPath $remainingExecutable){
         $remainingProcesses=@(Get-CimInstance Win32_Process -Filter "Name='EyeBreakReminder.exe'" -ErrorAction SilentlyContinue|Where-Object{try{[IO.Path]::GetFullPath([string]$_.ExecutablePath).StartsWith($installDir.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)}catch{$false}}|ForEach-Object{[pscustomobject]@{ProcessId=$_.ProcessId;ExecutablePath=$_.ExecutablePath;CommandLine=$_.CommandLine}})
         $exclusiveOpen=$false;$exclusiveOpenError=$null;$stream=$null
@@ -432,6 +436,10 @@ finally {
       if($null-ne$currentStartup){
         if([string]$currentStartup.EyeBreakReminder-cne$startupCommand){throw 'The Eye Break Reminder startup value changed to an unexpected command; refusing to remove it.'}
         Remove-ItemProperty -LiteralPath $runKeyPath -Name EyeBreakReminder -ErrorAction Stop
+      }
+      if($runKeyCreated-and(Test-Path -LiteralPath $runKeyPath)){
+        $remainingValues=@((Get-ItemProperty -LiteralPath $runKeyPath -ErrorAction SilentlyContinue).PSObject.Properties|Where-Object{$_.Name-notmatch'^PS'})
+        if($remainingValues.Count-eq0){Remove-Item -LiteralPath $runKeyPath -Force -ErrorAction Stop}else{Record 'Preserve non-test Windows Run values' 'INFO' ([pscustomobject]@{RemainingValueNames=@($remainingValues|Select-Object -ExpandProperty Name)})}
       }
       Record 'Remove disposable startup registration' 'PASS' 'Only the exact runner-owned Eye Break Reminder command was removed; an already-removed value is accepted.'
     }catch{Record 'Remove disposable startup registration' 'FAIL' $_.Exception.Message}
