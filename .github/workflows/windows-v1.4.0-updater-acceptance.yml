@@ -198,7 +198,7 @@ jobs:
             'Installer registers under the standard account HKCU hive',
             'Installed candidate launches with a visible window under the standard account',
             'Standard-user interactive uninstaller wizard',
-            'Interactive uninstall removes the standard user installation and both HKCU registrations'
+            'Interactive uninstall removes the standard user installation, preserves settings/history byte-for-byte, and clears both HKCU registrations'
           )
           foreach ($name in $requiredEvents) {
             $event = @($result.Events | Where-Object Name -CEQ $name)

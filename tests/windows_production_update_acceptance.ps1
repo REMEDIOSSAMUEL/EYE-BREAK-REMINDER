@@ -134,6 +134,32 @@ function Stop-ProductionApplication {
   throw 'The production candidate application did not exit through its registered safe-shutdown message.'
 }
 function Add-Check($Executable,[string[]]$Arguments,[string]$Description){& $Executable @Arguments;if($LASTEXITCODE-ne0){throw "$Description failed with exit code $LASTEXITCODE."}}
+function Invoke-CertUtilBounded([string[]]$Arguments,[string]$Description,[int[]]$AllowedExitCodes=@(0),[int]$TimeoutSeconds=20){
+  $certutil=Join-Path $env:WINDIR 'System32\certutil.exe'
+  if(-not(Test-Path -LiteralPath $certutil -PathType Leaf)){throw 'The Windows certificate utility is unavailable.'}
+  $stem='certutil-'+[guid]::NewGuid().ToString('N')
+  $stdout=Join-Path $testRoot ($stem+'.out')
+  $stderr=Join-Path $testRoot ($stem+'.err')
+  Write-Host ("EBR_CERTUTIL_STAGE start description='{0}' timeoutSeconds={1}"-f$Description,$TimeoutSeconds)
+  $process=Start-Process -FilePath $certutil -ArgumentList $Arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+  try {
+    if(-not$process.WaitForExit($TimeoutSeconds*1000)){
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      [void]$process.WaitForExit(5000)
+      throw "Windows certificate operation '$Description' exceeded its $TimeoutSeconds-second bound."
+    }
+    $output=''
+    if(Test-Path -LiteralPath $stdout){$output+=[IO.File]::ReadAllText($stdout)}
+    if(Test-Path -LiteralPath $stderr){$output+=[IO.File]::ReadAllText($stderr)}
+    $result=[pscustomobject]@{ExitCode=$process.ExitCode;Output=$output}
+    Write-Host ('EBR_CERTUTIL_EVENT '+([pscustomobject]@{Description=$Description;ExitCode=$result.ExitCode;Output=$output}|ConvertTo-Json -Depth 4 -Compress))
+    if($AllowedExitCodes-notcontains$result.ExitCode){throw "Windows certificate operation '$Description' returned $($result.ExitCode): $output"}
+    return $result
+  } finally {
+    $process.Dispose()
+    Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue
+  }
+}
 
 $resultStatus='FAIL'
 $hostsRestoreStatus='NOT RUN'
@@ -171,10 +197,12 @@ try {
   Add-Check $openssl @('x509','-req','-in',$leafCsrPath,'-CA',$rootPemPath,'-CAkey',$rootPrivateKeyPath,'-CAcreateserial','-out',$leafCertificatePath,'-days','1','-sha256','-extfile',$leafExtensionPath,'-extensions','server_cert') 'sign disposable official-host TLS leaf with the temporary test root'
   Add-Check $openssl @('x509','-in',$rootPemPath,'-outform','DER','-out',$rootCertificatePath) 'export temporary test-root certificate'
   Record 'Temporary isolated test TLS trust material is ready' 'INFO'
-  $rootCertificate=[Security.Cryptography.X509Certificates.X509Certificate2]::new($rootCertificatePath)
-  $rootThumbprint=$rootCertificate.Thumbprint
-  Import-Certificate -FilePath $rootCertificatePath -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
-  Assert ((Get-ChildItem 'Cert:\CurrentUser\Root' | Where-Object Thumbprint -EQ $rootThumbprint).Count-eq1) 'temporary test trust anchor is present only in the disposable current-user store' $rootThumbprint
+  $rootThumbprint=(Get-FileHash -LiteralPath $rootCertificatePath -Algorithm SHA1).Hash.ToUpperInvariant()
+  Record 'Test-root certificate thumbprint computed from its DER bytes' 'INFO' $rootThumbprint
+  $rootImport=Invoke-CertUtilBounded @('-user','-addstore','Root',$rootCertificatePath) 'add the disposable test root only to the isolated runner current-user store'
+  Assert ($rootImport.ExitCode-eq0) 'temporary test trust anchor import is accepted by Windows certutil in the disposable current-user store' $rootImport.Output
+  $rootPresence=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify the disposable test root current-user store entry'
+  Assert ($rootPresence.ExitCode-eq0-and$rootPresence.Output-match[regex]::Escape($rootThumbprint)) 'temporary test root is retrievable by its exact certificate thumbprint from the current-user store'
 
   $tail=[Text.Encoding]::ASCII.GetBytes("`r`n127.0.0.1 api.github.com github.com`r`n::1 api.github.com github.com`r`n")
   $newHosts=[byte[]]::new($originalHostsBytes.Length+$tail.Length)
@@ -196,9 +224,10 @@ try {
   # First remove the test-only issuer and prove Windows rejects the endpoint.
   # The production application will exercise the same WinHTTP certificate
   # validation path below. Reinstall the temporary root only after rejection.
-  $certPath="Cert:\CurrentUser\Root\$rootThumbprint"
-  Remove-Item -LiteralPath $certPath -Force
-  Assert (-not(Test-Path -LiteralPath $certPath)) 'the test-only TLS issuer is absent before the invalid-certificate rejection case' $rootThumbprint
+  $rootRemoveBeforeRejection=Invoke-CertUtilBounded @('-user','-delstore','Root',$rootThumbprint) 'remove the disposable test root before invalid-certificate rejection'
+  Assert ($rootRemoveBeforeRejection.ExitCode-eq0) 'the test-only TLS issuer is removed before invalid-certificate rejection' $rootThumbprint
+  $rootAbsentBeforeRejection=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify test-root absence before the invalid-certificate request' @(0,1,-2147024894)
+  Assert ($rootAbsentBeforeRejection.ExitCode-ne0-and$rootAbsentBeforeRejection.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified') 'the test-only TLS issuer is absent before the invalid-certificate rejection case' $rootThumbprint
   $pretrustProbeFailed=$false;$pretrustProbeMessage=''
   try { [void](Invoke-WebRequest -Uri 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' -UseBasicParsing -TimeoutSec 10) }
   catch { $pretrustProbeFailed=$true;$pretrustProbeMessage=$_.Exception.ToString() }
@@ -206,7 +235,9 @@ try {
   Assert (@(Get-Content -LiteralPath $requestLogPath -ErrorAction SilentlyContinue).Count-eq0) 'an untrusted TLS handshake sends no HTTP request to the isolated release feed'
 
   [void][IO.Directory]::CreateDirectory($installDir)
-  $setup=Start-Process -FilePath $candidateInstallerPath -ArgumentList @('/S',"/D=$installDir") -PassThru -Wait
+  Record 'Begin isolated fresh install of the exact candidate' 'INFO' $candidateInstallerPath
+  $setup=Start-Process -FilePath $candidateInstallerPath -ArgumentList @('/S',"/D=$installDir") -PassThru
+  if(-not$setup.WaitForExit(120000)){Stop-Process -Id $setup.Id -Force -ErrorAction SilentlyContinue;[void]$setup.WaitForExit(5000);throw 'The exact candidate silent installer exceeded its 120-second acceptance bound.'}
   $setupExitCode=$setup.ExitCode
   Assert ($setupExitCode-eq0) 'the exact authoritative v1.4.0 NSIS installer completed a fresh per-user installation' $setupExitCode
   $installedExe=Join-Path $installDir 'EyeBreakReminder.exe'
@@ -243,11 +274,14 @@ try {
   Assert (-not(Test-Path -LiteralPath (Join-Path $dataDir 'updates'))) 'invalid TLS certificate rejection creates no update staging directory'
   Assert ((Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()-eq(Get-FileHash -LiteralPath $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()) 'invalid TLS certificate rejection does not replace the installed production candidate'
   Assert ([Convert]::ToBase64String($historyBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'history.dat')))-and[Convert]::ToBase64String($sentinelBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'unrelated-sentinel.txt')))) 'invalid TLS certificate rejection leaves existing history and unrelated user data byte-for-byte unchanged'
-  Assert (-not(Test-Path -LiteralPath $certPath)) 'unverified feed does not acquire a trusted-root installation or bypass certificate validation' $rootThumbprint
+  $rootStillAbsent=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify the untrusted feed did not install its temporary issuer' @(0,1,-2147024894)
+  Assert ($rootStillAbsent.ExitCode-ne0-and$rootStillAbsent.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified') 'unverified feed does not acquire a trusted-root installation or bypass certificate validation' $rootThumbprint
   Stop-ProductionApplication
   $appProcess=$null
-  Import-Certificate -FilePath $rootCertificatePath -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
-  Assert ((Get-ChildItem 'Cert:\CurrentUser\Root' | Where-Object Thumbprint -EQ $rootThumbprint).Count-eq1) 'temporary test CA is installed only after the invalid-certificate rejection is verified'
+  $rootImportAfterRejection=Invoke-CertUtilBounded @('-user','-addstore','Root',$rootCertificatePath) 'reinstall the disposable test root only after invalid-certificate rejection is verified'
+  Assert ($rootImportAfterRejection.ExitCode-eq0) 'temporary test CA is installed only after the invalid-certificate rejection is verified' $rootImportAfterRejection.Output
+  $rootPresenceAfterRejection=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify controlled update feed test root after explicit installation'
+  Assert ($rootPresenceAfterRejection.ExitCode-eq0-and$rootPresenceAfterRejection.Output-match[regex]::Escape($rootThumbprint)) 'trusted controlled update feed has only the disposable current-user TLS test root'
   $feedProbe=Invoke-WebRequest -Uri 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' -UseBasicParsing -TimeoutSec 10
   Assert ($feedProbe.StatusCode-eq200-and($feedProbe.Content|ConvertFrom-Json).tag_name-eq'v1.4.1') 'ephemeral CA validates HTTPS to the isolated controlled official-host release feed'
   Record 'Trusted controlled HTTPS feed probe completed' 'INFO'
@@ -310,7 +344,18 @@ finally {
     try{[IO.File]::WriteAllBytes($hostsPath,$originalHostsBytes);& ipconfig.exe /flushdns|Out-Null;if($LASTEXITCODE-ne0){throw 'DNS flush after restoring hosts file failed.'};$restored=[IO.File]::ReadAllBytes($hostsPath);$equal=([Convert]::ToBase64String($originalHostsBytes)-ceq[Convert]::ToBase64String($restored));if(-not$equal){throw 'Hosts file did not return byte-for-byte to its original contents.'};$hostsRestoreStatus='PASS';Record 'Restore runner hosts file' 'PASS' ([pscustomobject]@{ByteIdentical=$equal})}catch{$hostsRestoreStatus='FAIL';Record 'Restore runner hosts file' 'FAIL' $_.Exception.Message}
   }else{$hostsRestoreStatus='NOT NEEDED'}
   if($rootThumbprint){
-    try{$certPath="Cert:\CurrentUser\Root\$rootThumbprint";if(Test-Path -LiteralPath $certPath){Remove-Item -LiteralPath $certPath -Force};if(Test-Path -LiteralPath $certPath){throw 'Temporary root remains in CurrentUser Root.'};$trustRootCleanupStatus='PASS';Record 'Remove temporary TLS trust root' 'PASS' $rootThumbprint}catch{$trustRootCleanupStatus='FAIL';Record 'Remove temporary TLS trust root' 'FAIL' $_.Exception.Message}
+    try{
+      $rootLookup=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'inspect the disposable current-user root store during cleanup' @(0,1,-2147024894)
+      $rootPresent=$rootLookup.ExitCode-eq0-and$rootLookup.Output-match[regex]::Escape($rootThumbprint)
+      $rootAbsent=$rootLookup.ExitCode-ne0-and$rootLookup.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified'
+      if($rootPresent){
+        $rootDelete=Invoke-CertUtilBounded @('-user','-delstore','Root',$rootThumbprint) 'remove the disposable current-user root during cleanup'
+        if($rootDelete.ExitCode-ne0){throw 'Windows certutil did not remove the disposable test root.'}
+        $rootVerify=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify the disposable current-user root was removed' @(0,1,-2147024894)
+        if(-not($rootVerify.ExitCode-ne0-and$rootVerify.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified')){throw 'The temporary root remains in the current-user root store after cleanup.'}
+      }elseif(-not$rootAbsent){throw 'The current-user root-store query failed without proving the test root absent.'}
+      $trustRootCleanupStatus='PASS';Record 'Remove temporary TLS trust root' 'PASS' $rootThumbprint
+    }catch{$trustRootCleanupStatus='FAIL';Record 'Remove temporary TLS trust root' 'FAIL' $_.Exception.Message}
   }else{$trustRootCleanupStatus='NOT CREATED'}
   if(Test-Path -LiteralPath $installDir){
     try{
