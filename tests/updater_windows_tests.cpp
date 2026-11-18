@@ -8,12 +8,52 @@
 #include <string>
 #include <vector>
 #include <cstdlib>
+#include <objbase.h>
 
 namespace {
 int assertions=0;
 bool check(bool value,const char*name){++assertions;if(!value)std::cerr<<"FAIL: "<<name<<'\n';return value;}
 bool writeBytes(const std::wstring&path,const std::string&value){HANDLE file=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return false;DWORD wrote=0;const bool ok=WriteFile(file,value.data(),DWORD(value.size()),&wrote,nullptr)&&wrote==value.size();CloseHandle(file);return ok;}
 bool createTestJunction(const std::wstring&link,const std::wstring&target){wchar_t systemDirectory[MAX_PATH]{};const UINT length=GetSystemDirectoryW(systemDirectory,MAX_PATH);if(!length||length>=MAX_PATH)return false;const std::wstring command=L"\""+std::wstring(systemDirectory)+L"\\cmd.exe\" /d /c mklink /J \""+link+L"\" \""+target+L"\"";std::vector<wchar_t>buffer(command.begin(),command.end());buffer.push_back(L'\0');STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION process{};if(!CreateProcessW(nullptr,buffer.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process))return false;WaitForSingleObject(process.hProcess,INFINITE);DWORD exitCode=1;GetExitCodeProcess(process.hProcess,&exitCode);CloseHandle(process.hThread);CloseHandle(process.hProcess);const DWORD attributes=GetFileAttributesW(link.c_str());return exitCode==0&&attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_REPARSE_POINT)!=0;}
+std::wstring asciiWide(const char*text){std::wstring result;for(;*text;++text)result.push_back(static_cast<unsigned char>(*text));return result;}
+int holdTestCoordinatorMutex(const char*nonce){
+    const std::wstring suffix=asciiWide(nonce),mutexName=L"Local\\EyeBreakReminder.UpdaterTest.CrossProcess."+suffix;
+    const std::wstring readyName=L"Local\\EyeBreakReminder.UpdaterTest.Ready."+suffix,releaseName=L"Local\\EyeBreakReminder.UpdaterTest.Release."+suffix;
+    HANDLE mutex{};if(!eye::updates::acquireCoordinatorMutex(mutex,mutexName.c_str()))return 10;
+    HANDLE ready=OpenEventW(EVENT_MODIFY_STATE,FALSE,readyName.c_str()),release=OpenEventW(SYNCHRONIZE,FALSE,releaseName.c_str());
+    if(!ready||!release){if(ready)CloseHandle(ready);if(release)CloseHandle(release);CloseHandle(mutex);return 11;}
+    const bool signalled=SetEvent(ready)!=FALSE;const DWORD wait=signalled?WaitForSingleObject(release,15000):WAIT_FAILED;
+    CloseHandle(release);CloseHandle(ready);CloseHandle(mutex);return wait==WAIT_OBJECT_0?0:12;
+}
+bool testCrossProcessCoordinatorMutex(){
+    GUID id{};wchar_t guid[40]{};if(FAILED(CoCreateGuid(&id))||!StringFromGUID2(id,guid,40))return false;
+    std::wstring suffix(guid);suffix.erase(std::remove(suffix.begin(),suffix.end(),L'{'),suffix.end());suffix.erase(std::remove(suffix.begin(),suffix.end(),L'}'),suffix.end());
+    const std::string nonce(suffix.begin(),suffix.end());const std::wstring mutexName=L"Local\\EyeBreakReminder.UpdaterTest.CrossProcess."+suffix;
+    const std::wstring readyName=L"Local\\EyeBreakReminder.UpdaterTest.Ready."+suffix,releaseName=L"Local\\EyeBreakReminder.UpdaterTest.Release."+suffix;
+    SetLastError(ERROR_SUCCESS);HANDLE ready=CreateEventW(nullptr,TRUE,FALSE,readyName.c_str());if(!ready)return false;
+    const bool readyWasNew=GetLastError()!=ERROR_ALREADY_EXISTS;
+    SetLastError(ERROR_SUCCESS);HANDLE release=CreateEventW(nullptr,TRUE,FALSE,releaseName.c_str());if(!release){CloseHandle(ready);return false;}
+    const bool releaseWasNew=GetLastError()!=ERROR_ALREADY_EXISTS;
+    if(!readyWasNew||!releaseWasNew){CloseHandle(release);CloseHandle(ready);return false;}
+    std::vector<wchar_t>module(32768);const DWORD moduleLength=GetModuleFileNameW(nullptr,module.data(),DWORD(module.size()));
+    if(!moduleLength||moduleLength>=module.size()){CloseHandle(release);CloseHandle(ready);return false;}
+    const std::wstring executable(module.data(),moduleLength);const std::wstring command=L"\""+executable+L"\" --hold-test-coordinator-mutex "+asciiWide(nonce.c_str());
+    std::vector<wchar_t>commandLine(command.begin(),command.end());commandLine.push_back(L'\0');STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION child{};
+    const BOOL started=CreateProcessW(executable.c_str(),commandLine.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&child);
+    bool ok=check(started!=FALSE,"start a separate updater test process to hold the coordinator mutex");
+    if(started){
+        const bool childReady=WaitForSingleObject(ready,5000)==WAIT_OBJECT_0;
+        ok&=check(childReady,"child process signals readiness only after creating the unique coordinator mutex");
+        HANDLE duplicate{};const bool secondRejected=childReady&&!eye::updates::acquireCoordinatorMutex(duplicate,mutexName.c_str())&&duplicate==nullptr;
+        ok&=check(secondRejected,"a separate process cannot acquire a second updater coordinator while the first process holds its named mutex handle");
+        const bool released=SetEvent(release)!=FALSE;const DWORD childWait=WaitForSingleObject(child.hProcess,17000);DWORD childExit=DWORD(-1);if(childWait==WAIT_OBJECT_0)GetExitCodeProcess(child.hProcess,&childExit);
+        ok&=check(released&&childWait==WAIT_OBJECT_0&&childExit==0,"child coordinator exits cleanly after the parent releases the test event");
+        HANDLE retry{};const bool reacquired=childWait==WAIT_OBJECT_0&&childExit==0&&eye::updates::acquireCoordinatorMutex(retry,mutexName.c_str());
+        ok&=check(reacquired,"a new updater coordinator can acquire the mutex after the child process exits");if(retry)CloseHandle(retry);
+        CloseHandle(child.hThread);CloseHandle(child.hProcess);
+    }
+    CloseHandle(release);CloseHandle(ready);return ok;
+}
 int runHttpsInterruption(int argc,char**argv){
     std::cerr<<"HTTPS test stage: entered runHttpsInterruption"<<std::endl;
     if(argc!=4){std::cerr<<"Usage: updater-windows-tests --https-interruption <proxy-port> <staging-directory>\n";return 2;}
@@ -58,6 +98,7 @@ int runHttpsInterruption(int argc,char**argv){
 }
 
 int main(int argc,char**argv){
+    if(argc==3&&std::string(argv[1])=="--hold-test-coordinator-mutex")return holdTestCoordinatorMutex(argv[2]);
     if(argc>1&&std::string(argv[1])=="--https-interruption")return runHttpsInterruption(argc,argv);
     const auto folder=std::filesystem::current_path()/"build"/"updater-windows-tests";
     if(!CreateDirectoryW(folder.c_str(),nullptr)){std::cerr<<"FAIL: isolated test folder must be new; refusing to reuse or remove it\n";return 1;}
@@ -67,6 +108,7 @@ int main(int argc,char**argv){
     const bool firstAcquired=eye::updates::acquireCoordinatorMutex(firstMutex,testMutexName.c_str());const bool duplicateRejected=!eye::updates::acquireCoordinatorMutex(duplicateMutex,testMutexName.c_str())&&duplicateMutex==nullptr;
     ok&=check(firstAcquired&&duplicateRejected,"a repeated update attempt cannot acquire a second coordinator mutex");if(firstMutex)CloseHandle(firstMutex);
     HANDLE retryMutex{};const bool retryAcquired=eye::updates::acquireCoordinatorMutex(retryMutex,testMutexName.c_str());ok&=check(retryAcquired,"a new update attempt can acquire the coordinator after the prior attempt exits");if(retryMutex)CloseHandle(retryMutex);
+    ok&=testCrossProcessCoordinatorMutex();
     const std::wstring source=stage+L"\\fixture.bin";ok&=check(writeBytes(source,"abc"),"create deterministic local test fixture");
     eye::updates::ReleaseAsset asset{"EyeBreakReminder.exe","https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder.exe","sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",3};
     std::atomic_bool cancelled{false};bool sawVerify=false;std::uint64_t progressed=0;
