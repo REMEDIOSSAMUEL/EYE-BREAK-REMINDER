@@ -134,31 +134,45 @@ function Stop-ProductionApplication {
   throw 'The production candidate application did not exit through its registered safe-shutdown message.'
 }
 function Add-Check($Executable,[string[]]$Arguments,[string]$Description){& $Executable @Arguments;if($LASTEXITCODE-ne0){throw "$Description failed with exit code $LASTEXITCODE."}}
-function Invoke-CertUtilBounded([string[]]$Arguments,[string]$Description,[int[]]$AllowedExitCodes=@(0),[int]$TimeoutSeconds=20){
-  $certutil=Join-Path $env:WINDIR 'System32\certutil.exe'
-  if(-not(Test-Path -LiteralPath $certutil -PathType Leaf)){throw 'The Windows certificate utility is unavailable.'}
-  $stem='certutil-'+[guid]::NewGuid().ToString('N')
-  $stdout=Join-Path $testRoot ($stem+'.out')
-  $stderr=Join-Path $testRoot ($stem+'.err')
-  Write-Host ("EBR_CERTUTIL_STAGE start description='{0}' timeoutSeconds={1}"-f$Description,$TimeoutSeconds)
-  $process=Start-Process -FilePath $certutil -ArgumentList $Arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+function Open-TemporaryRootStore {
+  $store=[Security.Cryptography.X509Certificates.X509Store]::new([Security.Cryptography.X509Certificates.StoreName]::Root,[Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+  $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+  return $store
+}
+function Find-TemporaryRootCertificate([Security.Cryptography.X509Certificates.X509Store]$Store,[string]$Thumbprint) {
+  return ,($Store.Certificates.Find([Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,$Thumbprint,$false))
+}
+function Add-TemporaryRootCertificate([string]$CertificatePath,[string]$Thumbprint) {
+  $certificate=[Security.Cryptography.X509Certificates.X509Certificate2]::new([IO.File]::ReadAllBytes($CertificatePath))
+  if($certificate.Thumbprint-cne$Thumbprint){$certificate.Dispose();throw 'The temporary root certificate bytes do not match their recorded thumbprint.'}
+  $script:temporaryRootCertificateRawData=$certificate.RawData
+  $store=Open-TemporaryRootStore
   try {
-    if(-not$process.WaitForExit($TimeoutSeconds*1000)){
-      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-      [void]$process.WaitForExit(5000)
-      throw "Windows certificate operation '$Description' exceeded its $TimeoutSeconds-second bound."
-    }
-    $output=''
-    if(Test-Path -LiteralPath $stdout){$output+=[IO.File]::ReadAllText($stdout)}
-    if(Test-Path -LiteralPath $stderr){$output+=[IO.File]::ReadAllText($stderr)}
-    $result=[pscustomobject]@{ExitCode=$process.ExitCode;Output=$output}
-    Write-Host ('EBR_CERTUTIL_EVENT '+([pscustomobject]@{Description=$Description;ExitCode=$result.ExitCode;Output=$output}|ConvertTo-Json -Depth 4 -Compress))
-    if($AllowedExitCodes-notcontains$result.ExitCode){throw "Windows certificate operation '$Description' returned $($result.ExitCode): $output"}
-    return $result
-  } finally {
-    $process.Dispose()
-    Remove-Item -LiteralPath $stdout,$stderr -Force -ErrorAction SilentlyContinue
+    if((Find-TemporaryRootCertificate $store $Thumbprint).Count-ne0){throw 'The disposable runner already trusts this generated test certificate; refusing to replace an existing root.'}
+    $script:temporaryRootCertificateAdded=$true
+    $store.Add($certificate)
+    $installed=Find-TemporaryRootCertificate $store $Thumbprint
+    if($installed.Count-ne1-or[Convert]::ToBase64String($installed[0].RawData)-cne[Convert]::ToBase64String($certificate.RawData)){throw 'The generated test root was not added byte-for-byte to the current-user root store.'}
+    return $certificate
+  } catch {
+    try {
+      $possiblyAdded=Find-TemporaryRootCertificate $store $Thumbprint
+      if($possiblyAdded.Count-eq1-and[Convert]::ToBase64String($possiblyAdded[0].RawData)-ceq[Convert]::ToBase64String($certificate.RawData)){$store.Remove($possiblyAdded[0]);$script:temporaryRootCertificateAdded=$false}
+    } catch {}
+    $certificate.Dispose();throw
   }
+  finally { $store.Close();$store.Dispose() }
+}
+function Remove-TemporaryRootCertificate([string]$Thumbprint,[byte[]]$ExpectedCertificateBytes) {
+  $store=Open-TemporaryRootStore
+  try {
+    $matches=Find-TemporaryRootCertificate $store $Thumbprint
+    if($matches.Count-eq0){return $false}
+    if($matches.Count-ne1-or[Convert]::ToBase64String($matches[0].RawData)-cne[Convert]::ToBase64String($ExpectedCertificateBytes)){throw 'The current-user root-store certificate does not exactly match the generated disposable test root; refusing removal.'}
+    $store.Remove($matches[0])
+    if((Find-TemporaryRootCertificate $store $Thumbprint).Count-ne0){throw 'The disposable test root remains in the current-user root store after removal.'}
+    return $true
+  } finally { $store.Close();$store.Dispose() }
 }
 
 $resultStatus='FAIL'
@@ -169,6 +183,9 @@ $requestLogPath=Join-Path $EvidenceDirectory 'production-update-feed-requests.js
 $serverStdout=Join-Path $EvidenceDirectory 'production-update-feed.stdout.log'
 $serverStderr=Join-Path $EvidenceDirectory 'production-update-feed.stderr.log'
 $rootCertificatePath=Join-Path $testRoot 'test-root.cer'
+$temporaryRootCertificate=$null
+$script:temporaryRootCertificateRawData=$null
+$script:temporaryRootCertificateAdded=$false
 $rootPrivateKeyPath=Join-Path $testRoot 'test-root.key'
 $rootPemPath=Join-Path $testRoot 'test-root.pem'
 $leafCsrPath=Join-Path $testRoot 'server.csr'
@@ -199,10 +216,8 @@ try {
   Record 'Temporary isolated test TLS trust material is ready' 'INFO'
   $rootThumbprint=(Get-FileHash -LiteralPath $rootCertificatePath -Algorithm SHA1).Hash.ToUpperInvariant()
   Record 'Test-root certificate thumbprint computed from its DER bytes' 'INFO' $rootThumbprint
-$rootImport=Invoke-CertUtilBounded @('-f','-user','-addstore','Root',$rootCertificatePath) 'add the disposable test root only to the isolated runner current-user store'
-  Assert ($rootImport.ExitCode-eq0) 'temporary test trust anchor import is accepted by Windows certutil in the disposable current-user store' $rootImport.Output
-  $rootPresence=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify the disposable test root current-user store entry'
-  Assert ($rootPresence.ExitCode-eq0-and$rootPresence.Output-match[regex]::Escape($rootThumbprint)) 'temporary test root is retrievable by its exact certificate thumbprint from the current-user store'
+  $temporaryRootCertificate=Add-TemporaryRootCertificate $rootCertificatePath $rootThumbprint
+  Assert ($temporaryRootCertificate.Thumbprint-ceq$rootThumbprint) 'temporary test trust anchor is accepted by the isolated runner current-user root store without an interactive prompt' $rootThumbprint
 
   $tail=[Text.Encoding]::ASCII.GetBytes("`r`n127.0.0.1 api.github.com github.com`r`n::1 api.github.com github.com`r`n")
   $newHosts=[byte[]]::new($originalHostsBytes.Length+$tail.Length)
@@ -345,15 +360,16 @@ finally {
   }else{$hostsRestoreStatus='NOT NEEDED'}
   if($rootThumbprint){
     try{
-$rootLookup=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'inspect the disposable current-user root store during cleanup' @(0,1,-2147024894,-2146893807)
-      $rootPresent=$rootLookup.ExitCode-eq0-and$rootLookup.Output-match[regex]::Escape($rootThumbprint)
-$rootAbsent=$rootLookup.ExitCode-ne0-and$rootLookup.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified|0x80090011|NTE_NOT_FOUND|Object was not found'
-      if($rootPresent){
-        $rootDelete=Invoke-CertUtilBounded @('-user','-delstore','Root',$rootThumbprint) 'remove the disposable current-user root during cleanup'
-        if($rootDelete.ExitCode-ne0){throw 'Windows certutil did not remove the disposable test root.'}
-$rootVerify=Invoke-CertUtilBounded @('-user','-store','Root',$rootThumbprint) 'verify the disposable current-user root was removed' @(0,1,-2147024894,-2146893807)
-if(-not($rootVerify.ExitCode-ne0-and$rootVerify.Output-match'(?i)0x80070002|ERROR_FILE_NOT_FOUND|cannot find the file specified|0x80090011|NTE_NOT_FOUND|Object was not found')){throw 'The temporary root remains in the current-user root store after cleanup.'}
-      }elseif(-not$rootAbsent){throw 'The current-user root-store query failed without proving the test root absent.'}
+      if($script:temporaryRootCertificateAdded){
+        if(-not$script:temporaryRootCertificateRawData){throw 'The generated test root was added but its exact DER bytes are unavailable; refusing unsafe store cleanup.'}
+        $removed=Remove-TemporaryRootCertificate $rootThumbprint $script:temporaryRootCertificateRawData
+        $script:temporaryRootCertificateAdded=$false
+      }else{
+        $store=Open-TemporaryRootStore
+        try{$remaining=Find-TemporaryRootCertificate $store $rootThumbprint;if($remaining.Count-ne0){throw 'The test-root import may have partially succeeded; refusing to remove a certificate without its verified DER bytes.'}}
+        finally{$store.Close();$store.Dispose()}
+      }
+      if($temporaryRootCertificate){$temporaryRootCertificate.Dispose();$temporaryRootCertificate=$null}
       $trustRootCleanupStatus='PASS';Record 'Remove temporary TLS trust root' 'PASS' $rootThumbprint
     }catch{$trustRootCleanupStatus='FAIL';Record 'Remove temporary TLS trust root' 'FAIL' $_.Exception.Message}
   }else{$trustRootCleanupStatus='NOT CREATED'}

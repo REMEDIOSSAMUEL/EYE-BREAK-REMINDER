@@ -15,6 +15,7 @@ class PE:
   require(d[:2]==b'MZ',f'{path.name}: DOS signature')
   self.pe=struct.unpack_from('<I',d,0x3c)[0]
   require(d[self.pe:self.pe+4]==b'PE\0\0',f'{path.name}: PE signature')
+  self.timestamp=struct.unpack_from('<I',d,self.pe+8)[0]
   self.machine,self.count=struct.unpack_from('<HH',d,self.pe+4)
   self.optional=self.pe+24;self.optional_size=struct.unpack_from('<H',d,self.pe+20)[0]
   self.magic=struct.unpack_from('<H',d,self.optional)[0]
@@ -66,6 +67,7 @@ class PE:
 
 app=PE(ROOT/'release/EyeBreakReminder.exe')
 require(app.machine==0x8664 and app.magic==0x20b,'Application must be x64 PE32+')
+require(app.timestamp==0,'Application PE timestamp is normalized for deterministic builds')
 require(app.subsystem==2,'Application must use Windows GUI subsystem')
 require(app.flags&0x160==0x160,'ASLR, NX and high-entropy VA flags')
 require(app.directory(4)==(0,0),'Expected unsigned release')

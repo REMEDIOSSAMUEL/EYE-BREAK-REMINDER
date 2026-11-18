@@ -260,7 +260,7 @@ jobs:
 
       - name: Reuse soak only when candidate hash and complete hosted evidence match
         id: soak_reuse
-        if: ${{ steps.soak_reference_download.outcome == 'success' && steps.resource_telemetry.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.soak_reference_download.outcome == 'success' && steps.resource_telemetry.outcome == 'success' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'

@@ -16,13 +16,13 @@ build:
 release/resources.o: src/resources.rc src/app.manifest $(wildcard assets/*.ico assets/*.wav) | release
 	$(WINDRES) src/resources.rc -O coff -o $@
 release/EyeBreakReminder.exe: src/app.cpp src/core.hpp src/theme.hpp src/update_checker.hpp src/update_client.hpp src/update_coordinator.hpp src/update_accessibility.hpp src/windows_services.hpp release/resources.o
-	$(CROSS_CXX) $(FLAGS) src/app.cpp release/resources.o -o $@ $(LIBS) -Wl,--dynamicbase,--nxcompat,--high-entropy-va
-	$(STRIP) $@
+	$(CROSS_CXX) $(FLAGS) src/app.cpp release/resources.o -o $@ $(LIBS) -Wl,--dynamicbase,--nxcompat,--high-entropy-va,--no-insert-timestamp
+	$(STRIP) --preserve-dates $@
 build/gui-test: | build
 	mkdir -p $@
 build/gui-test/EyeBreakReminder.exe: src/app.cpp src/core.hpp src/theme.hpp src/update_checker.hpp src/update_client.hpp src/update_coordinator.hpp src/update_accessibility.hpp src/windows_services.hpp release/resources.o | build/gui-test
-	$(CROSS_CXX) $(FLAGS) -DEYEBREAK_TEST_BUILD src/app.cpp release/resources.o -o $@ $(LIBS) -Wl,--dynamicbase,--nxcompat,--high-entropy-va
-	$(STRIP) $@
+	$(CROSS_CXX) $(FLAGS) -DEYEBREAK_TEST_BUILD src/app.cpp release/resources.o -o $@ $(LIBS) -Wl,--dynamicbase,--nxcompat,--high-entropy-va,--no-insert-timestamp
+	$(STRIP) --preserve-dates $@
 gui-test: build/gui-test/EyeBreakReminder.exe
 build/github-updater-smoke.exe: tests/github_updater_smoke.cpp src/update_checker.hpp src/update_client.hpp | build
 	$(HOST_CXX) -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror $< -o $@ -lwinhttp -lbcrypt
