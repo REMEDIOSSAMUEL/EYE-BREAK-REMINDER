@@ -2366,7 +2366,7 @@
       "required_tests": "gh auth status without exposing credentials",
       "actual_verification_evidence": "gh auth status and gh api user both identified REMEDIOSSAMUEL; gh auth status masked the token and no credential value was recorded.",
       "environment": "GitHub CLI/keyring and read-only GitHub API",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2377,7 +2377,7 @@
       "required_tests": "Read-only repo metadata API",
       "actual_verification_evidence": "Read-only API returned repository full_name REMEDIOSSAMUEL/EYE-BREAK-REMINDER and default branch main; PR and artifact APIs resolved this same repository.",
       "environment": "GitHub read-only API",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2386,9 +2386,9 @@
       "description": "Feature branch is pushed and current",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Compare local/remote head on final commit",
-      "actual_verification_evidence": "At the final remote audit, local feature HEAD and origin/feature/v1.4.0-automatic-updater both matched fb1193c7824a6c0a4802426394ae908ca5d8682c. This audit precedes the documentation-only evidence refresh.",
+      "actual_verification_evidence": "At the final remote audit, local HEAD and origin/feature/v1.4.0-automatic-updater both matched f6e7b923bac6aefe91a475f9d331965f8701fb5a; the worktree was clean.",
       "environment": "Local Git plus read-only git ls-remote",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2397,9 +2397,9 @@
       "description": "Draft pull request exists and targets main",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "PR metadata, current head and open state",
-      "actual_verification_evidence": "PR #7 is OPEN and DRAFT, targets main at base f4d01a341c90027fb506baa8fac5f6d1cef8cd55, and points to audited feature head fb1193c7824a6c0a4802426394ae908ca5d8682c.",
+      "actual_verification_evidence": "PR #7 is OPEN and DRAFT, targets main at base f4d01a341c90027fb506baa8fac5f6d1cef8cd55, and points to audited feature head f6e7b923bac6aefe91a475f9d331965f8701fb5a.",
       "environment": "GitHub PR API/CLI",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2408,9 +2408,9 @@
       "description": "Required Core tests and Windows package check passes",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Check on final PR head",
-      "actual_verification_evidence": "Required check Core tests and Windows package completed SUCCESS on feature head fb1193c7824a6c0a4802426394ae908ca5d8682c in run 44407600082.",
-      "environment": "GitHub Actions run 44407600082",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "actual_verification_evidence": "Required check Core tests and Windows package completed SUCCESS on feature head f6e7b923bac6aefe91a475f9d331965f8701fb5a in run 44414567354.",
+      "environment": "GitHub Actions run 44414567354",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2419,9 +2419,9 @@
       "description": "All applicable hosted Windows workflows reach terminal state",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Run statuses, job results and artifact evidence",
-      "actual_verification_evidence": "All tracked relevant workflows were terminal at the audit: focused exact-candidate update run 44392534668 SUCCESS; required CI run 44407600082 SUCCESS on fb1193c; broad run 44407600065 CANCELLED during compiler setup before product tests. Earlier harness failures and cancellations remain recorded as such; no skipped job is counted as a pass.",
-      "environment": "GitHub Actions remote audit at 2026-11-18T22:15:18Z",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "actual_verification_evidence": "All tracked relevant workflows were terminal at audit: focused exact-candidate update run 44392534668 SUCCESS; required CI run 44414567354 SUCCESS on f6e7b92; broad run 44414567364 CANCELLED during compiler setup before product tests. Earlier failures and cancellations remain historical results; no skipped job is counted as a pass.",
+      "environment": "GitHub Actions remote audit at 2026-11-18T22:47:02Z",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2432,7 +2432,7 @@
       "required_tests": "Actions artifact API/download and clean-directory verify",
       "actual_verification_evidence": "Actions artifact 14469062609 (eye-break-reminder-v1.4.0-focused-candidate-44392534668) exists, is unexpired, and is 8,448,342 bytes; its exact five-file payload was independently downloaded and hash-verified under GIT-014.",
       "environment": "GitHub Actions artifact API and prior independent download",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2443,7 +2443,7 @@
       "required_tests": "Read-only ruleset 27397921 inspection",
       "actual_verification_evidence": "Ruleset 27397921 is active on refs/heads/main and requires Core tests and Windows package.",
       "environment": "GitHub read-only ruleset API",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2452,9 +2452,9 @@
       "description": "No protection bypass occurred",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Ruleset, audit/PR state and no bypass actor",
-      "actual_verification_evidence": "The protected-main ruleset remained active with required PR review, non-fast-forward protection, deletion protection, and required Core tests and Windows package. No ruleset modification or bypass was performed during this task.",
+      "actual_verification_evidence": "Protected-main ruleset remained active with required PR review, non-fast-forward protection, deletion protection, and required Core tests and Windows package. No ruleset modification or bypass was performed.",
       "environment": "GitHub read-only ruleset and PR audit",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2465,7 +2465,7 @@
       "required_tests": "Read-only releases and tags query",
       "actual_verification_evidence": "Release lookup for v1.4.0 returned 404 and git ref lookup for refs/tags/v1.4.0 returned 404; no v1.4.0 release/tag exists.",
       "environment": "GitHub read-only Releases and Git refs API",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2476,7 +2476,7 @@
       "required_tests": "Release metadata and asset identities comparison",
       "actual_verification_evidence": "Published v1.3.0 release ID 447384077 and all five asset IDs, sizes, SHA-256 digests, and update timestamps match the preserved remote checkpoint exactly.",
       "environment": "GitHub read-only release API and checkpoint comparison",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2487,7 +2487,7 @@
       "required_tests": "Release metadata and asset identities comparison",
       "actual_verification_evidence": "Published v1.2.1 release ID 444152104 and all five asset IDs, sizes, SHA-256 digests, and update timestamps match the preserved remote checkpoint exactly.",
       "environment": "GitHub read-only release API and checkpoint comparison",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2498,7 +2498,7 @@
       "required_tests": "No access performed during task",
       "actual_verification_evidence": "No access to the Exercise Break Reminder repository, source, installation, settings, history, releases, or artifacts was made during the task.",
       "environment": "Task-scoped access record",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2541,8 +2541,8 @@
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Evidence links, limits and continuation state",
       "actual_verification_evidence": "Reviewed progress, completion audit, pre-release report, and the 231-row machine-readable matrix. Reconciled statuses to 177 PASS / 0 FAIL / 49 NOT TESTED / 3 BLOCKED / 2 NOT APPLICABLE, refreshed PR/CI/artifact/release remote evidence, and retained exact candidate hashes and limits.",
-      "environment": "Documentation and JSON validation in the authorized feature worktree; candidate product/build inputs remain at 29a35b25ce4a92af28c6bac53937af84e0d322a9; remote audit captured at feature head fb1193c7824a6c0a4802426394ae908ca5d8682c.",
-      "tested_source_commit": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+      "environment": "Documentation and JSON validation in the authorized feature worktree; candidate production/build inputs remain at source/archive head 29a35b25ce4a92af28c6bac53937af84e0d322a9; final remote audit was captured at feature head f6e7b923bac6aefe91a475f9d331965f8701fb5a.",
+      "tested_source_commit": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
       "tested_binary_sha256": null,
       "status": "PASS"
     },
@@ -2622,11 +2622,11 @@
     "NOT APPLICABLE": 2,
     "BLOCKED": 3
   },
-  "generated_at_utc": "2026-11-18T22:40:31Z",
+  "generated_at_utc": "2026-11-18T22:47:02Z",
   "latest_validation": {
-    "required_ci_run_id": 44407600082,
-    "required_ci_status": "PASS on feature head fb1193c7824a6c0a4802426394ae908ca5d8682c (Core tests and Windows package)",
-    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44407600082",
+    "required_ci_run_id": 44414567354,
+    "required_ci_status": "PASS on final audited feature head f6e7b923bac6aefe91a475f9d331965f8701fb5a (Core tests and Windows package)",
+    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44414567354",
     "windows_acceptance_run_id": 44392534668,
     "windows_acceptance_status": "SUCCESS; focused exact-candidate production transaction passed and ARM64 emulation job passed; previous 110-cycle soak reused only because candidate executable SHA-256 is identical.",
     "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44392534668",
@@ -2658,29 +2658,29 @@
     "duplicate_full_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44392550713",
     "latest_focused_updater_production_job_status": "PASS (production-update-acceptance-results.json: Status PASS, Assertions 51)",
     "latest_focused_updater_overall_status": "SUCCESS",
-    "required_ci_head": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+    "required_ci_head": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
     "required_ci_final_state": "PASS",
     "final_remote_audit": {
-      "checked_at_utc": "2026-11-18T22:15:18Z",
+      "checked_at_utc": "2026-11-18T22:47:02Z",
       "pull_request": {
         "number": 7,
         "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7",
         "state": "OPEN",
         "draft": true,
-        "head_sha": "fb1193c7824a6c0a4802426394ae908ca5d8682c",
+        "head_sha": "f6e7b923bac6aefe91a475f9d331965f8701fb5a",
         "base_sha": "f4d01a341c90027fb506baa8fac5f6d1cef8cd55",
-        "merge_state_status": "UNSTABLE because optional Windows acceptance run 44407600065 was canceled during compiler setup before product tests"
+        "merge_state_status": "UNSTABLE; required check passed, optional Windows acceptance run 44414567364 was canceled during compiler setup before product tests"
       },
       "required_check": {
         "name": "Core tests and Windows package",
-        "run_id": 44407600082,
+        "run_id": 44414567354,
         "status": "SUCCESS",
-        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44407600082"
+        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44414567354"
       },
       "optional_windows_acceptance": {
-        "run_id": 44407600065,
-        "status": "CANCELLED during compiler setup before candidate build or product tests; no acceptance evidence",
-        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44407600065"
+        "run_id": 44414567364,
+        "status": "CANCELLED during compiler setup before candidate build or product tests; no new acceptance evidence",
+        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44414567364"
       },
       "main_ruleset": {
         "id": 27397921,
