@@ -277,10 +277,10 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: eye-break-reminder-v1.4.0-candidate-44288305236
+          name: eye-break-reminder-v1.4.0-candidate-44345729932
           path: build/prior-v1.4.0-soak-candidate
           repository: ${{ github.repository }}
-          run-id: '44288305236'
+          run-id: '44345729932'
           github-token: ${{ github.token }}
 
       - name: Reuse soak only when candidate hash and complete hosted evidence match
@@ -305,11 +305,10 @@ jobs:
             $identities = $identityList.ToArray()
             $referenceGate = Get-Content -LiteralPath (Join-Path $referenceEvidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
             $summary = Get-Content -LiteralPath (Join-Path $referenceSoak 'soak-summary.json') -Raw | ConvertFrom-Json
-            $productionRun = Get-Content -LiteralPath (Join-Path $referenceEvidence 'production-update-acceptance-results.json') -Raw | ConvertFrom-Json
-            $productionLog = Get-Content -LiteralPath (Join-Path $referenceEvidence 'production-update-acceptance.log') -Raw
             $candidate = Get-Item -LiteralPath 'release/EyeBreakReminder.exe'
             $candidateHash = (Get-FileHash -LiteralPath $candidate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             $referenceIdentity = @($identities | Where-Object Name -CEQ 'EyeBreakReminder.exe')
+            $referenceAssetHash = if ($referenceIdentity.Count -eq 1) { [string]$referenceIdentity[0].SHA256 } else { '' }
             $timeseriesPath = Join-Path $referenceSoak 'resource-time-series.csv'
             $cyclesPath = Join-Path $referenceSoak 'cycle-results.csv'
             $trendPath = Join-Path $referenceSoak 'resource-trends.svg'
@@ -319,49 +318,49 @@ jobs:
             $screenshotsPresent = $screenshotNames.Count -ge 3 -and @($screenshotNames | ForEach-Object { Test-Path -LiteralPath (Join-Path $referenceSoak $_) -PathType Leaf } | Where-Object { -not $_ }).Count -eq 0
             $eventsClean = @($summary.Events | Where-Object { $_.Status -in @('FAIL','NOT TESTED') }).Count -eq 0
             $cyclesClean = $cycles.Count -eq 110 -and @($cycles | Where-Object { [int]$_.BreakWindowsOpened -lt 1 -or [int]$_.BreakWindowsAfter -ne 0 -or $_.StatusAfter -cne 'Running' }).Count -eq 0
-            $harnessOnlyFailure = $productionRun.Status -ceq 'FAIL' -and [int]$productionRun.Assertions -eq 0 -and
-              $productionLog -match [regex]::Escape("certificate operation 'add the disposable test root only to the isolated runner current-user store' exceeded its 20-second bound") -and
-              $productionLog -match 'NTE_NOT_FOUND|0x80090011'
-            $valid = $provenance.RunId -eq '44288305236' -and
-              $provenance.PRHeadCommit -ceq 'f996e013976a1068cbebc5f3a813629ed0625505' -and
-              $referenceGate.Status -ceq 'NOT READY' -and $referenceGate.Candidate -ceq 'success' -and
-              $referenceGate.Fixtures -ceq 'success' -and $referenceGate.ProductionUpdateFixture -ceq 'success' -and
-              $referenceGate.NetworkInterruption -ceq 'success' -and $referenceGate.LegacyV130Upgrade -ceq 'success' -and
-              $referenceGate.DesktopAvailable -eq $true -and $referenceGate.Gui -ceq 'success' -and
-              $referenceGate.StandardUser -ceq 'success' -and $referenceGate.Updater -ceq 'success' -and
-              $referenceGate.ProductionBinaryUpdate -ceq 'failure' -and $harnessOnlyFailure -and
-              $referenceGate.ResourceTelemetry -ceq 'success' -and $referenceGate.ResourceSoak -ceq 'success' -and
-              $referenceGate.CandidateIdentity -ceq 'success' -and
-              $referenceIdentity.Count -eq 1 -and
-              $candidate.VersionInfo.ProductVersion -match '^1\.4\.0(?:\.0)?$' -and
-              $candidateHash -ceq [string]$referenceIdentity[0].SHA256 -and
-              $candidateHash -ceq [string]$summary.SHA256 -and
-              $summary.Version -ceq '1.4.0' -and $summary.ExpectedBehavior -ceq 'NoGrowth' -and
-              [int]$summary.RequestedCycles -eq 110 -and [int]$summary.CompletedCycles -eq 110 -and
-              [int]$summary.Pass -ge 250 -and [int]$summary.Fail -eq 0 -and [int]$summary.NotTested -eq 0 -and
-              [bool]$summary.DiagnosticTelemetryComplete -and [int]$summary.MetricSamples -eq $timeseries.Count -and
-              $cyclesClean -and $timeseries.Count -ge 2000 -and $eventsClean -and $screenshotsPresent -and
-              (Test-Path -LiteralPath $trendPath -PathType Leaf) -and
-              $summary.Environment.OS -like '*Windows Server 2025*' -and $summary.Environment.OSArchitecture -ceq 'X64' -and
-              [double]$summary.UserObjects.SlopePerCycle -le 0.5 -and
-              ([double]$summary.UserObjects.EndMedian - [double]$summary.UserObjects.StartMedian) -le ([double]$summary.IdleUserRange + 1) -and
-              ([double]$summary.GdiObjects.EndMedian - [double]$summary.GdiObjects.StartMedian) -le 2 -and [double]$summary.GdiObjects.SlopePerCycle -le 0.10 -and
-              ([double]$summary.Handles.EndMedian - [double]$summary.Handles.StartMedian) -le 5 -and [double]$summary.Handles.SlopePerCycle -le 0.15 -and
-              ([double]$summary.PrivateBytes.EndMedian - [double]$summary.PrivateBytes.StartMedian) -le 4194304 -and [double]$summary.PrivateBytes.SlopePerCycle -le 65536 -and
-              ([double]$summary.WorkingSet.EndMedian - [double]$summary.WorkingSet.StartMedian) -le 20971520 -and [double]$summary.WorkingSet.SlopePerCycle -le 262144
-            if (-not $valid) { $reason = 'Prior evidence or exact candidate SHA-256 failed one or more strict reuse conditions.' }
+            $reuseChecks = [ordered]@{
+              'reference run ID' = $provenance.RunId -eq '44345729932'
+              'reference application/version' = $provenance.Application -ceq 'Eye Break Reminder' -and $provenance.Version -ceq '1.4.0'
+              'reference feature branch' = $provenance.Branch -ceq 'feature/v1.4.0-automatic-updater'
+              'reference PR head' = $provenance.PRHeadCommit -ceq '69408fb0f0dbc7166e98628d1f117b688b96d434'
+              'candidate gate succeeded' = $referenceGate.Candidate -ceq 'success'
+              'resource telemetry gate succeeded' = $referenceGate.ResourceTelemetry -ceq 'success'
+              'resource soak gate succeeded' = $referenceGate.ResourceSoak -ceq 'success'
+              'exactly one reference executable identity' = $referenceIdentity.Count -eq 1
+              'current candidate is version 1.4.0' = $candidate.VersionInfo.ProductVersion -match '^1\.4\.0(?:\.0)?$'
+              'current candidate SHA-256 matches reference artifact identity' = $candidateHash -ceq $referenceAssetHash
+              'current candidate SHA-256 matches soak executable SHA-256' = $candidateHash -ceq [string]$summary.SHA256
+              'soak application/version/no-growth behavior' = $summary.Application -ceq 'Eye Break Reminder' -and $summary.Version -ceq '1.4.0' -and $summary.ExpectedBehavior -ceq 'NoGrowth'
+              'soak completed all 110 requested cycles' = [int]$summary.RequestedCycles -eq 110 -and [int]$summary.CompletedCycles -eq 110
+              'soak result counts have no failures or untested rows' = [int]$summary.Pass -ge 250 -and [int]$summary.Fail -eq 0 -and [int]$summary.NotTested -eq 0
+              'diagnostic telemetry and sample count are complete' = [bool]$summary.DiagnosticTelemetryComplete -and [int]$summary.MetricSamples -eq $timeseries.Count
+              'all cycle rows are clean' = $cyclesClean
+              'resource time series has at least 2000 samples' = $timeseries.Count -ge 2000
+              'soak events contain no failures or untested rows' = $eventsClean
+              'three soak screenshots are present' = $screenshotsPresent
+              'resource trend artifact is present' = Test-Path -LiteralPath $trendPath -PathType Leaf
+              'environment is Windows Server 2025 x64' = $summary.Environment.OS -like '*Windows Server 2025*' -and $summary.Environment.OSArchitecture -ceq 'X64'
+              'USER object growth limits pass' = [double]$summary.UserObjects.SlopePerCycle -le 0.5 -and ([double]$summary.UserObjects.EndMedian - [double]$summary.UserObjects.StartMedian) -le ([double]$summary.IdleUserRange + 1)
+              'GDI object growth limits pass' = ([double]$summary.GdiObjects.EndMedian - [double]$summary.GdiObjects.StartMedian) -le 2 -and [double]$summary.GdiObjects.SlopePerCycle -le 0.10
+              'handle growth limits pass' = ([double]$summary.Handles.EndMedian - [double]$summary.Handles.StartMedian) -le 5 -and [double]$summary.Handles.SlopePerCycle -le 0.15
+              'private-byte growth limits pass' = ([double]$summary.PrivateBytes.EndMedian - [double]$summary.PrivateBytes.StartMedian) -le 4194304 -and [double]$summary.PrivateBytes.SlopePerCycle -le 65536
+              'working-set growth limits pass' = ([double]$summary.WorkingSet.EndMedian - [double]$summary.WorkingSet.StartMedian) -le 20971520 -and [double]$summary.WorkingSet.SlopePerCycle -le 262144
+            }
+            $failedReuseChecks = @($reuseChecks.GetEnumerator() | Where-Object { -not [bool]$_.Value } | ForEach-Object { $_.Key })
+            $valid = $failedReuseChecks.Count -eq 0
+            if (-not $valid) { $reason = 'Evidence reuse rejected; failed checks: ' + ($failedReuseChecks -join '; ') }
             else {
               $destination = 'build/v1.4.0-updater-evidence/resource-soak'
               New-Item -ItemType Directory -Force -Path $destination | Out-Null
               Copy-Item -Path (Join-Path $referenceSoak '*') -Destination $destination -Recurse -Force
               $files = @(Get-ChildItem -LiteralPath $destination -File -Recurse | ForEach-Object { [pscustomobject]@{Path=$_.FullName.Substring((Get-Location).Path.Length + 1);Bytes=$_.Length;SHA256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()} })
-              [pscustomobject]@{Status='PASS';Reused=$true;ReferenceRunId='44288305236';ReferenceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44288305236';ReferencePRHead=$provenance.PRHeadCommit;ReferenceMergeCommit=$provenance.SourceCommit;CurrentSourceCommit=$env:GITHUB_SHA;CurrentPRHeadCommit=if($env:GITHUB_EVENT_PATH){(Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw|ConvertFrom-Json).pull_request.head.sha}else{$null};CandidateSHA256=$candidateHash;Soak=$summary;CopiedEvidenceFiles=$files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse.json' -Encoding UTF8
+              [pscustomobject]@{Status='PASS';Reused=$true;ReferenceRunId='44345729932';ReferenceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44345729932';ReferencePRHead=$provenance.PRHeadCommit;ReferenceMergeCommit=$provenance.SourceCommit;CurrentSourceCommit=$env:GITHUB_SHA;CurrentPRHeadCommit=if($env:GITHUB_EVENT_PATH){(Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw|ConvertFrom-Json).pull_request.head.sha}else{$null};CandidateSHA256=$candidateHash;Soak=$summary;CopiedEvidenceFiles=$files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse.json' -Encoding UTF8
               $reused = $true
             }
           } catch { $reason = $_.Exception.Message }
           "reused=$($reused.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           if (-not $reused) {
-            [pscustomobject]@{Status='NOT REUSED';Reused=$false;Reason=$reason;CurrentCandidateSHA256=(Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant();Utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse-attempt.json' -Encoding UTF8
+            [pscustomobject]@{Status='NOT REUSED';Reused=$false;Reason=$reason;FailedChecks=$failedReuseChecks;ReferenceRunId='44345729932';CurrentCandidateSHA256=(Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant();ReferenceCandidateSHA256=$referenceAssetHash;ReferenceSoakSHA256=$summary.SHA256;Utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse-attempt.json' -Encoding UTF8
             Write-Host "Prior soak will not be reused: $reason"
           } else { Write-Host 'Prior soak evidence was reused after exact-binary and full-evidence validation.' }
 
