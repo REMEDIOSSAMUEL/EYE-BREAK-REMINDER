@@ -98,7 +98,10 @@ function Find-Dialog([string]$Marker,[int]$ProcessId=0,[int]$TimeoutSeconds=120)
     foreach($hwnd in $handles){try{$title=[EBR_PROD_UI]::Title($hwnd);$root=[System.Windows.Automation.AutomationElement]::FromHandle($hwnd);$names=@(Get-UiaNames $root);if((($names -join "`n")+"`n"+$title).Contains($Marker)){return [pscustomobject]@{Handle=$hwnd;Root=$root;Names=$names;WindowTitle=$title}}}catch{}}
     Start-Sleep -Milliseconds 100
   }
-  throw "Timed out waiting for actual application UI text '$Marker'."
+  $snapshot=@()
+  $diagnosticHandles=if($ProcessId){[EBR_PROD_UI]::Windows($ProcessId)}else{[EBR_PROD_UI]::WindowsAll()}
+  foreach($hwnd in $diagnosticHandles){try{$title=[EBR_PROD_UI]::Title($hwnd);$root=[System.Windows.Automation.AutomationElement]::FromHandle($hwnd);$items=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);$controls=@($items|ForEach-Object{try{[pscustomobject]@{Type=$_.Current.ControlType.ProgrammaticName;Name=$_.Current.Name;Offscreen=$_.Current.IsOffscreen;Enabled=$_.Current.IsEnabled;NativeHandle=$_.Current.NativeWindowHandle}}catch{}});$snapshot+=,[pscustomobject]@{WindowTitle=$title;RootName=$root.Current.Name;Controls=$controls}}catch{}}
+  throw "Timed out waiting for actual application UI text '$Marker'. Visible UIA snapshot: $(ConvertTo-Json $snapshot -Depth 8 -Compress)"
 }
 function Find-Button($Dialog,[string]$Name) {
   $items=$Dialog.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
@@ -314,6 +317,10 @@ try {
   Record 'Actual installed production app launched' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;SHA256=(Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant();ProductVersion=(Get-Item $installedExe).VersionInfo.ProductVersion;BuildMacro='EYEBREAK_TEST_BUILD absent'})
   $settingsTab=Find-Dialog 'Eye Break Reminder' $appProcess.Id 30
   Invoke-Button $settingsTab 'Settings'
+  Start-Sleep -Milliseconds 250
+  $settingsTab=Find-Dialog 'Eye Break Reminder' $appProcess.Id 5
+  Save-Screenshot $settingsTab 'production-settings-navigation.png'
+  Record 'UI state after selecting the production Settings tab' 'INFO' ($settingsTab.Names -join ' | ')
   $about=Find-Dialog 'About' $appProcess.Id 15
   Invoke-Button $about 'About'
   $tlsError=Find-Dialog 'A secure connection to GitHub could not be verified.' $appProcess.Id 30
