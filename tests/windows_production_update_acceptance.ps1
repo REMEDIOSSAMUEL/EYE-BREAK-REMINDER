@@ -92,10 +92,16 @@ function Assert([bool]$Ok,[string]$Name,$Details=$null) { if(-not $Ok){Record $N
 function Read-SettingsMap([string]$Path) { $map=@{};foreach($line in Get-Content -LiteralPath $Path){$separator=$line.IndexOf('=');if($separator-gt0){$map[$line.Substring(0,$separator)]=$line.Substring($separator+1)}};return $map }
 function Get-UiaNames($Root) { $names=[Collections.Generic.List[string]]::new();try{if($Root.Current.Name){$names.Add($Root.Current.Name)}}catch{};try{$all=$Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($item in $all){try{if($item.Current.Name){$names.Add($item.Current.Name)}}catch{}}}catch{};return $names.ToArray() }
 function Find-Dialog([string]$Marker,[int]$ProcessId=0,[int]$TimeoutSeconds=120) {
+  # The main application window can expose the requested text through its
+  # accessible descendants (for example, an About-page status label). Update
+  # workflow checks must bind to the native modal's own top-level caption so
+  # that a matching child in the owner window cannot masquerade as the dialog.
+  $expectedWindowTitle=$null
+  if($Marker-in@('Eye Break Reminder Update Available','Downloading Eye Break Reminder','Ready to install.','Update complete.')){$expectedWindowTitle='Eye Break Reminder Update'}
   $watch=[Diagnostics.Stopwatch]::StartNew()
   while($watch.Elapsed.TotalSeconds-lt$TimeoutSeconds){
     $handles=if($ProcessId){[EBR_PROD_UI]::Windows($ProcessId)}else{[EBR_PROD_UI]::WindowsAll()}
-    foreach($hwnd in $handles){try{$title=[EBR_PROD_UI]::Title($hwnd);$root=[System.Windows.Automation.AutomationElement]::FromHandle($hwnd);$names=@(Get-UiaNames $root);if((($names -join "`n")+"`n"+$title).Contains($Marker)){return [pscustomobject]@{Handle=$hwnd;Root=$root;Names=$names;WindowTitle=$title}}}catch{}}
+    foreach($hwnd in $handles){try{$title=[EBR_PROD_UI]::Title($hwnd);if($expectedWindowTitle-and$title-cne$expectedWindowTitle){continue};$root=[System.Windows.Automation.AutomationElement]::FromHandle($hwnd);$names=@(Get-UiaNames $root);if((($names -join "`n")+"`n"+$title).Contains($Marker)){Record 'Matched native updater UI window' 'INFO' ([pscustomobject]@{Marker=$Marker;WindowTitle=$title;RootName=$root.Current.Name;ProcessId=$ProcessId;WindowHandle=$hwnd.ToInt64();Names=$names});return [pscustomobject]@{Handle=$hwnd;Root=$root;Names=$names;WindowTitle=$title}}}catch{}}
     Start-Sleep -Milliseconds 100
   }
   $snapshot=@()
