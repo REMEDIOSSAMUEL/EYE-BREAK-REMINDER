@@ -224,7 +224,7 @@ jobs:
 
       - name: Update the installed exact production candidate through its real updater
         id: production_update
-        if: ${{ !cancelled() && steps.production_update_fixture.outcome == 'success' && steps.legacy_upgrade.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        if: ${{ !cancelled() && steps.updater.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.legacy_upgrade.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
         shell: pwsh
         timeout-minutes: 30
         run: |
