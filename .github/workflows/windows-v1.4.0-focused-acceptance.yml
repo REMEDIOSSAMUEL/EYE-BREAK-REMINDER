@@ -180,14 +180,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build the test-only executable-launch sentinel
-        shell: pwsh
+        shell: msys2 {0}
         run: |
-          $ErrorActionPreference = 'Stop'
-          $compiler = Join-Path $env:MSYS2_ROOT 'mingw64\bin\gcc.exe'
-          $sentinel = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-Unverified-Launch-Sentinel.exe'
-          & $compiler -Wall -Wextra -Werror -Os -s tests/update_launch_sentinel.c -o $sentinel
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $sentinel -PathType Leaf)) { throw 'The test-only executable-launch sentinel did not build.' }
-          "UPDATE_LAUNCH_SENTINEL_PATH=$sentinel" | Add-Content -LiteralPath $env:GITHUB_ENV
+          set -euo pipefail
+          source='tests/update_launch_sentinel.c'
+          sentinel="$(cygpath -u "$RUNNER_TEMP")/EyeBreakReminder-Unverified-Launch-Sentinel.exe"
+          if [[ ! -f "$source" ]]; then
+            echo "Sentinel source is missing: $source" >&2
+            exit 1
+          fi
+          echo "Using compiler: $(command -v gcc)"
+          echo "Writing sentinel to: $(cygpath -aw "$sentinel")"
+          gcc -Wall -Wextra -Werror -Os -s "$source" -o "$sentinel"
+          if [[ ! -s "$sentinel" ]]; then
+            echo "The test-only executable-launch sentinel was not created: $sentinel" >&2
+            exit 1
+          fi
+          printf 'UPDATE_LAUNCH_SENTINEL_PATH=%s\n' "$(cygpath -aw "$sentinel")" >> "$GITHUB_ENV"
 
       - name: Run the actual exact-candidate automatic updater transaction
         id: production_update
