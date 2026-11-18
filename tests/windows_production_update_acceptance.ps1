@@ -237,6 +237,7 @@ try {
   Invoke-Button $about 'About'
   $tlsError=Find-Dialog 'A secure connection to GitHub could not be verified.' $appProcess.Id 30
   Assert ($tlsError.WindowTitle-eq'Eye Break Reminder') 'production updater presents a meaningful TLS certificate validation error in the About settings UI' ($tlsError.Names -join ' | ')
+  Assert (@(Get-Content -LiteralPath $requestLogPath -ErrorAction SilentlyContinue).Count-eq0) 'production WinHTTP rejects the untrusted certificate before sending release metadata over HTTP'
   Assert (-not(Test-Path -LiteralPath (Join-Path $dataDir 'updates'))) 'invalid TLS certificate rejection creates no update staging directory'
   Assert ((Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()-eq(Get-FileHash -LiteralPath $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()) 'invalid TLS certificate rejection does not replace the installed production candidate'
   Assert ([Convert]::ToBase64String($historyBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'history.dat')))-and[Convert]::ToBase64String($sentinelBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'unrelated-sentinel.txt')))) 'invalid TLS certificate rejection leaves existing history and unrelated user data byte-for-byte unchanged'
