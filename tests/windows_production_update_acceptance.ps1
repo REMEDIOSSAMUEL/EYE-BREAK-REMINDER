@@ -90,7 +90,7 @@ Add-Type -AssemblyName System.Drawing -ErrorAction Stop
 function Record([string]$Name,[string]$Status,$Details=$null) { $entry=[pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')};$script:events.Add($entry);Write-Host ('EBR_UPDATE_EVENT '+($entry|ConvertTo-Json -Depth 10 -Compress)) }
 function Assert([bool]$Ok,[string]$Name,$Details=$null) { if(-not $Ok){Record $Name 'FAIL' $Details;throw "Production updater acceptance failed: $Name ($Details)"};$script:assertions++;Record $Name 'PASS' $Details }
 function Read-SettingsMap([string]$Path) { $map=@{};foreach($line in Get-Content -LiteralPath $Path){$separator=$line.IndexOf('=');if($separator-gt0){$map[$line.Substring(0,$separator)]=$line.Substring($separator+1)}};return $map }
-function Get-UiaNames($Root) { $names=[Collections.Generic.List[string]]::new();try{if($Root.Current.Name){$names.Add($Root.Current.Name)}}catch{};try{$all=$Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($item in $all){try{if($item.Current.Name){$names.Add($item.Current.Name)}}catch{}}}catch{};return ,$names.ToArray() }
+function Get-UiaNames($Root) { $names=[Collections.Generic.List[string]]::new();try{if($Root.Current.Name){$names.Add($Root.Current.Name)}}catch{};try{$all=$Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($item in $all){try{if($item.Current.Name){$names.Add($item.Current.Name)}}catch{}}}catch{};return $names.ToArray() }
 function Find-Dialog([string]$Marker,[int]$ProcessId=0,[int]$TimeoutSeconds=120) {
   $watch=[Diagnostics.Stopwatch]::StartNew()
   while($watch.Elapsed.TotalSeconds-lt$TimeoutSeconds){
