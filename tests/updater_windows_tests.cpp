@@ -86,6 +86,21 @@ int main(int argc,char**argv){
     asset.downloadUrl="https://updates.example.invalid/EyeBreakReminder.exe";
     auto unsafe=eye::updates::downloadVerified(asset,stage,L"EyeBreakReminder.exe",cancelled);
     ok&=check(!unsafe.ok&&GetFileAttributesW((stage+L"\\EyeBreakReminder.exe.part").c_str())==INVALID_FILE_ATTRIBUTES,"untrusted download host is rejected without leaving a partial file");
+    eye::updates::ReleaseAsset policyAsset{"EyeBreakReminder.exe","https://localhost:8443/EyeBreakReminder.exe","sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",3};
+    SetEnvironmentVariableW(L"EBR_GUI_TEST_FAIL_DOWNLOAD_TIMEOUTS",L"1");
+    auto timeoutPolicyFailure=eye::updates::downloadVerified(policyAsset,stage,L"EyeBreakReminder.exe",cancelled);
+    SetEnvironmentVariableW(L"EBR_GUI_TEST_FAIL_DOWNLOAD_TIMEOUTS",nullptr);
+    ok&=check(!timeoutPolicyFailure.ok&&timeoutPolicyFailure.error.find("bounded secure download timeouts")!=std::string::npos&&timeoutPolicyFailure.received==0&&
+              GetFileAttributesW((stage+L"\\EyeBreakReminder.exe.part").c_str())==INVALID_FILE_ATTRIBUTES&&
+              GetFileAttributesW((stage+L"\\EyeBreakReminder.exe").c_str())==INVALID_FILE_ATTRIBUTES,
+              "failure to configure bounded HTTPS timeouts fails closed and removes all staged bytes");
+    SetEnvironmentVariableW(L"EBR_GUI_TEST_FAIL_REDIRECT_LOCKDOWN",L"1");
+    auto redirectPolicyFailure=eye::updates::downloadVerified(policyAsset,stage,L"EyeBreakReminder.exe",cancelled);
+    SetEnvironmentVariableW(L"EBR_GUI_TEST_FAIL_REDIRECT_LOCKDOWN",nullptr);
+    ok&=check(!redirectPolicyFailure.ok&&redirectPolicyFailure.error.find("disable automatic redirects")!=std::string::npos&&redirectPolicyFailure.received==0&&
+              GetFileAttributesW((stage+L"\\EyeBreakReminder.exe.part").c_str())==INVALID_FILE_ATTRIBUTES&&
+              GetFileAttributesW((stage+L"\\EyeBreakReminder.exe").c_str())==INVALID_FILE_ATTRIBUTES,
+              "failure to disable WinHTTP automatic redirects fails closed before sending a request and cleans the partial file");
 
     const std::wstring install=stage+L"\\install";CreateDirectoryW(install.c_str(),nullptr);const wchar_t*ownedNames[]={L"Uninstall.exe",L"README.md",L"PRIVACY.md",L"VERIFICATION.md"};for(unsigned i:{0u,1u,3u})ok&=check(writeBytes(install+L"\\"+ownedNames[i],"previous-owned-file"),"create exact test installer-owned file");
     eye::updates::Transaction installedFiles;installedFiles.stagingDirectory=stage;installedFiles.targetExecutable=install+L"\\EyeBreakReminder.exe";installedFiles.kind="installed";

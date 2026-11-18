@@ -15,6 +15,7 @@ Changed
 
 - Unknown valid legacy settings are retained when settings are saved, and update preferences are stored with the existing settings schema.
 - The v1.3.0 to v1.4.0 transition remains a one-time installer upgrade because v1.3.0 contains no integrated installer.
+- Asset downloading now fails closed if WinHTTP cannot establish bounded timeouts or disable automatic redirects; failed policy setup leaves no staged payload.
 
 Verification status
 

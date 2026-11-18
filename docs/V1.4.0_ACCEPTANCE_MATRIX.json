@@ -3,7 +3,7 @@
   "generated_on": "2026-11-18",
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
-  "branch_head": "a8a95aec215fcae1e287438bdde8319f25ada43b",
+  "branch_head": "ffb8d9d11e886f89bf43512820816bcb69586c78",
   "current_release_candidate": {
     "status": "FAILED WINDOWS ACCEPTANCE — NON-AUTHORITATIVE",
     "run_id": 44206674085,
@@ -2578,14 +2578,47 @@
       "tested_binary_sha256": "b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e",
       "tested_installer_sha256": "563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b",
       "status": "PASS"
+    },
+    {
+      "implementation_status": "Implemented fail-closed in src/update_client.hpp; failure removes staged partial output before returning.",
+      "actual_verification_evidence": "Local Windows test-only binary passed the asserted fault-injection case; tests/updater_windows_tests.cpp. Log: build/overnight-2026-11-18/direct-updater-tests/updater.stdout.log. Test-only binary SHA-256: 4475d9f9ef855ade8b78844a9aa541ebc062e47da3a737002298784e7559a90c. This is not production-binary acceptance.",
+      "environment": "Local Windows host OS build 26300; test-only native Windows binary; not claimed as a named Windows release.",
+      "tested_source_commit": null,
+      "working_tree_base_commit": "ffb8d9d11e886f89bf43512820816bcb69586c78",
+      "tested_binary_sha256": "4475d9f9ef855ade8b78844a9aa541ebc062e47da3a737002298784e7559a90c",
+      "status": "PASS",
+      "requirement_id": "SEC-030",
+      "description": "Fail closed if bounded WinHTTP download timeout configuration fails",
+      "required_tests": "Inject WinHttpSetTimeouts failure; require rejection before receiving bytes, a meaningful error and removal of partial and final payload files."
+    },
+    {
+      "implementation_status": "Implemented fail-closed in src/update_client.hpp; failure removes staged partial output before returning.",
+      "actual_verification_evidence": "Local Windows test-only binary passed the asserted fault-injection case; tests/updater_windows_tests.cpp. Log: build/overnight-2026-11-18/direct-updater-tests/updater.stdout.log. Test-only binary SHA-256: 4475d9f9ef855ade8b78844a9aa541ebc062e47da3a737002298784e7559a90c. This is not production-binary acceptance.",
+      "environment": "Local Windows host OS build 26300; test-only native Windows binary; not claimed as a named Windows release.",
+      "tested_source_commit": null,
+      "working_tree_base_commit": "ffb8d9d11e886f89bf43512820816bcb69586c78",
+      "tested_binary_sha256": "4475d9f9ef855ade8b78844a9aa541ebc062e47da3a737002298784e7559a90c",
+      "status": "PASS",
+      "requirement_id": "SEC-031",
+      "description": "Fail closed if WinHTTP automatic redirect lockdown fails",
+      "required_tests": "Inject WinHttpSetOption(WINHTTP_OPTION_DISABLE_FEATURE) failure; require rejection before request bytes, a meaningful error and removal of partial and final payload files."
     }
   ],
   "status_counts": {
     "NOT TESTED": 86,
-    "NOT APPLICABLE": 1,
-    "BLOCKED": 1,
+    "PASS": 139,
     "FAIL": 4,
-    "PASS": 137
+    "BLOCKED": 1,
+    "NOT APPLICABLE": 1
   },
-  "generated_at_utc": "2026-11-18T02:52:00Z"
+  "generated_at_utc": "2026-11-18T16:16:16Z",
+  "latest_validation": {
+    "required_ci_run_id": 44329028930,
+    "required_ci_status": "success",
+    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44329028930",
+    "windows_acceptance_run_id": 44329029310,
+    "windows_acceptance_status": "in_progress; production updater stage failed at the 30-minute step timeout; 110-cycle resource soak in progress; terminal artifact/logs not yet available",
+    "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44329029310",
+    "source_commit": "ffb8d9d11e886f89bf43512820816bcb69586c78"
+  }
 }

@@ -70,6 +70,30 @@ inline Failure networkFailure(DWORD code){
     if(code==ERROR_WINHTTP_NAME_NOT_RESOLVED||code==ERROR_WINHTTP_CANNOT_CONNECT||code==ERROR_WINHTTP_CONNECTION_ERROR)return Failure::Offline;
     return Failure::Other;
 }
+inline bool testFailureEnabled(const wchar_t*name){
+#ifdef EYEBREAK_TEST_BUILD
+    wchar_t value[8]{};const DWORD length=GetEnvironmentVariableW(name,value,DWORD(std::size(value)));
+    return length==1&&value[0]==L'1';
+#else
+    (void)name;return false;
+#endif
+}
+inline bool configureDownloadTimeouts(HINTERNET session,bool loopbackTestSession){
+#ifdef EYEBREAK_TEST_BUILD
+    if(testFailureEnabled(L"EBR_GUI_TEST_FAIL_DOWNLOAD_TIMEOUTS")){SetLastError(ERROR_INVALID_FUNCTION);return false;}
+    return loopbackTestSession?WinHttpSetTimeouts(session,1000,1000,1000,3000)!=FALSE:
+      WinHttpSetTimeouts(session,5000,5000,10000,15000)!=FALSE;
+#else
+    (void)loopbackTestSession;return WinHttpSetTimeouts(session,5000,5000,10000,15000)!=FALSE;
+#endif
+}
+inline bool disableAutomaticRedirects(HINTERNET request){
+#ifdef EYEBREAK_TEST_BUILD
+    if(testFailureEnabled(L"EBR_GUI_TEST_FAIL_REDIRECT_LOCKDOWN")){SetLastError(ERROR_INVALID_FUNCTION);return false;}
+#endif
+    DWORD disableRedirects=WINHTTP_DISABLE_REDIRECTS;
+    return WinHttpSetOption(request,WINHTTP_OPTION_DISABLE_FEATURE,&disableRedirects,sizeof(disableRedirects))!=FALSE;
+}
 } // namespace client_detail
 
 inline HttpResponse latestStableReleaseResponse(){
@@ -125,8 +149,9 @@ inline DownloadResult downloadVerified(const ReleaseAsset&asset,const std::wstri
     std::wstring current;try{current=std::wstring(asset.downloadUrl.begin(),asset.downloadUrl.end());}catch(...){removePartial();result.error="The official download address is invalid.";return result;}
     DWORD accessType=WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
     LPCWSTR proxyName=WINHTTP_NO_PROXY_NAME;
+    bool loopbackTestSession=false;
 #ifdef EYEBREAK_TEST_BUILD
-    client_detail::Url initialUrl;const bool loopbackTestSession=client_detail::crackHttps(current,initialUrl)&&_wcsicmp(initialUrl.host.c_str(),L"localhost")==0;
+    client_detail::Url initialUrl;loopbackTestSession=client_detail::crackHttps(current,initialUrl)&&_wcsicmp(initialUrl.host.c_str(),L"localhost")==0;
     if(loopbackTestSession)accessType=WINHTTP_ACCESS_TYPE_NO_PROXY;
     wchar_t configuredProxy[128]{};const DWORD configuredProxyLength=GetEnvironmentVariableW(L"EBR_TEST_HTTPS_PROXY",configuredProxy,DWORD(std::size(configuredProxy)));
     std::wstring testProxy;
@@ -143,12 +168,9 @@ inline DownloadResult downloadVerified(const ReleaseAsset&asset,const std::wstri
 #endif
     client_detail::Internet session{WinHttpOpen(L"Eye Break Reminder updater",accessType,proxyName,WINHTTP_NO_PROXY_BYPASS,0)};
     if(!session.value){removePartial();result.error="Windows could not start the secure download service.";return result;}
-#ifdef EYEBREAK_TEST_BUILD
-    if(loopbackTestSession)WinHttpSetTimeouts(session.value,1000,1000,1000,3000);
-    else WinHttpSetTimeouts(session.value,5000,5000,10000,15000);
-#else
-    WinHttpSetTimeouts(session.value,5000,5000,10000,15000);
-#endif
+    if(!client_detail::configureDownloadTimeouts(session.value,loopbackTestSession)){
+        removePartial();result.error="Windows could not configure bounded secure download timeouts.";return result;
+    }
     const ULONGLONG start=GetTickCount64();bool complete=false;
     for(unsigned redirect=0;redirect<=5&&!complete;++redirect){
         if(cancelled.load()){result.cancelled=true;break;}client_detail::Url url;if(!client_detail::crackHttps(current,url)){result.error="The download redirect left the approved HTTPS GitHub asset hosts.";break;}
@@ -156,7 +178,9 @@ inline DownloadResult downloadVerified(const ReleaseAsset&asset,const std::wstri
         if(!connection.value){result.error="The secure connection to the release asset failed.";break;}
         client_detail::Internet request{WinHttpOpenRequest(connection.value,L"GET",url.path.c_str(),nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE)};
         if(!request.value){result.error="Windows could not prepare the release asset request.";break;}
-        DWORD disableRedirects=WINHTTP_DISABLE_REDIRECTS;WinHttpSetOption(request.value,WINHTTP_OPTION_DISABLE_FEATURE,&disableRedirects,sizeof(disableRedirects));
+        if(!client_detail::disableAutomaticRedirects(request.value)){
+            result.error="Windows could not disable automatic redirects for the release asset request.";break;
+        }
         const wchar_t*headers=L"Accept: application/octet-stream\r\n";
         if(!WinHttpAddRequestHeaders(request.value,headers,DWORD(-1),WINHTTP_ADDREQ_FLAG_ADD|WINHTTP_ADDREQ_FLAG_REPLACE)||!WinHttpSendRequest(request.value,WINHTTP_NO_ADDITIONAL_HEADERS,0,WINHTTP_NO_REQUEST_DATA,0,0,0)||!WinHttpReceiveResponse(request.value,nullptr)){
             result.error=GetLastError()==ERROR_WINHTTP_TIMEOUT?"The download timed out. Try again when your connection is stable.":"Windows could not securely connect to the release asset.";break;
