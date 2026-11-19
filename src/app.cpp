@@ -70,7 +70,7 @@ public:
  double deadline=0;CRITICAL_SECTION deadlineLock{};RECT normalBounds{};bool haveNormalBounds=false,breakSnooze=false;
  // Dynamic Annotation gives schedule fields full accessible names ("Monday, period 1, start time") beyond their short visible labels.
  IAccPropServices* accessibility{};std::vector<HWND> annotated;
- std::atomic_bool updateCheckActive{false};std::shared_ptr<UpdateDispatch> updateDispatch;std::wstring updateReleaseUrl;std::string dismissedUpdateVersion;std::optional<UpdateMessage> deferredAutomaticUpdate;bool updateExitPending=false;
+ std::atomic_bool updateCheckActive{false};std::thread updateCheckWorker;std::shared_ptr<UpdateDispatch> updateDispatch;std::wstring updateReleaseUrl;std::string dismissedUpdateVersion;std::optional<UpdateMessage> deferredAutomaticUpdate;bool updateExitPending=false;
  static Application* app;
  int px(double value)const{return geometry::scaled(value,int(dpi));}
  int fontHeight(int points)const{return -int(std::round(points*dpi/72.0*textScale));}
@@ -570,6 +570,7 @@ public:
    if(deferredAutomaticUpdate&&engine&&engine->snapshot().phase!=Phase::Break&&main&&!quitting)PostMessageW(main,DEFERRED_UPDATE,0,0);
   }
   void applyUpdateResult(UpdateMessage message){
+   if(updateCheckWorker.joinable())updateCheckWorker.join();
    updateCheckActive=false;EnableWindow(find(UPDATE_CHECK),TRUE);SetWindowTextW(find(UPDATE_CHECK),L"Check for Updates");
    const auto&result=message.result;updateReleaseUrl.clear();
    if(result.state==updates::State::Failed){setUpdateLabel(UPDATE_LATEST,L"Latest stable version: unavailable");setUpdateLabel(UPDATE_STATUS,wide(result.error));EnableWindow(find(UPDATE_OPEN),FALSE);}
@@ -588,14 +589,14 @@ public:
    HWND button=find(UPDATE_CHECK);if(button){EnableWindow(button,FALSE);SetWindowTextW(button,L"Checking…");InvalidateRect(button,nullptr,TRUE);}
    setUpdateLabel(UPDATE_STATUS,L"Checking the official stable release on GitHub…");setUpdateLabel(UPDATE_LATEST,L"Latest stable version: checking…");EnableWindow(find(UPDATE_OPEN),FALSE);updateReleaseUrl.clear();
    const std::wstring installed=installedVersion();auto dispatch=updateDispatch;
-   try{std::thread([dispatch,installed,automatic]{
+   try{updateCheckWorker=std::thread([dispatch,installed,automatic]{
      updates::CheckResult result;updates::ReleaseDetails release;
      try{result=updates::evaluate(latestReleaseResponse(),utf8(installed),&release);}
      catch(...){result.error="The update check could not be completed.";}
      std::unique_ptr<UpdateMessage> message(new(std::nothrow) UpdateMessage{std::move(result),std::move(release),automatic});if(!message)return;
      std::lock_guard<std::mutex> lock(dispatch->mutex);
      if(dispatch->alive&&dispatch->target&&PostMessageW(dispatch->target,UPDATE_RESULT,0,reinterpret_cast<LPARAM>(message.get())))message.release();
-    }).detach();}
+    });}
    catch(...){updateCheckActive=false;EnableWindow(find(UPDATE_CHECK),TRUE);SetWindowTextW(find(UPDATE_CHECK),L"Check for Updates");setUpdateLabel(UPDATE_STATUS,L"Windows could not start the update check.");}
   }
  void openOfficialRelease(){if(updateReleaseUrl.empty())return;auto result=reinterpret_cast<INT_PTR>(ShellExecuteW(main,L"open",updateReleaseUrl.c_str(),nullptr,nullptr,SW_SHOWNORMAL));if(result<=32)error(L"The official release page couldn't be opened. Check your default browser settings.");}
@@ -1159,7 +1160,7 @@ public:
    case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l));case WM_CTLCOLOREDIT:return a.color(reinterpret_cast<HDC>(w),reinterpret_cast<HWND>(l),true);
    case WM_QUERYENDSESSION:if(a.engine){a.saveSettings();a.saveTimer();}return TRUE;
    case WM_CLOSE:a.closeMain();return 0;
-   case WM_DESTROY:{a.quitting=true;if(a.updateDispatch){std::lock_guard<std::mutex> lock(a.updateDispatch->mutex);a.updateDispatch->alive=false;a.updateDispatch->target=nullptr;}MSG pending{};while(PeekMessageW(&pending,hwnd,UPDATE_RESULT,UPDATE_RESULT,PM_REMOVE))delete reinterpret_cast<UpdateMessage*>(pending.lParam);KillTimer(hwnd,RENDER);KillTimer(hwnd,CHECKPOINT);KillTimer(hwnd,SCROLL);if(a.stopEvent)SetEvent(a.stopEvent);if(a.worker){WaitForSingleObject(a.worker,3000);CloseHandle(a.worker);a.worker=nullptr;}if(a.trayAdded)Shell_NotifyIconW(NIM_DELETE,&a.trayData);WTSUnRegisterSessionNotification(hwnd);if(a.trayMenuOwner){DestroyWindow(a.trayMenuOwner);a.trayMenuOwner=nullptr;}PostQuitMessage(0);return 0;}
+   case WM_DESTROY:{a.quitting=true;if(a.updateDispatch){std::lock_guard<std::mutex> lock(a.updateDispatch->mutex);a.updateDispatch->alive=false;a.updateDispatch->target=nullptr;}if(a.updateCheckWorker.joinable())a.updateCheckWorker.detach();MSG pending{};while(PeekMessageW(&pending,hwnd,UPDATE_RESULT,UPDATE_RESULT,PM_REMOVE))delete reinterpret_cast<UpdateMessage*>(pending.lParam);KillTimer(hwnd,RENDER);KillTimer(hwnd,CHECKPOINT);KillTimer(hwnd,SCROLL);if(a.stopEvent)SetEvent(a.stopEvent);if(a.worker){WaitForSingleObject(a.worker,3000);CloseHandle(a.worker);a.worker=nullptr;}if(a.trayAdded)Shell_NotifyIconW(NIM_DELETE,&a.trayData);WTSUnRegisterSessionNotification(hwnd);if(a.trayMenuOwner){DestroyWindow(a.trayMenuOwner);a.trayMenuOwner=nullptr;}PostQuitMessage(0);return 0;}
   }return DefWindowProcW(hwnd,msg,w,l);
  }
  int run(HINSTANCE h,int show){instance=h;app=this;InitializeCriticalSection(&deadlineLock);stopEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);dueEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!stopEvent||!dueEvent)throw std::runtime_error("Timer scheduler unavailable");

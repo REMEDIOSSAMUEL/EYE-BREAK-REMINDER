@@ -143,7 +143,9 @@ try {
   $visibleRows=@($dialogPhases|Where-Object Phase -eq 'DialogVisible')
   $closedRows=@($dialogPhases|Where-Object Phase -eq 'DialogDismissed')
   $visibleSlope=Get-Slope $visibleRows; $closedSlope=Get-Slope $closedRows
-  $report=[pscustomobject]@{Status=$(if($checkSlope -le 0.15 -and $visibleSlope -le 0.15 -and $closedSlope -le 0.15){'PASS'}else{'FAIL'});SourceVersion=$baseVersion.ToString();ExecutableSHA256=(Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowerInvariant();WindowsCaption=(Get-CimInstance Win32_OperatingSystem).Caption;CheckOnlySlopePerCycle=$checkSlope;DialogVisibleSlopePerCycle=$visibleSlope;DialogDismissedSlopePerCycle=$closedSlope;CheckOnlySamples=$checkOnly.ToArray();DialogPhaseSamples=$dialogPhases.ToArray();Rows=$script:rows.ToArray()}
+  $windowsCaption=[Environment]::OSVersion.VersionString
+  try { $windowsCaption=(Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).Caption } catch { }
+  $report=[pscustomobject]@{Status=$(if($checkSlope -le 0.15 -and $visibleSlope -le 0.15 -and $closedSlope -le 0.15){'PASS'}else{'FAIL'});SourceVersion=$baseVersion.ToString();ExecutableSHA256=(Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowerInvariant();WindowsCaption=$windowsCaption;CheckOnlySlopePerCycle=$checkSlope;DialogVisibleSlopePerCycle=$visibleSlope;DialogDismissedSlopePerCycle=$closedSlope;CheckOnlySamples=$checkOnly.ToArray();DialogPhaseSamples=$dialogPhases.ToArray();Rows=$script:rows.ToArray()}
   $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'update-dialog-handle-diagnostic.json') -Encoding UTF8
   $script:rows | Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'update-dialog-handle-time-series.csv') -NoTypeInformation -Encoding utf8
   Write-Output "Update resource attribution: check-only slope=$checkSlope, visible=$visibleSlope, dismissed=$closedSlope handles/cycle."
