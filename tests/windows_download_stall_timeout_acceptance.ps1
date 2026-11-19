@@ -41,6 +41,7 @@ $serverProcess = $null
 $serverPid = $null
 $trustedThumbprint = $null
 $trustInstallAttempted = $false
+$trustInstalled = $false
 $certificateRemovalVerified = $true
 $runnerTempRootRemoved = $false
 $cleanupFailures = [System.Collections.Generic.List[string]]::new()
@@ -102,9 +103,34 @@ try {
     $trustedThumbprint = $caCertificate.Thumbprint
     if ([string]::IsNullOrWhiteSpace($trustedThumbprint)) { throw 'The disposable CA certificate has no thumbprint.' }
     $trustInstallAttempted = $true
-    $trust = Import-Certificate -FilePath $caDer -CertStoreLocation Cert:\CurrentUser\Root
-    if (-not $trust -or -not $trust.Thumbprint) { throw 'Windows did not import the disposable test CA.' }
-    if ([string]$trust.Thumbprint -cne $trustedThumbprint) { throw 'Windows imported a certificate with an unexpected identity.' }
+    $trustStore = [Security.Cryptography.X509Certificates.X509Store]::new(
+        [Security.Cryptography.X509Certificates.StoreName]::Root,
+        [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+    )
+    $trustStoreOpened = $false
+    try {
+        $trustStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+        $trustStoreOpened = $true
+        $existingTrust = $trustStore.Certificates.Find(
+            [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+            $trustedThumbprint,
+            $false
+        )
+        if ($existingTrust.Count -ne 0) { throw 'The unique disposable test CA unexpectedly already exists in CurrentUser Root.' }
+        $trustStore.Add($caCertificate)
+        $trustInstalled = $true
+        $installedTrust = $trustStore.Certificates.Find(
+            [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+            $trustedThumbprint,
+            $false
+        )
+        if ($installedTrust.Count -ne 1 -or $installedTrust[0].Thumbprint -cne $trustedThumbprint) {
+            throw 'Windows did not install the exact disposable test CA in CurrentUser Root.'
+        }
+    } finally {
+        if ($trustStoreOpened) { $trustStore.Close() }
+        $trustStore.Dispose()
+    }
 
     $phase = 'reserve loopback TLS feed port'
     Write-Host "Stall test phase: $phase"
@@ -236,20 +262,38 @@ finally {
         $certificateRemovalVerified = $false
         if ([string]::IsNullOrWhiteSpace($trustedThumbprint)) {
             $cleanupFailures.Add('The harness attempted certificate installation but did not retain the exact thumbprint for removal.')
-        } else {
-            $certificatePath = "Cert:\CurrentUser\Root\$trustedThumbprint"
-            if (Test-Path -LiteralPath $certificatePath) {
-                try {
-                    Remove-Item -LiteralPath $certificatePath -Force -ErrorAction Stop
-                } catch {
-                    $cleanupFailures.Add("Could not remove disposable CurrentUser Root certificate $trustedThumbprint`: $($_.Exception.Message)")
-                }
-            }
-            if (Test-Path -LiteralPath $certificatePath) {
-                $cleanupFailures.Add("Disposable CurrentUser Root certificate $trustedThumbprint remains after cleanup.")
-            } else {
+        } elseif ($trustInstalled) {
+            $cleanupStore = [Security.Cryptography.X509Certificates.X509Store]::new(
+                [Security.Cryptography.X509Certificates.StoreName]::Root,
+                [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+            )
+            $cleanupStoreOpened = $false
+            try {
+                $cleanupStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+                $cleanupStoreOpened = $true
+                $installedTrust = $cleanupStore.Certificates.Find(
+                    [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+                    $trustedThumbprint,
+                    $false
+                )
+                if ($installedTrust.Count -gt 1) { throw 'More than one certificate matched the unique disposable test thumbprint.' }
+                if ($installedTrust.Count -eq 1) { $cleanupStore.Remove($installedTrust[0]) }
+                $remainingTrust = $cleanupStore.Certificates.Find(
+                    [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+                    $trustedThumbprint,
+                    $false
+                )
+                if ($remainingTrust.Count -ne 0) { throw "Disposable CurrentUser Root certificate $trustedThumbprint remains after cleanup." }
                 $certificateRemovalVerified = $true
+            } catch {
+                $cleanupFailures.Add("Could not remove disposable CurrentUser Root certificate $trustedThumbprint`: $($_.Exception.Message)")
+            } finally {
+                if ($cleanupStoreOpened) { $cleanupStore.Close() }
+                $cleanupStore.Dispose()
             }
+        } else {
+            # The store operation never completed, so no trust was added and there is nothing to remove.
+            $certificateRemovalVerified = $true
         }
     }
 }
