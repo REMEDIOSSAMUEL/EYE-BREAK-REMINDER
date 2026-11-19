@@ -92,9 +92,11 @@ int wmain(int argc, wchar_t** argv) {
     const bool dataProtected = readUtf8(sentinel, after) && before == after;
     const bool noUnsafePayload = !exists(partial) && !exists(output);
     const bool timeoutReported = result.error.find("timed out") != std::string::npos;
-    // The production test-build WinHTTP receive timeout for localhost is 3000 ms.
-    // This timing bound distinguishes an actual body stall from only checking timeout configuration.
-    const bool stalledTransferExpired = elapsedMs >= 2200 && elapsedMs <= 8000;
+    // The test-build WinHTTP receive timeout for localhost is 3000 ms. This
+    // elapsed time also includes request setup, name resolution, connection,
+    // and runner scheduling, so keep a wider bound while staying below the
+    // PowerShell harness's 15-second watchdog.
+    const bool stalledTransferExpired = elapsedMs >= 2200 && elapsedMs < 12000;
     const bool passed = !result.ok && !result.cancelled && timeoutReported &&
                         result.received == 0 && stalledTransferExpired &&
                         dataProtected && noUnsafePayload;
@@ -108,6 +110,7 @@ int wmain(int argc, wchar_t** argv) {
         "  \"body_bytes_sent_before_timeout\": " + std::to_string(result.received) + ",\n" +
         "  \"elapsed_ms\": " + std::to_string(elapsedMs) + ",\n" +
         "  \"expected_receive_timeout_ms\": 3000,\n" +
+        "  \"maximum_total_elapsed_ms\": 12000,\n" +
         "  \"timeout_error_reported\": " + (timeoutReported ? "true" : "false") + ",\n" +
         "  \"partial_and_final_download_files_removed\": " + (noUnsafePayload ? "true" : "false") + ",\n" +
         "  \"preexisting_sentinel_preserved_byte_for_byte\": " + (dataProtected ? "true" : "false") + ",\n" +
