@@ -120,6 +120,25 @@ function Wait-Modal([Diagnostics.Process]$process,[string]$heading,[int]$timeout
   $diagnostics=Get-ModalFailureDiagnostics $process
   throw "Timed out waiting for signed updater dialog '$heading'; diagnostics=$($diagnostics|ConvertTo-Json -Compress -Depth 4)"
 }
+function Wait-ReadyDownloadModal([Diagnostics.Process]$process,[int]$timeoutSeconds=120){
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds -and -not $process.HasExited){
+    $window=[EBR_SIGNED_GUI_NATIVE]::FindWindowByClassAndPid('#32770',$process.Id)
+    if($window -ne [IntPtr]::Zero -and [EBR_SIGNED_GUI_NATIVE]::ChildText($window,12320) -ceq 'Downloading Eye Break Reminder'){
+      $body=[EBR_SIGNED_GUI_NATIVE]::ChildText($window,12321)
+      $install=[EBR_SIGNED_GUI_NATIVE]::GetDlgItem($window,12001)
+      if($body.Contains('The download is complete and its SHA-256 digest matches GitHub.') -and
+         $install -ne [IntPtr]::Zero -and [EBR_SIGNED_GUI_NATIVE]::IsWindowEnabled($install)){
+        return [pscustomobject]@{Window=$window;Body=$body}
+      }
+    }
+    Start-Sleep -Milliseconds 100
+    $process.Refresh()
+  }
+  $process.Refresh()
+  $diagnostics=Get-ModalFailureDiagnostics $process
+  throw "Timed out waiting for the verified signed download to become ready; diagnostics=$($diagnostics|ConvertTo-Json -Compress -Depth 4)"
+}
 function Wait-UpdateCoordinator([int]$timeoutSeconds=180){$watch=[Diagnostics.Stopwatch]::StartNew();$last='';while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds){foreach($process in [Diagnostics.Process]::GetProcessesByName('coordinator')){try{$process.Refresh();if(-not $process.HasExited){$window=[EBR_SIGNED_GUI_NATIVE]::FindWindowByClassAndPid('EyeBreakReminder.UpdateCoordinator',$process.Id);if($window -ne [IntPtr]::Zero){$last=[EBR_SIGNED_GUI_NATIVE]::ChildText($window,1);if($last.Contains('Update complete.')){return [pscustomobject]@{Process=$process;Window=$window;Message=$last}};$process.Dispose();break}}}catch{$process.Dispose()}};Start-Sleep -Milliseconds 100};throw "Timed out waiting for the real signed update coordinator; last status='$last'."}
 function Wait-UpdatedApplication([string]$target,[int]$timeoutSeconds=40){$full=[IO.Path]::GetFullPath($target);$watch=[Diagnostics.Stopwatch]::StartNew();while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds){foreach($process in [Diagnostics.Process]::GetProcessesByName('EyeBreakReminder')){try{$process.Refresh();if(-not $process.HasExited -and [IO.Path]::GetFullPath($process.Path) -ieq $full){$window=[EBR_SIGNED_GUI_NATIVE]::FindWindowByClassAndPid('EyeBreakReminder.Native',$process.Id);if($window -ne [IntPtr]::Zero -and [EBR_SIGNED_GUI_NATIVE]::Responsive($window)){return [pscustomobject]@{Process=$process;Window=$window}}}}catch{};$process.Dispose()};Start-Sleep -Milliseconds 100};throw 'The signed GUI update did not relaunch the installed successor application.'}
 function Close-App($app){if($null -eq $app -or $app.Process.HasExited){return};[EBR_SIGNED_GUI_NATIVE]::ExitApp($app.Window);if(-not $app.Process.WaitForExit(10000)){throw 'The updated test application did not exit through its normal message.'};$app.Process.Dispose()}
@@ -141,6 +160,9 @@ try{
   [IO.File]::WriteAllText((Join-Path $targetDirectory 'test-update-response.txt'),($release|ConvertTo-Json -Depth 8 -Compress),[Text.UTF8Encoding]::new($false))
   $env:EBR_GUI_TEST_DATA_DIRECTORY=$dataRoot;$env:EBR_GUI_TEST_UPDATE_ASSET_PATH=$setup
   $process=Start-Process -FilePath $target -WorkingDirectory $targetDirectory -PassThru;$script:app=$process
+  $download=Wait-ReadyDownloadModal $process
+  Assert-That ($download.Body.Contains('Downloaded:') -and $download.Body.Contains('(100%)')) 'automatic signed update download completes and verifies its payload before presenting install choices'
+  Assert-That ([EBR_SIGNED_GUI_NATIVE]::Click($download.Window,12001)) 'the completed signed download advances to the explicit installation choice'
   $choice=Wait-Modal $process 'Eye Break Reminder Update Available'
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::ChildText($choice,12320) -ceq 'Eye Break Reminder Update Available') 'the app discovers the newer stable release and presents the authenticated update choice'
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::ChildText($choice,12321).Contains('already been downloaded and verified')) 'automatic download completes and is authenticated before the user install prompt'
