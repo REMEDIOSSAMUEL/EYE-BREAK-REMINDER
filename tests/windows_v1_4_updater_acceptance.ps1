@@ -4,7 +4,8 @@ param(
   [Parameter(Mandatory=$true)][string]$UpdateInstaller,
   [Parameter(Mandatory=$true)][string]$UpdateExecutable,
   [Parameter(Mandatory=$true)][string]$FailingInstaller,
-  [string]$EvidenceDirectory='build/v1.4.0-updater-evidence'
+  [string]$EvidenceDirectory='build/v1.4.0-updater-evidence',
+  [ValidateSet('All','UpdatePreferences')][string]$Scenario='All'
 )
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Updater installation acceptance is restricted to a disposable GitHub Actions Windows runner.'}
@@ -244,7 +245,7 @@ function Complete-DownloadAndWait([int]$appProcessId,$Progress,[string]$Coordina
 }
 function Wait-InstalledVersion([string]$Version,[int]$Timeout=45){$watch=[Diagnostics.Stopwatch]::StartNew();$app=Join-Path $installDir 'EyeBreakReminder.exe';while($watch.Elapsed.TotalSeconds-lt$Timeout){try{$actual=(Get-Item -LiteralPath $app).VersionInfo.ProductVersion;if($actual-eq$Version){return $actual}}catch{};Start-Sleep -Milliseconds 100};throw "Installed EXE did not reach product version $Version."}
 function Assert-PreservedProfile(){ $settings=Get-Content -LiteralPath (Join-Path $dataDir 'settings.ini') -Raw;$history=Get-Content -LiteralPath (Join-Path $dataDir 'history.dat') -Raw;Assert ($settings-match'(?m)^workMinutes=37$'-and$settings-match'(?m)^breakSeconds=33$'-and$settings-match'(?m)^volume=32$') 'normal update preserves timer and alarm preferences';Assert ($settings-match'(?m)^theme=2$'-and$settings-match'(?m)^workAccentColor=3900150$'-and$settings-match'(?m)^breakAccentColor=16746496$'-and$settings-match'(?m)^breakModeColors=1$') 'normal update preserves theme, custom accents and distinct break color';Assert ($settings-match'(?m)^autoCheckUpdates=1$'-and$settings-match'(?m)^autoDownloadUpdates=0$') 'normal update preserves update preferences';Assert ($history-eq$script:historyText) 'normal update preserves history byte-for-byte'}
-function Open-UpdatePreferences([int]$appProcessId){$main=Find-Dialog 'Eye Break Reminder' @($appProcessId) 15;Select-Radio $main 'Settings';$main=Find-Dialog 'Eye Break Reminder' @($appProcessId) 15;Select-Radio $main 'About';return Find-Dialog 'Eye Break Reminder' @($appProcessId) 15}
+function Open-UpdatePreferences([int]$appProcessId){$main=Find-Dialog 'Eye Break Reminder' @($appProcessId) 15;[void](Select-Radio $main 'Settings');$main=Find-Dialog 'Eye Break Reminder' @($appProcessId) 15;[void](Select-Radio $main 'About');return Find-Dialog 'Eye Break Reminder' @($appProcessId) 15}
 function Read-UpdatePreferences($Dialog){$check=Find-Element $Dialog 'Automatically check for updates' 'ControlType.CheckBox';$download=Find-Element $Dialog 'Automatically download updates (installation always asks first)' 'ControlType.CheckBox';$checkToggle=$null;$downloadToggle=$null;if(-not$check.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern,[ref]$checkToggle)){throw 'Automatic-check preference lacks an accessible toggle state.'};if(-not$download.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern,[ref]$downloadToggle)){throw 'Automatic-download preference lacks an accessible toggle state.'};return [pscustomobject]@{AutoCheck=$checkToggle.Current.ToggleState;AutoDownload=$downloadToggle.Current.ToggleState;DownloadEnabled=$download.Current.IsEnabled}}
 function Set-ReleaseFixtureVersion([string]$Version){$path=Join-Path $installDir 'test-update-response.txt';$fixture=[IO.File]::ReadAllText($path);$separator=$fixture.IndexOf([Environment]::NewLine+[Environment]::NewLine);if($separator-lt0){throw 'The preference test update fixture has no HTTP header/body separator.'};$headers=$fixture.Substring(0,$separator);$release=$fixture.Substring($separator+2*[Environment]::NewLine.Length)|ConvertFrom-Json;$release.tag_name=$Version;$release.html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/$Version";foreach($asset in $release.assets){$asset.browser_download_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/$Version/$($asset.name)"};[IO.File]::WriteAllText($path,($headers+[Environment]::NewLine+[Environment]::NewLine+($release|ConvertTo-Json -Compress -Depth 6)),[Text.UTF8Encoding]::new($false))}
 function Run-UpdatePreferenceRoundtrip(){
@@ -260,7 +261,7 @@ function Run-UpdatePreferenceRoundtrip(){
   Assert ($saved-match'(?m)^autoCheckUpdates=1$'-and$saved-match'(?m)^autoDownloadUpdates=1$') 'both enabled preferences persist after application shutdown'
   Set-ReleaseFixtureVersion 'v1.4.1'
   $settingsPath=Join-Path $dataDir 'settings.ini';$beforeSettings=Get-Content -LiteralPath $settingsPath -Raw;$beforeSettingsComparable=[regex]::Replace($beforeSettings,'(?m)^updateLastCheck=\d+$','updateLastCheck=<checked>');$historyPath=Join-Path $dataDir 'history.dat';$now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();$expectedHistory="$($now-120) 1 20"+[Environment]::NewLine;[IO.File]::WriteAllText($historyPath,$expectedHistory,[Text.UTF8Encoding]::new($false));$historyBefore=[Convert]::ToBase64String([IO.File]::ReadAllBytes($historyPath));$baselineExe=Join-Path $installDir 'EyeBreakReminder.exe';$baselineHash=(Get-FileHash -LiteralPath $baselineExe -Algorithm SHA256).Hash.ToLowerInvariant();$baselineVersion=(Get-Item -LiteralPath $baselineExe).VersionInfo.ProductVersion
-  $appProcessId=Start-TestApp;$ready=Find-Dialog 'Ready to install.' @($appProcessId) 120;$readyNames=Get-Names $ready.Root -join ' | '
+  $appProcessId=Start-TestApp;$ready=Find-Dialog 'Ready to install.' @($appProcessId) 120;$readyNames=(Get-Names $ready.Root) -join ' | '
   Assert (($readyNames.Contains('Downloaded:'))-and$readyNames.Contains('(100%)')) 'persisted automatic-download preference completes a verified fixture download with byte progress' $readyNames
   $progressBars=@($ready.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)|Where-Object{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::ProgressBar});Assert ($progressBars.Count-eq1) 'automatic-download ready dialog exposes one progress bar';$range=$null;if(-not$progressBars[0].TryGetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern,[ref]$range)){throw 'Automatic-download progress control lacks an accessible range.'};Assert ($range.Current.Value-eq1000) 'automatic-download progress reaches 100 percent after verification' $range.Current.Value
   $updatesRoot=Join-Path $dataDir 'updates';$stages=@(Get-ChildItem -LiteralPath $updatesRoot -Directory -ErrorAction Stop);Assert ($stages.Count-eq1) 'automatic download stages exactly one private update transaction folder' $stages.Count;$stage=$stages[0].FullName;$stagedInstaller=Join-Path $stage 'EyeBreakReminder-Setup-x64.exe';Assert (Test-Path -LiteralPath $stagedInstaller -PathType Leaf) 'automatic download stages the expected installed-app setup asset';$stagedHash=(Get-FileHash -LiteralPath $stagedInstaller -Algorithm SHA256).Hash.ToLowerInvariant();Assert ($stagedHash-ceq$script:setupDigest.Substring(7)) 'automatically downloaded setup fixture matches its published SHA-256 digest' $stagedHash
@@ -424,7 +425,7 @@ function Run-InterruptedDownloadRecovery(){
 }
 function Run-InstallerFailure(){Install-Baseline;Seed-Profile;New-ReleaseFixture $FailingInstaller $UpdateExecutable;$appProcessId=Start-TestApp;$progress=Begin-Download $appProcessId;Complete-DownloadAndWait $appProcessId $progress 'The update failed.';Assert ((Wait-InstalledVersion '1.4.0')-eq'1.4.0') 'failed installer transaction restores the exact previous executable';$key=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder';Assert ($key.DisplayVersion-eq'1.4.0') 'failed installer restores Installed Apps version registration';Assert-PreservedProfile;Stop-Application;Record 'Controlled installer exit failure and rollback' 'PASS'}
 function Run-StartupFailure(){Install-Baseline;Seed-Profile;New-ReleaseFixture $UpdateInstaller $UpdateExecutable;$appProcessId=Start-TestApp $script:setupSource 0 '1.4.1';$progress=Begin-Download $appProcessId;Complete-DownloadAndWait $appProcessId $progress 'The updated application did not start.';Assert ((Wait-InstalledVersion '1.4.0')-eq'1.4.0') 'missing startup confirmation triggers previous-version rollback';Assert-PreservedProfile;Stop-Application;$uninstall=Start-Process -FilePath (Join-Path $installDir 'Uninstall.exe') -ArgumentList '/S' -PassThru -Wait;Assert ($uninstall.ExitCode-eq0-and-not(Test-Path -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe'))) 'application can be uninstalled normally after startup-failure recovery';Assert (((Get-Content -LiteralPath (Join-Path $dataDir 'settings.ini') -Raw)-match'(?m)^workMinutes=37$')-and((Get-Content -LiteralPath (Join-Path $dataDir 'history.dat') -Raw)-eq$script:historyText)) 'uninstall after recovery preserves the restored settings and history';Record 'New executable startup confirmation rollback and subsequent uninstall' 'PASS'}
-function Run-PortableUpdate(){Reset-Installation;Remove-Item -LiteralPath $scriptRoot -Recurse -Force -ErrorAction SilentlyContinue;[void][IO.Directory]::CreateDirectory($scriptRoot);[void][IO.Directory]::CreateDirectory($installDir);$portable=Join-Path $scriptRoot 'portable';[void][IO.Directory]::CreateDirectory($portable);$app=Join-Path $portable 'EyeBreakReminder.exe';Copy-Item -LiteralPath $BaselineExecutable -Destination $app;[IO.File]::WriteAllText((Join-Path $portable 'keep-user-document.txt'),'keep this unrelated file');Seed-Profile;New-ReleaseFixture $UpdateInstaller $UpdateExecutable;Copy-Item -LiteralPath (Join-Path $installDir 'test-update-response.txt') -Destination (Join-Path $portable 'test-update-response.txt');$appProcessId=Start-TestApp $script:appSource 0 '' $app;[void](Begin-Download $appProcessId);$ready=Find-Dialog 'Ready to install.' @($appProcessId) 120;$names=Get-Names $ready.Root -join ' | ';Assert (($names-match'Downloaded:')-and($names-match'\(100%\)')) 'portable update displays completed byte progress in the native dialog' $names;Screenshot $ready 'portable-update-progress-ready.png';Complete-DownloadAndWait $appProcessId $ready;Assert ((Get-Item -LiteralPath $app).VersionInfo.ProductVersion-eq'1.4.1') 'portable update atomically replaces and relaunches the standalone executable';Assert ((Get-Content -LiteralPath (Join-Path $portable 'keep-user-document.txt') -Raw)-eq'keep this unrelated file') 'portable update preserves unrelated files';Assert (-not(Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder')) 'portable update does not register an installed application';Assert-PreservedProfile;Stop-Application;Record 'Portable standalone update' 'PASS'}
+function Run-PortableUpdate(){Reset-Installation;Remove-Item -LiteralPath $scriptRoot -Recurse -Force -ErrorAction SilentlyContinue;[void][IO.Directory]::CreateDirectory($scriptRoot);[void][IO.Directory]::CreateDirectory($installDir);$portable=Join-Path $scriptRoot 'portable';[void][IO.Directory]::CreateDirectory($portable);$app=Join-Path $portable 'EyeBreakReminder.exe';Copy-Item -LiteralPath $BaselineExecutable -Destination $app;[IO.File]::WriteAllText((Join-Path $portable 'keep-user-document.txt'),'keep this unrelated file');Seed-Profile;New-ReleaseFixture $UpdateInstaller $UpdateExecutable;Copy-Item -LiteralPath (Join-Path $installDir 'test-update-response.txt') -Destination (Join-Path $portable 'test-update-response.txt');$appProcessId=Start-TestApp $script:appSource 0 '' $app;[void](Begin-Download $appProcessId);$ready=Find-Dialog 'Ready to install.' @($appProcessId) 120;$names=(Get-Names $ready.Root) -join ' | ';Assert (($names-match'Downloaded:')-and($names-match'\(100%\)')) 'portable update displays completed byte progress in the native dialog' $names;Screenshot $ready 'portable-update-progress-ready.png';Complete-DownloadAndWait $appProcessId $ready;Assert ((Get-Item -LiteralPath $app).VersionInfo.ProductVersion-eq'1.4.1') 'portable update atomically replaces and relaunches the standalone executable';Assert ((Get-Content -LiteralPath (Join-Path $portable 'keep-user-document.txt') -Raw)-eq'keep this unrelated file') 'portable update preserves unrelated files';Assert (-not(Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder')) 'portable update does not register an installed application';Assert-PreservedProfile;Stop-Application;Record 'Portable standalone update' 'PASS'}
 function Run-PortableCleanUpdate([bool]$DeleteHistory){
   Reset-Installation
   $portable=Join-Path $scriptRoot 'portable';[void][IO.Directory]::CreateDirectory($portable)
@@ -501,31 +502,37 @@ try{
   Assert (-not(Test-Path -LiteralPath $dataDir)) 'disposable runner starts without Eye Break Reminder profile data' $dataDir
   Record 'Updater test fixture identities' 'INFO' $script:fixtureIdentities
   Assert ((Get-Item -LiteralPath $BaselineInstaller).VersionInfo.ProductVersion-eq'1.4.0') 'baseline installer file version';Assert ((Get-Item -LiteralPath $UpdateInstaller).VersionInfo.ProductVersion-eq'1.4.1') 'test update installer file version';Assert ((Get-Item -LiteralPath $UpdateExecutable).VersionInfo.ProductVersion-eq'1.4.1') 'test update standalone file version';Assert ((Get-Item -LiteralPath $FailingInstaller).VersionInfo.ProductVersion-eq'1.4.1') 'controlled failing installer has the expected version resource'
-  Run-UpdatePreferenceRoundtrip
-  Run-NormalUpdate
-  Run-DialogThemes
-  Run-ActiveBreakDeferral
-  Run-CancelAndHashFailure $false
-  Run-ScaledProgress
-  Run-InterruptedDownloadRecovery
-  Run-CancelAndHashFailure $true
-  Run-CleanUpdate $false
-  Run-CleanUpdate $true
-  Run-InstallerFailure
-  Run-StartupFailure
-  Run-InterruptedCleanRecovery
-  Run-PortableUpdate
-  Run-PortableCleanUpdate $false
-  Run-PortableCleanUpdate $true
-  Run-UninstallChecks
-  Run-InteractiveUninstall $false
-  Run-InteractiveUninstall $true
-  Record 'Overall updater Windows integration' 'PASS' ([pscustomobject]@{Assertions=$script:assertions;Version='1.4.1';OnlyLocalFixtureMetadata=$true;PublicReleaseCreated=$false})
+  if($Scenario-eq'UpdatePreferences'){
+    Run-UpdatePreferenceRoundtrip
+    Reset-Installation
+    Record 'Overall updater preference roundtrip' 'PASS' ([pscustomobject]@{Assertions=$script:assertions;Scenario=$Scenario;Version='1.4.1';OnlyLocalFixtureMetadata=$true;PublicReleaseCreated=$false})
+  }else{
+    Run-UpdatePreferenceRoundtrip
+    Run-NormalUpdate
+    Run-DialogThemes
+    Run-ActiveBreakDeferral
+    Run-CancelAndHashFailure $false
+    Run-ScaledProgress
+    Run-InterruptedDownloadRecovery
+    Run-CancelAndHashFailure $true
+    Run-CleanUpdate $false
+    Run-CleanUpdate $true
+    Run-InstallerFailure
+    Run-StartupFailure
+    Run-InterruptedCleanRecovery
+    Run-PortableUpdate
+    Run-PortableCleanUpdate $false
+    Run-PortableCleanUpdate $true
+    Run-UninstallChecks
+    Run-InteractiveUninstall $false
+    Run-InteractiveUninstall $true
+    Record 'Overall updater Windows integration' 'PASS' ([pscustomobject]@{Assertions=$script:assertions;Scenario=$Scenario;Version='1.4.1';OnlyLocalFixtureMetadata=$true;PublicReleaseCreated=$false})
+  }
 }catch{Record 'Overall updater Windows integration' 'FAIL' $_.Exception.ToString();throw}
 finally{
   try{Stop-Application}catch{Record 'Safe process cleanup' 'FAIL' $_.Exception.Message}
   $hasFailures=@($script:events|Where-Object{$_.Status -eq 'FAIL'}).Count -gt 0
-  $completedSuccessfully=@($script:events|Where-Object{$_.Name -eq 'Overall updater Windows integration'-and$_.Status -eq 'PASS'}).Count -gt 0
+  $completedSuccessfully=@($script:events|Where-Object{$_.Name -in @('Overall updater Windows integration','Overall updater preference roundtrip')-and$_.Status -eq 'PASS'}).Count -gt 0
   if(-not$hasFailures-and(Test-Path -LiteralPath $scriptRoot)){
     $resolved=[IO.Path]::GetFullPath($scriptRoot)
     $prefix=$runnerTemp.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
@@ -536,6 +543,6 @@ finally{
   }
   Remove-Item Env:EBR_GUI_TEST_DATA_DIRECTORY,Env:EBR_GUI_TEST_UPDATE_ASSET_PATH,Env:EBR_GUI_TEST_UPDATE_DELAY_MS,Env:EBR_GUI_TEST_CONFIRM_TIMEOUT_MS,Env:EBR_GUI_TEST_SKIP_UPDATE_CONFIRM_VERSION,Env:EBR_GUI_TEST_HOLD_AFTER_CLEAN_MS -ErrorAction SilentlyContinue
   $resultStatus=if($hasFailures){'FAIL'}elseif($completedSuccessfully){'PASS'}else{'INCOMPLETE'}
-  $result=[pscustomobject]@{Status=$resultStatus;Assertions=$script:assertions;FixtureIdentities=$script:fixtureIdentities;Events=@($script:events);RunId=$env:GITHUB_RUN_ID;Utc=[DateTime]::UtcNow.ToString('o')};$result|ConvertTo-Json -Depth 9|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'updater-acceptance-results.json') -Encoding UTF8
+  $result=[pscustomobject]@{Status=$resultStatus;Scenario=$Scenario;Assertions=$script:assertions;FixtureIdentities=$script:fixtureIdentities;Events=@($script:events);RunId=$env:GITHUB_RUN_ID;Utc=[DateTime]::UtcNow.ToString('o')};$result|ConvertTo-Json -Depth 9|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'updater-acceptance-results.json') -Encoding UTF8
   try{Stop-Transcript|Out-Null}catch{}
 }
