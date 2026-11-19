@@ -163,8 +163,7 @@ jobs:
           $allReleaseFiles = @(Get-ChildItem -LiteralPath 'release' -File)
           $verificationReport = @($allReleaseFiles | Where-Object Name -CEQ 'BINARY-VERIFICATION.json')
           if ($verificationReport.Count -ne 1) { throw 'The package verifier did not produce its expected audit record.' }
-          $files = @($allReleaseFiles | Where-Object Name -CNE 'BINARY-VERIFICATION.json' | Sort-Object Name)
-          if (($files.Name -join "`n") -cne (($expected | Sort-Object) -join "`n")) { throw 'The development candidate artifact set must contain exactly the five documented files.' }
+          foreach ($name in $expected) { if (-not (Test-Path -LiteralPath (Join-Path 'release' $name) -PathType Leaf)) { throw "The development candidate is missing documented release file: $name" } }
           $trust = Get-Content -LiteralPath 'src/update_trust.hpp' -Raw
           if ($trust -notmatch 'ProductionUpdateKeyProvisioned\s*=\s*false' -or $trust -match 'ProductionUpdateKeyId\s*=\s*"p256-[0-9a-f]{16}"') { throw 'The development candidate must fail closed with no provisioned production trust root.' }
           foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe')) {
@@ -201,6 +200,8 @@ jobs:
           } finally { $source.Dispose() }
           New-Item -ItemType Directory -Force -Path 'candidate/release','candidate/evidence' | Out-Null
           foreach ($name in $expected) { Copy-Item -LiteralPath (Join-Path 'release' $name) -Destination 'candidate/release' }
+          $candidateFiles = @(Get-ChildItem -LiteralPath 'candidate/release' -File | Sort-Object Name)
+          if (($candidateFiles.Name -join "`n") -cne (($expected | Sort-Object) -join "`n")) { throw "The staged development artifact set differs from the five documented release files. Found: $($candidateFiles.Name -join ', ')" }
           Copy-Item -LiteralPath $verificationReport[0].FullName -Destination 'candidate/evidence/BINARY-VERIFICATION.json'
           $identities = foreach ($name in $expected) {
             $item = Get-Item -LiteralPath (Join-Path 'release' $name)

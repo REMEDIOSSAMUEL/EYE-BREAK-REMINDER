@@ -137,7 +137,7 @@ try{
     $scenarioRoot=Join-Path $testRoot $scenario.Name;[void][IO.Directory]::CreateDirectory($scenarioRoot)
     [void][IO.Directory]::CreateDirectory($profile);$script:dataRootCreated=$true;$updates=Join-Path $profile 'updates';[void][IO.Directory]::CreateDirectory($updates)
     $settingsPath=Join-Path $profile 'settings.ini';$historyPath=Join-Path $profile 'history.dat';$sentinelPath=Join-Path $profile 'unrelated-sentinel.txt'
-    $settings="workMinutes=37`nbreakSeconds=33`nvolume=32`ntheme=2`nalarm=0`nrepeat=1`nnotifications=0`nsnooze=0`nautoStart=0`nstartup=0`nhistory=1`n"
+    $settings="workMinutes=37`nbreakSeconds=33`nvolume=32`ntheme=2`nalarm=0`nrepeat=1`nnotifications=0`nsnooze=0`nautoStart=1`nstartup=0`nhistory=1`n"
     [IO.File]::WriteAllText($settingsPath,$settings,[Text.UTF8Encoding]::new($false));$historyRecord="$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()-120) 1 20`n"
     [IO.File]::WriteAllText($historyPath,$historyRecord,[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText($sentinelPath,'unrelated-profile-sentinel',[Text.UTF8Encoding]::new($false))
     $historyHash=Get-Hash $historyPath;$sentinelHash=Get-Hash $sentinelPath
@@ -169,7 +169,8 @@ try{
     $app=Wait-UpdatedApp $target
     $timerInitial=Get-TimerSeconds $app.Window
     Assert-That ([EBR_SIGNED_UPDATE_NATIVE]::Responsive($app.Window)) "$($scenario.Name): relaunch created a responsive v1.4.1 application window"
-    Assert-That (Wait-TimerProgress $app.Window $timerInitial) "$($scenario.Name): the relaunched application's timer continues to advance"
+    $timerAdvanced=Wait-TimerProgress $app.Window $timerInitial
+    Assert-That $timerAdvanced "$($scenario.Name): the relaunched application's timer continues to advance (initial=$timerInitial current=$(Get-TimerSeconds $app.Window))"
     Assert-That (Assert-PreferenceState $settingsPath $scenario.Clean) "$($scenario.Name): settings match the selected preserve or clean-install policy"
     $historyPresent=Test-Path -LiteralPath $historyPath
     if($scenario.DeleteHistory){Assert-That (-not $historyPresent -or -not (Get-Content -LiteralPath $historyPath -Raw).Contains($historyRecord.Trim())) "$($scenario.Name): explicit history deletion removes the old session"}

@@ -56,10 +56,12 @@ public static class EBR_RESOURCE_LOOPS {
   [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern uint RegisterWindowMessageW(string name);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr hwnd, StringBuilder text, int count);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassNameW(IntPtr hwnd, StringBuilder text, int count);
   [DllImport("user32.dll")] public static extern uint GetGuiResources(IntPtr process, uint flags);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
   [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr handle);
   public static string Text(IntPtr hwnd) { var text = new StringBuilder(1024); GetWindowTextW(hwnd, text, text.Capacity); return text.ToString(); }
+  public static string ClassName(IntPtr hwnd) { var text = new StringBuilder(256); GetClassNameW(hwnd, text, text.Capacity); return text.ToString(); }
   public static IntPtr[] TopWindows(int pid) { var result = new List<IntPtr>(); EnumCallback cb = delegate(IntPtr hwnd, IntPtr ignored) { uint actual; GetWindowThreadProcessId(hwnd, out actual); if (actual == (uint)pid) result.Add(hwnd); return true; }; EnumWindows(cb, IntPtr.Zero); GC.KeepAlive(cb); return result.ToArray(); }
   public static IntPtr[] Children(IntPtr parent) { var result = new List<IntPtr>(); EnumCallback cb = delegate(IntPtr hwnd, IntPtr ignored) { result.Add(hwnd); return true; }; EnumChildWindows(parent, cb, IntPtr.Zero); GC.KeepAlive(cb); return result.ToArray(); }
   public static int ControlId(IntPtr hwnd) { return GetDlgCtrlID(hwnd); }
@@ -133,6 +135,12 @@ function Get-ControlText([IntPtr]$Window, [int]$ControlId) {
 function Get-DescendantTexts([IntPtr]$Window) {
   @([EBR_RESOURCE_LOOPS]::Children($Window) | ForEach-Object { [EBR_RESOURCE_LOOPS]::Text($_) } | Where-Object { $_ })
 }
+function Get-TopWindowDiagnostics {
+  @([EBR_RESOURCE_LOOPS]::TopWindows($script:appPid) | ForEach-Object {
+    $h=$_
+    [pscustomobject]@{Title=[EBR_RESOURCE_LOOPS]::Text($h);Class=[EBR_RESOURCE_LOOPS]::ClassName($h);Visible=[EBR_RESOURCE_LOOPS]::IsWindowVisible($h);Children=(Get-DescendantTexts $h) -join ' | '}
+  })
+}
 function Wait-Idle([IntPtr]$CheckButton, [int]$TimeoutSeconds=15) {
   $watch=[Diagnostics.Stopwatch]::StartNew()
   while($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
@@ -195,7 +203,8 @@ function Run-DnsFailureAndSignedRetry([IntPtr]$CheckButton) {
   [void][EBR_RESOURCE_LOOPS]::SendMessageW($settingsNav,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
   if(-not [EBR_RESOURCE_LOOPS]::IsWindowVisible($CheckButton)){throw 'The isolated update-check control was not visible after returning to Settings.'}
   Write-UpdateFixture $false;Trigger-Check $CheckButton
-  $choice=Find-TopWindow $script:appPid 'Eye Break Reminder Update'
+  try { $choice=Find-TopWindow $script:appPid 'Eye Break Reminder Update' }
+  catch { $status=(Get-DescendantTexts $script:mainWindow) -join ' | ';$windows=Get-TopWindowDiagnostics | ConvertTo-Json -Compress -Depth 5;throw "$($_.Exception.Message) Retry status='$status'; top-level windows=$windows; fixtureBytes=$((Get-Item -LiteralPath $script:responsePath).Length)." }
   $body=Get-ControlText $choice 12321
   if(-not $body.Contains('Available version: v1.4.1')){throw "A valid signed retry did not present the successor version: $body"}
   $later=[EBR_RESOURCE_LOOPS]::GetDlgItem($choice,12002)
