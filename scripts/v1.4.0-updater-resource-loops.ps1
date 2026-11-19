@@ -213,11 +213,11 @@ function Run-DnsFailureAndSignedRetry([IntPtr]$CheckButton) {
   catch { $status=(Get-DescendantTexts $script:mainWindow) -join ' | ';$windows=Get-TopWindowDiagnostics | ConvertTo-Json -Compress -Depth 5;$modalDiagnostic=if(Test-Path -LiteralPath $script:modalDiagnosticPath){[IO.File]::ReadAllText($script:modalDiagnosticPath)}else{'<none>'};throw "$($_.Exception.Message) Retry status='$status'; top-level windows=$windows; fixtureBytes=$((Get-Item -LiteralPath $script:responsePath).Length); modalDiagnostic='$modalDiagnostic'." }
   $body=Get-ControlText $choice 12321
   if(-not $body.Contains('Available version: v1.4.1')){throw "A valid signed retry did not present the successor version: $body"}
-  $later=[EBR_RESOURCE_LOOPS]::GetDlgItem($choice,12002)
-  if($later -eq [IntPtr]::Zero){throw 'The valid signed retry did not expose its Later action.'}
-  [void][EBR_RESOURCE_LOOPS]::SendMessageW($later,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+  [void][EBR_RESOURCE_LOOPS]::SendMessageW($choice,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
   Wait-Idle $CheckButton
-  if((Get-FileHash -LiteralPath $testExe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sourceHash){throw 'The existing app changed after the successful signed retry was deferred.'}
+  $dismissalDiagnostic=if(Test-Path -LiteralPath $script:modalDiagnosticPath){[IO.File]::ReadAllText($script:modalDiagnosticPath)}else{''}
+  if($dismissalDiagnostic.Contains('available-update-skipped-dismissed-version')){throw 'Closing the signed retry dialog unexpectedly marked its release version as explicitly dismissed.'}
+  if((Get-FileHash -LiteralPath $testExe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sourceHash){throw 'The existing app changed after the successful signed retry dialog was closed.'}
   if((Get-FileHash -LiteralPath $sentinelPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sentinelHash){throw 'The isolated profile sentinel changed during DNS failure and signed retry.'}
   $updates=Join-Path $dataDirectory 'updates';if(Test-Path -LiteralPath $updates){$remaining=@(Get-ChildItem -LiteralPath $updates -Force);if($remaining.Count){throw 'A deferred signed retry left an update transaction staged.'}}
   $script:rows.Add([pscustomobject]@{Cycle=0;Phase='DnsFailureThenSignedRetry';Utc=[DateTime]::UtcNow.ToString('o');DnsErrorShown=$true;TimerAdvanced=$timerAdvanced;SignedRetryPresented=$true;ExistingExecutableUnchanged=$true})
