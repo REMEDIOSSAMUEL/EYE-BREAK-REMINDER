@@ -238,23 +238,27 @@ bool testDnsResolutionFailure(const std::wstring&stage){
 }
 bool createTestJunction(const std::wstring&link,const std::wstring&target){wchar_t systemDirectory[MAX_PATH]{};const UINT length=GetSystemDirectoryW(systemDirectory,MAX_PATH);if(!length||length>=MAX_PATH)return false;const std::wstring command=L"\""+std::wstring(systemDirectory)+L"\\cmd.exe\" /d /c mklink /J \""+link+L"\" \""+target+L"\"";std::vector<wchar_t>buffer(command.begin(),command.end());buffer.push_back(L'\0');STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION process{};if(!CreateProcessW(nullptr,buffer.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process))return false;WaitForSingleObject(process.hProcess,INFINITE);DWORD exitCode=1;GetExitCodeProcess(process.hProcess,&exitCode);CloseHandle(process.hThread);CloseHandle(process.hProcess);const DWORD attributes=GetFileAttributesW(link.c_str());return exitCode==0&&attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_REPARSE_POINT)!=0;}
 std::wstring asciiWide(const char*text){std::wstring result;for(;*text;++text)result.push_back(static_cast<unsigned char>(*text));return result;}
+struct GuiWindowSearch {DWORD processId{};HWND window{};};
+BOOL CALLBACK findGuiWindowForProcess(HWND candidate,LPARAM parameter){auto*search=reinterpret_cast<GuiWindowSearch*>(parameter);if(!search||!IsWindowVisible(candidate))return TRUE;DWORD processId=0;GetWindowThreadProcessId(candidate,&processId);if(processId!=search->processId)return TRUE;wchar_t className[128]{};if(GetClassNameW(candidate,className,DWORD(std::size(className)))&&wcscmp(className,L"EyeBreakReminder.Native")==0){search->window=candidate;return FALSE;}return TRUE;}
+HWND guiWindowForProcess(DWORD processId){GuiWindowSearch search{processId,nullptr};EnumWindows(findGuiWindowForProcess,reinterpret_cast<LPARAM>(&search));return search.window;}
 struct RunningGuiFixture {
-    PROCESS_INFORMATION process{};HWND window{};
+    PROCESS_INFORMATION process{};HWND window{};DWORD createError{};DWORD processQueryError{};DWORD observedExitCode{STILL_ACTIVE};DWORD foreignWindowPid{};bool timedOut{};bool environmentRestored{};
     bool start(const std::wstring&image,const std::wstring&dataDirectory){
         wchar_t priorData[32768]{};const DWORD priorLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",priorData,DWORD(std::size(priorData)));
         if(priorLength>=std::size(priorData)||!SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",dataDirectory.c_str()))return false;
         STARTUPINFOW startup{};startup.cb=sizeof(startup);std::wstring command=eye::updates::quoteArgument(image);
-        const BOOL created=CreateProcessW(image.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_UNICODE_ENVIRONMENT,nullptr,eye::updates::parentPath(image).c_str(),&startup,&process);
-        const BOOL restored=priorLength?SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",std::wstring(priorData,priorLength).c_str()):SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",nullptr);
+        const BOOL created=CreateProcessW(image.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_UNICODE_ENVIRONMENT,nullptr,eye::updates::parentPath(image).c_str(),&startup,&process);createError=created?ERROR_SUCCESS:GetLastError();
+        const BOOL restored=priorLength?SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",std::wstring(priorData,priorLength).c_str()):SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",nullptr);environmentRestored=restored!=FALSE;
         if(process.hThread){CloseHandle(process.hThread);process.hThread=nullptr;}
         if(!created||!restored){close();return false;}
         for(unsigned i=0;i<200;++i){
-            DWORD exitCode=0;if(!GetExitCodeProcess(process.hProcess,&exitCode)||exitCode!=STILL_ACTIVE)return false;
-            HWND candidate=FindWindowW(L"EyeBreakReminder.Native",nullptr);DWORD owner=0;if(candidate)GetWindowThreadProcessId(candidate,&owner);
-            if(candidate&&owner==process.dwProcessId&&IsWindowVisible(candidate)){window=candidate;return responsive();}
+            if(!GetExitCodeProcess(process.hProcess,&observedExitCode)){processQueryError=GetLastError();return false;}if(observedExitCode!=STILL_ACTIVE)return false;
+            HWND candidate=guiWindowForProcess(process.dwProcessId);
+            if(candidate){window=candidate;return responsive();}
+            HWND any=FindWindowW(L"EyeBreakReminder.Native",nullptr);if(any)GetWindowThreadProcessId(any,&foreignWindowPid);
             Sleep(50);
         }
-        return false;
+        timedOut=true;return false;
     }
     bool responsive()const{
         DWORD_PTR ignored=0;return process.hProcess&&window&&IsWindow(window)&&
@@ -507,7 +511,7 @@ int main(int argc,char**argv){
     const std::wstring registrySentinel=L"unchanged";const LONG registryWriteStatus=registryCreated?RegSetValueExW(testRegistry,L"Sentinel",0,REG_SZ,reinterpret_cast<const BYTE*>(registrySentinel.c_str()),DWORD((registrySentinel.size()+1)*sizeof(wchar_t))):registryCreateStatus;const bool registryWritten=registryWriteStatus==ERROR_SUCCESS;if(testRegistry)RegCloseKey(testRegistry);
     if(!registryWritten)std::cerr<<"SEC-028 registry setup failed: create="<<registryCreateStatus<<" write="<<registryWriteStatus<<" path="<<std::filesystem::path(registryPath).string()<<"\n";
     ok&=check(registryWritten,"create an isolated current-user registry sentinel for SEC-028");
-    const std::wstring launchMarker=stage+L"\\unauthorized-installer-launched.marker";DeleteFileW(launchMarker.c_str());const std::wstring usabilityProfile=stage+L"\\sec028-application-profile";const bool usabilityProfileCreated=CreateDirectoryW(usabilityProfile.c_str(),nullptr)!=FALSE;RunningGuiFixture runningApplication;const bool applicationStarted=usabilityProfileCreated&&usableAppCopied&&runningApplication.start(portableTarget,usabilityProfile);unsigned appTimerInitial=0;const bool appTimerObserved=applicationStarted&&runningApplication.timerSeconds(appTimerInitial);ok&=check(applicationStarted&&appTimerObserved,"launch the actual existing Eye Break Reminder app from its disposable profile and read its active timer");
+    const std::wstring launchMarker=stage+L"\\unauthorized-installer-launched.marker";DeleteFileW(launchMarker.c_str());const std::wstring usabilityProfile=stage+L"\\sec028-application-profile";const bool usabilityProfileCreated=CreateDirectoryW(usabilityProfile.c_str(),nullptr)!=FALSE;RunningGuiFixture runningApplication;const bool applicationStarted=usabilityProfileCreated&&usableAppCopied&&runningApplication.start(portableTarget,usabilityProfile);unsigned appTimerInitial=0;const bool appTimerObserved=applicationStarted&&runningApplication.timerSeconds(appTimerInitial);if(!applicationStarted||!appTimerObserved){DWORD liveExitCode=STILL_ACTIVE;const bool exitReadable=runningApplication.process.hProcess&&GetExitCodeProcess(runningApplication.process.hProcess,&liveExitCode);const DWORD exitReadError=exitReadable?ERROR_SUCCESS:GetLastError();std::cerr<<"SEC-028 GUI launch diagnostic: profileCreated="<<usabilityProfileCreated<<" appCopyValid="<<usableAppCopied<<" processStarted="<<applicationStarted<<" timerReadable="<<appTimerObserved<<" pid="<<runningApplication.process.dwProcessId<<" createError="<<runningApplication.createError<<" environmentRestored="<<runningApplication.environmentRestored<<" exitReadable="<<exitReadable<<" exitCode="<<liveExitCode<<" exitReadError="<<exitReadError<<" processQueryError="<<runningApplication.processQueryError<<" timedOut="<<runningApplication.timedOut<<" foreignWindowPid="<<runningApplication.foreignWindowPid<<" window="<<runningApplication.window<<"\n";}ok&=check(applicationStarted,"launch the actual existing Eye Break Reminder app from its disposable profile");if(applicationStarted)ok&=check(appTimerObserved,"read the active timer from the actual running application");
     auto coordinatorMutexExists=[](){HANDLE mutex=OpenMutexW(SYNCHRONIZE,FALSE,L"Local\\EyeBreakReminder.UpdateCoordinator.1");if(!mutex)return false;CloseHandle(mutex);return true;};
     const bool mutexBefore=coordinatorMutexExists();const unsigned launchAttemptsBefore=eye::updates::TestProcessLaunchAttempts.load(std::memory_order_relaxed);unsigned rejectionPasses=0,fileSideEffectPasses=0;
     for(const auto&fixture:rejectionCases){
