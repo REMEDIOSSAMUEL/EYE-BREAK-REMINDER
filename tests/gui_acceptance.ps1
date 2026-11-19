@@ -480,6 +480,18 @@ function Find-UiaDialog([string]$Marker,[int]$TimeoutSeconds=15) {
   }
   throw "Timed out waiting for UI Automation dialog text '$Marker'."
 }
+function Find-NativeUpdateDialog([int]$TimeoutSeconds=15) {
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds-lt$TimeoutSeconds){
+    foreach($window in [EBR_GUI_NATIVE]::TopWindowsForProcess($script:testPid)){
+      if(-not[EBR_GUI_NATIVE]::IsWindowVisible($window)-or[EBR_GUI_NATIVE]::Text($window)-cne'Eye Break Reminder Update'){continue}
+      $install=[EBR_GUI_NATIVE]::GetDlgItem($window,12001);$later=[EBR_GUI_NATIVE]::GetDlgItem($window,12002)
+      if($install-ne[IntPtr]::Zero-and$later-ne[IntPtr]::Zero-and[EBR_GUI_NATIVE]::IsWindowVisible($install)-and[EBR_GUI_NATIVE]::IsWindowVisible($later)){return $window}
+    }
+    Start-Sleep -Milliseconds 50
+  }
+  throw 'Timed out waiting for the native update dialog and its install/remind-later buttons.'
+}
 function Invoke-UiaButton($Dialog,[string]$Name) {
   $items=$Dialog.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
   foreach($element in $items){
@@ -643,20 +655,24 @@ function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Fai
   Add-Result "$Name latest label" 'INFO' $latest
 }
 function Run-UpdateDialogResourceCycle([int]$Cycle,[string]$ReleaseBody,[bool]$Measure) {
-  # This fixture is consumed by the isolated GUI-test build; no public endpoint
-  # or downloaded executable participates in this repeated dialog lifecycle.
+  # The resource loop uses native HWND controls so UI Automation client wrappers
+  # do not keep the app's accessibility providers alive during process-handle sampling.
   Write-UpdateFixture 200 $ReleaseBody 'none' 250
   Click-Control $script:mainWindow 160 "Update-dialog resource cycle $Cycle"
-  $dialog=Find-UiaDialog 'Eye Break Reminder Update Available' 12
-  if($dialog.WindowTitle-cne'Eye Break Reminder Update'){throw "Update-dialog cycle $Cycle found an unexpected window title '$($dialog.WindowTitle)'"}
-  if(-not@($dialog.Names|Where-Object{$_.Contains('Download & Install')}).Count){throw "Update-dialog cycle $Cycle did not expose the expected install action."}
-  Invoke-UiaButton $dialog 'Remind Me Later'
+  $dialog=Find-NativeUpdateDialog 12
+  $install=[EBR_GUI_NATIVE]::GetDlgItem($dialog,12001);$later=[EBR_GUI_NATIVE]::GetDlgItem($dialog,12002)
+  if([EBR_GUI_NATIVE]::Text($install)-cne'Download & Install'){throw "Update-dialog cycle $Cycle did not expose the expected native install action."}
+  if([EBR_GUI_NATIVE]::Text($later)-cne'Remind Me Later'){throw "Update-dialog cycle $Cycle did not expose the expected native dismiss action."}
+  Click-Control $dialog 12002 'Update-dialog Remind Me Later'
   $watch=[Diagnostics.Stopwatch]::StartNew();$enabled=$false
   while($watch.Elapsed.TotalSeconds-lt12){try{$enabled=(Get-Control $script:mainWindow 160 'Update-dialog resource check').Enabled}catch{};if($enabled){break};Start-Sleep -Milliseconds 50}
   if(-not$enabled){throw "Update-dialog cycle $Cycle did not return the check control to idle."}
   $remaining=@([EBR_GUI_NATIVE]::TopWindowsForProcess($script:testPid)|Where-Object{[EBR_GUI_NATIVE]::IsWindowVisible($_)-and[EBR_GUI_NATIVE]::Text($_)-eq'Eye Break Reminder Update'})
   if($remaining.Count-ne0){throw "Update-dialog cycle $Cycle left $($remaining.Count) visible update dialog(s) after dismissal."}
+  $dialog=[IntPtr]::Zero
+  [GC]::Collect();[GC]::WaitForPendingFinalizers();[GC]::Collect()
   if($Measure){
+    Start-Sleep -Milliseconds 50
     $sample=Get-PickerResourceSample $Cycle
     $script:updateDialogResourceSamples.Add([pscustomobject]@{TimestampUtc=[DateTime]::UtcNow.ToString('o');Cycle=$sample.Cycle;UserObjects=$sample.UserObjects;GdiObjects=$sample.GdiObjects;HandleCount=$sample.HandleCount;PrivateBytes=$sample.PrivateBytes;WorkingSetBytes=$sample.WorkingSetBytes})
   }
