@@ -20,7 +20,7 @@ Changed
 
 Verification status
 
-- Full-scope exact-candidate acceptance passed on GitHub Actions Windows Server 2025 x64, with a separate Windows 11 ARM64 x64-emulation pass (run `44453271527`). Required Core tests and Windows package passed on remote PR head `d7682be` (run `44455446680`); current local test/workflow changes still require hosted validation. The app and setup remain unsigned, so v1.4.0 is **not ready for publication approval**. See `docs/V1.4.0_FINAL_PRE_RELEASE_VERIFICATION.md` and `docs/V1.4.0_ACCEPTANCE_MATRIX.json` for exact candidate identities, evidence, NOT TESTED and BLOCKED items.
+- The exact five-file candidate from run `44498562317` passed the actual in-app update/relaunch, settings/history policies, installer/uninstaller, portable recovery and coordinator backup-failure acceptance. The corrected actual HTTPS timeout and exact-candidate 110-cycle soak passed in run `44505090187` (110/110 cycles; 264 PASS, 0 FAIL, 0 NOT TESTED). Clean-runner candidate/hash/provenance audit and Windows 11 ARM64 x64-emulation passed in [run `44527187760`](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44527187760). Required **Core tests and Windows package** passed on feature head `f2914bc` in [run `44527196926`](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44527196926); the final documentation commit requires its own check. The app and setup remain unsigned, so v1.4.0 is **not ready for publication approval**. See the final verification report and machine-readable acceptance matrix for exact identities and remaining gaps.
 
 ## 1.3.0 (feature branch; prepared, not published)
 
