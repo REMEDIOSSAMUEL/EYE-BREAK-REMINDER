@@ -171,10 +171,12 @@ try{
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::Click($choice,12001)) 'the update choice starts the real verified download flow'
   $script:coordinator=Wait-UpdateCoordinator
   Assert-That ($script:coordinator.Message.Contains('Update complete.')) 'the actual app-launched update coordinator reports success'
+  $coordinatorHandle=$script:coordinator.Process.Handle
+  Assert-That ($coordinatorHandle -ne [IntPtr]::Zero) 'the running signed update coordinator exposes a valid process handle for exit verification'
   [EBR_SIGNED_GUI_NATIVE]::CloseCoordinator($script:coordinator.Window)
   if(-not $script:coordinator.Process.WaitForExit(20000)){throw 'The completed signed update coordinator did not exit after its status was acknowledged.'};$script:coordinator.Process.Refresh()
   $coordinatorExit=$script:coordinator.Process.ExitCode
-  $coordinatorNativeExit=[EBR_SIGNED_GUI_NATIVE]::NativeExitCode($script:coordinator.Process.Handle)
+  $coordinatorNativeExit=[EBR_SIGNED_GUI_NATIVE]::NativeExitCode($coordinatorHandle)
   Assert-That ($coordinatorNativeExit -ceq '0') "the signed update coordinator exits successfully (managedExit='$coordinatorExit'; nativeExit='$coordinatorNativeExit'; pid=$($script:coordinator.Process.Id); image='$($script:coordinator.ImagePath)'; status='$($script:coordinator.Message)')"
   $script:coordinator.Process.Dispose();$script:coordinator=$null
   $script:updatedApp=Wait-UpdatedApplication $target
