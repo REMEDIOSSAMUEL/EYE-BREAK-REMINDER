@@ -171,9 +171,25 @@ bool testDnsResolutionFailure(const std::wstring&stage){
     ok&=check(response.status==0&&response.body.empty()&&response.failure==eye::updates::Failure::Offline&&response.errorCode==ERROR_WINHTTP_NAME_NOT_RESOLVED,"real WinHTTP resolution of the reserved .invalid origin returns DNS-name-not-resolved, not an HTTP error");
     const auto failed=eye::updates::evaluate(response,"1.4.0");
     ok&=check(failed.state==eye::updates::State::Failed&&failed.error.find("Could not reach GitHub")!=std::string::npos,"report DNS failure as a recoverable offline update-check message");
-    const std::string newerRelease="{\"tag_name\":\"v1.4.1\",\"html_url\":\"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.4.1\",\"draft\":false,\"prerelease\":false,\"assets\":[{\"name\":\"EyeBreakReminder-Setup-x64.exe\",\"browser_download_url\":\"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder-Setup-x64.exe\",\"size\":128,\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"EyeBreakReminder.exe\",\"browser_download_url\":\"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder.exe\",\"size\":128,\"digest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}]}";
-    const auto retry=eye::updates::evaluate(eye::updates::HttpResponse{200,newerRelease,eye::updates::Failure::None,0},"1.4.0");
-    ok&=check(retry.state==eye::updates::State::UpdateAvailable&&retry.latestVersion=="1.4.1","a subsequent successful stable-release response is accepted after the DNS failure");
+    const std::string installerDigest="sha256:"+std::string(64,'c'),portableDigest="sha256:"+std::string(64,'b');
+    const std::string newerRelease="{\"tag_name\":\"v1.4.1\",\"html_url\":\"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.4.1\",\"draft\":false,\"prerelease\":false,\"assets\":["
+        "{\"name\":\"EyeBreakReminder-Setup-x64.exe\",\"browser_download_url\":\"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder-Setup-x64.exe\",\"size\":3,\"digest\":\""+installerDigest+"\"},"
+        "{\"name\":\"EyeBreakReminder.exe\",\"browser_download_url\":\"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder.exe\",\"size\":3,\"digest\":\""+portableDigest+"\"}]}";
+    eye::updates::ReleaseDetails retryDetails;
+    const auto retry=eye::updates::evaluate(eye::updates::HttpResponse{200,newerRelease,eye::updates::Failure::None,0},"1.4.0",&retryDetails);
+    ok&=check(retry.state==eye::updates::State::UpdateAvailable&&retry.latestVersion=="1.4.1","a later successful stable-release lookup remains discoverable after the DNS failure");
+    ok&=check(!eye::updates::selectAuthenticatedAsset(retryDetails,eye::updates::PackageKind::Installed).ok,"a discovered retry cannot be offered before its manifest signature is authenticated");
+    EphemeralSigningKey retrySigner;const bool retryKeyGenerated=retrySigner.generate();const auto retryManifest=transactionManifest(retrySigner);const std::string retryManifestBytes=eye::updates::canonicalManifest(retryManifest);std::string retrySignature;
+    const bool retrySigned=retryKeyGenerated&&!retryManifestBytes.empty()&&retrySigner.sign(retryManifestBytes,retrySignature);
+    const auto retryAuthorization=retrySigned?eye::updates::verifyManifestWithKey(retryManifestBytes,retrySignature,"v1.4.1","1.4.0",std::time(nullptr),retrySigner.trusted):eye::updates::ManifestAuthorization{};
+    retryDetails.assets.push_back({std::string(eye::updates::UpdateManifestName),"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/"+std::string(eye::updates::UpdateManifestName),{},retryManifestBytes.size()});
+    retryDetails.assets.push_back({std::string(eye::updates::UpdateManifestSignatureName),"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/"+std::string(eye::updates::UpdateManifestSignatureName),{},64});
+    const auto retryManifestAsset=eye::updates::selectManifestAsset(retryDetails,eye::updates::UpdateManifestName);
+    const auto retrySignatureAsset=eye::updates::selectManifestAsset(retryDetails,eye::updates::UpdateManifestSignatureName);
+    retryDetails.manifestVerified=retryAuthorization.ok;retryDetails.signedManifestBytes=retryManifestBytes;retryDetails.signedManifestSignature=retrySignature;retryDetails.authenticatedManifest=retryAuthorization.manifest;
+    const auto retryInstaller=eye::updates::selectAuthenticatedAsset(retryDetails,eye::updates::PackageKind::Installed);
+    const auto retryPortable=eye::updates::selectAuthenticatedAsset(retryDetails,eye::updates::PackageKind::Portable);
+    ok&=check(retryAuthorization.ok&&retryManifestAsset.ok&&retrySignatureAsset.ok&&retryInstaller.ok&&retryInstaller.asset.name=="EyeBreakReminder-Setup-x64.exe"&&retryPortable.ok&&retryPortable.asset.name=="EyeBreakReminder.exe","a successful retry proceeds only with a valid disposable-key manifest and role-bound installer/portable payloads");
     std::string appAfter,settingsAfter,historyAfter;const bool filesUnchanged=eye::updates::hashFile(app,appAfter)&&eye::updates::hashFile(settings,settingsAfter)&&eye::updates::hashFile(history,historyAfter)&&appBefore==appAfter&&settingsBefore==settingsAfter&&historyBefore==historyAfter;
     const bool noInstaller=GetFileAttributesW(marker.c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW((stage+L"\\EyeBreakReminder-Setup-x64.exe").c_str())==INVALID_FILE_ATTRIBUTES;
     ok&=check(filesUnchanged,"DNS failure leaves disposable app, settings and history sentinels unchanged");

@@ -1,0 +1,55 @@
+name: Windows v1.4.0 update security tests
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Makefile'
+      - 'src/update_checker.hpp'
+      - 'src/update_manifest.hpp'
+      - 'src/update_signature_win.hpp'
+      - 'src/update_trust.hpp'
+      - 'src/update_client.hpp'
+      - 'src/update_coordinator.hpp'
+      - 'tests/updater_windows_tests.cpp'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-metadata-and-rejection-tests:
+    name: CNG signatures, rejection side effects and DNS failure
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install native Windows build tools
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+
+      - name: Build isolated Windows updater tests
+        shell: msys2 {0}
+        run: make build/updater-windows-tests.exe HOST_CXX=g++
+
+      - name: Run actual Windows CNG signature verification
+        shell: pwsh
+        run: '& .\build\updater-windows-tests.exe --test-signatures'
+
+      - name: Run real DNS resolution failure and recovery retry
+        shell: pwsh
+        run: '& .\build\updater-windows-tests.exe --dns-failure'
+
+      - name: Run isolated updater and SEC-028 side-effect matrix
+        shell: pwsh
+        run: '& .\build\updater-windows-tests.exe'

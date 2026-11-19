@@ -43,6 +43,9 @@ checks = {
     "include focused exact-candidate acceptance workflow": included(
         Path(".github/workflows/windows-v1.4.0-focused-acceptance.yml")
     ),
+    "include signed update security verification workflow": included(
+        Path(".github/workflows/windows-v1.4.0-update-security.yml")
+    ),
     "include updater metadata regression test": included(
         Path("tests/updater_metadata_tests.cpp")
     ),
