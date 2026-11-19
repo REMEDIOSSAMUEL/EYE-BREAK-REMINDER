@@ -20,11 +20,6 @@ on:
       - '.gitattributes'
       - 'scripts/package.py'
       - 'scripts/verify.py'
-      - 'docs/**'
-      - '!docs/V1.4.0_AUTONOMOUS_COMPLETION_PROGRESS.md'
-      - '!docs/V1.4.0_ACCEPTANCE_MATRIX.json'
-      - '!docs/V1.4.0_FINAL_COMPLETION_AUDIT.md'
-      - '!docs/V1.4.0_FINAL_PRE_RELEASE_VERIFICATION.md'
       - 'tests/**'
       - '!tests/windows_certificate_store_worker.ps1'
       - '!tests/windows_production_update_acceptance.ps1'
@@ -442,7 +437,7 @@ jobs:
 
       - name: Run the established 110-cycle native resource soak
         id: soak
-        if: ${{ !cancelled() && steps.network-interruption.outcome == 'success' && steps.updater.outcome == 'success' && steps.resource_telemetry.outcome == 'success' && steps.soak_reuse.outputs.reused != 'true' }}
+        if: ${{ !cancelled() && steps.network-interruption.outcome == 'success' && steps.download-body-timeout.outcome == 'success' && steps.updater.outcome == 'success' && steps.portable-recovery.outcome == 'success' && steps.resource_telemetry.outcome == 'success' && steps.soak_reuse.outputs.reused != 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -476,10 +471,12 @@ jobs:
           FIXTURE_OUTCOME: ${{ steps.fixtures.outcome }}
           PRODUCTION_UPDATE_FIXTURE_OUTCOME: ${{ steps.production_update_fixture.outcome }}
           NETWORK_INTERRUPTION_OUTCOME: ${{ steps.network-interruption.outcome }}
+          DOWNLOAD_BODY_TIMEOUT_OUTCOME: ${{ steps.download-body-timeout.outcome }}
           LEGACY_UPGRADE_OUTCOME: ${{ steps.legacy_upgrade.outcome }}
           DESKTOP_OUTCOME: ${{ steps.desktop.outcome }}
           GUI_OUTCOME: ${{ steps.gui.outcome }}
           UPDATER_OUTCOME: ${{ steps.updater.outcome }}
+          PORTABLE_RECOVERY_OUTCOME: ${{ steps.portable-recovery.outcome }}
           STANDARD_USER_OUTCOME: ${{ steps.standard_user.outcome }}
           PRODUCTION_UPDATE_OUTCOME: ${{ steps.production_update.outcome }}
           RESOURCE_TELEMETRY_OUTCOME: ${{ steps.resource_telemetry.outcome }}
@@ -492,14 +489,14 @@ jobs:
           $desktopAvailable = $false
           if (Test-Path -LiteralPath $probePath) { $desktopAvailable = [bool](Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json).interactiveDesktopAvailable }
           $soakPassed = $env:SOAK_OUTCOME -eq 'success' -or $env:SOAK_REUSED -eq 'true'
-          $fullAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:STANDARD_USER_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $soakPassed -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
+          $fullAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:DOWNLOAD_BODY_TIMEOUT_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:STANDARD_USER_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PORTABLE_RECOVERY_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $soakPassed -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
           $preferenceAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success' -and $env:SOAK_REUSED -eq 'true'
           $status = if (($env:ACCEPTANCE_SCOPE -eq 'UpdatePreferences' -and $preferenceAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'All' -and $fullAcceptance)) {'PASS'} else {'NOT READY'}
-          [pscustomobject]@{Status=$status;Scope=$env:ACCEPTANCE_SCOPE;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;ProductionUpdateFixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;StandardUser=$env:STANDARD_USER_OUTCOME;Updater=$env:UPDATER_OUTCOME;ProductionBinaryUpdate=$env:PRODUCTION_UPDATE_OUTCOME;ResourceTelemetry=$env:RESOURCE_TELEMETRY_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;ResourceSoakReused=$env:SOAK_REUSED;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
+          [pscustomobject]@{Status=$status;Scope=$env:ACCEPTANCE_SCOPE;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;ProductionUpdateFixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;DownloadBodyTimeout=$env:DOWNLOAD_BODY_TIMEOUT_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;StandardUser=$env:STANDARD_USER_OUTCOME;Updater=$env:UPDATER_OUTCOME;PortableRecovery=$env:PORTABLE_RECOVERY_OUTCOME;ProductionBinaryUpdate=$env:PRODUCTION_UPDATE_OUTCOME;ResourceTelemetry=$env:RESOURCE_TELEMETRY_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;ResourceSoakReused=$env:SOAK_REUSED;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
             ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Encoding UTF8
           if ($status -ne 'PASS') {
             if (-not $desktopAvailable) { throw 'Windows updater release acceptance is NOT TESTED: this runner exposed no interactive Explorer desktop. The exact development candidate is retained as evidence but is not release-ready.' }
-            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; production update fixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME; network interruption=$env:NETWORK_INTERRUPTION_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; standard user=$env:STANDARD_USER_OUTCOME; updater=$env:UPDATER_OUTCOME; production binary update=$env:PRODUCTION_UPDATE_OUTCOME; resource telemetry=$env:RESOURCE_TELEMETRY_OUTCOME; soak=$env:SOAK_OUTCOME; soak reused=$env:SOAK_REUSED; identity=$env:IDENTITY_OUTCOME."
+            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; production update fixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME; network interruption=$env:NETWORK_INTERRUPTION_OUTCOME; stalled body timeout=$env:DOWNLOAD_BODY_TIMEOUT_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; standard user=$env:STANDARD_USER_OUTCOME; updater=$env:UPDATER_OUTCOME; portable recovery=$env:PORTABLE_RECOVERY_OUTCOME; production binary update=$env:PRODUCTION_UPDATE_OUTCOME; resource telemetry=$env:RESOURCE_TELEMETRY_OUTCOME; soak=$env:SOAK_OUTCOME; soak reused=$env:SOAK_REUSED; identity=$env:IDENTITY_OUTCOME."
           }
 
       - name: Upload the exact candidate and all Windows evidence
