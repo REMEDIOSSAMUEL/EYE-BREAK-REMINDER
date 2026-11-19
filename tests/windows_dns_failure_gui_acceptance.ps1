@@ -25,6 +25,7 @@ if(-not $evidence.StartsWith($evidenceRoot.TrimEnd('\')+'\',[StringComparison]::
 
 $native=@'
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 public static class EBR_DNS_GUI_NATIVE {
@@ -54,6 +55,14 @@ public static class EBR_DNS_GUI_NATIVE {
     EnumWindowsProc callback=delegate(IntPtr hwnd,IntPtr ignored) { if(GetDlgCtrlID(hwnd)==wantedId){found=hwnd;return false;} return true; };
     EnumChildWindows(parent,callback,IntPtr.Zero); GC.KeepAlive(callback); return found;
   }
+  public static string[] VisibleStaticTexts(IntPtr parent) {
+    List<string> values=new List<string>();
+    EnumWindowsProc callback=delegate(IntPtr hwnd,IntPtr ignored) {
+      if(IsWindowVisible(hwnd)){StringBuilder cls=new StringBuilder(256);GetClassNameW(hwnd,cls,cls.Capacity);if(String.Equals(cls.ToString(),"Static",StringComparison.OrdinalIgnoreCase)){StringBuilder text=new StringBuilder(4096);GetWindowTextW(hwnd,text,text.Capacity);if(text.Length>0)values.Add(text.ToString());}}
+      return true;
+    };
+    EnumChildWindows(parent,callback,IntPtr.Zero);GC.KeepAlive(callback);return values.ToArray();
+  }
   public static string ChildText(IntPtr parent,int id) { IntPtr child=FindChildById(parent,id); if(child==IntPtr.Zero)return ""; StringBuilder text=new StringBuilder(4096);GetWindowTextW(child,text,text.Capacity);return text.ToString(); }
   public static string WindowText(IntPtr hwnd) { StringBuilder text=new StringBuilder(4096);GetWindowTextW(hwnd,text,text.Capacity);return text.ToString(); }
   public static bool Responsive(IntPtr hwnd) { IntPtr ignored;return hwnd!=IntPtr.Zero&&SendMessageTimeoutW(hwnd,0,IntPtr.Zero,IntPtr.Zero,2|32,1500,out ignored)!=IntPtr.Zero; }
@@ -66,7 +75,7 @@ function Get-Hash([string]$path){(Get-FileHash -LiteralPath $path -Algorithm SHA
 function Click-Control([IntPtr]$window,[int]$controlId){$control=[EBR_DNS_GUI_NATIVE]::FindChildById($window,$controlId);if($control -eq [IntPtr]::Zero){throw "The isolated app did not expose control $controlId."};if(-not [EBR_DNS_GUI_NATIVE]::IsWindowVisible($control)){throw "The isolated app control $controlId is not visible in the selected page or section."};[void][EBR_DNS_GUI_NATIVE]::SendMessageW($control,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)}
 function Get-TimerSeconds([IntPtr]$window){$text=[EBR_DNS_GUI_NATIVE]::ChildText($window,40);if($text -notmatch '^(\d+):(\d{2})$'){throw "Unexpected timer text '$text'."};return ([int]$Matches[1]*60+[int]$Matches[2])}
 function Wait-AppWindow([Diagnostics.Process]$process,[int]$timeoutSeconds=30){$watch=[Diagnostics.Stopwatch]::StartNew();while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds){$process.Refresh();if($process.HasExited){throw "The isolated app exited during startup with code $($process.ExitCode)."};$window=[EBR_DNS_GUI_NATIVE]::FindMainWindowByPid($process.Id);if($window -ne [IntPtr]::Zero -and [EBR_DNS_GUI_NATIVE]::Responsive($window)){return $window};Start-Sleep -Milliseconds 100};throw 'The isolated app did not expose a responsive native main window.'}
-function Wait-UpdateResult([Diagnostics.Process]$process,[IntPtr]$window,[int]$timeoutSeconds=60){$watch=[Diagnostics.Stopwatch]::StartNew();$latest='';$status='';while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds){$process.Refresh();if($process.HasExited){throw "The app exited while checking updates with code $($process.ExitCode)."};$latest=[EBR_DNS_GUI_NATIVE]::ChildText($window,163);$status=[EBR_DNS_GUI_NATIVE]::ChildText($window,162);$checking=$status -ceq 'Checking the official stable release on GitHub…';$failed=$latest -ceq 'Latest stable version: unavailable' -and $status.Contains('Could not reach GitHub');$succeeded=$latest -match '^Latest stable version: \d+\.\d+\.\d+' -and -not $checking;if($failed -or $succeeded){return [pscustomobject]@{Latest=$latest;Status=$status}};Start-Sleep -Milliseconds 100};throw "Timed out waiting for a completed update-check result; latest='$latest'; status='$status'."}
+function Wait-UpdateResult([Diagnostics.Process]$process,[IntPtr]$window,[int]$timeoutSeconds=60){$watch=[Diagnostics.Stopwatch]::StartNew();$latest='';$status='';$textDump='';while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds){$process.Refresh();if($process.HasExited){throw "The app exited while checking updates with code $($process.ExitCode)."};$texts=@([EBR_DNS_GUI_NATIVE]::VisibleStaticTexts($window));$latest=($texts|Where-Object {$_ -match '^Latest stable version:'}|Select-Object -First 1);$status=($texts|Where-Object {$_ -ceq 'Check for Updates queries the official public GitHub Releases API.' -or $_ -ceq 'Checking the official stable release on GitHub…' -or $_ -match '^Could not reach GitHub\b' -or $_ -match '^The installed application is newer than the latest stable release\.' -or $_ -ceq 'Eye Break Reminder is up to date.' -or $_ -ceq 'A newer stable version is available.'}|Select-Object -First 1);$checking=$status -ceq 'Checking the official stable release on GitHub…';$failed=$latest -ceq 'Latest stable version: unavailable' -and $status -match '^Could not reach GitHub\b';$succeeded=$latest -match '^Latest stable version: \d+\.\d+\.\d+' -and -not $checking;if($failed -or $succeeded){return [pscustomobject]@{Latest=$latest;Status=$status}};$textDump=$texts -join ' | ';Start-Sleep -Milliseconds 100};throw "Timed out waiting for a completed update-check result; latest='$latest'; status='$status'; visibleStaticTexts='$textDump'."}
 function Wait-TimerProgress([IntPtr]$window,[int]$initial,[int]$timeoutMilliseconds=8000){$watch=[Diagnostics.Stopwatch]::StartNew();while($watch.ElapsedMilliseconds -lt $timeoutMilliseconds){if((Get-TimerSeconds $window) -lt $initial){return $true};Start-Sleep -Milliseconds 100};return $false}
 function Close-TestApp([Diagnostics.Process]$process,[IntPtr]$window){if($null -eq $process){return};$process.Refresh();if($process.HasExited){return};if(-not [EBR_DNS_GUI_NATIVE]::RequestNormalExit($window)){throw 'Could not request normal exit from the isolated DNS test app.'};if(-not $process.WaitForExit(10000)){throw 'The isolated DNS test app did not exit through its normal message.'};$process.Refresh();if($process.ExitCode -ne 0){throw "The isolated DNS test app exited with $($process.ExitCode)."};$process.Dispose()}
 
