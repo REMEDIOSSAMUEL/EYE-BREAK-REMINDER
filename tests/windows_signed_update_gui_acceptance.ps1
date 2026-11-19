@@ -49,6 +49,7 @@ public static class EBR_SIGNED_GUI_NATIVE {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hwnd);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern uint GetModuleFileNameW(IntPtr module, StringBuilder text, int count);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
   public static IntPtr FindWindowByClassAndPid(string expected, int wantedPid) {
     IntPtr found=IntPtr.Zero;
     EnumWindowsProc callback=delegate(IntPtr hwnd, IntPtr ignored) {
@@ -61,6 +62,7 @@ public static class EBR_SIGNED_GUI_NATIVE {
   public static string Text(IntPtr hwnd) { StringBuilder text=new StringBuilder(2048); GetWindowTextW(hwnd,text,text.Capacity); return text.ToString(); }
   public static string ChildText(IntPtr hwnd,int id) { IntPtr child=GetDlgItem(hwnd,id); return child==IntPtr.Zero?"":Text(child); }
   public static string ImagePath(IntPtr hwnd) { uint pid=0; GetWindowThreadProcessId(hwnd,out pid); try { using(var p=System.Diagnostics.Process.GetProcessById((int)pid)) return p.MainModule.FileName; } catch { return ""; } }
+  public static string NativeExitCode(IntPtr process) { uint code; if(!GetExitCodeProcess(process,out code)) return "error:"+Marshal.GetLastWin32Error(); return code.ToString(System.Globalization.CultureInfo.InvariantCulture); }
   public static bool Responsive(IntPtr hwnd) { IntPtr ignored; return SendMessageTimeoutW(hwnd,0,IntPtr.Zero,IntPtr.Zero,2|32,1500,out ignored)!=IntPtr.Zero; }
   public static bool Click(IntPtr hwnd,int id) { IntPtr child=GetDlgItem(hwnd,id); if(child==IntPtr.Zero||!IsWindowEnabled(child))return false; SendMessageW(child,0x00F5,IntPtr.Zero,IntPtr.Zero); return true; }
   public static bool SetChecked(IntPtr hwnd,int id,bool value) { IntPtr child=GetDlgItem(hwnd,id); if(child==IntPtr.Zero||!IsWindowEnabled(child))return false; SendMessageW(child,0x00F1,(IntPtr)(value?1:0),IntPtr.Zero); return true; }
@@ -172,7 +174,8 @@ try{
   [EBR_SIGNED_GUI_NATIVE]::CloseCoordinator($script:coordinator.Window)
   if(-not $script:coordinator.Process.WaitForExit(20000)){throw 'The completed signed update coordinator did not exit after its status was acknowledged.'};$script:coordinator.Process.Refresh()
   $coordinatorExit=$script:coordinator.Process.ExitCode
-  Assert-That ($coordinatorExit -eq 0) "the signed update coordinator exits successfully (exit=$coordinatorExit; pid=$($script:coordinator.Process.Id); image='$($script:coordinator.ImagePath)'; status='$($script:coordinator.Message)')"
+  $coordinatorNativeExit=[EBR_SIGNED_GUI_NATIVE]::NativeExitCode($script:coordinator.Process.Handle)
+  Assert-That ($coordinatorNativeExit -ceq '0') "the signed update coordinator exits successfully (managedExit='$coordinatorExit'; nativeExit='$coordinatorNativeExit'; pid=$($script:coordinator.Process.Id); image='$($script:coordinator.ImagePath)'; status='$($script:coordinator.Message)')"
   $script:coordinator.Process.Dispose();$script:coordinator=$null
   $script:updatedApp=Wait-UpdatedApplication $target
   $timerInitial=Get-TimerSeconds $script:updatedApp.Window
