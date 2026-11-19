@@ -76,7 +76,50 @@ function Get-Hash([string]$path){(Get-FileHash -LiteralPath $path -Algorithm SHA
 function Get-TimerSeconds([IntPtr]$window){$text=[EBR_SIGNED_GUI_NATIVE]::ChildText($window,40);if($text -notmatch '^(\d+):(\d{2})$'){throw "Unexpected application timer text '$text'."};return ([int]$Matches[1]*60+[int]$Matches[2])}
 function Wait-TimerProgress([IntPtr]$window,[int]$initial,[int]$timeoutMilliseconds=7000){$watch=[Diagnostics.Stopwatch]::StartNew();while($watch.ElapsedMilliseconds -lt $timeoutMilliseconds){if((Get-TimerSeconds $window) -lt $initial){return $true};Start-Sleep -Milliseconds 100};return $false}
 function Wait-NoStagedUpdates([string]$updates,[int]$timeoutSeconds=20){$watch=[Diagnostics.Stopwatch]::StartNew();while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds){if(-not(Test-Path -LiteralPath $updates) -or @(Get-ChildItem -LiteralPath $updates -Force).Count -eq 0){return $true};Start-Sleep -Milliseconds 100};return $false}
-function Wait-Modal([Diagnostics.Process]$process,[string]$heading,[int]$timeoutSeconds=90,[switch]$EnabledPrimary){$watch=[Diagnostics.Stopwatch]::StartNew();while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds -and -not $process.HasExited){$window=[EBR_SIGNED_GUI_NATIVE]::FindWindowByClassAndPid('#32770',$process.Id);if($window -ne [IntPtr]::Zero -and [EBR_SIGNED_GUI_NATIVE]::ChildText($window,12320) -ceq $heading){$button=[EBR_SIGNED_GUI_NATIVE]::GetDlgItem($window,12001);if($heading -eq 'Clean Installation'){$button=[EBR_SIGNED_GUI_NATIVE]::GetDlgItem($window,12326)};if($button -ne [IntPtr]::Zero -and (-not $EnabledPrimary -or [EBR_SIGNED_GUI_NATIVE]::IsWindowEnabled($button))){return $window}};Start-Sleep -Milliseconds 100;$process.Refresh()};throw "Timed out waiting for signed updater dialog '$heading'; exited=$($process.HasExited)."}
+function Get-ModalFailureDiagnostics([Diagnostics.Process]$process){
+  $mainWindow=[EBR_SIGNED_GUI_NATIVE]::FindWindowByClassAndPid('EyeBreakReminder.Native',$process.Id)
+  $modalWindow=[EBR_SIGNED_GUI_NATIVE]::FindWindowByClassAndPid('#32770',$process.Id)
+  $status='';$latest='';$modalHeading='';$modalBody='';$mainTitle=''
+  if($mainWindow -ne [IntPtr]::Zero){
+    $mainTitle=[EBR_SIGNED_GUI_NATIVE]::Text($mainWindow)
+    $status=[EBR_SIGNED_GUI_NATIVE]::ChildText($mainWindow,162)
+    $latest=[EBR_SIGNED_GUI_NATIVE]::ChildText($mainWindow,163)
+  }
+  if($modalWindow -ne [IntPtr]::Zero){
+    $modalHeading=[EBR_SIGNED_GUI_NATIVE]::ChildText($modalWindow,12320)
+    $modalBody=[EBR_SIGNED_GUI_NATIVE]::ChildText($modalWindow,12321)
+  }
+  $diagnosticPath=Join-Path (Split-Path -Parent $testApp) 'test-update-modal-diagnostic.txt'
+  $modalDiagnostic=if(Test-Path -LiteralPath $diagnosticPath){[IO.File]::ReadAllText($diagnosticPath)}else{''}
+  return [pscustomobject]@{
+    ProcessId=$process.Id
+    ProcessExited=$process.HasExited
+    MainWindowFound=($mainWindow -ne [IntPtr]::Zero)
+    MainWindowTitle=$mainTitle
+    UpdateStatus=$status
+    LatestVersionStatus=$latest
+    ModalWindowFound=($modalWindow -ne [IntPtr]::Zero)
+    ModalHeading=$modalHeading
+    ModalBody=$modalBody
+    TestOnlyModalDiagnostic=$modalDiagnostic
+  }
+}
+function Wait-Modal([Diagnostics.Process]$process,[string]$heading,[int]$timeoutSeconds=90,[switch]$EnabledPrimary){
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds -and -not $process.HasExited){
+    $window=[EBR_SIGNED_GUI_NATIVE]::FindWindowByClassAndPid('#32770',$process.Id)
+    if($window -ne [IntPtr]::Zero -and [EBR_SIGNED_GUI_NATIVE]::ChildText($window,12320) -ceq $heading){
+      $button=[EBR_SIGNED_GUI_NATIVE]::GetDlgItem($window,12001)
+      if($heading -eq 'Clean Installation'){$button=[EBR_SIGNED_GUI_NATIVE]::GetDlgItem($window,12326)}
+      if($button -ne [IntPtr]::Zero -and (-not $EnabledPrimary -or [EBR_SIGNED_GUI_NATIVE]::IsWindowEnabled($button))){return $window}
+    }
+    Start-Sleep -Milliseconds 100
+    $process.Refresh()
+  }
+  $process.Refresh()
+  $diagnostics=Get-ModalFailureDiagnostics $process
+  throw "Timed out waiting for signed updater dialog '$heading'; diagnostics=$($diagnostics|ConvertTo-Json -Compress -Depth 4)"
+}
 function Wait-UpdateCoordinator([int]$timeoutSeconds=180){$watch=[Diagnostics.Stopwatch]::StartNew();$last='';while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds){foreach($process in [Diagnostics.Process]::GetProcessesByName('coordinator')){try{$process.Refresh();if(-not $process.HasExited){$window=[EBR_SIGNED_GUI_NATIVE]::FindWindowByClassAndPid('EyeBreakReminder.UpdateCoordinator',$process.Id);if($window -ne [IntPtr]::Zero){$last=[EBR_SIGNED_GUI_NATIVE]::ChildText($window,1);if($last.Contains('Update complete.')){return [pscustomobject]@{Process=$process;Window=$window;Message=$last}};$process.Dispose();break}}}catch{$process.Dispose()}};Start-Sleep -Milliseconds 100};throw "Timed out waiting for the real signed update coordinator; last status='$last'."}
 function Wait-UpdatedApplication([string]$target,[int]$timeoutSeconds=40){$full=[IO.Path]::GetFullPath($target);$watch=[Diagnostics.Stopwatch]::StartNew();while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds){foreach($process in [Diagnostics.Process]::GetProcessesByName('EyeBreakReminder')){try{$process.Refresh();if(-not $process.HasExited -and [IO.Path]::GetFullPath($process.Path) -ieq $full){$window=[EBR_SIGNED_GUI_NATIVE]::FindWindowByClassAndPid('EyeBreakReminder.Native',$process.Id);if($window -ne [IntPtr]::Zero -and [EBR_SIGNED_GUI_NATIVE]::Responsive($window)){return [pscustomobject]@{Process=$process;Window=$window}}}}catch{};$process.Dispose()};Start-Sleep -Milliseconds 100};throw 'The signed GUI update did not relaunch the installed successor application.'}
 function Close-App($app){if($null -eq $app -or $app.Process.HasExited){return};[EBR_SIGNED_GUI_NATIVE]::ExitApp($app.Window);if(-not $app.Process.WaitForExit(10000)){throw 'The updated test application did not exit through its normal message.'};$app.Process.Dispose()}
