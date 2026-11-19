@@ -2,6 +2,12 @@ name: Windows v1.4.0 test-key update failure edges
 
 on:
   workflow_dispatch:
+    inputs:
+      build_development_candidate:
+        description: Build and independently audit the final unsigned development candidate after source freeze
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -115,6 +121,7 @@ jobs:
           retention-days: 90
 
   development-candidate-x64:
+    if: ${{ inputs.build_development_candidate }}
     name: Build and independently audit the unsigned development candidate
     runs-on: windows-2025
     timeout-minutes: 45
@@ -223,6 +230,7 @@ jobs:
           retention-days: 90
 
   independent-development-candidate-audit:
+    if: ${{ inputs.build_development_candidate && needs.development-candidate-x64.result == 'success' }}
     name: Re-download and independently verify candidate bytes
     needs: development-candidate-x64
     runs-on: windows-2025

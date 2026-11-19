@@ -76,6 +76,7 @@ $script:appProcess = $null
 $script:appPid = 0
 $script:mainWindow = [IntPtr]::Zero
 $script:responsePath = Join-Path $appDirectory 'test-update-response.txt'
+$script:modalDiagnosticPath = Join-Path $appDirectory 'test-update-modal-diagnostic.txt'
 $payloadPath = Join-Path $tempRoot 'controlled-payload.bin'
 $payloadBytes = 1MB
 $payload = [IO.File]::Open($payloadPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
@@ -208,7 +209,7 @@ function Run-DnsFailureAndSignedRetry([IntPtr]$CheckButton) {
   if(-not [EBR_RESOURCE_LOOPS]::IsWindowVisible($CheckButton)){throw 'The isolated update-check control was not visible after returning to Settings.'}
   Write-UpdateFixture $false;Trigger-Check $CheckButton
   try { $choice=Find-TopWindow $script:appPid 'Eye Break Reminder Update' }
-  catch { $status=(Get-DescendantTexts $script:mainWindow) -join ' | ';$windows=Get-TopWindowDiagnostics | ConvertTo-Json -Compress -Depth 5;throw "$($_.Exception.Message) Retry status='$status'; top-level windows=$windows; fixtureBytes=$((Get-Item -LiteralPath $script:responsePath).Length)." }
+  catch { $status=(Get-DescendantTexts $script:mainWindow) -join ' | ';$windows=Get-TopWindowDiagnostics | ConvertTo-Json -Compress -Depth 5;$modalDiagnostic=if(Test-Path -LiteralPath $script:modalDiagnosticPath){[IO.File]::ReadAllText($script:modalDiagnosticPath)}else{'<none>'};throw "$($_.Exception.Message) Retry status='$status'; top-level windows=$windows; fixtureBytes=$((Get-Item -LiteralPath $script:responsePath).Length); modalDiagnostic='$modalDiagnostic'." }
   $body=Get-ControlText $choice 12321
   if(-not $body.Contains('Available version: v1.4.1')){throw "A valid signed retry did not present the successor version: $body"}
   $later=[EBR_RESOURCE_LOOPS]::GetDlgItem($choice,12002)
@@ -407,6 +408,7 @@ try {
 } finally {
   [Environment]::SetEnvironmentVariable('EBR_GUI_TEST_UPDATE_DELAY_MS',$null,'Process')
   if($script:responsePath -and (Test-Path -LiteralPath $script:responsePath)){Remove-Item -LiteralPath $script:responsePath -Force}
+  if($script:modalDiagnosticPath -and (Test-Path -LiteralPath $script:modalDiagnosticPath)){Remove-Item -LiteralPath $script:modalDiagnosticPath -Force}
   if($script:appPid -and $script:mainWindow -ne [IntPtr]::Zero){
     $quit=[EBR_RESOURCE_LOOPS]::RegisterWindowMessageW('EyeBreakReminder.Exit.Native.1')
     [void][EBR_RESOURCE_LOOPS]::PostMessageW($script:mainWindow,$quit,[IntPtr]::Zero,[IntPtr]::Zero)

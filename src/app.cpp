@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <commdlg.h>
+#include <cstring>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -57,6 +58,13 @@ struct UpdateModalState {
  std::wstring headingText,bodyText,releaseNotes,releaseUrl,primaryText;HFONT normalFont{},headingFont{};UINT dpi=96;bool ready=false,install=false,cleanInstall=false,removeHistory=false,finished=false,deferred=false,breakHidden=false;int result=IDCANCEL;
 };
 std::wstring startupUpdateNonce,startupCleanupDirectory;DWORD startupCoordinatorPid=0;
+void testUpdateDiagnostic(const char*event){
+#ifdef EYEBREAK_TEST_BUILD
+ wchar_t module[32768]{};const DWORD length=GetModuleFileNameW(nullptr,module,DWORD(std::size(module)));if(!length||length>=std::size(module))return;std::wstring path(module,length);const auto slash=path.find_last_of(L"\\/");if(slash==std::wstring::npos)return;path.resize(slash+1);path+=L"test-update-modal-diagnostic.txt";HANDLE file=CreateFileW(path.c_str(),FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return;DWORD written=0;WriteFile(file,event,DWORD(std::strlen(event)),&written,nullptr);CloseHandle(file);
+#else
+ (void)event;
+#endif
+}
 class Application {
 public:
  HINSTANCE instance{};HWND main{},breakWindow{},trayMenuOwner{};HICON icon{};HFONT normalFont{},headingFont{},tabFont{},smallFont{},titleFont{},countFont{},breakFont{},breakTitleFont{},breakCountFont{};int countSize=0;HBRUSH backgroundBrush{},surfaceBrush{};
@@ -476,10 +484,11 @@ public:
    }
    return FALSE;
   }
-  static bool runUpdateModal(UpdateModalState&state){HWND owner=state.owner->main;const bool ownerEnabled=owner&&IsWindowEnabled(owner);if(ownerEnabled)EnableWindow(owner,FALSE);HWND dialog=CreateDialogParamW(state.owner->instance,MAKEINTRESOURCEW(UPDATE_MODAL_TEMPLATE),owner,updateModalProc,reinterpret_cast<LPARAM>(&state));if(!dialog||state.finished){if(dialog&&IsWindow(dialog))DestroyWindow(dialog);if(ownerEnabled)EnableWindow(owner,TRUE);return false;}
+  static bool runUpdateModal(UpdateModalState&state){HWND owner=state.owner->main;const bool ownerEnabled=owner&&IsWindowEnabled(owner);if(ownerEnabled)EnableWindow(owner,FALSE);HWND dialog=CreateDialogParamW(state.owner->instance,MAKEINTRESOURCEW(UPDATE_MODAL_TEMPLATE),owner,updateModalProc,reinterpret_cast<LPARAM>(&state));if(!dialog||state.finished){testUpdateDiagnostic(dialog?"modal-initialization-failed\n":"modal-creation-failed\n");if(dialog&&IsWindow(dialog))DestroyWindow(dialog);if(ownerEnabled)EnableWindow(owner,TRUE);return false;}
    SendMessageW(dialog,WM_SETICON,ICON_SMALL,reinterpret_cast<LPARAM>(state.owner->icon));BOOL dark=state.owner->colors.dark&&!state.owner->colors.systemContrast;DwmSetWindowAttribute(dialog,20,&dark,sizeof(dark));RECT work{};MONITORINFO monitor{};monitor.cbSize=sizeof(monitor);if(GetMonitorInfoW(MonitorFromWindow(owner,MONITOR_DEFAULTTONEAREST),&monitor))work=monitor.rcWork;state.dpi=GetDpiForWindow(dialog);DWORD style=DWORD(GetWindowLongPtrW(dialog,GWL_STYLE)),exstyle=DWORD(GetWindowLongPtrW(dialog,GWL_EXSTYLE));const int desiredWidth=std::min(modalDpiPx(state,int(std::round(620*std::sqrt(state.owner->textScale)))),int(work.right-work.left)-modalDpiPx(state,40));ModalMetrics metrics=modalMetrics(state,desiredWidth,std::max(modalDpiPx(state,180),int(work.bottom-work.top)-modalDpiPx(state,100)));RECT outer{0,0,metrics.width,metrics.height};AdjustWindowRectExForDpi(&outer,style,FALSE,exstyle,state.dpi);const int outerWidth=outer.right-outer.left,outerHeight=outer.bottom-outer.top;RECT parent{};GetWindowRect(owner,&parent);int x=parent.left+(parent.right-parent.left-outerWidth)/2,y=parent.top+(parent.bottom-parent.top-outerHeight)/2;x=std::clamp(x,int(work.left),int(work.right)-outerWidth);y=std::clamp(y,int(work.top),int(work.bottom)-outerHeight);SetWindowPos(dialog,nullptr,x,y,outerWidth,outerHeight,SWP_NOZORDER|SWP_NOACTIVATE);layoutModal(state);ShowWindow(dialog,SW_SHOWNORMAL);UpdateWindow(dialog);SetForegroundWindow(dialog);SetActiveWindow(dialog);HWND focus=state.kind==UpdateModalKind::Choice?state.primary:state.secondary;SetFocus(focus);
    MSG message{};while(!state.finished){BOOL received=GetMessageW(&message,nullptr,0,0);if(received<=0){if(received==0)PostQuitMessage(int(message.wParam));finishModal(state,IDCANCEL);break;}if(!IsDialogMessageW(dialog,&message)){TranslateMessage(&message);DispatchMessageW(&message);}if(owner&&!IsWindow(owner)&&!state.finished)finishModal(state,IDCANCEL);}
    if(state.window)DestroyWindow(state.window);
+   if(state.result==IDCANCEL)testUpdateDiagnostic("modal-ended-cancelled\n");
    if(ownerEnabled&&owner&&IsWindow(owner))EnableWindow(owner,TRUE);
    if(owner&&IsWindow(owner))SetForegroundWindow(owner);
    return state.result!=IDCANCEL;
@@ -500,6 +509,7 @@ public:
     if(ready)state.bodyText+=L"\n\nThe update has already been downloaded and verified.";
     state.releaseNotes=releaseNotes(release.notes);state.releaseUrl=wide(release.releaseUrl);state.primaryText=ready?L"Install Update":L"Download && Install";
     if(!runUpdateModal(state)){
+     testUpdateDiagnostic(state.deferred?"choice-deferred-for-break\n":"choice-dismissed-or-cancelled\n");
      if(state.deferred)return{false,false,true};
      return{};
     }
@@ -565,8 +575,8 @@ public:
    CloseHandle(process.hThread);CloseHandle(process.hProcess);updateExitPending=true;PostMessageW(main,quitMessage,0,0);return true;
   }
   void handleAvailableUpdate(const UpdateMessage&message){
-   if(dismissedUpdateVersion==message.release.tag)return;
-    if(engine->snapshot().phase==Phase::Break){deferredAutomaticUpdate=message;setUpdateLabel(UPDATE_STATUS,L"An update is available. Eye Break Reminder will wait until your active break ends before showing update options.");return;}
+   if(dismissedUpdateVersion==message.release.tag){testUpdateDiagnostic("available-update-skipped-dismissed-version\n");return;}
+    if(engine->snapshot().phase==Phase::Break){testUpdateDiagnostic("available-update-deferred-active-break\n");deferredAutomaticUpdate=message;setUpdateLabel(UPDATE_STATUS,L"An update is available. Eye Break Reminder will wait until your active break ends before showing update options.");return;}
    std::wstring installDir;const bool installed=updates::registeredInstallDirectory(installDir)&&updates::samePath(installDir,updates::parentPath(executable()));
    const auto selected=updates::selectAuthenticatedAsset(message.release,installed?updates::PackageKind::Installed:updates::PackageKind::Portable);
    if(!selected.ok){setUpdateLabel(UPDATE_STATUS,wide(selected.error));return;}
