@@ -151,7 +151,7 @@ try{
     if($LASTEXITCODE -ne 0){throw "CNG test-key manifest signing failed for $($scenario.Name)."}
     $manifest=Get-Content -LiteralPath (Join-Path $stage 'EyeBreakReminder-UpdateManifest.json') -Raw | ConvertFrom-Json
     $selected=if($scenario.Kind -eq 'installed'){$setup}else{$portable};$assetName=if($scenario.Kind -eq 'installed'){'EyeBreakReminder-Setup-x64.exe'}else{'EyeBreakReminder.exe'}
-    $nonce=[guid]::NewGuid().ToString('D');$previousHash=Get-Hash $target;$selectedHash=Get-Hash $selected;$portableHash=Get-Hash $portable
+    $nonce=[guid]::NewGuid().ToString('D');$previousHash=Get-Hash $target;$selectedHash=Get-Hash $selected;$setupHash=Get-Hash $setup;$portableHash=Get-Hash $portable
     $values=[ordered]@{
       staging=$stage;artifact=$selected;target=$target;data=$profile;version='1.4.1';previous='1.4.0';nonce=$nonce
       kind=$scenario.Kind;name=$assetName;sha256=$selectedHash;applicationSha256=$portableHash;previousSha256=$previousHash;size=(Get-Item -LiteralPath $selected).Length
@@ -185,7 +185,7 @@ try{
     Assert-That (-not (Get-ItemProperty -LiteralPath $runOnceKeyPath -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue)) "$($scenario.Name): completed transaction removes the recovery registration"
     if(-not (Close-UpdatedApp $app)){throw "The updated $($scenario.Name) application did not close through its normal exit message."}
     $app.Process.Dispose();$proc.Dispose()
-    $script:results.Add([pscustomobject]@{Scenario=$scenario.Name;Status='PASS';Kind=$scenario.Kind;Clean=$scenario.Clean;DeleteHistory=$scenario.DeleteHistory;TestKeyId=$manifest.key_id;InitialApplicationSHA256=$previousHash;AuthorizedInstallerSHA256=(Get-Hash $setup);AuthorizedPortableSHA256=$portableHash;InstalledApplicationSHA256=(Get-Hash $target);SettingsPreserved=(-not $scenario.Clean);HistoryPreserved=(-not $scenario.DeleteHistory);ApplicationRelaunched=$true;TimerAdvanced=$true;TestTrust='Disposable CNG ECDSA P-256 key; production trust unchanged'})
+    $script:results.Add([pscustomobject]@{Scenario=$scenario.Name;Status='PASS';Kind=$scenario.Kind;Clean=$scenario.Clean;DeleteHistory=$scenario.DeleteHistory;TestKeyId=$manifest.key_id;InitialApplicationSHA256=$previousHash;AuthorizedInstallerSHA256=$setupHash;AuthorizedPortableSHA256=$portableHash;InstalledApplicationSHA256=(Get-Hash $target);SettingsPreserved=(-not $scenario.Clean);HistoryPreserved=(-not $scenario.DeleteHistory);ApplicationRelaunched=$true;TimerAdvanced=$true;TestTrust='Disposable CNG ECDSA P-256 key; production trust unchanged'})
     if($scenario.Kind -eq 'installed'){$uninstaller=Join-Path $targetDirectory 'Uninstall.exe';if(Test-Path -LiteralPath $uninstaller){$uninstall=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait;if($uninstall.ExitCode -ne 0){throw "Isolated test installation cleanup returned $($uninstall.ExitCode)."}}}
     if(Test-Path -LiteralPath $appKeyPath){Remove-Item -LiteralPath $appKeyPath -Recurse -Force}
     if(Test-Path -LiteralPath $uninstallKeyPath){Remove-Item -LiteralPath $uninstallKeyPath -Recurse -Force}
