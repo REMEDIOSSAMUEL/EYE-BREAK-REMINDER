@@ -5,7 +5,9 @@ import datetime as dt
 import hashlib
 import json
 from argparse import Namespace
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,6 +41,24 @@ def valid_manifest(key_id: str) -> dict[str, object]:
 
 
 class SigningToolTests(unittest.TestCase):
+    def test_key_acl_parser_requires_one_current_user_full_control_allow(self) -> None:
+        identity = r"MACHINE\remed"
+        self.assertTrue(signing.has_only_current_user_acl(
+            rf"C:\signing-key {identity}:(OI)(CI)(F)", identity
+        ))
+        self.assertTrue(signing.has_only_current_user_acl(
+            rf"C:\signing-key\private.pem {identity}:(I)(F)", identity
+        ))
+        self.assertFalse(signing.has_only_current_user_acl(
+            rf"C:\signing-key {identity}:(R)", identity
+        ))
+        self.assertFalse(signing.has_only_current_user_acl(
+            rf"C:\signing-key {identity}:(DENY)(F)", identity
+        ))
+        self.assertFalse(signing.has_only_current_user_acl(
+            rf"C:\signing-key {identity}:(F)\nBUILTIN\Administrators:(F)", identity
+        ))
+
     def test_raw_signature_encoding_round_trip(self) -> None:
         raw = bytes.fromhex("80" + "01" * 31 + "00" + "02" * 31)
         self.assertEqual(signing.der_signature_to_raw(signing.raw_signature_to_der(raw)), raw)
@@ -67,6 +87,9 @@ class SigningToolTests(unittest.TestCase):
             same_key_path = root / "same-key.pem"
             with self.assertRaises(ValueError):
                 signing.generate_key(Namespace(private_key=same_key_path, public_key=same_key_path))
+            with self.assertRaises(ValueError):
+                signing.generate_key(Namespace(private_key=root / "private.pem", public_key=root / "public.pem"))
+            self.assertFalse((root / "private.pem").exists())
 
             args = Namespace(
                 private_key=root / "private.pem", public_key=root / "public.pem",
@@ -85,6 +108,81 @@ class SigningToolTests(unittest.TestCase):
             args.manifest.write_bytes(b"existing metadata")
             with self.assertRaises(ValueError):
                 signing.sign(args)
+            args.manifest = root / "fresh-manifest.json"
+            args.signature = root / "fresh-manifest.sig"
+            with self.assertRaises(ValueError):
+                signing.sign(args)
+
+    def test_private_key_path_rejects_checkout_onedrive_and_temp(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ebr-key-location-policy-") as folder:
+            root = Path(folder)
+            checkout = root / "checkout"
+            sync = root / "OneDrive"
+            temp_root = root / "tmp"
+            safe = root / "offline-key-media"
+            for directory in (checkout, sync, temp_root, safe):
+                directory.mkdir()
+            self.assertEqual(
+                signing.validate_private_key_path(
+                    safe / "production-private.pem",
+                    project_root=checkout,
+                    sync_roots=[sync],
+                    temp_root=temp_root,
+                ),
+                (safe / "production-private.pem").resolve(),
+            )
+            for unsafe in (
+                checkout / "production-private.pem",
+                sync / "production-private.pem",
+                temp_root / "production-private.pem",
+            ):
+                with self.subTest(path=unsafe), self.assertRaises(ValueError):
+                    signing.validate_private_key_path(
+                        unsafe,
+                        project_root=checkout,
+                        sync_roots=[sync],
+                        temp_root=temp_root,
+                    )
+
+            # The checkout's path ancestry should identify its sync root even
+            # when the caller does not inject a test-only root list.
+            nested_sync = root / "OneDrive - Personal"
+            nested_project = nested_sync / "project"
+            nested_project.mkdir(parents=True)
+            with self.assertRaises(ValueError):
+                signing.validate_private_key_path(
+                    nested_sync / "production-private.pem",
+                    project_root=nested_project,
+                    temp_root=temp_root,
+                )
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("icacls"), "Windows ACL verification only")
+    def test_new_key_directory_acl_is_limited_to_current_user(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ebr-key-acl-policy-") as folder:
+            root = Path(folder)
+            directory = root / "signing-key"
+            sid = signing.restrict_private_key_directory(
+                directory,
+                project_root=root / "checkout",
+                sync_roots=[],
+                temp_root=root / "not-a-temp-root",
+            )
+            self.assertTrue(directory.is_dir())
+            self.assertRegex(sid, r"^S-1-\d+(?:-\d+)+$")
+            identity, _ = signing.current_windows_user()
+            acl_probe = directory / "non-secret-acl-probe.txt"
+            acl_probe.write_text("acl verification only", encoding="ascii")
+            acl = subprocess.run(["icacls", str(acl_probe)], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(acl.returncode, 0)
+            self.assertTrue(signing.has_only_current_user_acl(acl.stdout, identity))
+            signing.verify_private_key_acl(acl_probe)
+            with self.assertRaises(ValueError):
+                signing.restrict_private_key_directory(
+                    directory,
+                    project_root=root / "checkout",
+                    sync_roots=[],
+                    temp_root=root / "not-a-temp-root",
+                )
 
     def test_openssl_signature_and_embedded_public_key(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ebr-disposable-sign-tool-key-") as folder:

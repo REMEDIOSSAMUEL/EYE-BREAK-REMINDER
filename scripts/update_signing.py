@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """Offline signing and verification for Eye Break Reminder update metadata.
 
-The production private key must be encrypted, kept outside this checkout, and
-used only on an approved signing machine. This tool never generates a key
-unless the operator explicitly invokes `generate`.
+Production private keys must be encrypted and stored outside the checkout,
+OneDrive, and temporary directories. On Windows, key generation creates a new
+dedicated directory whose DACL grants access only to the current user. This
+tool never generates a key unless `generate` is explicitly invoked.
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -39,6 +42,150 @@ def ensure_outside_checkout(path: Path) -> None:
     except ValueError:
         return
     raise ValueError("The production private key must be stored outside the project checkout.")
+
+
+def path_is_within(path: Path, parent: Path) -> bool:
+    candidate = os.path.normcase(str(path.resolve(strict=False)))
+    root = os.path.normcase(str(parent.resolve(strict=False)))
+    try:
+        return os.path.commonpath((candidate, root)) == root
+    except ValueError:
+        return False
+
+
+def synchronized_roots(project_root: Path = ROOT) -> list[Path]:
+    roots: list[Path] = []
+    for name in ("OneDrive", "OneDriveCommercial", "OneDriveConsumer"):
+        value = os.environ.get(name)
+        if value:
+            roots.append(Path(value))
+    try:
+        roots.extend(candidate for candidate in Path.home().glob("OneDrive*") if candidate.is_dir())
+    except OSError:
+        pass
+    # Also discover the sync root from the checkout path. This remains effective
+    # when an interactive shell has not exported the OneDrive environment vars.
+    project = project_root.resolve(strict=False)
+    for parent in (project, *project.parents):
+        folded = parent.name.casefold()
+        if folded == "onedrive" or folded.startswith("onedrive -"):
+            roots.append(parent)
+    return roots
+
+
+def validate_private_key_path(
+    path: Path,
+    *,
+    project_root: Path = ROOT,
+    sync_roots: list[Path] | None = None,
+    temp_root: Path | None = None,
+) -> Path:
+    resolved = path.resolve(strict=False)
+    if path_is_within(resolved, project_root):
+        raise ValueError("The production private key must be stored outside the project checkout.")
+    roots = synchronized_roots(project_root) if sync_roots is None else sync_roots
+    if any(path_is_within(resolved, root) for root in roots):
+        raise ValueError("The production private key must not be stored in a synchronized OneDrive folder.")
+    temporary = Path(tempfile.gettempdir()) if temp_root is None else temp_root
+    if path_is_within(resolved, temporary):
+        raise ValueError("The production private key must not be stored in a temporary directory.")
+    return resolved
+
+
+def current_windows_user() -> tuple[str, str]:
+    if os.name != "nt":
+        raise RuntimeError("Production private-key provisioning requires Windows ACL support.")
+    result = subprocess.run(
+        ["whoami", "/user", "/fo", "csv", "/nh"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    rows = list(csv.reader(result.stdout.splitlines())) if result.returncode == 0 else []
+    identity = rows[0][0].strip() if rows and len(rows[0]) == 2 else ""
+    sid = rows[0][1].strip() if rows and len(rows[0]) == 2 else ""
+    if not identity:
+        raise RuntimeError("Could not determine the current Windows user for key-directory protection.")
+    if not re.fullmatch(r"S-1-\d+(?:-\d+)+", sid):
+        raise RuntimeError("Could not determine the current Windows user's SID for key-directory protection.")
+    return identity, sid
+
+
+def has_only_current_user_acl(acl_output: str, identity: str) -> bool:
+    # icacls prints the file path and its first ACE on the same line. A drive
+    # colon is not followed by an ACE parenthesis, so count only the latter.
+    # Require an allow-full-control ACE; a read-only grant or a DENY ACE must
+    # not be mistaken for a usable, user-owned signing directory.
+    ace_count = len(re.findall(r":\((?=[A-Z])", acl_output, flags=re.IGNORECASE))
+    full_control = re.compile(
+        rf"{re.escape(identity)}:((?:\((?:OI|CI|IO|NP|I)\))*)\(F\)(?=\s|$)",
+        flags=re.IGNORECASE,
+    )
+    return ace_count == 1 and full_control.search(acl_output) is not None
+
+
+def verify_private_key_acl(path: Path) -> None:
+    identity, _ = current_windows_user()
+    result = subprocess.run(
+        ["icacls", str(path)],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode or not has_only_current_user_acl(result.stdout, identity):
+        raise RuntimeError("The production private key ACL is not limited to the current Windows user.")
+
+
+def restrict_private_key_directory(
+    directory: Path,
+    *,
+    project_root: Path = ROOT,
+    sync_roots: list[Path] | None = None,
+    temp_root: Path | None = None,
+) -> str:
+    """Create a new dedicated key directory with an explicit current-user-only DACL."""
+    validate_private_key_path(
+        directory / "production-private.pem",
+        project_root=project_root,
+        sync_roots=sync_roots,
+        temp_root=temp_root,
+    )
+    if directory.exists():
+        raise ValueError("Refusing an existing key directory; use a new dedicated directory.")
+    if not directory.parent.is_dir():
+        raise ValueError("The selected key-volume parent must already exist.")
+    identity, sid = current_windows_user()
+    directory.mkdir()
+    try:
+        result = subprocess.run(
+            ["icacls", str(directory), "/inheritance:r", "/grant:r", f"*{sid}:(OI)(CI)F"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode:
+            raise RuntimeError("Windows could not restrict the new production-key directory ACL.")
+        verified = subprocess.run(
+            ["icacls", str(directory)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if verified.returncode:
+            raise RuntimeError("Windows could not verify the production-key directory ACL.")
+        if not has_only_current_user_acl(verified.stdout, identity):
+            raise RuntimeError("The production-key directory ACL is not limited to the current Windows user.")
+        return sid
+    except Exception:
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+        raise
 
 
 def point_from_public_pem(path: Path) -> bytes:
@@ -244,18 +391,19 @@ def build_manifest(args: argparse.Namespace, point: bytes) -> dict[str, object]:
 
 
 def generate_key(args: argparse.Namespace) -> None:
-    ensure_outside_checkout(args.private_key)
-    ensure_outside_checkout(args.public_key)
     if args.private_key.resolve() == args.public_key.resolve():
         raise ValueError("Private and public key paths must be different.")
+    private_path = validate_private_key_path(args.private_key)
+    ensure_outside_checkout(args.public_key)
     if args.private_key.exists() or args.public_key.exists():
         raise ValueError("Refusing to overwrite an existing key file.")
-    args.private_key.parent.mkdir(parents=True, exist_ok=True)
+    restrict_private_key_directory(args.private_key.parent)
     args.public_key.parent.mkdir(parents=True, exist_ok=True)
     try:
         run_openssl("genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256",
-                    "-aes-256-cbc", "-out", str(args.private_key))
+                    "-aes-256-cbc", "-out", str(private_path))
         run_openssl("pkey", "-in", str(args.private_key), "-pubout", "-out", str(args.public_key))
+        verify_private_key_acl(private_path)
         point = point_from_public_pem(args.public_key)
     except Exception:
         # Remove only the files this invocation may have created; never touch
@@ -265,19 +413,24 @@ def generate_key(args: argparse.Namespace) -> None:
                 path.unlink(missing_ok=True)
             except OSError:
                 pass
+        try:
+            args.private_key.parent.rmdir()
+        except OSError:
+            pass
         raise
     print(f"Created encrypted offline P-256 key. Public key id: {key_id(point)}")
     print("The private key contents were not displayed. Securely back it up offline and remove it from networked systems.")
 
 
 def sign(args: argparse.Namespace) -> None:
-    ensure_outside_checkout(args.private_key)
     inputs = [args.private_key.resolve(), args.public_key.resolve(), args.installer.resolve(), args.portable.resolve()]
     outputs = [args.manifest.resolve(), args.signature.resolve()]
     if outputs[0] == outputs[1] or any(output in inputs for output in outputs):
         raise ValueError("Manifest and signature output paths must be distinct from each other, keys, and payloads.")
     if args.manifest.exists() or args.signature.exists():
         raise ValueError("Refusing to overwrite existing signed metadata; choose new output paths.")
+    private_path = validate_private_key_path(args.private_key)
+    verify_private_key_acl(private_path)
     point = point_from_public_pem(args.public_key)
     value = build_manifest(args, point)
     raw = canonical_json(value)
@@ -310,7 +463,7 @@ def sign(args: argparse.Namespace) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    keygen = commands.add_parser("generate", help="create a passphrase-encrypted P-256 key outside the checkout")
+    keygen = commands.add_parser("generate", help="create a passphrase-encrypted P-256 key outside the checkout, OneDrive, and temporary directories")
     keygen.add_argument("--private-key", type=Path, required=True)
     keygen.add_argument("--public-key", type=Path, required=True)
     keygen.set_defaults(func=generate_key)
