@@ -1090,7 +1090,13 @@ try {
   Run-UpdateFixture 'newer-version' 200 $newer 'none' 'newer stable version is available'
   $updateDialogWarmup=3;$updateDialogMeasured=20
   for($i=1;$i-le($updateDialogWarmup+$updateDialogMeasured);$i++){
-    Run-UpdateDialogResourceCycle $i $newer ($i-gt$updateDialogWarmup)
+    # A dismissed release is intentionally suppressed for the rest of this
+    # app session. Give each lifecycle a distinct, valid newer patch version
+    # so the soak measures dialog creation rather than defeating that UX rule.
+    $dialogVersionBase=[Version]$newerVersion
+    $dialogCycleVersion='{0}.{1}.{2}' -f $dialogVersionBase.Major,$dialogVersionBase.Minor,$i
+    $dialogCycleRelease=Release-Fixture $dialogCycleVersion
+    Run-UpdateDialogResourceCycle $i $dialogCycleRelease ($i-gt$updateDialogWarmup)
   }
   $updateDialogResourceTrends=@((Get-PickerResourceTrend 'USER objects' 'UserObjects' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'GDI objects' 'GdiObjects' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'process handles' 'HandleCount' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'private bytes' 'PrivateBytes' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'working set bytes' 'WorkingSetBytes' $script:updateDialogResourceSamples))
   foreach($trend in $updateDialogResourceTrends){$tolerance=switch($trend.Resource){'private bytes'{1048576}'working set bytes'{8388608}default{2}};$flat=($trend.Resource -notin @('private bytes','working set bytes'));Assert-That ($trend.EndMedian-le($trend.StartMedian+$tolerance)-and(-not$flat-or$trend.SlopePerInteraction-le0.15)) "Repeated update dialogs have no sustained $($trend.Resource) growth" ([pscustomobject]@{Trend=$trend;AllowedMedianDrift=$tolerance})}

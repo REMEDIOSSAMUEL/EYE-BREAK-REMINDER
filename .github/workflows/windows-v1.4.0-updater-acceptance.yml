@@ -38,6 +38,8 @@ on:
       # remain excluded for focused harness-only edits.
       - 'tests/windows_production_update_acceptance.ps1'
       - 'tests/windows_v1_4_updater_acceptance.ps1'
+      - 'tests/windows_v1_3_to_v1_4_upgrade_acceptance.ps1'
+      - 'tests/gui_acceptance.ps1'
       - '.github/workflows/windows-v1.4.0-updater-acceptance.yml'
   workflow_dispatch:
     inputs:
