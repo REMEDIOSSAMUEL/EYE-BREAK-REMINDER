@@ -129,8 +129,9 @@ function Find-TopWindow([int]$ProcessId, [string]$Title, [int]$TimeoutSeconds=12
   $windows=@([EBR_RESOURCE_LOOPS]::TopWindows($ProcessId)|ForEach-Object{$hwnd=$_;[pscustomobject]@{Title=[EBR_RESOURCE_LOOPS]::Text($hwnd);Class=[EBR_RESOURCE_LOOPS]::ClassName($hwnd);Visible=[EBR_RESOURCE_LOOPS]::IsWindowVisible($hwnd);Children=(Get-DescendantTexts $hwnd)-join ' | '}})|ConvertTo-Json -Compress -Depth 5
   $status=if($script:mainWindow-ne[IntPtr]::Zero){(Get-DescendantTexts $script:mainWindow)-join ' | '}else{''}
   $fixture=if($script:responsePath-and(Test-Path -LiteralPath $script:responsePath)){[IO.File]::ReadAllText($script:responsePath)}else{''}
+  $modalDiagnostic=if($script:modalDiagnosticPath-and(Test-Path -LiteralPath $script:modalDiagnosticPath)){[IO.File]::ReadAllText($script:modalDiagnosticPath)}else{'<none>'}
   if($fixture.Length-gt 700){$fixture=$fixture.Substring(0,700)}
-  throw "Timed out waiting for '$Title' from process $ProcessId. MainStatus='$status'; top-level windows=$windows; fixture='$fixture'."
+  throw "Timed out waiting for '$Title' from process $ProcessId. MainStatus='$status'; top-level windows=$windows; fixture='$fixture'; modalDiagnostic='$modalDiagnostic'."
 }
 function Get-ControlText([IntPtr]$Window, [int]$ControlId) {
   $control=[EBR_RESOURCE_LOOPS]::FindChildById($Window,$ControlId)
