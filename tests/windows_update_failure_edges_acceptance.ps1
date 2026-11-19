@@ -321,7 +321,7 @@ function Invoke-InstallerLaunchDeniedTest() {
     $installedHash=Get-Hash $transaction.Target
     Add-Assertion ($installedHash -ceq (Get-Hash $candidate) -and (Get-AppVersion $transaction.Target) -match '^1\.4\.0(\.0)?$') 'FAIL-014: application remains the original v1.4.0 executable' ([pscustomobject]@{SHA256=$installedHash;ProductVersion=(Get-AppVersion $transaction.Target)})
     Add-Assertion ((Get-ItemProperty -LiteralPath $uninstallKeyPath -Name DisplayVersion -ErrorAction Stop).DisplayVersion -ceq '1.4.0') 'FAIL-014: Installed Apps version is restored to v1.4.0'
-    $app=Start-DisposableApp $transaction.Target
+    $app=Find-RunningDisposableApp $transaction.Target
     Add-Assertion ($null -ne $app -and -not $app.Process.HasExited -and [IO.Path]::GetFullPath($app.Process.Path) -ieq [IO.Path]::GetFullPath($transaction.Target)) 'FAIL-014: restored v1.4.0 app relaunches from the registered install path'
     Close-DisposableApp $app; $app=$null
     $profileAfter=Get-ProfileHashes
