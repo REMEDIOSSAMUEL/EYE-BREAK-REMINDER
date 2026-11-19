@@ -1,0 +1,99 @@
+name: Windows v1.4.0 retained candidate verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/v1.4.0-automatic-updater
+    paths:
+      - '.github/workflows/windows-v1.4.0-retained-candidate-retest.yml'
+      - 'tests/verify_v140_retained_candidate.ps1'
+      - 'tests/windows_arm64_emulation_acceptance.ps1'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  independent-candidate-audit:
+    name: Clean-runner audit of retained exact candidate and evidence
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Check out audit harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download retained candidate and terminal x64 evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-candidate-completion-44505090187
+          repository: ${{ github.repository }}
+          run-id: '44505090187'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: retained-artifact
+
+      - name: Revalidate downloaded candidate plus raw timeout and soak evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\verify_v140_retained_candidate.ps1 `
+            -ArtifactRoot '.\retained-artifact' `
+            -OutputPath '.\build\final-candidate-audit\independent-audit.json'
+
+      - name: Retain independent candidate audit evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.4.0-independent-candidate-audit-${{ github.run_id }}
+          path: build/final-candidate-audit/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  windows-11-arm64-x64-emulation:
+    name: Exact retained candidate on Windows 11 ARM64 x64 emulation
+    runs-on: windows-11-arm
+    timeout-minutes: 40
+    steps:
+      - name: Check out ARM64 acceptance harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the exact retained candidate and evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-candidate-completion-44505090187
+          repository: ${{ github.repository }}
+          run-id: '44505090187'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: retained-artifact
+
+      - name: Verify provenance and run the Windows 11 ARM64 x64-emulation acceptance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\verify_v140_retained_candidate.ps1 `
+            -ArtifactRoot '.\retained-artifact' `
+            -OutputPath '.\build\arm64-final-candidate-evidence\retained-candidate-audit.json'
+          $release = Join-Path (Get-Location) 'release'
+          New-Item -ItemType Directory -Force -Path $release | Out-Null
+          Get-ChildItem -LiteralPath '.\retained-artifact\candidate-input\release' -File | Copy-Item -Destination $release -Force
+          $provenance = Get-Content '.\retained-artifact\candidate-input\build\v1.4.0-updater-evidence\candidate-provenance.json' -Raw | ConvertFrom-Json
+          & .\tests\windows_arm64_emulation_acceptance.ps1 `
+            -InstallerPath (Join-Path $release 'EyeBreakReminder-Setup-x64.exe') `
+            -StandaloneExecutable (Join-Path $release 'EyeBreakReminder.exe') `
+            -PortableArchive (Join-Path $release 'EyeBreakReminder-Portable-x64.zip') `
+            -EvidenceDirectory '.\build\arm64-final-candidate-evidence\acceptance' `
+            -CandidateSourceCommit $provenance.PRHeadCommit -ExpectedVersion '1.4.0'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Retain ARM64 x64-emulation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.4.0-windows-11-arm64-emulation-${{ github.run_id }}
+          path: build/arm64-final-candidate-evidence/**
+          if-no-files-found: warn
+          retention-days: 90

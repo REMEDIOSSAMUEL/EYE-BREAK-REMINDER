@@ -1,11 +1,6 @@
 name: Windows v1.4.0 targeted candidate completion
 
 on:
-  push:
-    branches:
-      - feature/v1.4.0-automatic-updater
-    paths:
-      - '.github/workflows/windows-v1.4.0-final-candidate-completion.yml'
   workflow_dispatch:
 
 permissions:
@@ -110,13 +105,9 @@ jobs:
           $summary = Get-Content -LiteralPath '.\build\v1.4.0-final-candidate-completion\resource-soak\soak-summary.json' -Raw | ConvertFrom-Json
           $hash = (Get-FileHash -LiteralPath '.\candidate-input\release\EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($summary.Application -cne 'Eye Break Reminder' -or $summary.Version -cne '1.4.0' -or $summary.RequestedCycles -ne 110 -or $summary.CompletedCycles -ne 110 -or $summary.Pass -lt 250 -or $summary.Fail -ne 0 -or $summary.NotTested -ne 0 -or -not $summary.DiagnosticTelemetryComplete -or $summary.SHA256 -cne $hash) { throw 'The exact-candidate 110-cycle soak or resource-trend evidence did not pass.' }
-          $completion = Get-Content -LiteralPath 'build/v1.4.0-final-candidate-completion/completion.json' -Raw | ConvertFrom-Json
-          $completion.TimeoutHarness = 'PASS'
-          $completion.ProductionBinaryResourceSoak = 'PASS'
-          $completion.SoakedExecutableSHA256 = $hash
-          $completion.SoakCycles = 110
-          $completion.SoakedUtc = [DateTime]::UtcNow.ToString('o')
-          $completion | ConvertTo-Json -Depth 8 | Set-Content 'build/v1.4.0-final-candidate-completion/completion.json' -Encoding UTF8
+          & .\tests\write_v140_completion_evidence.ps1 `
+            -CompletionPath '.\build\v1.4.0-final-candidate-completion\completion.json' `
+            -ExecutableSHA256 $hash -SoakCycles 110
 
       - name: Upload the unchanged exact candidate and completion evidence
         if: always()
