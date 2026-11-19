@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - '.github/workflows/windows-v1.4.0-targeted-regressions.yml'
       - 'tests/gui_acceptance.ps1'
       - 'tests/windows_standard_user_acceptance.ps1'
       - 'tests/windows_v1_3_to_v1_4_upgrade_acceptance.ps1'
@@ -119,7 +120,8 @@ jobs:
           if ([string]$provenance.RunId -cne $env:REFERENCE_RUN_ID -or $provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0') {
             throw 'The downloaded artifact provenance does not match the requested v1.4.0 acceptance run.'
           }
-          if ($gate.Status -cne 'PASS' -or $gate.Scope -cne 'All' -or $gate.Candidate -cne 'success' -or $gate.CandidateIdentity -cne 'success' -or $gate.ResourceSoak -cne 'success' -or $gate.ProductionBinaryUpdate -cne 'success') {
+          $soakValid = $gate.ResourceSoak -ceq 'success' -or [string]$gate.ResourceSoakReused -ceq 'true'
+          if ($gate.Status -cne 'PASS' -or $gate.Scope -cne 'All' -or $gate.Candidate -cne 'success' -or $gate.CandidateIdentity -cne 'success' -or -not $soakValid -or $gate.ProductionBinaryUpdate -cne 'success') {
             throw 'The referenced artifact is not from a passing All-scope exact-candidate acceptance run.'
           }
           $release = 'candidate/release'
@@ -206,7 +208,8 @@ jobs:
           if ([string]$provenance.RunId -cne $env:REFERENCE_RUN_ID -or $provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0') {
             throw 'The downloaded artifact provenance does not match the requested v1.4.0 acceptance run.'
           }
-          if ($gate.Status -cne 'PASS' -or $gate.Scope -cne 'All' -or $gate.Candidate -cne 'success' -or $gate.CandidateIdentity -cne 'success' -or $gate.ResourceSoak -cne 'success' -or $gate.ProductionBinaryUpdate -cne 'success') {
+          $soakValid = $gate.ResourceSoak -ceq 'success' -or [string]$gate.ResourceSoakReused -ceq 'true'
+          if ($gate.Status -cne 'PASS' -or $gate.Scope -cne 'All' -or $gate.Candidate -cne 'success' -or $gate.CandidateIdentity -cne 'success' -or -not $soakValid -or $gate.ProductionBinaryUpdate -cne 'success') {
             throw 'The referenced artifact is not from a passing All-scope exact-candidate acceptance run.'
           }
           $release = 'candidate/release'
