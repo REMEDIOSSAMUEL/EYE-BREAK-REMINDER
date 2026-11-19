@@ -209,7 +209,7 @@ bool testDnsResolutionFailure(const std::wstring&stage){
     const auto liveRetryResponse=restoredEnvironment?eye::updates::latestStableReleaseResponse():eye::updates::HttpResponse{};eye::updates::ReleaseDetails liveRetryDetails;const auto liveRetry=eye::updates::evaluate(liveRetryResponse,"1.4.0",&liveRetryDetails);
     if(!restoredEnvironment||liveRetryResponse.status!=200||liveRetryResponse.failure!=eye::updates::Failure::None||liveRetry.state==eye::updates::State::Failed){
         std::cout<<"INFO: live retry diagnostics status="<<liveRetryResponse.status<<" failure="<<static_cast<int>(liveRetryResponse.failure)
-                 <<" errorCode="<<liveRetryResponse.errorCode<<" message="<<liveRetryResponse.error<<" bodyBytes="<<liveRetryResponse.body.size()
+                 <<" errorCode="<<liveRetryResponse.errorCode<<" message="<<liveRetry.error<<" bodyBytes="<<liveRetryResponse.body.size()
                  <<" tag="<<liveRetryDetails.tag<<"\n";
     }
     ok&=check(restoredEnvironment&&liveRetryResponse.status==200&&liveRetryResponse.failure==eye::updates::Failure::None&&liveRetry.state!=eye::updates::State::Failed&&!liveRetryDetails.tag.empty(),"a real retry to the official GitHub release API succeeds after the test-only DNS failure is removed");
