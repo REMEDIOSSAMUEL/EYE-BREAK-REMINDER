@@ -94,6 +94,18 @@ inline bool disableAutomaticRedirects(HINTERNET request){
     DWORD disableRedirects=WINHTTP_DISABLE_REDIRECTS;
     return WinHttpSetOption(request,WINHTTP_OPTION_DISABLE_FEATURE,&disableRedirects,sizeof(disableRedirects))!=FALSE;
 }
+#ifdef EYEBREAK_TEST_BUILD
+inline bool configureLoopbackTestCertificate(HINTERNET request,const Url&url){
+    if(_wcsicmp(url.host.c_str(),L"localhost")==0&&url.port>=1024&&
+       testFailureEnabled(L"EBR_TEST_ALLOW_UNTRUSTED_LOOPBACK_CERT")){
+        // A harness-only localhost certificate avoids editing the hosted runner's trust store.
+        // This branch is absent from production builds and does not ignore name/date/usage errors.
+        DWORD flags=SECURITY_FLAG_IGNORE_UNKNOWN_CA;
+        return WinHttpSetOption(request,WINHTTP_OPTION_SECURITY_FLAGS,&flags,sizeof(flags))!=FALSE;
+    }
+    return true;
+}
+#endif
 } // namespace client_detail
 
 inline HttpResponse latestStableReleaseResponse(){
@@ -181,6 +193,11 @@ inline DownloadResult downloadVerified(const ReleaseAsset&asset,const std::wstri
         if(!client_detail::disableAutomaticRedirects(request.value)){
             result.error="Windows could not disable automatic redirects for the release asset request.";break;
         }
+#ifdef EYEBREAK_TEST_BUILD
+        if(!client_detail::configureLoopbackTestCertificate(request.value,url)){
+            result.error="Windows could not configure the isolated localhost test-certificate policy.";break;
+        }
+#endif
         const wchar_t*headers=L"Accept: application/octet-stream\r\n";
         if(!WinHttpAddRequestHeaders(request.value,headers,DWORD(-1),WINHTTP_ADDREQ_FLAG_ADD|WINHTTP_ADDREQ_FLAG_REPLACE)||!WinHttpSendRequest(request.value,WINHTTP_NO_ADDITIONAL_HEADERS,0,WINHTTP_NO_REQUEST_DATA,0,0,0)||!WinHttpReceiveResponse(request.value,nullptr)){
             result.error=GetLastError()==ERROR_WINHTTP_TIMEOUT?"The download timed out. Try again when your connection is stable.":"Windows could not securely connect to the release asset.";break;

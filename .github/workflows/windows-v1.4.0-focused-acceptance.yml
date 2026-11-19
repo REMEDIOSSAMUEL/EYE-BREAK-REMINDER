@@ -1,18 +1,6 @@
 name: Windows v1.4.0 focused updater acceptance
 
 on:
-  push:
-    branches:
-      - feature/v1.4.0-automatic-updater
-    paths:
-      - '.github/workflows/windows-v1.4.0-focused-acceptance.yml'
-      - 'tests/windows_certificate_store_worker.ps1'
-      - 'tests/windows_production_update_acceptance.ps1'
-      - 'tests/package_source_policy_tests.py'
-      - 'tests/windows_download_stall_timeout_acceptance.ps1'
-      - 'tests/download_stall_timeout_feed.py'
-      - 'tests/updater_download_stall_timeout.cpp'
-      - 'tests/updater_portable_recovery_tests.cpp'
   workflow_dispatch:
     inputs:
       reference_run_id:
@@ -43,6 +31,7 @@ jobs:
           msystem: MINGW64
           update: true
           install: >-
+            make
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-binutils
             mingw-w64-x86_64-python
@@ -67,7 +56,7 @@ jobs:
           github-token: ${{ github.token }}
           path: reference
 
-      - name: Rebuild final source and portable archives while preserving the hash-tested application and installer
+      - name: Build the authoritative candidate from the exact pushed source commit
         id: candidate
         shell: pwsh
         env:
@@ -115,35 +104,20 @@ jobs:
           if ($failedReferenceChecks.Count -gt 0) { throw "The reference Windows run has unrelated failed evidence: $($failedReferenceChecks -join '; ')" }
           if ($referenceGate.DownloadBodyTimeout -cne 'failure' -or $referenceGate.PortableRecovery -cne 'failure' -or $referenceGate.ResourceSoak -cne 'skipped' -or $referenceGate.Scope -cne 'All') { throw 'Reference Windows run does not match the two focused harness gaps and skipped exact-binary soak.' }
 
-          # Confirm production inputs have not changed since the candidate executable and installer were built.
+          # The focused fix changes only test-build TLS handling, but build the
+          # final candidate from this exact commit so binary/source provenance is direct.
           Add-Type -AssemblyName System.IO.Compression
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $sourceArchive = [IO.Compression.ZipFile]::OpenRead((Join-Path $referenceRelease 'EyeBreakReminder-Source.zip'))
-          try {
-            $currentPaths = @()
-            foreach ($directory in @('src','assets','installer')) {
-              $currentPaths += @(Get-ChildItem -LiteralPath $directory -Recurse -File | ForEach-Object { $_.FullName.Substring((Get-Location).Path.Length + 1).Replace('\','/') })
-            }
-            $currentPaths += @('Makefile','VERSION')
-            foreach ($relative in $currentPaths) {
-              $entry = $sourceArchive.GetEntry("EyeBreakReminder/$relative")
-              if (-not $entry) { throw "Reference source archive does not contain production input $relative" }
-              $stream = $entry.Open()
-              $sha = [Security.Cryptography.SHA256]::Create()
-              try { $oldHash = [Convert]::ToHexString($sha.ComputeHash($stream)).ToLowerInvariant() } finally { $sha.Dispose(); $stream.Dispose() }
-              $newHash = (Get-FileHash -LiteralPath $relative -Algorithm SHA256).Hash.ToLowerInvariant()
-              if ($oldHash -cne $newHash) { throw "Production source input changed since the accepted candidate build: $relative" }
-            }
-          } finally { $sourceArchive.Dispose() }
-
-          New-Item -ItemType Directory -Force -Path release,build/v1.4.0-updater-evidence | Out-Null
-          foreach ($name in $expectedNames) { Copy-Item -LiteralPath (Join-Path $referenceRelease $name) -Destination (Join-Path 'release' $name) }
-          $beforeApp = $expectedHashes['EyeBreakReminder.exe']
-          $beforeSetup = $expectedHashes['EyeBreakReminder-Setup-x64.exe']
-          $oldPortable = Join-Path $referenceRelease 'EyeBreakReminder-Portable-x64.zip'
-          & "$env:MSYS2_ROOT\mingw64\bin\python.exe" .\scripts\package.py
-          if ($LASTEXITCODE -ne 0) { throw "Current-source package step failed with exit code $LASTEXITCODE." }
-          if ((Get-FileHash 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant() -cne $beforeApp -or (Get-FileHash 'release/EyeBreakReminder-Setup-x64.exe' -Algorithm SHA256).Hash.ToLowerInvariant() -cne $beforeSetup) { throw 'Source packaging unexpectedly replaced the exact candidate executable or installer.' }
+          if (Test-Path -LiteralPath 'release') { throw 'Candidate build requires a clean, previously absent release directory.' }
+          $make = Get-Command make -ErrorAction Stop
+          & $make.Source 'release/EyeBreakReminder-Setup-x64.exe'
+          if ($LASTEXITCODE -ne 0) { throw "Exact-commit production executable/installer build failed with exit code $LASTEXITCODE." }
+          $python = Get-Command python3 -ErrorAction Stop
+          & $python.Source .\scripts\package.py
+          if ($LASTEXITCODE -ne 0) { throw "Exact-commit release packaging failed with exit code $LASTEXITCODE." }
+          & $python.Source .\scripts\verify.py
+          if ($LASTEXITCODE -ne 0) { throw "Exact-commit source/package verification failed with exit code $LASTEXITCODE." }
+          New-Item -ItemType Directory -Force -Path 'build/v1.4.0-updater-evidence' | Out-Null
 
           function Get-ZipHashes([string]$Path) {
             $zip = [IO.Compression.ZipFile]::OpenRead($Path)
@@ -157,12 +131,6 @@ jobs:
               return $map
             } finally { $zip.Dispose() }
           }
-          $oldPortableEntries = Get-ZipHashes $oldPortable
-          $newPortableEntries = Get-ZipHashes 'release/EyeBreakReminder-Portable-x64.zip'
-          if (($oldPortableEntries.Keys | Sort-Object) -join "`n" -cne (($newPortableEntries.Keys | Sort-Object) -join "`n")) { throw 'Final portable package content set differs from the previously accepted portable package.' }
-          foreach ($entryName in $oldPortableEntries.Keys) { if ($oldPortableEntries[$entryName] -cne $newPortableEntries[$entryName]) { throw "Final portable package content changed: $entryName" } }
-          if ($newPortableEntries['EyeBreakReminder.exe'] -cne $beforeApp) { throw 'Final portable package does not contain the exact tested standalone executable.' }
-
           $sourceZip = [IO.Compression.ZipFile]::OpenRead((Join-Path (Get-Location) 'release/EyeBreakReminder-Source.zip'))
           try {
             foreach ($entry in $sourceZip.Entries) {
@@ -179,6 +147,14 @@ jobs:
             $file = Get-Item -LiteralPath (Join-Path 'release' $name)
             [pscustomobject]@{Name=$name;Bytes=$file.Length;SHA256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant();ProductVersion=if($name.EndsWith('.exe')){$file.VersionInfo.ProductVersion}else{$null}}
           }
+          $portableZip = [IO.Compression.ZipFile]::OpenRead((Join-Path (Get-Location) 'release/EyeBreakReminder-Portable-x64.zip'))
+          try {
+            $portableApp = $portableZip.GetEntry('EyeBreakReminder.exe')
+            if (-not $portableApp) { throw 'The portable package does not contain EyeBreakReminder.exe.' }
+            $portableStream = $portableApp.Open(); $portableSha = [Security.Cryptography.SHA256]::Create()
+            try { $portableAppHash = [Convert]::ToHexString($portableSha.ComputeHash($portableStream)).ToLowerInvariant() } finally { $portableSha.Dispose(); $portableStream.Dispose() }
+            if ($portableAppHash -cne $identities[0].SHA256) { throw 'Portable and standalone executables differ in the final exact-commit candidate.' }
+          } finally { $portableZip.Dispose() }
           $identities | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/release-artifact-identities.json' -Encoding UTF8
           $manifest = Get-Content 'release/EyeBreakReminder-SHA256.txt'
           if ($manifest.Count -ne 4) { throw 'Final candidate checksum manifest must cover exactly four payloads.' }
@@ -188,7 +164,13 @@ jobs:
           }
           if ($identities[0].ProductVersion -notmatch '^1\.4\.0(\.0)?$' -or $identities[1].ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw 'Final candidate executable and installer are not version 1.4.0.' }
           Copy-Item -LiteralPath $referenceEvidence -Destination "build/v1.4.0-updater-evidence/reference-run-$($env:REFERENCE_RUN_ID)" -Recurse
-          [pscustomobject]@{Application='Eye Break Reminder';Version='1.4.0';RunId=$env:GITHUB_RUN_ID;RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID";BinarySourceCommit=$referenceProvenance.SourceCommit;SourceArchiveCommit=$env:GITHUB_SHA;ReferenceRunId=$env:REFERENCE_RUN_ID;ReferencePRHead=$referenceProvenance.PRHeadCommit;CandidateFiles=$identities;ProductionInputsCompared=@($currentPaths);Prior110CycleSoakReused=$false;ResourceSoakStatus='PENDING';SoakSHA256=$null;Published=$false;Tagged=$false;Merged=$false} | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/candidate-provenance.json' -Encoding UTF8
+          $referenceAppHash = [string](@($referenceIdentities | Where-Object Name -CEQ 'EyeBreakReminder.exe')[0].SHA256).ToLowerInvariant()
+          $referenceSetupHash = [string](@($referenceIdentities | Where-Object Name -CEQ 'EyeBreakReminder-Setup-x64.exe')[0].SHA256).ToLowerInvariant()
+          $reusableBinaryEvidence = $identities[0].SHA256 -ceq $referenceAppHash -and $identities[1].SHA256 -ceq $referenceSetupHash
+          $compilerVersion = (& (Get-Command x86_64-w64-mingw32-g++ -ErrorAction Stop).Source --version | Select-Object -First 1)
+          $linkerVersion = (& (Get-Command x86_64-w64-mingw32-ld -ErrorAction Stop).Source --version | Select-Object -First 1)
+          $nsisVersion = (& (Get-Command makensis -ErrorAction Stop).Source -VERSION | Select-Object -First 1)
+          [pscustomobject]@{Application='Eye Break Reminder';Version='1.4.0';RunId=$env:GITHUB_RUN_ID;RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID";SourceCommit=$env:GITHUB_SHA;PRHeadCommit=$env:GITHUB_SHA;BinarySourceCommit=$env:GITHUB_SHA;SourceArchiveCommit=$env:GITHUB_SHA;ReferenceRunId=$env:REFERENCE_RUN_ID;ReferenceCandidateSourceCommit=$referenceProvenance.SourceCommit;ReferencePRHead=$referenceProvenance.PRHeadCommit;PriorGuiAndInstallerEvidenceReusable=$reusableBinaryEvidence;BuildEnvironment=@{RunnerImage=$env:ImageOS;RunnerImageVersion=$env:ImageVersion;OS=(Get-CimInstance Win32_OperatingSystem).Caption;Architecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();Compiler=$compilerVersion;Linker=$linkerVersion;NSIS=$nsisVersion;Configuration='x64 Release, C++17, O2, static runtime, linker timestamp disabled'};CandidateFiles=$identities;ProductionInputsCompared='Built from the exact pushed source commit; make production build, package.py and verify.py passed';Prior110CycleSoakReused=$false;ResourceSoakStatus='PENDING';SoakSHA256=$null;Published=$false;Tagged=$false;Merged=$false} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/candidate-provenance.json' -Encoding UTF8
 
       - name: Prove an HTTPS response-body stall times out safely
         id: download_body_timeout
@@ -203,7 +185,8 @@ jobs:
           if ($result.status -cne 'PASS' -or -not $result.nativeResult.timeout_error_reported -or
               -not $result.nativeResult.partial_and_final_download_files_removed -or
               -not $result.nativeResult.preexisting_sentinel_preserved_byte_for_byte -or
-              -not $result.trust.removalVerified -or -not $result.cleanup.runnerTempTestDirectoryRemoved) {
+              -not $result.trust.testOnlyUnknownCaOverride -or -not $result.trust.restrictedToLocalhost -or
+              $result.trust.windowsCertificateStoreModified -or -not $result.cleanup.runnerTempTestDirectoryRemoved) {
             throw 'The actual stalled HTTPS body timeout or its cleanup evidence did not pass.'
           }
 

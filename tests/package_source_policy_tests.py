@@ -1,5 +1,6 @@
 """Regression checks for source-archive inclusion and machine-local exclusions."""
 import ast
+import re
 from pathlib import Path
 
 
@@ -17,6 +18,14 @@ namespace = {"Path": Path}
 exec(compile(ast.Module(body=nodes, type_ignores=[]), "scripts/package.py", "exec"), namespace)
 included = namespace["in_source"]
 verify_source = (root / "scripts" / "verify.py").read_text(encoding="utf-8")
+update_client = (root / "src" / "update_client.hpp").read_text(encoding="utf-8")
+loopback_certificate_policy = re.search(
+    r"#ifdef EYEBREAK_TEST_BUILD\s*\ninline bool configureLoopbackTestCertificate\([^\n]+\)\s*\{(?P<body>.*?)\n\}\s*\n#endif",
+    update_client,
+    re.DOTALL,
+)
+loopback_certificate_region = loopback_certificate_policy.group(0) if loopback_certificate_policy else ""
+loopback_certificate_body = loopback_certificate_policy.group("body") if loopback_certificate_policy else ""
 
 checks = {
     "exclude linked-worktree Git pointer": not included(Path(".git")),
@@ -37,8 +46,19 @@ checks = {
     "include updater metadata regression test": included(
         Path("tests/updater_metadata_tests.cpp")
     ),
-    "include bounded certificate-store worker": included(
-        Path("tests/windows_certificate_store_worker.ps1")
+    "timeout harness avoids Windows certificate-store operations": all(
+        token not in (root / "tests" / "windows_download_stall_timeout_acceptance.ps1").read_text(encoding="utf-8")
+        for token in ("Import-Certificate", "X509Store", "CurrentUser\\Root")
+    ),
+    "limit test-only unknown-CA exception to the exact localhost request": all(
+        item in loopback_certificate_region for item in (
+            "#ifdef EYEBREAK_TEST_BUILD",
+            "_wcsicmp(url.host.c_str(),L\"localhost\")==0",
+            "url.port>=1024",
+            "EBR_TEST_ALLOW_UNTRUSTED_LOOPBACK_CERT",
+            "SECURITY_FLAG_IGNORE_UNKNOWN_CA",
+            "return true;",
+        )
     ),
     "exclude generated executables": all(
         not included(Path(path)) for path in (

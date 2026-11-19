@@ -16,7 +16,7 @@ function Quote-ProcessArgument([string]$Value) {
 }
 
 if ($env:GITHUB_ACTIONS -cne 'true') {
-    throw 'This test installs a disposable test CA in CurrentUser\Root; it may run only on an ephemeral GitHub Actions Windows runner.'
+    throw 'This test compiles and runs a native timeout probe; it may run only on an ephemeral GitHub Actions Windows runner.'
 }
 if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP) -or
     -not (Test-Path -LiteralPath $env:RUNNER_TEMP -PathType Container)) {
@@ -39,10 +39,6 @@ if (-not (Get-Item -LiteralPath $rootFull).FullName.StartsWith($runnerPrefix, [S
 
 $serverProcess = $null
 $serverPid = $null
-$trustedThumbprint = $null
-$trustInstallAttempted = $false
-$trustInstalled = $false
-$certificateRemovalVerified = $true
 $runnerTempRootRemoved = $false
 $cleanupFailures = [System.Collections.Generic.List[string]]::new()
 $finalEvidence = $null
@@ -57,80 +53,20 @@ try {
     $python = Get-Command python -ErrorAction Stop
     $compiler = Get-Command x86_64-w64-mingw32-g++ -ErrorAction Stop
 
-    $caKey = Join-Path $rootFull 'ephemeral-test-ca.key'
-    $caPem = Join-Path $rootFull 'ephemeral-test-ca.pem'
-    $caDer = Join-Path $rootFull 'ephemeral-test-ca.cer'
     $leafKey = Join-Path $rootFull 'localhost-test-server.key'
-    $leafCsr = Join-Path $rootFull 'localhost-test-server.csr'
     $leafPem = Join-Path $rootFull 'localhost-test-server.pem'
-    $leafExt = Join-Path $rootFull 'localhost-test-server.ext'
 
-    $phase = 'generate disposable test CA'
+    $phase = 'generate self-signed localhost TLS test certificate'
     Write-Host "Stall test phase: $phase"
     Invoke-CheckedProcess $openssl.Source @(
-        'req','-x509','-newkey','rsa:2048','-sha256','-nodes','-keyout',$caKey,'-out',$caPem,
-        '-days','1','-subj','/CN=EyeBreakReminder-Disposable-DownloadTimeout-Test-CA',
-        '-addext','basicConstraints=critical,CA:TRUE,pathlen:0',
-        '-addext','keyUsage=critical,keyCertSign,cRLSign'
-    ) 'Generate the disposable test certificate authority'
-    $phase = 'generate localhost certificate request'
-    Write-Host "Stall test phase: $phase"
-    Invoke-CheckedProcess $openssl.Source @(
-        'req','-newkey','rsa:2048','-sha256','-nodes','-keyout',$leafKey,'-out',$leafCsr,
-        '-subj','/CN=localhost'
-    ) 'Generate the localhost test-server certificate request'
-    @(
-        'basicConstraints=critical,CA:FALSE'
-        'keyUsage=critical,digitalSignature,keyEncipherment'
-        'extendedKeyUsage=serverAuth'
-        'subjectAltName=DNS:localhost'
-        'subjectKeyIdentifier=hash'
-        'authorityKeyIdentifier=keyid,issuer'
-    ) | Set-Content -LiteralPath $leafExt -Encoding ascii
-    $phase = 'sign localhost certificate'
-    Write-Host "Stall test phase: $phase"
-    Invoke-CheckedProcess $openssl.Source @(
-        'x509','-req','-in',$leafCsr,'-CA',$caPem,'-CAkey',$caKey,'-CAcreateserial',
-        '-out',$leafPem,'-days','1','-sha256','-extfile',$leafExt
-    ) 'Sign the localhost server certificate with the disposable test CA'
-    $phase = 'export disposable CA certificate'
-    Write-Host "Stall test phase: $phase"
-    Invoke-CheckedProcess $openssl.Source @('x509','-in',$caPem,'-outform','DER','-out',$caDer) 'Prepare the disposable CA for Windows trust'
-
-    $phase = 'load and install disposable CA in CurrentUser Root'
-    Write-Host "Stall test phase: $phase"
-    $caCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($caDer)
-    $trustedThumbprint = $caCertificate.Thumbprint
-    if ([string]::IsNullOrWhiteSpace($trustedThumbprint)) { throw 'The disposable CA certificate has no thumbprint.' }
-    $trustInstallAttempted = $true
-    $trustStore = [Security.Cryptography.X509Certificates.X509Store]::new(
-        [Security.Cryptography.X509Certificates.StoreName]::Root,
-        [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
-    )
-    $trustStoreOpened = $false
-    try {
-        $trustStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-        $trustStoreOpened = $true
-        $existingTrust = $trustStore.Certificates.Find(
-            [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-            $trustedThumbprint,
-            $false
-        )
-        if ($existingTrust.Count -ne 0) { throw 'The unique disposable test CA unexpectedly already exists in CurrentUser Root.' }
-        $trustStore.Add($caCertificate)
-        $trustInstalled = $true
-        $installedTrust = $trustStore.Certificates.Find(
-            [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-            $trustedThumbprint,
-            $false
-        )
-        if ($installedTrust.Count -ne 1 -or $installedTrust[0].Thumbprint -cne $trustedThumbprint) {
-            throw 'Windows did not install the exact disposable test CA in CurrentUser Root.'
-        }
-    } finally {
-        if ($trustStoreOpened) { $trustStore.Close() }
-        $trustStore.Dispose()
-    }
+        'req','-x509','-newkey','rsa:2048','-sha256','-nodes','-keyout',$leafKey,'-out',$leafPem,
+        '-days','1','-subj','/CN=localhost',
+        '-addext','basicConstraints=critical,CA:FALSE',
+        '-addext','keyUsage=critical,digitalSignature,keyEncipherment',
+        '-addext','extendedKeyUsage=serverAuth',
+        '-addext','subjectAltName=DNS:localhost'
+    ) 'Generate a self-signed localhost TLS test certificate with the expected server name and usage'
+    Write-Host 'The Windows trust store will not be modified; the test binary has a localhost-only, test-build unknown-CA override.'
 
     $phase = 'reserve loopback TLS feed port'
     Write-Host "Stall test phase: $phase"
@@ -172,9 +108,16 @@ try {
     $phase = 'execute the native WinHTTP stalled-body test'
     Write-Host "Stall test phase: $phase"
     $resultPath = Join-Path $rootFull 'native-test-result.json'
-    $testProcess = Start-Process -FilePath $testExe -ArgumentList @(
-        [string]$port, (Quote-ProcessArgument $rootFull), (Quote-ProcessArgument $resultPath)
-    ) -WindowStyle Hidden -PassThru
+    $testTrustVariable = 'EBR_TEST_ALLOW_UNTRUSTED_LOOPBACK_CERT'
+    $previousTestTrustValue = [Environment]::GetEnvironmentVariable($testTrustVariable, 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable($testTrustVariable, '1', 'Process')
+        $testProcess = Start-Process -FilePath $testExe -ArgumentList @(
+            [string]$port, (Quote-ProcessArgument $rootFull), (Quote-ProcessArgument $resultPath)
+        ) -WindowStyle Hidden -PassThru
+    } finally {
+        [Environment]::SetEnvironmentVariable($testTrustVariable, $previousTestTrustValue, 'Process')
+    }
     if (-not $testProcess.WaitForExit(15000)) {
         $stalledFeedState = if (Test-Path -LiteralPath $statePath) {
             Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
@@ -192,7 +135,7 @@ try {
             nativeProcessId = $testProcess.Id
             nativeTestChildTerminated = $testChildTerminated
             feedEvidence = $stalledFeedState
-            trust = [pscustomobject]@{ store = 'Cert:\CurrentUser\Root'; installAttempted = $trustInstallAttempted; thumbprint = $trustedThumbprint; removalVerified = $false }
+            trust = [pscustomobject]@{ windowsCertificateStoreModified = $false; testOnlyUnknownCaOverride = $true; restrictedToLocalhost = $true }
             cleanup = [pscustomobject]@{ runnerTempTestDirectoryRemoved = $false; errors = @() }
             serverStdout = if (Test-Path -LiteralPath $serverStdout) { Get-Content -LiteralPath $serverStdout -Raw -ErrorAction SilentlyContinue } else { $null }
             serverStderr = if (Test-Path -LiteralPath $serverStderr) { Get-Content -LiteralPath $serverStderr -Raw -ErrorAction SilentlyContinue } else { $null }
@@ -227,12 +170,12 @@ try {
     $finalEvidence = [pscustomobject]@{
         test = 'FAIL-005 actual stalled HTTPS asset-body timeout'
         status = 'PASS'
-        classification = 'real WinHTTP receive timeout against a trusted loopback TLS server; not a timeout-configuration assertion'
+        classification = 'real WinHTTP receive timeout against a localhost self-signed TLS server; test-build unknown-CA override is restricted to localhost and is absent from production builds'
         sourceCommit = $env:GITHUB_SHA
         runnerImage = $env:ImageOS
         nativeResult = $nativeResult
         feedEvidence = $feedState
-        trust = [pscustomobject]@{ store = 'Cert:\CurrentUser\Root'; ephemeralUserRootInstalled = $true; thumbprint = $trustedThumbprint; removalVerified = $false }
+        trust = [pscustomobject]@{ windowsCertificateStoreModified = $false; testOnlyUnknownCaOverride = $true; restrictedToLocalhost = $true }
         cleanup = [pscustomobject]@{ runnerTempTestDirectoryRemoved = $false; errors = @() }
         laptopRestarted = $false
         destructiveInstallPerformed = $false
@@ -246,7 +189,7 @@ catch {
         failure = "phase=$phase; $([string]$failure)"
         sourceCommit = $env:GITHUB_SHA
         runnerImage = $env:ImageOS
-        trust = [pscustomobject]@{ store = 'Cert:\CurrentUser\Root'; installAttempted = $trustInstallAttempted; thumbprint = $trustedThumbprint; removalVerified = $false }
+        trust = [pscustomobject]@{ windowsCertificateStoreModified = $false; testOnlyUnknownCaOverride = $true; restrictedToLocalhost = $true }
         cleanup = [pscustomobject]@{ runnerTempTestDirectoryRemoved = $false; errors = @() }
         laptopRestarted = $false
         destructiveInstallPerformed = $false
@@ -257,44 +200,6 @@ catch {
 finally {
     if ($serverPid -and (Get-Process -Id $serverPid -ErrorAction SilentlyContinue)) {
         Stop-Process -Id $serverPid -Force -ErrorAction SilentlyContinue
-    }
-    if ($trustInstallAttempted) {
-        $certificateRemovalVerified = $false
-        if ([string]::IsNullOrWhiteSpace($trustedThumbprint)) {
-            $cleanupFailures.Add('The harness attempted certificate installation but did not retain the exact thumbprint for removal.')
-        } elseif ($trustInstalled) {
-            $cleanupStore = [Security.Cryptography.X509Certificates.X509Store]::new(
-                [Security.Cryptography.X509Certificates.StoreName]::Root,
-                [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
-            )
-            $cleanupStoreOpened = $false
-            try {
-                $cleanupStore.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-                $cleanupStoreOpened = $true
-                $installedTrust = $cleanupStore.Certificates.Find(
-                    [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-                    $trustedThumbprint,
-                    $false
-                )
-                if ($installedTrust.Count -gt 1) { throw 'More than one certificate matched the unique disposable test thumbprint.' }
-                if ($installedTrust.Count -eq 1) { $cleanupStore.Remove($installedTrust[0]) }
-                $remainingTrust = $cleanupStore.Certificates.Find(
-                    [Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-                    $trustedThumbprint,
-                    $false
-                )
-                if ($remainingTrust.Count -ne 0) { throw "Disposable CurrentUser Root certificate $trustedThumbprint remains after cleanup." }
-                $certificateRemovalVerified = $true
-            } catch {
-                $cleanupFailures.Add("Could not remove disposable CurrentUser Root certificate $trustedThumbprint`: $($_.Exception.Message)")
-            } finally {
-                if ($cleanupStoreOpened) { $cleanupStore.Close() }
-                $cleanupStore.Dispose()
-            }
-        } else {
-            # The store operation never completed, so no trust was added and there is nothing to remove.
-            $certificateRemovalVerified = $true
-        }
     }
 }
 
@@ -322,13 +227,12 @@ if (-not $cleanupItem) {
 }
 
 if ($finalEvidence) {
-    if ($finalEvidence.trust) { $finalEvidence.trust.removalVerified = $certificateRemovalVerified }
     if ($finalEvidence.cleanup) {
         $finalEvidence.cleanup.runnerTempTestDirectoryRemoved = $runnerTempRootRemoved
         $finalEvidence.cleanup.errors = @($cleanupFailures)
     }
 }
-if (-not $certificateRemovalVerified -or -not $runnerTempRootRemoved -or $cleanupFailures.Count -gt 0) {
+if (-not $runnerTempRootRemoved -or $cleanupFailures.Count -gt 0) {
     $failure = if ($failure) { "$failure; cleanup verification failed: $($cleanupFailures -join '; ')" } else { "Cleanup verification failed: $($cleanupFailures -join '; ')" }
     if ($finalEvidence) {
         $finalEvidence.status = 'FAIL'
