@@ -252,3 +252,113 @@ jobs:
           path: build/v1.4.0-updater-evidence
           if-no-files-found: warn
           retention-days: 90
+
+  coordinator-backup-failure:
+    name: Exact-candidate coordinator backup-failure recovery (Windows Server x64)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install the native Windows compiler and utilities
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+
+      - name: Install upstream NSIS 3.11
+        uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1
+        with:
+          version: '3.11'
+
+      - name: Download the exact retained candidate
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.4.0-candidate-${{ github.event.inputs.reference_run_id || '44453271527' }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.reference_run_id || '44453271527' }}
+          github-token: ${{ github.token }}
+          path: candidate
+
+      - name: Validate All-scope provenance and candidate hashes
+        shell: pwsh
+        env:
+          REFERENCE_RUN_ID: ${{ github.event.inputs.reference_run_id || '44453271527' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = 'candidate/build/v1.4.0-updater-evidence'
+          $provenance = Get-Content -LiteralPath (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          $gate = Get-Content -LiteralPath (Join-Path $evidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
+          $soakValid = $gate.ResourceSoak -ceq 'success' -or [string]$gate.ResourceSoakReused -ceq 'true'
+          if ([string]$provenance.RunId -cne $env:REFERENCE_RUN_ID -or $provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $gate.Status -cne 'PASS' -or $gate.Scope -cne 'All' -or $gate.Candidate -cne 'success' -or $gate.CandidateIdentity -cne 'success' -or -not $soakValid -or $gate.ProductionBinaryUpdate -cne 'success') {
+            throw 'The referenced artifact is not from a passing All-scope exact-candidate acceptance run.'
+          }
+          $release = 'candidate/release'
+          $identities = Get-Content -LiteralPath (Join-Path $evidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json
+          $expected = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          if ($identities.Count -ne 5 -or (@($identities | Sort-Object Name | Select-Object -ExpandProperty Name) -join "`n") -cne (@($expected | Sort-Object) -join "`n")) { throw 'The candidate identity record does not contain the five release assets.' }
+          foreach ($item in $identities) {
+            $path = Join-Path $release $item.Name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate asset is missing: $($item.Name)" }
+            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $item.SHA256) { throw "Candidate asset hash mismatch: $($item.Name)" }
+          }
+          New-Item -ItemType Directory -Force -Path 'release' | Out-Null
+          Copy-Item -LiteralPath (Join-Path $release 'EyeBreakReminder.exe') -Destination 'release\EyeBreakReminder.exe'
+          Copy-Item -LiteralPath (Join-Path $release 'EyeBreakReminder-Setup-x64.exe') -Destination 'release\EyeBreakReminder-Setup-x64.exe'
+
+      - name: Build only the controlled successor fixture and launch sentinel
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          printf 'MSYS2_ROOT=%s\n' "$(cygpath -aw /)" >> "$GITHUB_ENV"
+          sentinel="$(cygpath -aw "$RUNNER_TEMP")/EyeBreakReminder-Unverified-Launch-Sentinel.exe"
+          gcc -Wall -Wextra -Werror -Os -s tests/update_launch_sentinel.c -o "$(cygpath -u "$sentinel")"
+          test -s "$(cygpath -u "$sentinel")"
+          printf 'UPDATE_LAUNCH_SENTINEL_PATH=%s\n' "$sentinel" >> "$GITHUB_ENV"
+          test -s "$(cygpath -u "$NSISDIR")/makensis.exe"
+
+      - name: Build controlled v1.4.1 update fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\build_production_update_fixture.ps1
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify real coordinator aborts before install when settings backup fails
+        shell: pwsh
+        timeout-minutes: 25
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_production_update_acceptance.ps1 `
+            -CandidateInstaller '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -CandidateExecutable '.\release\EyeBreakReminder.exe' `
+            -ControlledInstaller "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder-Setup-x64.exe" `
+            -ControlledExecutable "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder.exe" `
+            -LaunchSentinelExecutable $env:UPDATE_LAUNCH_SENTINEL_PATH `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence' `
+            -Scenario CoordinatorBackupFailure
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $report = Get-Content -LiteralPath '.\build\v1.4.0-updater-evidence\production-update-acceptance-results.json' -Raw | ConvertFrom-Json
+          $event = @($report.Events | Where-Object Name -CEQ 'Exact production coordinator backup failure and recovery')
+          if ($report.Status -ne 'PASS' -or $event.Count -ne 1 -or $event[0].Status -ne 'PASS') { throw 'Exact-candidate coordinator backup-failure evidence did not pass.' }
+
+      - name: Retain exact-candidate backup-failure evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-coordinator-backup-failure-${{ github.run_id }}
+          path: build/v1.4.0-updater-evidence
+          if-no-files-found: warn
+          retention-days: 90

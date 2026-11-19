@@ -423,7 +423,44 @@ function Run-InterruptedDownloadRecovery(){
   $updatesRoot=Join-Path $dataDir 'updates';Assert ((Test-Path -LiteralPath $updatesRoot)-and@(Get-ChildItem -LiteralPath $updatesRoot -Force).Count-eq0) 'interrupted stream removes its partial staging transaction'
   [IO.File]::WriteAllBytes($assetPath,$payload);$settingsPath=Join-Path $dataDir 'settings.ini';$settings=[regex]::Replace((Get-Content -LiteralPath $settingsPath -Raw),'(?m)^updateLastCheck=\d+$','updateLastCheck=0');[IO.File]::WriteAllText($settingsPath,$settings,[Text.UTF8Encoding]::new($false));$appProcessId=Start-TestApp $assetPath;$progress=Begin-Download $appProcessId;Complete-DownloadAndWait $appProcessId $progress;Assert ((Wait-InstalledVersion '1.4.1')-eq'1.4.1') 'successful retry installs after an interrupted stream';Assert-PreservedProfile;Stop-Application;Record 'Interrupted stream recovery and successful retry' 'PASS'
 }
-function Run-InstallerFailure(){Install-Baseline;Seed-Profile;New-ReleaseFixture $FailingInstaller $UpdateExecutable;$appProcessId=Start-TestApp;$progress=Begin-Download $appProcessId;Complete-DownloadAndWait $appProcessId $progress 'The update failed.';Assert ((Wait-InstalledVersion '1.4.0')-eq'1.4.0') 'failed installer transaction restores the exact previous executable';$key=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder';Assert ($key.DisplayVersion-eq'1.4.0') 'failed installer restores Installed Apps version registration';Assert-PreservedProfile;Stop-Application;Record 'Controlled installer exit failure and rollback' 'PASS'}
+function Run-InstallerFailure(){
+  Install-Baseline;Seed-Profile
+  $app=Join-Path $installDir 'EyeBreakReminder.exe';$readme=Join-Path $installDir 'README.md'
+  $settings=Join-Path $dataDir 'settings.ini';$timer=Join-Path $dataDir 'timer.dat';$history=Join-Path $dataDir 'history.dat'
+  $before=[pscustomobject]@{
+    Executable=(Get-FileHash -LiteralPath $app -Algorithm SHA256).Hash.ToLowerInvariant()
+    Readme=(Get-FileHash -LiteralPath $readme -Algorithm SHA256).Hash.ToLowerInvariant()
+    Settings=(Get-FileHash -LiteralPath $settings -Algorithm SHA256).Hash.ToLowerInvariant()
+    Timer=(Get-FileHash -LiteralPath $timer -Algorithm SHA256).Hash.ToLowerInvariant()
+    History=(Get-FileHash -LiteralPath $history -Algorithm SHA256).Hash.ToLowerInvariant()
+  }
+  $mutationMarker=Join-Path $scriptRoot 'partial-install-mutation.txt'
+  Assert (-not(Test-Path -LiteralPath $mutationMarker)) 'partial-install failure fixture starts without a stale mutation marker'
+  New-ReleaseFixture $FailingInstaller $UpdateExecutable
+  $appProcessId=Start-TestApp;$progress=Begin-Download $appProcessId
+  Complete-DownloadAndWait $appProcessId $progress 'The update failed.'
+  Assert ((Wait-InstalledVersion '1.4.0')-eq'1.4.0') 'failed installer transaction restores the previous product version'
+  Assert ((Get-Content -LiteralPath $mutationMarker -Raw)-ceq"partial-install-mutation-v1;expected-installer-exit=37`r`n") 'controlled installer fixture changed existing install files and registry before returning its failure code'
+  $afterExecutable=(Get-FileHash -LiteralPath $app -Algorithm SHA256).Hash.ToLowerInvariant()
+  Assert ($afterExecutable-ceq$before.Executable) 'partial-install rollback restores the exact previous application executable hash' $afterExecutable
+  $afterReadme=(Get-FileHash -LiteralPath $readme -Algorithm SHA256).Hash.ToLowerInvariant()
+  Assert ($afterReadme-ceq$before.Readme) 'partial-install rollback restores the overwritten installer-owned README byte-for-byte' $afterReadme
+  $key=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder'
+  Assert ($key.DisplayVersion-eq'1.4.0') 'partial-install rollback restores the previous Installed Apps version registration' $key.DisplayVersion
+  Assert ((Get-FileHash -LiteralPath $settings -Algorithm SHA256).Hash.ToLowerInvariant()-ceq$before.Settings) 'partial-install rollback preserves settings bytes exactly'
+  Assert ((Get-FileHash -LiteralPath $timer -Algorithm SHA256).Hash.ToLowerInvariant()-ceq$before.Timer) 'partial-install rollback preserves the timer checkpoint bytes exactly'
+  Assert ((Get-FileHash -LiteralPath $history -Algorithm SHA256).Hash.ToLowerInvariant()-ceq$before.History) 'partial-install rollback preserves history bytes exactly'
+  Assert-PreservedProfile
+  $restoredProcess=$null;$restartWatch=[Diagnostics.Stopwatch]::StartNew();$expectedApp=[IO.Path]::GetFullPath($app)
+  while($restartWatch.Elapsed.TotalSeconds-lt30-and-not$restoredProcess){
+    $restoredProcess=@(Get-TestOwnedApplications|Where-Object{$_.Id-ne$appProcessId-and$_.Path-and[IO.Path]::GetFullPath($_.Path)-ieq$expectedApp}|Select-Object -First 1)
+    if(-not$restoredProcess){Start-Sleep -Milliseconds 100}
+  }
+  $restored=if($restoredProcess){$restoredProcess[0]}else{$null}
+  Assert ($restored-and-not$restored.HasExited-and$restored.Id-ne$appProcessId-and[IO.Path]::GetFullPath($restored.Path)-ieq$expectedApp) 'the previous application relaunched from its exact installed path after partial-install rollback' ([pscustomobject]@{PreviousProcessId=$appProcessId;RestoredProcessId=$(if($restored){$restored.Id}else{$null});ProcessPath=$(if($restored){$restored.Path}else{$null});ExecutableSHA256=$afterExecutable})
+  Stop-Application
+  Record 'Controlled partial installer mutation and durable rollback' 'PASS' ([pscustomobject]@{MutationFixture=$mutationMarker;PriorFiles=$before;RestoredExecutableSHA256=$afterExecutable;RegistryVersion=$key.DisplayVersion;PreviousVersionRelaunched=$true})
+}
 function Run-StartupFailure(){Install-Baseline;Seed-Profile;New-ReleaseFixture $UpdateInstaller $UpdateExecutable;$appProcessId=Start-TestApp $script:setupSource 0 '1.4.1';$progress=Begin-Download $appProcessId;Complete-DownloadAndWait $appProcessId $progress 'The updated application did not start.';Assert ((Wait-InstalledVersion '1.4.0')-eq'1.4.0') 'missing startup confirmation triggers previous-version rollback';Assert-PreservedProfile;Stop-Application;$uninstall=Start-Process -FilePath (Join-Path $installDir 'Uninstall.exe') -ArgumentList '/S' -PassThru -Wait;Assert ($uninstall.ExitCode-eq0-and-not(Test-Path -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe'))) 'application can be uninstalled normally after startup-failure recovery';Assert (((Get-Content -LiteralPath (Join-Path $dataDir 'settings.ini') -Raw)-match'(?m)^workMinutes=37$')-and((Get-Content -LiteralPath (Join-Path $dataDir 'history.dat') -Raw)-eq$script:historyText)) 'uninstall after recovery preserves the restored settings and history';Record 'New executable startup confirmation rollback and subsequent uninstall' 'PASS'}
 function Run-PortableUpdate(){Reset-Installation;Remove-Item -LiteralPath $scriptRoot -Recurse -Force -ErrorAction SilentlyContinue;[void][IO.Directory]::CreateDirectory($scriptRoot);[void][IO.Directory]::CreateDirectory($installDir);$portable=Join-Path $scriptRoot 'portable';[void][IO.Directory]::CreateDirectory($portable);$app=Join-Path $portable 'EyeBreakReminder.exe';Copy-Item -LiteralPath $BaselineExecutable -Destination $app;[IO.File]::WriteAllText((Join-Path $portable 'keep-user-document.txt'),'keep this unrelated file');Seed-Profile;New-ReleaseFixture $UpdateInstaller $UpdateExecutable;Copy-Item -LiteralPath (Join-Path $installDir 'test-update-response.txt') -Destination (Join-Path $portable 'test-update-response.txt');$appProcessId=Start-TestApp $script:appSource 0 '' $app;[void](Begin-Download $appProcessId);$ready=Find-Dialog 'Ready to install.' @($appProcessId) 120;$names=(Get-Names $ready.Root) -join ' | ';Assert (($names-match'Downloaded:')-and($names-match'\(100%\)')) 'portable update displays completed byte progress in the native dialog' $names;Screenshot $ready 'portable-update-progress-ready.png';Complete-DownloadAndWait $appProcessId $ready;Assert ((Get-Item -LiteralPath $app).VersionInfo.ProductVersion-eq'1.4.1') 'portable update atomically replaces and relaunches the standalone executable';Assert ((Get-Content -LiteralPath (Join-Path $portable 'keep-user-document.txt') -Raw)-eq'keep this unrelated file') 'portable update preserves unrelated files';Assert (-not(Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder')) 'portable update does not register an installed application';Assert-PreservedProfile;Stop-Application;Record 'Portable standalone update' 'PASS'}
 function Run-PortableCleanUpdate([bool]$DeleteHistory){

@@ -1,4 +1,6 @@
 #define EYEBREAK_TEST_BUILD
+#include <winsock2.h>
+#undef NOMINMAX
 #include "../src/update_coordinator.hpp"
 #include <windows.h>
 #include <atomic>
@@ -7,6 +9,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <cstring>
 #include <cstdlib>
 #include <objbase.h>
 
@@ -14,6 +17,34 @@ namespace {
 int assertions=0;
 bool check(bool value,const char*name){++assertions;if(!value)std::cerr<<"FAIL: "<<name<<'\n';return value;}
 bool writeBytes(const std::wstring&path,const std::string&value){HANDLE file=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return false;DWORD wrote=0;const bool ok=WriteFile(file,value.data(),DWORD(value.size()),&wrote,nullptr)&&wrote==value.size();CloseHandle(file);return ok;}
+struct RefusedLoopbackPort {
+    using StartupFn=int (WSAAPI*)(WORD,LPWSADATA);using SocketFn=SOCKET (WSAAPI*)(int,int,int);using BindFn=int (WSAAPI*)(SOCKET,const sockaddr*,int);using NameFn=int (WSAAPI*)(SOCKET,sockaddr*,int*);using InetAddrFn=u_long (WSAAPI*)(const char*);using NtohsFn=u_short (WSAAPI*)(u_short);using CloseFn=int (WSAAPI*)(SOCKET);using CleanupFn=int (WSAAPI*)();
+    HMODULE module{};SOCKET reservation=INVALID_SOCKET;CloseFn closeSocket{};CleanupFn cleanup{};bool winsockStarted=false;unsigned short port=0;
+    template<class Function> Function loadProc(const char*name){const FARPROC raw=GetProcAddress(module,name);Function function{};static_assert(sizeof(function)==sizeof(raw));std::memcpy(&function,&raw,sizeof(function));return function;}
+    bool open(){
+        module=LoadLibraryW(L"Ws2_32.dll");if(!module)return false;
+        const auto startup=loadProc<StartupFn>("WSAStartup");const auto createSocket=loadProc<SocketFn>("socket");const auto bindSocket=loadProc<BindFn>("bind");const auto socketName=loadProc<NameFn>("getsockname");const auto address=loadProc<InetAddrFn>("inet_addr");const auto networkToHostPort=loadProc<NtohsFn>("ntohs");closeSocket=loadProc<CloseFn>("closesocket");cleanup=loadProc<CleanupFn>("WSACleanup");
+        if(!startup||!createSocket||!bindSocket||!socketName||!address||!networkToHostPort||!closeSocket||!cleanup)return false;
+        WSADATA data{};if(startup(MAKEWORD(2,2),&data)!=0)return false;winsockStarted=true;reservation=createSocket(AF_INET,SOCK_STREAM,IPPROTO_TCP);if(reservation==INVALID_SOCKET)return false;
+        sockaddr_in endpoint{};endpoint.sin_family=AF_INET;endpoint.sin_addr.s_addr=address("127.0.0.1");endpoint.sin_port=0;if(endpoint.sin_addr.s_addr==INADDR_NONE||bindSocket(reservation,reinterpret_cast<const sockaddr*>(&endpoint),sizeof(endpoint))!=0)return false;
+        int length=sizeof(endpoint);if(socketName(reservation,reinterpret_cast<sockaddr*>(&endpoint),&length)!=0||length!=sizeof(endpoint))return false;port=networkToHostPort(endpoint.sin_port);return port>=1024;
+    }
+    void close(){if(reservation!=INVALID_SOCKET&&closeSocket){closeSocket(reservation);reservation=INVALID_SOCKET;}if(winsockStarted&&cleanup){cleanup();winsockStarted=false;}if(module){FreeLibrary(module);module=nullptr;}}
+    ~RefusedLoopbackPort(){close();}
+};
+bool testInitialConnectionRefusal(const std::wstring&stage){
+    RefusedLoopbackPort endpoint;if(!endpoint.open())return check(false,"reserve an unlistened loopback TCP port for deterministic connection refusal");
+    // Keep the socket bound but never listen so no competing local process can
+    // claim the port while WinHTTP receives a refused loopback connection.
+    wchar_t priorProxy[128]{};const DWORD priorLength=GetEnvironmentVariableW(L"EBR_TEST_HTTPS_PROXY",priorProxy,DWORD(std::size(priorProxy)));if(priorLength>=std::size(priorProxy))return check(false,"read a bounded prior test proxy setting");
+    const std::wstring testProxy=L"127.0.0.1:"+std::to_wstring(endpoint.port);if(!SetEnvironmentVariableW(L"EBR_TEST_HTTPS_PROXY",testProxy.c_str()))return check(false,"set the isolated loopback proxy for the connection-refusal test");
+    const std::wstring sentinel=stage+L"\\connection-refusal-prior-app.sentinel";bool ok=check(writeBytes(sentinel,"existing-app-must-remain-unchanged"),"create the prior-app sentinel for connection refusal");
+    eye::updates::ReleaseAsset asset;asset.name="EyeBreakReminder-Setup-x64.exe";asset.size=3;asset.digest="sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";asset.downloadUrl="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.3.0/EyeBreakReminder-Setup-x64.exe";
+    std::atomic_bool cancelled{false};const auto result=eye::updates::downloadVerified(asset,stage,L"EyeBreakReminder-Setup-x64.exe",cancelled);
+    const bool restoredProxy=priorLength?SetEnvironmentVariableW(L"EBR_TEST_HTTPS_PROXY",std::wstring(priorProxy,priorLength).c_str())!=FALSE:SetEnvironmentVariableW(L"EBR_TEST_HTTPS_PROXY",nullptr)!=FALSE;
+    std::string sentinelContents;const bool priorAppUntouched=eye::win::read(sentinel,sentinelContents,128)&&sentinelContents=="existing-app-must-remain-unchanged";const bool noPartial=GetFileAttributesW((stage+L"\\EyeBreakReminder-Setup-x64.exe.part").c_str())==INVALID_FILE_ATTRIBUTES;const bool noInstaller=GetFileAttributesW((stage+L"\\EyeBreakReminder-Setup-x64.exe").c_str())==INVALID_FILE_ATTRIBUTES;
+    ok&=check(restoredProxy,"restore the caller's prior loopback-proxy environment setting");ok&=check(!result.ok&&!result.cancelled&&result.received==0&&!result.error.empty()&&result.error.find("connect")!=std::string::npos,"an initial refused HTTPS connection returns an actionable failure without accepting bytes");ok&=check(noPartial&&noInstaller,"initial connection refusal removes the partial file and does not stage an installer");ok&=check(priorAppUntouched,"initial connection refusal leaves the existing app sentinel byte-for-byte unchanged");ok&=check(DeleteFileW(sentinel.c_str())!=FALSE,"remove the connection-refusal prior-app sentinel after the assertion");return ok;
+}
 bool createTestJunction(const std::wstring&link,const std::wstring&target){wchar_t systemDirectory[MAX_PATH]{};const UINT length=GetSystemDirectoryW(systemDirectory,MAX_PATH);if(!length||length>=MAX_PATH)return false;const std::wstring command=L"\""+std::wstring(systemDirectory)+L"\\cmd.exe\" /d /c mklink /J \""+link+L"\" \""+target+L"\"";std::vector<wchar_t>buffer(command.begin(),command.end());buffer.push_back(L'\0');STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION process{};if(!CreateProcessW(nullptr,buffer.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process))return false;WaitForSingleObject(process.hProcess,INFINITE);DWORD exitCode=1;GetExitCodeProcess(process.hProcess,&exitCode);CloseHandle(process.hThread);CloseHandle(process.hProcess);const DWORD attributes=GetFileAttributesW(link.c_str());return exitCode==0&&attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_REPARSE_POINT)!=0;}
 std::wstring asciiWide(const char*text){std::wstring result;for(;*text;++text)result.push_back(static_cast<unsigned char>(*text));return result;}
 int holdTestCoordinatorMutex(const char*nonce){
@@ -104,6 +135,7 @@ int main(int argc,char**argv){
     if(!CreateDirectoryW(folder.c_str(),nullptr)){std::cerr<<"FAIL: isolated test folder must be new; refusing to reuse or remove it\n";return 1;}
     const std::wstring stage=folder.wstring();bool ok=true;
     ok&=check(eye::updates::safeStagingDirectory(stage),"isolated staging directory is a regular non-reparse path");
+    ok&=testInitialConnectionRefusal(stage);
     const std::wstring testMutexName=L"Local\\EyeBreakReminder.UpdaterTest."+std::to_wstring(GetCurrentProcessId());HANDLE firstMutex{},duplicateMutex{};
     const bool firstAcquired=eye::updates::acquireCoordinatorMutex(firstMutex,testMutexName.c_str());const bool duplicateRejected=!eye::updates::acquireCoordinatorMutex(duplicateMutex,testMutexName.c_str())&&duplicateMutex==nullptr;
     ok&=check(firstAcquired&&duplicateRejected,"a repeated update attempt cannot acquire a second coordinator mutex");if(firstMutex)CloseHandle(firstMutex);

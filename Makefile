@@ -38,7 +38,7 @@ updater-windows-test: build/updater-windows-tests.exe build/updater-production-p
 build/updater-failing-installer-resources.o: tests/updater_failing_installer.rc | build
 	$(WINDRES) $< -O coff -o $@
 build/updater-failing-installer.exe: tests/updater_failing_installer.cpp build/updater-failing-installer-resources.o | build
-	$(CROSS_CXX) -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -municode -mwindows -static -static-libgcc -static-libstdc++ $^ -o $@
+	$(CROSS_CXX) -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -municode -mwindows -static -static-libgcc -static-libstdc++ $^ -o $@ -ladvapi32
 updater-test-artifacts: build/updater-failing-installer.exe
 tests/core-tests: tests/core_tests.cpp src/core.hpp
 	$(HOST_CXX) -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror $< -o $@

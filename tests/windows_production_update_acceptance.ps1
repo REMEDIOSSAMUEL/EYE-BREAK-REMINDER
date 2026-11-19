@@ -4,7 +4,8 @@ param(
   [Parameter(Mandatory=$true)][string]$ControlledInstaller,
   [Parameter(Mandatory=$true)][string]$ControlledExecutable,
   [Parameter(Mandatory=$true)][string]$LaunchSentinelExecutable,
-  [string]$EvidenceDirectory = 'build/v1.4.0-updater-evidence'
+  [string]$EvidenceDirectory = 'build/v1.4.0-updater-evidence',
+  [ValidateSet('All','CoordinatorBackupFailure')][string]$Scenario = 'All'
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'This production-binary update transaction runs only on a disposable GitHub Actions Windows runner.' }
@@ -403,6 +404,51 @@ try {
   $sentinelBytes=[IO.File]::ReadAllBytes($launchSentinelPath)
   Record 'Test-only unverified-executable sentinel identity' 'INFO' ([pscustomobject]@{Path=$launchSentinelPath;Bytes=$sentinelBytes.Length;SHA256=(Get-FileHash -LiteralPath $launchSentinelPath -Algorithm SHA256).Hash.ToLowerInvariant();MarkerPath=$launchSentinelMarker})
 
+  if($Scenario-eq'CoordinatorBackupFailure'){
+    $appProcess=Start-Process -FilePath $installedExe -PassThru
+    Record 'Exact candidate launched for coordinator backup-failure injection' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;ProductVersion=(Get-Item $installedExe).VersionInfo.ProductVersion})
+    $choice=Find-Dialog 'Eye Break Reminder Update Available' $appProcess.Id 90
+    Assert ($choice.WindowTitle-eq'Eye Break Reminder Update') 'exact candidate discovers the controlled stable successor before backup-failure injection' $choice.WindowTitle
+    Invoke-Button $choice 'Download & Install'
+    $ready=Find-Dialog 'Ready to install.' $appProcess.Id 120
+    Assert ((@($ready.Names)-join' ').Contains('(100%)')-and(@($ready.Names)-join' ').Contains('SHA-256 digest matches GitHub')) 'the controlled update payload is completely downloaded and verified before coordinator backup-failure injection' ($ready.Names -join ' | ')
+    $updatesRoot=Join-Path $dataDir 'updates'
+    $backupStages=@(Get-ChildItem -LiteralPath $updatesRoot -Directory -Force -ErrorAction Stop)
+    Assert ($backupStages.Count-eq1) 'the verified update has one isolated private staging directory before coordinator startup' @($backupStages.FullName)
+    $backupCollision=Join-Path $backupStages[0].FullName 'backup-0.dat'
+    if(Test-Path -LiteralPath $backupCollision){throw 'The exact backup collision fixture path unexpectedly exists.'}
+    [IO.File]::WriteAllText($backupCollision,'disposable pre-existing backup-name collision',[Text.Encoding]::ASCII)
+    $collisionHash=(Get-FileHash -LiteralPath $backupCollision -Algorithm SHA256).Hash.ToLowerInvariant()
+    $oldPid=$appProcess.Id
+    Invoke-Button $ready 'Install Update'
+    $backupFailure=Find-Dialog 'The current application or its settings could not be backed up and verified.' 0 180
+    $backupFailureText=$backupFailure.Names -join ' '
+    Assert ($backupFailure.WindowTitle-eq'Eye Break Reminder Update'-and$backupFailureText.Contains('The current application or its settings could not be backed up and verified.')-and$backupFailureText.Contains('The update was not installed.')) 'the actual production coordinator reports an actionable backup failure before installer execution' $backupFailureText
+    Assert (-not(Test-Path -LiteralPath $launchSentinelMarker)) 'coordinator backup failure does not launch the unverified-executable sentinel'
+    Assert ((Get-Item -LiteralPath $installedExe).VersionInfo.ProductVersion-match'^1\.4\.0(\.0)?$'-and(Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()-ceq(Get-FileHash -LiteralPath $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()) 'coordinator backup failure leaves the exact tested v1.4.0 installed executable unchanged' ([pscustomobject]@{Version=(Get-Item $installedExe).VersionInfo.ProductVersion;SHA256=(Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()})
+    Assert ((Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Stop).DisplayVersion-eq'1.4.0') 'coordinator backup failure leaves Installed Apps registration at v1.4.0'
+    $settingsAfterFailure=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
+    $settingKeysBefore=@($settingsBefore.Keys|Where-Object{$_-cne'updateLastCheck'}|Sort-Object)
+    $changedSettings=@($settingKeysBefore|Where-Object{-not$settingsAfterFailure.ContainsKey($_)-or[string]$settingsBefore[$_]-cne[string]$settingsAfterFailure[$_]})
+    Assert ($changedSettings.Count-eq0-and[Convert]::ToBase64String($historyBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'history.dat')))-and[Convert]::ToBase64String($sentinelBefore)-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $dataDir 'unrelated-sentinel.txt')))) 'coordinator backup failure preserves user settings, history and unrelated profile bytes' ([pscustomobject]@{ChangedSettings=$changedSettings;HistoryUnchanged=$true;UnrelatedSentinelUnchanged=$true;UpdateCheckTimestampMayAdvance=$true})
+    Invoke-Button $backupFailure 'Close'
+    $relaunchWatch=[Diagnostics.Stopwatch]::StartNew();$restoredProcesses=@()
+    while($relaunchWatch.Elapsed.TotalSeconds-lt45){
+      $restoredProcesses=@(Get-CimInstance Win32_Process -Filter "Name='EyeBreakReminder.exe'" -ErrorAction SilentlyContinue|Where-Object{$_.ExecutablePath-and[IO.Path]::GetFullPath([string]$_.ExecutablePath)-ieq$installedExe-and[int]$_.ProcessId-ne$oldPid})
+      if($restoredProcesses.Count){break};Start-Sleep -Milliseconds 200
+    }
+    Assert ($restoredProcesses.Count-gt0) 'the previous v1.4.0 application relaunches after coordinator backup failure' $restoredProcesses
+    $restoredProcess=Get-Process -Id ([int]$restoredProcesses[0].ProcessId) -ErrorAction Stop
+    Assert ($restoredProcess.MainWindowHandle-ne[IntPtr]::Zero) 'the recovered previous application has a live visible main window' ([pscustomobject]@{ProcessId=$restoredProcess.Id;Path=$restoredProcesses[0].ExecutablePath;WindowHandle=$restoredProcess.MainWindowHandle.ToInt64()})
+    $stageWatch=[Diagnostics.Stopwatch]::StartNew()
+    while($stageWatch.Elapsed.TotalSeconds-lt20-and(Test-Path -LiteralPath $backupStages[0].FullName)){Start-Sleep -Milliseconds 100}
+    Assert (-not(Test-Path -LiteralPath $backupStages[0].FullName)) 'recovery cleanup removes the collision marker and private staging directory' ([pscustomobject]@{StagePath=$backupStages[0].FullName;Removed=(-not(Test-Path -LiteralPath $backupStages[0].FullName));CollisionSHA256=$collisionHash;WaitSeconds=[Math]::Round($stageWatch.Elapsed.TotalSeconds,2)})
+    Assert (@(Get-Content -LiteralPath $requestLogPath|ForEach-Object{$_|ConvertFrom-Json}|Where-Object{$_.host-eq'github.com'-and$_.path-eq'/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder-Setup-x64.exe'}).Count-ge1) 'the isolated feed records the verified successor-setup download that preceded the coordinator backup failure'
+    Record 'Exact production coordinator backup failure and recovery' 'PASS' ([pscustomobject]@{CandidateVersion='1.4.0';NoInstallerLaunch=(-not(Test-Path -LiteralPath $launchSentinelMarker));PreviousApplicationRelaunched=$true;UserDataPreserved=$true;StageCleaned=$true})
+    $script:resultStatus='PASS'
+    return
+  }
+
   if(Test-Path -LiteralPath $redirectMarkerPath){throw 'The one-shot unexpected-redirect fixture marker already exists.'}
   [IO.File]::WriteAllText($redirectMarkerPath,'redirect the next setup asset response once',[Text.Encoding]::ASCII)
   $unexpectedRedirect='https://unexpected-updates.example.invalid/unsafe.exe'
@@ -582,7 +628,7 @@ finally {
   try{$resolvedTestRoot=[IO.Path]::GetFullPath($testRoot);if($resolvedTestRoot-ine$testRoot-or-not$resolvedTestRoot.StartsWith($runnerPrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Refusing to remove files outside the isolated production-update runner folder.'};if(Test-Path -LiteralPath $resolvedTestRoot){if((Get-Item -LiteralPath $resolvedTestRoot).Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Refusing to remove a reparse-point test folder.'};Remove-Item -LiteralPath $resolvedTestRoot -Recurse -Force};if(Test-Path -LiteralPath $resolvedTestRoot){throw 'Disposable TLS keys and transaction files remain in RUNNER_TEMP.'};Record 'Remove disposable TLS private keys and test folder' 'PASS' $resolvedTestRoot}catch{Record 'Remove disposable TLS private keys and test folder' 'FAIL' $_.Exception.Message}
   if($hostsRestoreStatus-eq'FAIL'-or$trustRootCleanupStatus-eq'FAIL'-or@($script:events|Where-Object Status -EQ 'FAIL').Count){ $script:resultStatus='FAIL' }
   $script:events.Add([pscustomobject]@{Name='Isolated feed cleanup';Status=$(if($hostsRestoreStatus-ne'FAIL'-and$trustRootCleanupStatus-ne'FAIL'-and$serverStopped){'PASS'}else{'FAIL'});Details=[pscustomobject]@{HostsFile=$hostsRestoreStatus;TemporaryTrustRoot=$trustRootCleanupStatus;ServerProcessStopped=$serverStopped;TestCAOrKeysUploaded=$false};Utc=[DateTime]::UtcNow.ToString('o')})
-  $report=[pscustomobject]@{Status=$script:resultStatus;Assertions=$script:assertions;RunId=$env:GITHUB_RUN_ID;SourceCommit=$env:GITHUB_SHA;StartedUtc=$startedUtc.ToString('o');CompletedUtc=[DateTime]::UtcNow.ToString('o');CandidateBaselineVersion='1.4.0';ControlledSuccessorVersion='1.4.1';TestTrustAnchor=$rootThumbprint;TemporaryTestRootRemoved=($trustRootCleanupStatus-eq'PASS');HostsRestoredByteIdentically=($hostsRestoreStatus-eq'PASS');ProductionTestEndpointOverrideCompiled=$false;Events=@($script:events)}
+  $report=[pscustomobject]@{Status=$script:resultStatus;Scenario=$Scenario;Assertions=$script:assertions;RunId=$env:GITHUB_RUN_ID;SourceCommit=$env:GITHUB_SHA;StartedUtc=$startedUtc.ToString('o');CompletedUtc=[DateTime]::UtcNow.ToString('o');CandidateBaselineVersion='1.4.0';ControlledSuccessorVersion='1.4.1';TestTrustAnchor=$rootThumbprint;TemporaryTestRootRemoved=($trustRootCleanupStatus-eq'PASS');HostsRestoredByteIdentically=($hostsRestoreStatus-eq'PASS');ProductionTestEndpointOverrideCompiled=$false;Events=@($script:events)}
   $report|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'production-update-acceptance-results.json') -Encoding UTF8
   try{Stop-Transcript|Out-Null}catch{}
 }
