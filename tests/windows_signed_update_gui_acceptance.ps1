@@ -181,10 +181,12 @@ try{
   $script:coordinator.Process.Dispose();$script:coordinator=$null
   $script:updatedApp=Wait-UpdatedApplication $target
   $timerInitial=Get-TimerSeconds $script:updatedApp.Window
+  Assert-That ([EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,41) -ceq 'Paused' -and [EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,20) -ceq 'Resume') 'the relaunched application respects the preserved disabled auto-start preference'
+  Assert-That ([EBR_SIGNED_GUI_NATIVE]::Click($script:updatedApp.Window,20)) 'the relaunched signed successor can resume its timer normally'
   Assert-That ((Get-Hash $target) -ceq (Get-Hash $portable) -and (Get-Item -LiteralPath $target).VersionInfo.ProductVersion -match '^1\.4\.1(\.0)?$') 'the installed binary exactly matches the signed portable-application digest and successor version'
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::Responsive($script:updatedApp.Window)) 'the relaunched signed successor application responds to the window message check'
   Assert-That (Wait-TimerProgress $script:updatedApp.Window $timerInitial) 'the relaunched signed successor timer continues to advance'
-  Assert-That (([IO.File]::ReadAllText($settingsPath)).Contains('workMinutes=37') -and ([IO.File]::ReadAllText($settingsPath)).Contains('volume=32')) 'the signed installed update preserves user settings'
+  Assert-That (([IO.File]::ReadAllText($settingsPath)).Contains('workMinutes=37') -and ([IO.File]::ReadAllText($settingsPath)).Contains('volume=32') -and ([IO.File]::ReadAllText($settingsPath)).Contains('autoStart=0')) 'the signed installed update preserves user settings, including the disabled auto-start choice'
   Assert-That ((Get-Hash $historyPath) -ceq $historyHash) 'the signed installed update preserves user history byte-for-byte'
   Assert-That ((Get-Hash $sentinelPath) -ceq $sentinelHash) 'the signed installed update preserves unrelated user data'
   $version=(Get-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion).DisplayVersion
