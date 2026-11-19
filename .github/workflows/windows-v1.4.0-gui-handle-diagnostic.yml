@@ -1,0 +1,49 @@
+name: Windows v1.4.0 update-dialog handle attribution
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gui-handle-attribution:
+    name: Isolate update-check and modal process-handle growth
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - name: Check out the requested feature-branch source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install the native Windows GUI test compiler
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+
+      - name: Build only the isolated accelerated GUI test executable
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          make gui-test \
+            CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
+            WINDRES=windres
+
+      - name: Attribute handle growth to check worker or dialog lifecycle
+        shell: pwsh
+        run: ./scripts/v1.4.0-gui-handle-diagnostic.ps1
+
+      - name: Retain diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-gui-handle-diagnostic-${{ github.run_id }}
+          path: build/v1.4.0-gui-handle-diagnostic/
+          if-no-files-found: warn
+          retention-days: 30
