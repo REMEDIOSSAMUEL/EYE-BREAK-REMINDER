@@ -299,6 +299,19 @@ public static class EBR_STD_UIA_CLIENT {
     $installedHash=(Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()
     if($installedHash-cne$expectedHash){throw "Installed executable hash $installedHash differs from candidate hash $expectedHash."}
     $events.Add([pscustomobject]@{Name='Installed image matches the candidate at the standard user LocalAppData path';Status='PASS';Path=$installed;SHA256=$installedHash})
+    $startMenuShortcut=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Eye Break Reminder\Eye Break Reminder.lnk'
+    if(-not(Test-Path -LiteralPath $startMenuShortcut -PathType Leaf)){throw "The standard-user installer did not create the expected per-user Start Menu shortcut '$startMenuShortcut'."}
+    $shortcutShell=$null;$shortcut=$null
+    try{
+      $shortcutShell=New-Object -ComObject WScript.Shell;$shortcut=$shortcutShell.CreateShortcut($startMenuShortcut)
+      $shortcutTarget=[IO.Path]::GetFullPath([string]$shortcut.TargetPath);$shortcutArguments=[string]$shortcut.Arguments
+      if($shortcutTarget-ine[IO.Path]::GetFullPath($installed)){throw "The standard-user Start Menu shortcut targets '$shortcutTarget', expected '$installed'."}
+      if($shortcutArguments.Length-ne0){throw "The standard-user Start Menu shortcut has unexpected arguments '$shortcutArguments'."}
+      $events.Add([pscustomobject]@{Name='Per-user Start Menu shortcut points exactly to the installed executable without arguments';Status='PASS';ShortcutPath=$startMenuShortcut;TargetPath=$shortcutTarget;Arguments=$shortcutArguments})
+    }finally{
+      if($shortcut-and[Runtime.InteropServices.Marshal]::IsComObject($shortcut)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)}
+      if($shortcutShell-and[Runtime.InteropServices.Marshal]::IsComObject($shortcutShell)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcutShell)}
+    }
     $uninstallKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder';$appKey='HKCU:\Software\EyeBreakReminder'
     if(-not(Test-Path -LiteralPath $uninstallKey)){throw 'The standard user HKCU uninstall registration was not created.'}
     $registration=Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Stop

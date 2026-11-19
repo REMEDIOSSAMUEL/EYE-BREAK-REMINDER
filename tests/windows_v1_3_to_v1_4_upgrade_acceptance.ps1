@@ -24,6 +24,23 @@ public static class EBR_LEGACY_UPGRADE_NATIVE {
 Add-Type -TypeDefinition $native -ErrorAction Stop
 $events=[Collections.Generic.List[object]]::new();$assertions=0;$result='FAIL'
 function Assert([bool]$ok,[string]$name,$details=$null){if(-not$ok){$events.Add([pscustomobject]@{Name=$name;Status='FAIL';Details=$details;Utc=[DateTime]::UtcNow.ToString('o')});throw "v1.3.0 to v1.4.0 upgrade failed: $name ($details)"};$script:assertions++;$script:events.Add([pscustomobject]@{Name=$name;Status='PASS';Details=$details;Utc=[DateTime]::UtcNow.ToString('o')})}
+function Assert-StartMenuRegistration([string]$expectedTarget,[string]$phase){
+  $expectedDirectory=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Eye Break Reminder'
+  $shortcutPath=Join-Path $expectedDirectory 'Eye Break Reminder.lnk'
+  Assert (Test-Path -LiteralPath $shortcutPath -PathType Leaf) "$phase creates the shortcut at the exact per-user Start Menu path" $shortcutPath
+  $shell=$null;$link=$null
+  try{
+    $shell=New-Object -ComObject WScript.Shell
+    $link=$shell.CreateShortcut($shortcutPath)
+    $actualTarget=[string]$link.TargetPath;$actualArguments=[string]$link.Arguments
+    $targetMatches= -not[string]::IsNullOrWhiteSpace($actualTarget) -and [IO.Path]::GetFullPath($actualTarget)-ieq[IO.Path]::GetFullPath($expectedTarget)
+    $argumentsMatch=[string]::IsNullOrEmpty($actualArguments)
+    Assert ($targetMatches-and$argumentsMatch) "$phase shortcut targets the exact installed executable with no command-line arguments" ([pscustomobject]@{Path=$shortcutPath;ExpectedTarget=[IO.Path]::GetFullPath($expectedTarget);ActualTarget=$actualTarget;ExpectedArguments='';ActualArguments=$actualArguments})
+  }finally{
+    if($link){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($link)}
+    if($shell){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)}
+  }
+}
 try{
   Assert ((Get-Item -LiteralPath $LegacyInstaller).VersionInfo.ProductVersion-eq'1.3.0') 'downloaded official baseline installer has v1.3.0 product identity'
   Assert ((Get-Item -LiteralPath $CandidateInstaller).VersionInfo.ProductVersion-eq'1.4.0') 'candidate setup has v1.4.0 product identity'
@@ -32,6 +49,7 @@ try{
   $old=Start-Process -FilePath ([IO.Path]::GetFullPath($LegacyInstaller)) -ArgumentList @('/S',"/D=$installDir") -PassThru -Wait
   Assert ($old.ExitCode-eq0-and(Test-Path -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe'))) 'real public v1.3.0 NSIS installer completes in a disposable per-user folder' $old.ExitCode
   Assert ((Get-Item -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe')).VersionInfo.ProductVersion-eq'1.3.0') 'installed baseline executable is v1.3.0'
+  Assert-StartMenuRegistration (Join-Path $installDir 'EyeBreakReminder.exe') 'Fresh v1.3.0 install'
   $installKey=Get-ItemProperty -LiteralPath 'HKCU:\Software\EyeBreakReminder' -ErrorAction Stop;$uninstallKey=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder' -ErrorAction Stop
   Assert ([IO.Path]::GetFullPath($installKey.InstallDir)-ieq[IO.Path]::GetFullPath($installDir)-and$uninstallKey.DisplayVersion-eq'1.3.0') 'v1.3.0 install registration points to the isolated path and Apps entry'
   [void][IO.Directory]::CreateDirectory($dataDir);$now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -46,9 +64,11 @@ try{
   $installKey=Get-ItemProperty -LiteralPath 'HKCU:\Software\EyeBreakReminder' -ErrorAction Stop;$uninstallKey=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder' -ErrorAction Stop
   Assert ([IO.Path]::GetFullPath($installKey.InstallDir)-ieq[IO.Path]::GetFullPath($installDir)-and$uninstallKey.DisplayVersion-eq'1.4.0'-and(Test-Path -LiteralPath (Join-Path $installDir 'Uninstall.exe'))) 'upgrade retains the installation identity and updates Installed Apps metadata'
   Assert ((Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash.ToLowerInvariant()-eq$before.Settings-and(Get-FileHash -LiteralPath $timerPath -Algorithm SHA256).Hash.ToLowerInvariant()-eq$before.Timer-and(Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash.ToLowerInvariant()-eq$before.History) 'installer preserves pre-existing v1.3.0 settings, timer checkpoint and history exactly'
-  $shortcut=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Eye Break Reminder\Eye Break Reminder.lnk';Assert (Test-Path -LiteralPath $shortcut) 'Start Menu shortcut remains registered after in-place update'
+  Assert-StartMenuRegistration $app 'In-place v1.4.0 upgrade'
   $appProcess=Start-Process -FilePath $app -PassThru;$watch=[Diagnostics.Stopwatch]::StartNew();while($watch.Elapsed.TotalSeconds-lt20-and-not$appProcess.HasExited){$appProcess.Refresh();if($appProcess.MainWindowHandle-ne[IntPtr]::Zero){break};Start-Sleep -Milliseconds 100};Assert (-not$appProcess.HasExited-and$appProcess.MainWindowHandle-ne[IntPtr]::Zero) 'upgraded v1.4.0 binary starts with the existing legacy profile';$quit=[EBR_LEGACY_UPGRADE_NATIVE]::RegisterWindowMessageW('EyeBreakReminder.Exit.Native.1');[void][EBR_LEGACY_UPGRADE_NATIVE]::PostMessageW($appProcess.MainWindowHandle,$quit,[IntPtr]::Zero,[IntPtr]::Zero);if(-not$appProcess.WaitForExit(15000)){throw 'Upgraded application did not exit through its own Exit message.'}
   $migrated=Get-Content -LiteralPath $settingsPath -Raw;Assert ($migrated-match'(?m)^workMinutes=37$'-and$migrated-match'(?m)^theme=2$'-and$migrated-match'(?m)^workAccentColor=3900150$'-and$migrated-match'(?m)^breakAccentColor=16746496$') 'v1.4.0 loads and rewrites legacy timer/theme/custom accent settings'
+  $startupRunValue=Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'EyeBreakReminder' -ErrorAction SilentlyContinue
+  Assert ($migrated-match'(?m)^startup=0$'-and$null-eq$startupRunValue) 'upgraded profile keeps the disabled startup preference and has no Eye Break Reminder Run registration' ([pscustomobject]@{SettingsStartup='0';RunValue=$startupRunValue})
   Assert ($migrated-match'(?m)^futureLegacyFlag=opaque-value$') 'v1.4.0 preserves an unknown valid legacy setting during migration'
   Assert ((Get-FileHash -LiteralPath $historyPath -Algorithm SHA256).Hash.ToLowerInvariant()-eq$before.History) 'starting the upgraded application preserves statistics/history'
   $uninstall=Start-Process -FilePath (Join-Path $installDir 'Uninstall.exe') -ArgumentList '/S' -PassThru -Wait;Assert ($uninstall.ExitCode-eq0-and-not(Test-Path -LiteralPath $app)) 'upgraded v1.4.0 can be removed through the registered uninstaller'

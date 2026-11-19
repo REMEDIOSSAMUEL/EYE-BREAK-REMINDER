@@ -37,6 +37,7 @@ $script:updateLatestHandle = [IntPtr]::Zero
 $script:updateInstalledHandle = [IntPtr]::Zero
 $script:pickerResourceSamples = [System.Collections.Generic.List[object]]::new()
 $script:breakResourceSamples = [System.Collections.Generic.List[object]]::new()
+$script:updateDialogResourceSamples = [System.Collections.Generic.List[object]]::new()
 
 $native = @'
 using System;
@@ -641,6 +642,25 @@ function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Fai
   $latest=[EBR_GUI_NATIVE]::Text($script:updateLatestHandle)
   Add-Result "$Name latest label" 'INFO' $latest
 }
+function Run-UpdateDialogResourceCycle([int]$Cycle,[string]$ReleaseBody,[bool]$Measure) {
+  # This fixture is consumed by the isolated GUI-test build; no public endpoint
+  # or downloaded executable participates in this repeated dialog lifecycle.
+  Write-UpdateFixture 200 $ReleaseBody 'none' 250
+  Click-Control $script:mainWindow 160 "Update-dialog resource cycle $Cycle"
+  $dialog=Find-UiaDialog 'Eye Break Reminder Update Available' 12
+  if($dialog.WindowTitle-cne'Eye Break Reminder Update'){throw "Update-dialog cycle $Cycle found an unexpected window title '$($dialog.WindowTitle)'"}
+  if(-not@($dialog.Names|Where-Object{$_.Contains('Download & Install')}).Count){throw "Update-dialog cycle $Cycle did not expose the expected install action."}
+  Invoke-UiaButton $dialog 'Remind Me Later'
+  $watch=[Diagnostics.Stopwatch]::StartNew();$enabled=$false
+  while($watch.Elapsed.TotalSeconds-lt12){try{$enabled=(Get-Control $script:mainWindow 160 'Update-dialog resource check').Enabled}catch{};if($enabled){break};Start-Sleep -Milliseconds 50}
+  if(-not$enabled){throw "Update-dialog cycle $Cycle did not return the check control to idle."}
+  $remaining=@([EBR_GUI_NATIVE]::TopWindowsForProcess($script:testPid)|Where-Object{[EBR_GUI_NATIVE]::IsWindowVisible($_)-and[EBR_GUI_NATIVE]::Text($_)-eq'Eye Break Reminder Update'})
+  if($remaining.Count-ne0){throw "Update-dialog cycle $Cycle left $($remaining.Count) visible update dialog(s) after dismissal."}
+  if($Measure){
+    $sample=Get-PickerResourceSample $Cycle
+    $script:updateDialogResourceSamples.Add([pscustomobject]@{TimestampUtc=[DateTime]::UtcNow.ToString('o');Cycle=$sample.Cycle;UserObjects=$sample.UserObjects;GdiObjects=$sample.GdiObjects;HandleCount=$sample.HandleCount;PrivateBytes=$sample.PrivateBytes;WorkingSetBytes=$sample.WorkingSetBytes})
+  }
+}
 function Run-UpdateOverlapBarrier {
   Switch-Timer
   Click-Control $script:mainWindow 21 'Reset timer before deterministic update overlap'
@@ -1068,6 +1088,13 @@ try {
   Switch-Settings 5
   Assert-That (([EBR_GUI_NATIVE]::Text($script:updateLatestHandle)) -eq "Latest stable version: $expectedVersion") 'Same-version latest label'
   Run-UpdateFixture 'newer-version' 200 $newer 'none' 'newer stable version is available'
+  $updateDialogWarmup=3;$updateDialogMeasured=20
+  for($i=1;$i-le($updateDialogWarmup+$updateDialogMeasured);$i++){
+    Run-UpdateDialogResourceCycle $i $newer ($i-gt$updateDialogWarmup)
+  }
+  $updateDialogResourceTrends=@((Get-PickerResourceTrend 'USER objects' 'UserObjects' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'GDI objects' 'GdiObjects' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'process handles' 'HandleCount' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'private bytes' 'PrivateBytes' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'working set bytes' 'WorkingSetBytes' $script:updateDialogResourceSamples))
+  foreach($trend in $updateDialogResourceTrends){$tolerance=switch($trend.Resource){'private bytes'{1048576}'working set bytes'{8388608}default{2}};$flat=($trend.Resource -notin @('private bytes','working set bytes'));Assert-That ($trend.EndMedian-le($trend.StartMedian+$tolerance)-and(-not$flat-or$trend.SlopePerInteraction-le0.15)) "Repeated update dialogs have no sustained $($trend.Resource) growth" ([pscustomobject]@{Trend=$trend;AllowedMedianDrift=$tolerance})}
+  Add-Result 'Repeated update-dialog resource soak' 'INFO' ([pscustomobject]@{WarmupDialogs=$updateDialogWarmup;MeasuredDialogs=$updateDialogMeasured;Trends=$updateDialogResourceTrends;Samples=$script:updateDialogResourceSamples.ToArray()})
   Assert-That ((Get-Control $script:mainWindow 161 'Open official release').Enabled) 'Official release button enables for a newer version'
   Run-UpdateFixture 'older-version' 200 $older 'none' 'newer than the latest'
   Assert-That ((Get-Control $script:mainWindow 161 'Open official release').Enabled) 'Release notes remain available without offering a downgrade when installed version is newer'
@@ -1160,6 +1187,7 @@ finally {
   if($script:updateBarrierRelease){$script:updateBarrierRelease.Dispose()}
   if($script:pickerResourceSamples.Count){$script:pickerResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'picker-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
   if($script:breakResourceSamples.Count){$script:breakResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'reminder-window-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
+  if($script:updateDialogResourceSamples.Count){$script:updateDialogResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'update-dialog-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
   $os=Get-CimInstance Win32_OperatingSystem
   $guiExecutableHash=(Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowerInvariant()
   $report=[pscustomobject]@{Version=$expectedVersion;ExecutableRole='Accelerated GUI test build; distinct from the production release candidate';ExecutableSHA256=$guiExecutableHash;WindowsCaption=$os.Caption;WindowsVersion=$os.Version;WindowsBuild=$os.BuildNumber;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();InteractiveDesktopAvailable=[Environment]::UserInteractive;Assertions=$script:assertionCount;Events=$script:events.ToArray();EvidenceDirectory=$EvidenceDirectory;TestDataDirectory=$dataDirectory}

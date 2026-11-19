@@ -1,0 +1,259 @@
+name: Windows v1.4.0 targeted regression verification
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'tests/gui_acceptance.ps1'
+      - 'tests/windows_standard_user_acceptance.ps1'
+      - 'tests/windows_v1_3_to_v1_4_upgrade_acceptance.ps1'
+  workflow_dispatch:
+    inputs:
+      reference_run_id:
+        description: Completed All-scope acceptance run retaining the exact v1.4.0 candidate
+        required: true
+        type: string
+        default: '44453271527'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gui-update-dialog-resource:
+    name: GUI update-dialog resource lifecycle (Windows Server x64)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install the native Windows compiler
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-python
+
+      - name: Build only the accelerated GUI test executable
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          printf 'MSYS2_ROOT=%s\n' "$(cygpath -aw /)" >> "$GITHUB_ENV"
+          if ! command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
+            cp "$(command -v strip)" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          fi
+          make gui-test
+
+      - name: Confirm the hosted interactive desktop is available
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probe = & .\tests\windows_runner_probe.ps1
+          $capabilities = $probe | ConvertFrom-Json
+          if (-not $capabilities.interactiveDesktopAvailable) {
+            throw 'This test requires an interactive Windows desktop; the runner did not provide one.'
+          }
+
+      - name: Run GUI acceptance and 20-dialog resource trend
+        shell: pwsh
+        timeout-minutes: 30
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\gui_acceptance.ps1 -TestSystemHighContrast
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $report = Get-Content -LiteralPath '.\build\gui-test\evidence\gui-acceptance-results.json' -Raw | ConvertFrom-Json
+          if ($report.InteractiveDesktopAvailable -ne $true -or $report.Assertions -le 0) {
+            throw 'The GUI acceptance result does not prove an interactive run with assertions.'
+          }
+          $resource = Import-Csv -LiteralPath '.\build\gui-test\evidence\update-dialog-resource-time-series.csv'
+          if ($resource.Count -ne 20) { throw "Expected 20 measured update dialogs, found $($resource.Count)." }
+
+      - name: Retain GUI evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-gui-dialog-resources-${{ github.run_id }}
+          path: |
+            build/gui-test/evidence/gui-acceptance-results.json
+            build/gui-test/evidence/update-dialog-resource-time-series.csv
+            build/gui-test/evidence/*.png
+          if-no-files-found: warn
+          retention-days: 90
+
+  fresh-standard-user-install:
+    name: Fresh standard-user install shortcut and uninstall (Windows Server x64)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the exact retained candidate
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.4.0-candidate-${{ github.event.inputs.reference_run_id || '44453271527' }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.reference_run_id || '44453271527' }}
+          github-token: ${{ github.token }}
+          path: candidate
+
+      - name: Validate full All-scope run and candidate hashes
+        shell: pwsh
+        env:
+          REFERENCE_RUN_ID: ${{ github.event.inputs.reference_run_id || '44453271527' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = 'candidate/build/v1.4.0-updater-evidence'
+          $provenance = Get-Content -LiteralPath (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          $gate = Get-Content -LiteralPath (Join-Path $evidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
+          if ([string]$provenance.RunId -cne $env:REFERENCE_RUN_ID -or $provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0') {
+            throw 'The downloaded artifact provenance does not match the requested v1.4.0 acceptance run.'
+          }
+          if ($gate.Status -cne 'PASS' -or $gate.Scope -cne 'All' -or $gate.Candidate -cne 'success' -or $gate.CandidateIdentity -cne 'success' -or $gate.ResourceSoak -cne 'success' -or $gate.ProductionBinaryUpdate -cne 'success') {
+            throw 'The referenced artifact is not from a passing All-scope exact-candidate acceptance run.'
+          }
+          $release = 'candidate/release'
+          $identities = Get-Content -LiteralPath (Join-Path $evidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json
+          $expected = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          if ($identities.Count -ne 5 -or (@($identities | Sort-Object Name | Select-Object -ExpandProperty Name) -join "`n") -cne (@($expected | Sort-Object) -join "`n")) {
+            throw 'The candidate identity evidence does not contain the five required release assets.'
+          }
+          foreach ($item in $identities) {
+            $path = Join-Path $release $item.Name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate asset is missing: $($item.Name)" }
+            $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -cne $item.SHA256) { throw "Candidate asset hash mismatch: $($item.Name)" }
+          }
+          New-Item -ItemType Directory -Force -Path 'release' | Out-Null
+          Copy-Item -LiteralPath (Join-Path $release 'EyeBreakReminder-Setup-x64.exe') -Destination 'release\EyeBreakReminder-Setup-x64.exe'
+          Copy-Item -LiteralPath (Join-Path $release 'EyeBreakReminder.exe') -Destination 'release\EyeBreakReminder.exe'
+
+      - name: Run exact-candidate fresh standard-user install acceptance
+        shell: pwsh
+        timeout-minutes: 30
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_standard_user_acceptance.ps1 `
+            -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -ExecutablePath '.\release\EyeBreakReminder.exe' `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence\standard-user'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $result = Get-Content -LiteralPath '.\build\v1.4.0-updater-evidence\standard-user\standard-user-results.json' -Raw | ConvertFrom-Json
+          if ($result.Status -ne 'PASS') { throw "Standard-user installer harness did not pass: $($result.Failure)" }
+          $requiredEvents = @(
+            'Child process has a standard Windows user token',
+            'Standard-user interactive installer wizard',
+            'Installed image matches the candidate at the standard user LocalAppData path',
+            'Per-user Start Menu shortcut points exactly to the installed executable without arguments',
+            'Installer registers under the standard account HKCU hive',
+            'Installed candidate launches with a visible window under the standard account',
+            'Standard-user interactive uninstaller wizard',
+            'Interactive uninstall removes the standard user installation, preserves settings/history byte-for-byte, and clears both HKCU registrations'
+          )
+          foreach ($name in $requiredEvents) {
+            $event = @($result.Events | Where-Object Name -CEQ $name)
+            if ($event.Count -ne 1 -or $event[0].Status -ne 'PASS') { throw "Required standard-user acceptance event did not pass: $name" }
+          }
+          if (-not $result.AccountRemoved -or -not $result.StageRemoved -or $result.CleanupErrors.Count -gt 0) { throw 'Disposable standard-user account, profile staging, and cleanup must all be verified.' }
+
+      - name: Retain standard-user installer evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-standard-user-${{ github.run_id }}
+          path: build/v1.4.0-updater-evidence/standard-user
+          if-no-files-found: warn
+          retention-days: 90
+
+  legacy-upgrade-shortcut:
+    name: Published v1.3.0 upgrade shortcut and migration (Windows Server x64)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the exact retained candidate
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.4.0-candidate-${{ github.event.inputs.reference_run_id || '44453271527' }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.reference_run_id || '44453271527' }}
+          github-token: ${{ github.token }}
+          path: candidate
+
+      - name: Validate full All-scope run and candidate hashes
+        shell: pwsh
+        env:
+          REFERENCE_RUN_ID: ${{ github.event.inputs.reference_run_id || '44453271527' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = 'candidate/build/v1.4.0-updater-evidence'
+          $provenance = Get-Content -LiteralPath (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          $gate = Get-Content -LiteralPath (Join-Path $evidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
+          if ([string]$provenance.RunId -cne $env:REFERENCE_RUN_ID -or $provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0') {
+            throw 'The downloaded artifact provenance does not match the requested v1.4.0 acceptance run.'
+          }
+          if ($gate.Status -cne 'PASS' -or $gate.Scope -cne 'All' -or $gate.Candidate -cne 'success' -or $gate.CandidateIdentity -cne 'success' -or $gate.ResourceSoak -cne 'success' -or $gate.ProductionBinaryUpdate -cne 'success') {
+            throw 'The referenced artifact is not from a passing All-scope exact-candidate acceptance run.'
+          }
+          $release = 'candidate/release'
+          $identities = Get-Content -LiteralPath (Join-Path $evidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json
+          $expected = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          if ($identities.Count -ne 5 -or (@($identities | Sort-Object Name | Select-Object -ExpandProperty Name) -join "`n") -cne (@($expected | Sort-Object) -join "`n")) {
+            throw 'The candidate identity evidence does not contain the five required release assets.'
+          }
+          foreach ($item in $identities) {
+            $path = Join-Path $release $item.Name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate asset is missing: $($item.Name)" }
+            $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -cne $item.SHA256) { throw "Candidate asset hash mismatch: $($item.Name)" }
+          }
+          New-Item -ItemType Directory -Force -Path 'release' | Out-Null
+          Copy-Item -LiteralPath (Join-Path $release 'EyeBreakReminder-Setup-x64.exe') -Destination 'release\EyeBreakReminder-Setup-x64.exe'
+          Copy-Item -LiteralPath (Join-Path $release 'EyeBreakReminder.exe') -Destination 'release\EyeBreakReminder.exe'
+
+      - name: Download and authenticate the public v1.3.0 setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-v1.3.0-Setup-x64.exe'
+          Invoke-WebRequest -Uri 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.3.0/EyeBreakReminder-Setup-x64.exe' -OutFile $path
+          $expected = '67c7bb338e83397e17007fa0afff9b4ad06f0a2d7924bb016198d9d38e3a76b4'
+          $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "The downloaded published v1.3.0 setup hash is wrong: $actual" }
+          if ((Get-Item -LiteralPath $path).VersionInfo.ProductVersion -notmatch '^1\.3\.0(\.0)?$') { throw 'The downloaded published setup is not version 1.3.0.' }
+          "LEGACY_INSTALLER=$path" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Run exact-candidate v1.3.0 to v1.4.0 upgrade and shortcut acceptance
+        shell: pwsh
+        timeout-minutes: 30
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_v1_3_to_v1_4_upgrade_acceptance.ps1 `
+            -LegacyInstaller $env:LEGACY_INSTALLER `
+            -CandidateInstaller '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -CandidateExecutable '.\release\EyeBreakReminder.exe' `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Retain legacy-upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-legacy-upgrade-${{ github.run_id }}
+          path: build/v1.4.0-updater-evidence
+          if-no-files-found: warn
+          retention-days: 90
