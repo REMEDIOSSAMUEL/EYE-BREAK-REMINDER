@@ -89,9 +89,9 @@ try {
     Invoke-Checked $compiler $testCompilerArgs 'compile a separate disposable-key v1.4.1 integration application'
     Invoke-Checked $strip @('release/EyeBreakReminder-Test.exe') 'strip the test-only successor application'
     $testInstallerText = $installerText.Replace('OutFile "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Setup-x64.exe"', 'OutFile "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Setup-x64-Test.exe"')
-    $testInstallerText = $testInstallerText.Replace('File "${EB_PROJECT_ROOT}\release\EyeBreakReminder.exe"', 'File "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Test.exe"')
+    $testInstallerText = $testInstallerText.Replace('File "${EB_PROJECT_ROOT}\release\EyeBreakReminder.exe"', 'File /oname=EyeBreakReminder.exe "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Test.exe"')
     if (-not $testInstallerText.Contains('OutFile "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Setup-x64-Test.exe"') -or
-        -not $testInstallerText.Contains('File "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Test.exe"')) { throw 'The test-only NSIS fixture does not embed its matching v1.4.1 integration executable.' }
+        -not $testInstallerText.Contains('File /oname=EyeBreakReminder.exe "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Test.exe"')) { throw 'The test-only NSIS fixture does not install its matching v1.4.1 integration executable under the product filename.' }
     [IO.File]::WriteAllText((Join-Path $fixtureRoot 'installer\setup-test.nsi'), $testInstallerText, [Text.UTF8Encoding]::new($false))
     Invoke-Checked $makensis @('-NOCD', 'installer/setup-test.nsi') 'build a separate test-only successor installer with matching executable identity'
   } finally {
