@@ -45,7 +45,7 @@ foreach ($name in @('settings.ini','timer.dat','history.dat')) {
   if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
 }
 
-$script:pid = 0
+$script:testPid = 0
 $script:main = [IntPtr]::Zero
 $script:process = $null
 $script:rows = [Collections.Generic.List[object]]::new()
@@ -66,18 +66,18 @@ function Write-ReleaseFixture([string]$Tag) {
   [IO.File]::WriteAllText($script:fixture,"status=200`r`nfailure=none`r`ndelay_ms=100`r`n`r`n$body",[Text.UTF8Encoding]::new($false))
 }
 function Get-Sample([int]$cycle,[string]$phase) {
-  $p = [Diagnostics.Process]::GetProcessById($script:pid)
+  $p = [Diagnostics.Process]::GetProcessById($script:testPid)
   try { $p.Refresh(); [pscustomobject]@{Cycle=$cycle;Phase=$phase;Utc=[DateTime]::UtcNow.ToString('o');HandleCount=$p.HandleCount;PrivateBytes=$p.PrivateMemorySize64;WorkingSetBytes=$p.WorkingSet64} }
   finally { $p.Dispose() }
 }
 function Find-MainWindow {
-  foreach ($h in [EBR_HANDLE_DIAGNOSTIC]::TopWindows($script:pid)) { if ([EBR_HANDLE_DIAGNOSTIC]::IsWindowVisible($h) -and [EBR_HANDLE_DIAGNOSTIC]::Text($h) -eq 'Eye Break Reminder') { return $h } }
+  foreach ($h in [EBR_HANDLE_DIAGNOSTIC]::TopWindows($script:testPid)) { if ([EBR_HANDLE_DIAGNOSTIC]::IsWindowVisible($h) -and [EBR_HANDLE_DIAGNOSTIC]::Text($h) -eq 'Eye Break Reminder') { return $h } }
   [IntPtr]::Zero
 }
 function Find-UpdateDialog([int]$timeoutSeconds=12) {
   $watch=[Diagnostics.Stopwatch]::StartNew()
   while ($watch.Elapsed.TotalSeconds -lt $timeoutSeconds) {
-    foreach ($h in [EBR_HANDLE_DIAGNOSTIC]::TopWindows($script:pid)) {
+    foreach ($h in [EBR_HANDLE_DIAGNOSTIC]::TopWindows($script:testPid)) {
       if ([EBR_HANDLE_DIAGNOSTIC]::IsWindowVisible($h) -and [EBR_HANDLE_DIAGNOSTIC]::Text($h) -eq 'Eye Break Reminder Update' -and
           [EBR_HANDLE_DIAGNOSTIC]::GetDlgItem($h,12001) -ne [IntPtr]::Zero -and [EBR_HANDLE_DIAGNOSTIC]::GetDlgItem($h,12002) -ne [IntPtr]::Zero) { return $h }
     }
@@ -105,11 +105,11 @@ try {
   $existing=@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue | Where-Object { try { [IO.Path]::GetFullPath($_.Path) -ieq $exePath } catch { $false } })
   if ($existing.Count) { throw 'The isolated diagnostic executable is already running; refusing to reuse its profile.' }
   $process=Start-Process -FilePath $exePath -PassThru
-  $script:process=$process; $script:pid=$process.Id
+  $script:process=$process; $script:testPid=$process.Id
   $watch=[Diagnostics.Stopwatch]::StartNew()
   while ($watch.Elapsed.TotalSeconds -lt 15 -and $script:main -eq [IntPtr]::Zero) { $script:main=Find-MainWindow; if ($script:main -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 50 } }
   if ($script:main -eq [IntPtr]::Zero) { throw 'The isolated GUI test app did not create its main window.' }
-  if ([IO.Path]::GetFullPath((Get-Process -Id $script:pid).Path) -ine $exePath) { throw 'The running process path does not match the isolated test executable.' }
+  if ([IO.Path]::GetFullPath((Get-Process -Id $script:testPid).Path) -ine $exePath) { throw 'The running process path does not match the isolated test executable.' }
   $navSettings=[EBR_HANDLE_DIAGNOSTIC]::GetDlgItem($script:main,12)
   [void][EBR_HANDLE_DIAGNOSTIC]::SendMessageW($navSettings,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
   $section=[EBR_HANDLE_DIAGNOSTIC]::GetDlgItem($script:main,135)
@@ -150,7 +150,7 @@ try {
 }
 finally {
   if ($script:fixture -and (Test-Path -LiteralPath $script:fixture)) { Remove-Item -LiteralPath $script:fixture -Force }
-  if ($script:pid -and $script:main -ne [IntPtr]::Zero -and [EBR_HANDLE_DIAGNOSTIC]::IsWindow($script:main)) {
+  if ($script:testPid -and $script:main -ne [IntPtr]::Zero -and [EBR_HANDLE_DIAGNOSTIC]::IsWindow($script:main)) {
     $quit=[EBR_HANDLE_DIAGNOSTIC]::RegisterWindowMessageW('EyeBreakReminder.Exit.Native.1')
     [void][EBR_HANDLE_DIAGNOSTIC]::PostMessageW($script:main,$quit,[IntPtr]::Zero,[IntPtr]::Zero)
     if ($script:process -and -not $script:process.WaitForExit(8000)) { Write-Error 'The isolated diagnostic app did not exit through its own Exit message.' }
