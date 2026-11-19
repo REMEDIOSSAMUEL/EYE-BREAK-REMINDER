@@ -32,6 +32,7 @@ on:
       - '!tests/updater_download_stall_timeout.cpp'
       - '!tests/updater_disk_acl_tests.cpp'
       - '!tests/windows_update_failure_edges_acceptance.ps1'
+      - '!tests/build_production_update_fixture.ps1'
       - '!tests/updater_portable_recovery_tests.cpp'
       - '!README.md'
       - '!CHANGELOG.md'

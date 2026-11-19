@@ -269,7 +269,7 @@ function Invoke-OwnerRefusesExitTest() {
   $transaction=$null; $app=$null; $suspended=$false; $coordinatorWindow=[IntPtr]::Zero
   try {
     $transaction=New-Transaction 'owner-refuses-exit' $install 0
-    $app=Find-RunningDisposableApp $transaction.Target
+    $app=Start-DisposableApp $transaction.Target
     $profileBefore=Get-ProfileHashes
     $suspender=[EBR_FAILURE_EDGE_NATIVE]::SuspendWindowThread($app.Hwnd)
     if ($suspender -eq [IntPtr]::Zero) { throw 'Could not suspend the disposable candidate app UI thread for the refusal-to-exit fault injection.' }
