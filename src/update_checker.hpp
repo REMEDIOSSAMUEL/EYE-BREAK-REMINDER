@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "update_manifest.hpp"
 
 namespace eye::updates {
 
@@ -25,6 +26,9 @@ struct ReleaseDetails {
     std::string tag, releaseUrl, notes;
     bool draft=false, prerelease=false;
     std::vector<ReleaseAsset> assets;
+    bool manifestVerified=false;
+    std::string signedManifestBytes, signedManifestSignature;
+    UpdateManifest authenticatedManifest;
 };
 
 namespace detail {
@@ -308,6 +312,41 @@ inline SelectedAsset selectAsset(const ReleaseDetails&release,PackageKind kind){
         selected.error="GitHub did not provide a usable SHA-256 digest for the update asset.";return selected;
     }
     selected.ok=true;selected.asset=*match;return selected;
+}
+
+inline SelectedAsset selectManifestAsset(const ReleaseDetails&release,std::string_view expectedName){
+    SelectedAsset selected;
+    const std::string name(expectedName);
+    if((name!=UpdateManifestName&&name!=UpdateManifestSignatureName)||release.tag.empty()){
+        selected.error="The signed update metadata request is invalid.";return selected;
+    }
+    const ReleaseAsset*match=nullptr;unsigned matches=0;
+    for(const auto&asset:release.assets)if(asset.name==name){match=&asset;++matches;}
+    if(matches!=1){selected.error=matches?"GitHub returned duplicate signed metadata assets.":"The official release is missing signed update metadata.";return selected;}
+    const std::string expectedUrl="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/"+release.tag+"/"+name;
+    const std::uint64_t limit=name==UpdateManifestName?16384u:64u;
+    if(match->downloadUrl!=expectedUrl||match->size==0||match->size>limit){
+        selected.error="GitHub returned invalid or oversized signed update metadata.";return selected;
+    }
+    if(name==UpdateManifestSignatureName&&match->size!=64){selected.error="The signed update signature has an invalid file size.";return selected;}
+    selected.ok=true;selected.asset=*match;return selected;
+}
+
+inline SelectedAsset selectAuthenticatedAsset(const ReleaseDetails&release,PackageKind kind){
+    SelectedAsset selected;
+    if(!release.manifestVerified||!manifest_detail::validShape(release.authenticatedManifest)||release.tag!="v"+release.authenticatedManifest.version){
+        selected.error="The release has no verified publisher-signed update manifest.";return selected;
+    }
+    const ManifestAsset*authorized=manifestAsset(release.authenticatedManifest,kind==PackageKind::Installed);
+    if(!authorized){selected.error="The signed update manifest has no payload for this installation type.";return selected;}
+    const ReleaseAsset*match=nullptr;unsigned matches=0;
+    for(const auto&asset:release.assets)if(asset.name==authorized->name){match=&asset;++matches;}
+    if(matches!=1){selected.error=matches?"GitHub returned duplicate signed update payload assets.":"The official release is missing its signed payload.";return selected;}
+    const std::string expectedUrl="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/"+release.tag+"/"+authorized->name;
+    if(match->downloadUrl!=expectedUrl||match->size!=authorized->size){selected.error="The release payload name, location, or size differs from the signed manifest.";return selected;}
+    const std::string expectedDigest="sha256:"+authorized->sha256;
+    if(!match->digest.empty()&&match->digest!=expectedDigest){selected.error="GitHub's additional payload digest conflicts with the publisher-signed manifest.";return selected;}
+    selected.ok=true;selected.asset=*match;selected.asset.digest=expectedDigest;return selected;
 }
 
 } // namespace eye::updates

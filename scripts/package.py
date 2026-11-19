@@ -9,7 +9,14 @@ with zipfile.ZipFile(release/'EyeBreakReminder-Portable-x64.zip','w',zipfile.ZIP
  archive.write(root/'README.md','README.md')
  for name in ['PRIVACY.md','VERIFICATION.md','THIRD-PARTY-LICENSES.txt']:
   archive.write(root/'docs'/name,name)
- archive.writestr('SIGNING-STATUS.txt','UNSIGNED. No signing certificate or publisher identity was supplied.\n')
+ trust=(root/'src'/'update_trust.hpp').read_text(encoding='ascii')
+ if 'inline constexpr bool ProductionUpdateKeyProvisioned=false;' in trust:
+  status='DEVELOPMENT CANDIDATE. Authenticode is unsigned and the production update-manifest trust key is not provisioned. This build refuses update offers and is not for production release.\n'
+ elif 'inline constexpr bool ProductionUpdateKeyProvisioned=true;' in trust:
+  status='The production update-manifest trust key is embedded. Authenticode status is separate and must be verified independently. Release manifest and signature must accompany this payload.\n'
+ else:
+  raise RuntimeError('Cannot determine the production update trust state; refusing to label the package.')
+ archive.writestr('SIGNING-STATUS.txt',status)
 # Build outputs, local tool folders and signing secrets never belong in the source archive (mirrors .gitignore). The test
 # binary is tests/core-tests on Linux and tests/core-tests.exe when MinGW builds it on Windows.
 EXCLUDED_DIRS={'release','build','dist','__pycache__'}

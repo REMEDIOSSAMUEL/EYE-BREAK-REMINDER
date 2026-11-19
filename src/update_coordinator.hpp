@@ -2,6 +2,7 @@
 
 #include "windows_services.hpp"
 #include "update_client.hpp"
+#include "update_signature_win.hpp"
 #include "update_accessibility.hpp"
 #include <winver.h>
 #include <atomic>
@@ -95,6 +96,20 @@ inline bool validateTransaction(const Transaction&t,const std::wstring&transacti
     if(t.kind=="installed"&&!samePath(t.artifactPath,t.stagingDirectory+L"\\EyeBreakReminder-Setup-x64.exe")){error="The downloaded installer is not in the private staging folder.";return false;}
     if(t.nonce.size()!=36||t.nonce.find_first_not_of(L"0123456789abcdefABCDEF-")!=std::wstring::npos){error="The update confirmation token is invalid.";return false;}
     if(!digestText(t.sha256)||!digestText(t.expectedApplicationSha256)||!digestText(t.previousSha256)||t.expectedSize==0||t.expectedSize>100ull*1024*1024||t.backupMask>7||t.ownedFileMask>15||!backupDigestMetadataValid(t)||(t.deleteHistory&&!t.clean)){error="The update integrity or backup metadata is invalid.";return false;}
+    std::string manifestBytes,signatureBytes;
+    if(!eye::win::read(t.stagingDirectory+L"\\EyeBreakReminder-UpdateManifest.json",manifestBytes,16384)||
+       !eye::win::read(t.stagingDirectory+L"\\EyeBreakReminder-UpdateManifest.sig",signatureBytes,64)){
+        error="The publisher-signed update manifest or signature is missing or unreadable.";return false;
+    }
+    const std::string signedReleaseTag="v"+eye::win::utf8(t.version);
+    const auto authorization=verifyStagedManifest(manifestBytes,signatureBytes,t.stagingDirectory,signedReleaseTag,eye::win::utf8(t.previousVersion),std::time(nullptr));
+    if(!authorization.ok){error=authorization.error;return false;}
+    const auto*installer=manifestAsset(authorization.manifest,true);const auto*portable=manifestAsset(authorization.manifest,false);
+    const auto*selected=t.kind=="installed"?installer:portable;
+    if(!selected||authorization.manifest.version!=eye::win::utf8(t.version)||selected->name!=t.artifactName||
+       selected->size!=t.expectedSize||selected->sha256!=t.sha256||!portable||portable->sha256!=t.expectedApplicationSha256){
+        error="The update transaction does not match a payload authorized by the signed manifest.";return false;
+    }
     return true;
 }
 
@@ -302,6 +317,17 @@ inline void performTransaction(Transaction t,UiState&ui){
     std::string actual;WIN32_FILE_ATTRIBUTE_DATA artifactInfo{};const bool sizeMatches=GetFileAttributesExW(t.artifactPath.c_str(),GetFileExInfoStandard,&artifactInfo)&&((std::uint64_t(artifactInfo.nFileSizeHigh)<<32)|artifactInfo.nFileSizeLow)==t.expectedSize;
     if(!sizeMatches||!hashFile(t.artifactPath,actual)||actual!=t.sha256){abortBeforeInstall(L"The staged update failed its final size or SHA-256 verification. It was not executed.");return;}
     if((t.kind=="installed"&&productVersion(t.artifactPath)!=t.version)||(t.kind=="portable"&&(productVersion(t.artifactPath)!=t.version||actual!=t.expectedApplicationSha256))){abortBeforeInstall(L"The downloaded update does not contain the expected application version and identity.");return;}
+    std::string finalManifest,finalSignature;
+    const bool finalMetadataRead=eye::win::read(t.stagingDirectory+L"\\EyeBreakReminder-UpdateManifest.json",finalManifest,16384)&&
+        eye::win::read(t.stagingDirectory+L"\\EyeBreakReminder-UpdateManifest.sig",finalSignature,64);
+    const auto finalAuthorization=finalMetadataRead?verifyStagedManifest(finalManifest,finalSignature,t.stagingDirectory,
+        "v"+eye::win::utf8(t.version),eye::win::utf8(t.previousVersion),std::time(nullptr)):ManifestAuthorization{};
+    const auto*finalSelected=finalAuthorization.ok?manifestAsset(finalAuthorization.manifest,t.kind=="installed"):nullptr;
+    const auto*finalPortable=finalAuthorization.ok?manifestAsset(finalAuthorization.manifest,false):nullptr;
+    if(!finalAuthorization.ok||!finalSelected||!finalPortable||finalSelected->name!=t.artifactName||finalSelected->size!=t.expectedSize||
+       finalSelected->sha256!=t.sha256||finalPortable->sha256!=t.expectedApplicationSha256){
+        abortBeforeInstall(L"The publisher signature could not be revalidated at the installation boundary. The update was not executed.");return;
+    }
     if(!writeJournal(t,L"verified")||!setRecoveryRegistration(t,true)||!writeJournal(t,L"installing")){setRecoveryRegistration(t,false);abortBeforeInstall(L"Windows could not save the durable recovery information. The current application was not changed.");return;}
     coordinatorMessage(ui,L"Installing the verified update…");bool installed=false;
     if(t.kind=="installed"){

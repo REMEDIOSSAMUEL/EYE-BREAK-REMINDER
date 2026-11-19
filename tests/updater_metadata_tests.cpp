@@ -27,11 +27,44 @@ std::string releaseJson(const std::string&tag="v1.4.1",bool draft=false,bool pre
 bool failedCheck(const eye::updates::HttpResponse&response,std::string_view installed="1.4.0"){
     return eye::updates::evaluate(response,installed).state==eye::updates::State::Failed;
 }
+bool manifestTests(){
+    using namespace eye::updates;bool ok=true;UpdateManifest manifest;
+    manifest.schemaVersion=1;manifest.application=std::string(OfficialApplicationIdentity);manifest.repository=std::string(OfficialRepositoryIdentity);
+    manifest.version="1.4.1";manifest.channel="stable";manifest.architecture="x64";manifest.keyId="p256-0123456789abcdef";
+    manifest.issuedAt="2026-11-19T11:00:00Z";manifest.expiresAt="2027-01-01T00:00:00Z";
+    manifest.assets={{"EyeBreakReminder-Setup-x64.exe","installer","installed","x64",std::string(64,'a'),64},
+                     {"EyeBreakReminder.exe","portable-update","portable","x64",std::string(64,'b'),32}};
+    const std::string bytes=canonicalManifest(manifest);UpdateManifest parsed;
+    ok&=check(!bytes.empty()&&parseCanonicalManifest(bytes,parsed)&&canonicalManifest(parsed)==bytes,"parse and reproduce the exact canonical signed update manifest");
+    std::int64_t now=0;ok&=check(manifest_detail::parseDate("2026-11-19T12:00:00Z",now),"accept a canonical UTC manifest timestamp");
+    ok&=check(validateManifestFreshness(manifest,now),"accept an unexpired manifest issued within its validity period");
+    auto altered=manifest;altered.issuedAt="2026-11-19T12:06:00Z";ok&=check(!validateManifestFreshness(altered,now),"reject a manifest issued too far in the future");
+    altered=manifest;altered.expiresAt="2026-11-19T11:59:59Z";ok&=check(!validateManifestFreshness(altered,now),"reject an expired manifest");
+    altered=manifest;altered.expiresAt="2027-03-01T00:00:00Z";ok&=check(!validateManifestFreshness(altered,now),"reject a manifest with an excessive validity interval");
+    for(const std::string&bad:std::vector<std::string>{"", "{}", bytes+" ", "\xef\xbb\xbf"+bytes,
+        bytes.substr(0,bytes.size()-1)+",\"version\":\"9.9.9\"}",
+        "{\"schema_version\":1,\"schema_version\":1"+bytes.substr(bytes.find(",\"application\"")),
+        bytes.substr(0,bytes.find("\"version\":\"1.4.1\""))+"\"version\":\"1.4.1+build.1\""+bytes.substr(bytes.find("\"channel\"" )-1),
+        bytes.substr(0,bytes.find("\"sha256\":\""))+"\"sha256\":\"ABC\""+bytes.substr(bytes.find("\"},",bytes.find("\"sha256\":\""))+2)}){
+        ok&=check(!parseCanonicalManifest(bad,parsed),"reject malformed, duplicated, noncanonical, or ambiguous signed manifest fields");
+    }
+    altered=manifest;altered.schemaVersion=2;ok&=check(canonicalManifest(altered).empty(),"refuse to serialize an unsupported schema version");
+    altered=manifest;altered.repository="REMEDIOSSAMUEL/OTHER-REPOSITORY";ok&=check(canonicalManifest(altered).empty(),"refuse to serialize a manifest for another repository");
+    altered=manifest;altered.architecture="arm64";ok&=check(canonicalManifest(altered).empty(),"refuse an unsupported architecture");
+    altered=manifest;altered.version="1.4.01";ok&=check(canonicalManifest(altered).empty(),"reject an ambiguous leading-zero release version");
+    altered=manifest;altered.assets[0].role="portable-update";ok&=check(canonicalManifest(altered).empty(),"reject a substituted or conflicting asset role");
+    altered=manifest;altered.assets[0].name="EyeBreakReminder.exe";ok&=check(canonicalManifest(altered).empty(),"reject a substituted installer asset name");
+    altered=manifest;altered.assets[0].size=0;ok&=check(canonicalManifest(altered).empty(),"reject a zero-sized signed payload");
+    altered=manifest;altered.assets[1].sha256=std::string(63,'b');ok&=check(canonicalManifest(altered).empty(),"reject a truncated signed payload digest");
+    altered=manifest;altered.keyId="unknown";ok&=check(canonicalManifest(altered).empty(),"reject an invalid signing key identifier");
+    std::int64_t invalidDate=0;ok&=check(!manifest_detail::parseDate("2026-02-29T12:00:00Z",invalidDate),"reject impossible UTC calendar dates");
+    return ok;
+}
 }
 
 int main(){
     using namespace eye::updates;
-    bool ok=true;
+    bool ok=manifestTests();
     Version parsed;
     ok&=check(detail::parseVersion("v1.4.1",parsed)&&parsed.major==1&&parsed.minor==4&&parsed.patch==1,"parse a tagged stable semantic version");
     ok&=check(detail::parseVersion("1.4.1+windows.x64",parsed)&&parsed.prerelease.empty(),"accept valid build metadata");

@@ -1,14 +1,18 @@
 #pragma once
 
 #include "update_checker.hpp"
+#include "update_signature_win.hpp"
 #include <windows.h>
 #include <winhttp.h>
 #include <bcrypt.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cwchar>
 #include <functional>
+#include <mutex>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -18,12 +22,44 @@ struct DownloadProgress { std::uint64_t received=0,total=0;bool verifying=false;
 struct DownloadResult { bool ok=false,cancelled=false;std::string error,sha256;std::uint64_t received=0; };
 
 namespace client_detail {
+#ifdef EYEBREAK_TEST_BUILD
+inline std::atomic<unsigned> WinHttpCloseFailures{0};
+#endif
 struct Internet {
     HINTERNET value{};
     explicit Internet(HINTERNET h=nullptr):value(h){}
-    ~Internet(){if(value)WinHttpCloseHandle(value);}
+    ~Internet(){
+        if(value&&!WinHttpCloseHandle(value)){
+#ifdef EYEBREAK_TEST_BUILD
+            WinHttpCloseFailures.fetch_add(1,std::memory_order_relaxed);
+#endif
+        }
+    }
     Internet(const Internet&)=delete;Internet&operator=(const Internet&)=delete;
 };
+struct SessionEntry {
+    DWORD accessType{};std::wstring proxyName,proxyBypass;int resolveTimeout{},connectTimeout{},sendTimeout{},receiveTimeout{};HINTERNET value{};
+};
+struct SessionPool {std::mutex mutex;std::array<SessionEntry,8> entries{};std::size_t size=0;};
+inline HINTERNET processSession(DWORD accessType,LPCWSTR proxyName,LPCWSTR proxyBypass,int resolveTimeout,int connectTimeout,int sendTimeout,int receiveTimeout){
+    // Keep a bounded set of WinHTTP sessions for the process lifetime. Repeatedly
+    // creating and closing sessions on resolver failures grew native process
+    // handles on Windows; per-request connection and request handles remain RAII-owned.
+    // A test update worker may be detached during window teardown, so the pool has
+    // no shutdown destructor. Windows releases these at process exit.
+    static SessionPool*pool=new(std::nothrow)SessionPool;if(!pool)return nullptr;
+    const std::wstring proxy=proxyName?proxyName:L"",bypass=proxyBypass?proxyBypass:L"";
+    std::lock_guard<std::mutex>lock(pool->mutex);
+    for(std::size_t i=0;i<pool->size;++i){const auto&entry=pool->entries[i];
+        if(entry.accessType==accessType&&entry.proxyName==proxy&&entry.proxyBypass==bypass&&entry.resolveTimeout==resolveTimeout&&entry.connectTimeout==connectTimeout&&entry.sendTimeout==sendTimeout&&entry.receiveTimeout==receiveTimeout)return entry.value;
+    }
+    if(pool->size==pool->entries.size()){SetLastError(ERROR_NOT_ENOUGH_MEMORY);return nullptr;}
+    HINTERNET value=WinHttpOpen(L"Eye Break Reminder updater",accessType,proxyName,proxyBypass,0);if(!value)return nullptr;
+    if(!WinHttpSetTimeouts(value,resolveTimeout,connectTimeout,sendTimeout,receiveTimeout)){const DWORD error=GetLastError();WinHttpCloseHandle(value);SetLastError(error);return nullptr;}
+    try{auto&entry=pool->entries[pool->size];entry.accessType=accessType;entry.proxyName=proxy;entry.proxyBypass=bypass;entry.resolveTimeout=resolveTimeout;entry.connectTimeout=connectTimeout;entry.sendTimeout=sendTimeout;entry.receiveTimeout=receiveTimeout;entry.value=value;++pool->size;}
+    catch(...){WinHttpCloseHandle(value);SetLastError(ERROR_NOT_ENOUGH_MEMORY);return nullptr;}
+    return value;
+}
 struct HashProvider {
     BCRYPT_ALG_HANDLE algorithm{};BCRYPT_HASH_HANDLE hash{};std::vector<BYTE> object;
     ~HashProvider(){if(hash)BCryptDestroyHash(hash);if(algorithm)BCryptCloseAlgorithmProvider(algorithm,0);}
@@ -78,13 +114,12 @@ inline bool testFailureEnabled(const wchar_t*name){
     (void)name;return false;
 #endif
 }
-inline bool configureDownloadTimeouts(HINTERNET session,bool loopbackTestSession){
+inline bool allowDownloadTimeoutConfiguration(bool loopbackTestSession){
 #ifdef EYEBREAK_TEST_BUILD
     if(testFailureEnabled(L"EBR_GUI_TEST_FAIL_DOWNLOAD_TIMEOUTS")){SetLastError(ERROR_INVALID_FUNCTION);return false;}
-    return loopbackTestSession?WinHttpSetTimeouts(session,1000,1000,1000,3000)!=FALSE:
-      WinHttpSetTimeouts(session,5000,5000,10000,15000)!=FALSE;
+    (void)loopbackTestSession;return true;
 #else
-    (void)loopbackTestSession;return WinHttpSetTimeouts(session,5000,5000,10000,15000)!=FALSE;
+    (void)loopbackTestSession;return true;
 #endif
 }
 inline bool disableAutomaticRedirects(HINTERNET request){
@@ -109,10 +144,19 @@ inline bool configureLoopbackTestCertificate(HINTERNET request,const Url&url){
 } // namespace client_detail
 
 inline HttpResponse latestStableReleaseResponse(){
-    HttpResponse response;client_detail::Internet session{WinHttpOpen(L"Eye Break Reminder updater",WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0)};
-    if(!session.value){const DWORD error=GetLastError();response.failure=client_detail::networkFailure(error);response.errorCode=error;return response;}
-    if(!WinHttpSetTimeouts(session.value,5000,5000,5000,10000)){const DWORD error=GetLastError();response.failure=client_detail::networkFailure(error);response.errorCode=error;return response;}
-    client_detail::Internet connection{WinHttpConnect(session.value,L"api.github.com",INTERNET_DEFAULT_HTTPS_PORT,0)};
+#ifdef EYEBREAK_TEST_BUILD
+    // A fixed reserved .invalid origin exercises genuine resolver failure in
+    // tests. This branch is absent from every production build and cannot
+    // redirect production GitHub requests through a caller-supplied host.
+    const bool dnsFailureFixture=client_detail::testFailureEnabled(L"EBR_GUI_TEST_DNS_FAILURE");
+    const wchar_t*apiHost=dnsFailureFixture?L"eye-break-reminder-dns-test.invalid":L"api.github.com";
+    const DWORD accessType=dnsFailureFixture?WINHTTP_ACCESS_TYPE_NO_PROXY:WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
+#else
+    const wchar_t*apiHost=L"api.github.com";const DWORD accessType=WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
+#endif
+    HttpResponse response;HINTERNET session=client_detail::processSession(accessType,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,5000,5000,5000,10000);
+    if(!session){const DWORD error=GetLastError();response.failure=client_detail::networkFailure(error);response.errorCode=error;return response;}
+    client_detail::Internet connection{WinHttpConnect(session,apiHost,INTERNET_DEFAULT_HTTPS_PORT,0)};
     if(!connection.value){const DWORD error=GetLastError();response.failure=client_detail::networkFailure(error);response.errorCode=error;return response;}
     client_detail::Internet request{WinHttpOpenRequest(connection.value,L"GET",L"/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest",nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE)};
     if(!request.value){const DWORD error=GetLastError();response.failure=client_detail::networkFailure(error);response.errorCode=error;return response;}
@@ -124,6 +168,75 @@ inline HttpResponse latestStableReleaseResponse(){
     DWORD status=0,statusSize=sizeof(status);if(!WinHttpQueryHeaders(request.value,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&status,&statusSize,WINHTTP_NO_HEADER_INDEX)){const DWORD error=GetLastError();response.failure=client_detail::networkFailure(error);response.errorCode=error;return response;}response.status=int(status);
     while(response.body.size()<=1024*1024){DWORD available=0;if(!WinHttpQueryDataAvailable(request.value,&available)){const DWORD error=GetLastError();response.failure=client_detail::networkFailure(error);response.errorCode=error;response.body.clear();return response;}if(!available)break;const DWORD amount=std::min<DWORD>(available,DWORD(1024*1024+1-response.body.size()));if(!amount)break;const auto old=response.body.size();response.body.resize(old+amount);DWORD read=0;if(!WinHttpReadData(request.value,response.body.data()+old,amount,&read)){const DWORD error=GetLastError();response.failure=client_detail::networkFailure(error);response.errorCode=error;response.body.clear();return response;}response.body.resize(old+read);if(!read)break;}
     return response;
+}
+
+inline bool fetchReleaseMetadataAsset(const ReleaseAsset&asset,std::uint64_t maximum,std::string&out,std::string&error){
+    using namespace client_detail;
+    out.clear();if(asset.size==0||asset.size>maximum||asset.downloadUrl.empty()){
+        error="The signed release metadata has an invalid size or download address.";return false;
+    }
+    std::wstring current;try{current.assign(asset.downloadUrl.begin(),asset.downloadUrl.end());}catch(...){error="The signed release metadata address is invalid.";return false;}
+    HINTERNET session=processSession(WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,5000,5000,5000,10000);
+    if(!session){
+        error="Windows could not start the secure update metadata request.";return false;
+    }
+    for(unsigned redirect=0;redirect<=5;++redirect){
+        Url url;if(!crackHttps(current,url)){error="The signed update metadata left the approved HTTPS GitHub hosts.";return false;}
+        Internet connection{WinHttpConnect(session,url.host.c_str(),url.port,0)};
+        if(!connection.value){error="Windows could not connect to the signed update metadata host.";return false;}
+        Internet request{WinHttpOpenRequest(connection.value,L"GET",url.path.c_str(),nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE)};
+        if(!request.value){error="Windows could not prepare the signed update metadata request.";return false;}
+        if(!disableAutomaticRedirects(request.value)){error="Windows could not disable automatic metadata redirects.";return false;}
+        const wchar_t*headers=L"Accept: application/octet-stream\r\n";
+        if(!WinHttpAddRequestHeaders(request.value,headers,DWORD(-1),WINHTTP_ADDREQ_FLAG_ADD|WINHTTP_ADDREQ_FLAG_REPLACE)||
+           !WinHttpSendRequest(request.value,WINHTTP_NO_ADDITIONAL_HEADERS,0,WINHTTP_NO_REQUEST_DATA,0,0,0)||!WinHttpReceiveResponse(request.value,nullptr)){
+            const DWORD code=GetLastError();error=code==ERROR_WINHTTP_NAME_NOT_RESOLVED?"DNS could not resolve the signed update metadata host.":code==ERROR_WINHTTP_TIMEOUT?"The signed update metadata request timed out.":"Windows could not securely retrieve the signed update metadata.";return false;
+        }
+        DWORD status=0,statusBytes=sizeof(status);if(!WinHttpQueryHeaders(request.value,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&status,&statusBytes,WINHTTP_NO_HEADER_INDEX)){
+            error="GitHub returned an unreadable signed update metadata response.";return false;
+        }
+        if(status==301||status==302||status==303||status==307||status==308){
+            if(redirect==5){error="The signed update metadata redirected too many times.";return false;}
+            std::wstring next=redirectLocation(request.value);Url checked;
+            if(next.empty()||!crackHttps(next,checked)){error="The signed update metadata redirect was unsafe or invalid.";return false;}
+            current=std::move(next);continue;
+        }
+        if(status!=200){error="GitHub returned HTTP "+std::to_string(status)+" for signed update metadata.";return false;}
+        std::uint64_t contentSize=0;if(contentLength(request.value,contentSize)&&contentSize!=asset.size){error="The signed update metadata size did not match the release listing.";return false;}
+        bool complete=false;
+        while(out.size()<=maximum){
+            DWORD available=0;if(!WinHttpQueryDataAvailable(request.value,&available)){out.clear();error="The signed update metadata download was interrupted.";return false;}
+            if(!available){complete=true;break;}
+            if(available>maximum-out.size()){out.clear();error="The signed update metadata exceeded its size limit.";return false;}
+            const auto old=out.size();out.resize(old+available);DWORD got=0;
+            if(!WinHttpReadData(request.value,out.data()+old,available,&got)){out.clear();error="The signed update metadata download was interrupted.";return false;}
+            out.resize(old+got);if(!got){complete=true;break;}
+        }
+        if(!complete||out.size()!=asset.size){out.clear();error="The signed update metadata was incomplete or had an unexpected size.";return false;}
+        if(!asset.digest.empty()){
+            const auto separator=asset.digest.find(':');HashProvider hash;std::array<BYTE,32>digest{};
+            if(separator==std::string::npos||asset.digest.substr(0,separator)!="sha256"||!hash.open()||
+               BCryptHashData(hash.hash,reinterpret_cast<PUCHAR>(out.data()),ULONG(out.size()),0)<0||
+               BCryptFinishHash(hash.hash,digest.data(),DWORD(digest.size()),0)<0||asset.digest!="sha256:"+hex(digest.data(),digest.size())){
+                out.clear();error="GitHub's additional signed-metadata digest was invalid or conflicted with the downloaded bytes.";return false;
+            }
+        }
+        return true;
+    }
+    error="The signed update metadata could not be retrieved.";return false;
+}
+
+inline bool authenticateReleaseMetadata(ReleaseDetails&release,std::string_view installedVersion,std::string&error){
+    release.manifestVerified=false;release.signedManifestBytes.clear();release.signedManifestSignature.clear();release.authenticatedManifest={};
+    if(!ProductionUpdateKeyProvisioned){error="Publisher update authentication is not configured on this build.";return false;}
+    const auto manifestAsset=selectManifestAsset(release,UpdateManifestName),signatureAsset=selectManifestAsset(release,UpdateManifestSignatureName);
+    if(!manifestAsset.ok){error=manifestAsset.error;return false;}if(!signatureAsset.ok){error=signatureAsset.error;return false;}
+    std::string manifestBytes,signatureBytes;
+    if(!fetchReleaseMetadataAsset(manifestAsset.asset,16384,manifestBytes,error)||!fetchReleaseMetadataAsset(signatureAsset.asset,64,signatureBytes,error))return false;
+    const auto authorization=verifyProductionManifest(manifestBytes,signatureBytes,release.tag,installedVersion,std::time(nullptr));
+    if(!authorization.ok){error=authorization.error;return false;}
+    release.signedManifestBytes=std::move(manifestBytes);release.signedManifestSignature=std::move(signatureBytes);
+    release.authenticatedManifest=authorization.manifest;release.manifestVerified=true;return true;
 }
 
 inline bool safeStagingDirectory(const std::wstring&path){
@@ -178,15 +291,16 @@ inline DownloadResult downloadVerified(const ReleaseAsset&asset,const std::wstri
         accessType=WINHTTP_ACCESS_TYPE_NAMED_PROXY;proxyName=testProxy.c_str();
     }
 #endif
-    client_detail::Internet session{WinHttpOpen(L"Eye Break Reminder updater",accessType,proxyName,WINHTTP_NO_PROXY_BYPASS,0)};
-    if(!session.value){removePartial();result.error="Windows could not start the secure download service.";return result;}
-    if(!client_detail::configureDownloadTimeouts(session.value,loopbackTestSession)){
+    if(!client_detail::allowDownloadTimeoutConfiguration(loopbackTestSession)){
         removePartial();result.error="Windows could not configure bounded secure download timeouts.";return result;
     }
+    const int resolveTimeout=loopbackTestSession?1000:5000,connectTimeout=loopbackTestSession?1000:5000,sendTimeout=loopbackTestSession?1000:10000,receiveTimeout=loopbackTestSession?3000:15000;
+    HINTERNET session=client_detail::processSession(accessType,proxyName,WINHTTP_NO_PROXY_BYPASS,resolveTimeout,connectTimeout,sendTimeout,receiveTimeout);
+    if(!session){removePartial();result.error="Windows could not start the secure download service or configure bounded secure download timeouts.";return result;}
     const ULONGLONG start=GetTickCount64();bool complete=false;
     for(unsigned redirect=0;redirect<=5&&!complete;++redirect){
         if(cancelled.load()){result.cancelled=true;break;}client_detail::Url url;if(!client_detail::crackHttps(current,url)){result.error="The download redirect left the approved HTTPS GitHub asset hosts.";break;}
-        client_detail::Internet connection{WinHttpConnect(session.value,url.host.c_str(),url.port,0)};
+        client_detail::Internet connection{WinHttpConnect(session,url.host.c_str(),url.port,0)};
         if(!connection.value){result.error="The secure connection to the release asset failed.";break;}
         client_detail::Internet request{WinHttpOpenRequest(connection.value,L"GET",url.path.c_str(),nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,WINHTTP_FLAG_SECURE)};
         if(!request.value){result.error="Windows could not prepare the release asset request.";break;}

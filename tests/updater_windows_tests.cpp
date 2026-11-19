@@ -2,6 +2,7 @@
 #include <winsock2.h>
 #undef NOMINMAX
 #include "../src/update_coordinator.hpp"
+#include "../src/update_signature_win.hpp"
 #include <windows.h>
 #include <atomic>
 #include <filesystem>
@@ -11,12 +12,80 @@
 #include <vector>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
+#include <ctime>
 #include <objbase.h>
 
 namespace {
 int assertions=0;
 bool check(bool value,const char*name){++assertions;if(!value)std::cerr<<"FAIL: "<<name<<'\n';return value;}
 bool writeBytes(const std::wstring&path,const std::string&value){HANDLE file=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return false;DWORD wrote=0;const bool ok=WriteFile(file,value.data(),DWORD(value.size()),&wrote,nullptr)&&wrote==value.size();CloseHandle(file);return ok;}
+struct EphemeralSigningKey {
+    eye::updates::signature_detail::AlgorithmHandle algorithm;
+    eye::updates::signature_detail::KeyHandle key;
+    eye::updates::TrustedPublicKey trusted;
+    bool generate(){
+        if(BCryptOpenAlgorithmProvider(&algorithm.value,BCRYPT_ECDSA_P256_ALGORITHM,nullptr,0)<0||
+           BCryptGenerateKeyPair(algorithm.value,&key.value,256,0)<0||BCryptFinalizeKeyPair(key.value,0)<0)return false;
+        DWORD length=0;if(BCryptExportKey(key.value,nullptr,BCRYPT_ECCPUBLIC_BLOB,nullptr,0,&length,0)<0||length!=sizeof(BCRYPT_ECCKEY_BLOB)+64)return false;
+        std::vector<unsigned char>blob(length);if(BCryptExportKey(key.value,nullptr,BCRYPT_ECCPUBLIC_BLOB,blob.data(),length,&length,0)<0)return false;
+        const auto*header=reinterpret_cast<const BCRYPT_ECCKEY_BLOB*>(blob.data());if(header->dwMagic!=BCRYPT_ECDSA_PUBLIC_P256_MAGIC||header->cbKey!=32)return false;
+        trusted.p256Point.assign(blob.begin()+sizeof(BCRYPT_ECCKEY_BLOB),blob.end());return eye::updates::signature_detail::keyIdForPoint(trusted.p256Point,trusted.keyId);
+    }
+    bool sign(std::string_view message,std::string&signature){
+        std::array<unsigned char,32>digest{};if(!eye::updates::signature_detail::sha256(message,digest))return false;
+        DWORD length=0;signature.assign(64,'\0');
+        return BCryptSignHash(key.value,nullptr,digest.data(),DWORD(digest.size()),reinterpret_cast<PUCHAR>(signature.data()),DWORD(signature.size()),&length,0)>=0&&length==64;
+    }
+};
+bool manifestTimestamp(std::time_t value,std::string&text){
+    std::tm utc{};const __time64_t stamp=static_cast<__time64_t>(value);if(_gmtime64_s(&utc,&stamp)!=0)return false;
+    char buffer[32]{};const int count=std::snprintf(buffer,sizeof(buffer),"%04d-%02d-%02dT%02d:%02d:%02dZ",utc.tm_year+1900,utc.tm_mon+1,utc.tm_mday,utc.tm_hour,utc.tm_min,utc.tm_sec);
+    if(count!=20)return false;
+    text.assign(buffer,std::size_t(count));return true;
+}
+bool writeSignedManifest(const std::wstring&stage,EphemeralSigningKey&signer,const eye::updates::UpdateManifest&manifest){
+    const std::string bytes=eye::updates::canonicalManifest(manifest);std::string signature;
+    if(bytes.empty()){std::cerr<<"FAIL: test manifest did not serialize canonically\n";return false;}
+    if(!signer.sign(bytes,signature)){std::cerr<<"FAIL: CNG could not sign the disposable transaction manifest\n";return false;}
+    const bool manifestWritten=writeBytes(stage+L"\\EyeBreakReminder-UpdateManifest.json",bytes);const DWORD manifestError=manifestWritten?ERROR_SUCCESS:GetLastError();
+    const bool signatureWritten=writeBytes(stage+L"\\EyeBreakReminder-UpdateManifest.sig",signature);const DWORD signatureError=signatureWritten?ERROR_SUCCESS:GetLastError();
+    const bool publicKeyWritten=writeBytes(stage+L"\\test-update-public-key.bin",std::string(reinterpret_cast<const char*>(signer.trusted.p256Point.data()),signer.trusted.p256Point.size()));const DWORD publicKeyError=publicKeyWritten?ERROR_SUCCESS:GetLastError();
+    if(!manifestWritten||!signatureWritten||!publicKeyWritten)std::cerr<<"FAIL: signed test fixture write results manifest="<<manifestWritten<<" error="<<manifestError<<" signature="<<signatureWritten<<" error="<<signatureError<<" public_key="<<publicKeyWritten<<" error="<<publicKeyError<<" stage_exists="<<(GetFileAttributesW(stage.c_str())!=INVALID_FILE_ATTRIBUTES)<<" parent_exists="<<(GetFileAttributesW(eye::updates::parentPath(stage).c_str())!=INVALID_FILE_ATTRIBUTES)<<" stage="<<std::filesystem::path(stage).string()<<"\n";
+    return manifestWritten&&signatureWritten&&publicKeyWritten;
+}
+eye::updates::UpdateManifest transactionManifest(const EphemeralSigningKey&signer){
+    const std::time_t now=std::time(nullptr);std::string issued,expires;
+    eye::updates::UpdateManifest manifest;if(!manifestTimestamp(now,issued)||!manifestTimestamp(now+24*60*60,expires))return manifest;
+    manifest.schemaVersion=1;manifest.application=std::string(eye::updates::OfficialApplicationIdentity);
+    manifest.repository=std::string(eye::updates::OfficialRepositoryIdentity);manifest.version="1.4.1";manifest.channel="stable";manifest.architecture="x64";
+    manifest.keyId=signer.trusted.keyId;manifest.issuedAt=issued;manifest.expiresAt=expires;
+    manifest.assets={{"EyeBreakReminder-Setup-x64.exe","installer","installed","x64",std::string(64,'c'),3},
+                     {"EyeBreakReminder.exe","portable-update","portable","x64",std::string(64,'b'),3}};
+    return manifest;
+}
+bool testSignedManifestVerification(){
+    using namespace eye::updates;EphemeralSigningKey signer,other;bool ok=true;
+    ok&=check(signer.generate()&&other.generate(),"generate separate disposable Windows CNG P-256 test keys");
+    UpdateManifest manifest;manifest.schemaVersion=1;manifest.application=std::string(OfficialApplicationIdentity);manifest.repository=std::string(OfficialRepositoryIdentity);manifest.version="1.4.1";manifest.channel="stable";manifest.architecture="x64";manifest.keyId=signer.trusted.keyId;manifest.issuedAt="2026-11-19T11:00:00Z";manifest.expiresAt="2027-01-01T00:00:00Z";
+    manifest.assets={{"EyeBreakReminder-Setup-x64.exe","installer","installed","x64",std::string(64,'a'),100},
+                     {"EyeBreakReminder.exe","portable-update","portable","x64",std::string(64,'b'),90}};
+    const std::string bytes=canonicalManifest(manifest);std::string signature;ok&=check(!bytes.empty()&&signer.sign(bytes,signature),"sign the complete canonical manifest using the disposable CNG key");
+    ok&=check(verifyManifestSignature(bytes,signature,signer.trusted),"verify a valid SHA-256/ECDSA P-256 manifest signature with its matching key");
+    ok&=check(!verifyManifestSignature(bytes,{},signer.trusted),"reject a missing manifest signature");
+    ok&=check(!verifyManifestSignature(bytes,std::string_view(signature.data(),signature.size()-1),signer.trusted),"reject a truncated ECDSA signature");
+    std::string changed=bytes;changed[changed.find("1.4.1")]='9';ok&=check(!verifyManifestSignature(changed,signature,signer.trusted),"reject a modified version or any other manifest byte");
+    std::string badEncoding=signature;badEncoding[0]=char(badEncoding[0]^0x80);ok&=check(!verifyManifestSignature(bytes,badEncoding,signer.trusted),"reject an invalid raw signature encoding");
+    ok&=check(!verifyManifestSignature(bytes,signature,other.trusted),"reject a signature from a different key");
+    TrustedPublicKey unknown=signer.trusted;unknown.keyId="p256-ffffffffffffffff";ok&=check(!verifyManifestSignature(bytes,signature,unknown),"reject an unknown or mismatched signing key identifier");
+    const bool productionSeparate=!ProductionUpdateKeyProvisioned&&ProductionUpdateKeyId.empty()&&
+        !verifyProductionManifest(bytes,signature,"v1.4.1","1.4.0",std::time(nullptr)).ok;
+    ok&=check(productionSeparate,"a disposable test-key signature is rejected by the unprovisioned production trust configuration");
+    DWORD before=0,after=0;const bool handleBaseline=GetProcessHandleCount(GetCurrentProcess(),&before)!=FALSE;
+    bool repeated=handleBaseline;for(unsigned i=0;i<100;++i)repeated&=verifyManifestSignature(bytes,signature,signer.trusted);
+    const bool handlesObserved=GetProcessHandleCount(GetCurrentProcess(),&after)!=FALSE;ok&=check(repeated&&handlesObserved&&before==after,"100 signature verifications release CNG handles back to the process baseline");
+    return ok;
+}
 bool testInvalidTemporaryRoot(const std::wstring&stage){
     const std::wstring invalidDataRoot=stage+L"\\missing-parent\\EyeBreakReminder";
     std::wstring rejectedStage;
@@ -80,6 +149,41 @@ bool testInitialConnectionRefusal(const std::wstring&stage){
     const bool restoredProxy=priorLength?SetEnvironmentVariableW(L"EBR_TEST_HTTPS_PROXY",std::wstring(priorProxy,priorLength).c_str())!=FALSE:SetEnvironmentVariableW(L"EBR_TEST_HTTPS_PROXY",nullptr)!=FALSE;
     std::string sentinelContents;const bool priorAppUntouched=eye::win::read(sentinel,sentinelContents,128)&&sentinelContents=="existing-app-must-remain-unchanged";const bool noPartial=GetFileAttributesW((stage+L"\\EyeBreakReminder-Setup-x64.exe.part").c_str())==INVALID_FILE_ATTRIBUTES;const bool noInstaller=GetFileAttributesW((stage+L"\\EyeBreakReminder-Setup-x64.exe").c_str())==INVALID_FILE_ATTRIBUTES;
     ok&=check(restoredProxy,"restore the caller's prior loopback-proxy environment setting");ok&=check(!result.ok&&!result.cancelled&&result.received==0&&!result.error.empty()&&result.error.find("connect")!=std::string::npos,"an initial refused HTTPS connection returns an actionable failure without accepting bytes");ok&=check(noPartial&&noInstaller,"initial connection refusal removes the partial file and does not stage an installer");ok&=check(priorAppUntouched,"initial connection refusal leaves the existing app sentinel byte-for-byte unchanged");ok&=check(DeleteFileW(sentinel.c_str())!=FALSE,"remove the connection-refusal prior-app sentinel after the assertion");return ok;
+}
+bool testDnsResolutionFailure(const std::wstring&stage){
+    const std::wstring profile=stage+L"\\dns-profile",app=profile+L"\\EyeBreakReminder.exe",settings=profile+L"\\settings.ini",history=profile+L"\\history.dat",marker=stage+L"\\dns-installer-launched.marker";
+    const bool profileCreated=CreateDirectoryW(profile.c_str(),nullptr)!=FALSE;
+    const bool fixturesCreated=profileCreated&&writeBytes(app,"existing-application")&&writeBytes(settings,"theme=dark\nwork=47\n")&&writeBytes(history,"sessions=42\n");
+    bool ok=check(fixturesCreated,"create disposable app/settings/history sentinels for the DNS failure test");
+    std::string appBefore,settingsBefore,historyBefore;ok&=check(eye::updates::hashFile(app,appBefore)&&eye::updates::hashFile(settings,settingsBefore)&&eye::updates::hashFile(history,historyBefore),"record disposable file identities before DNS resolution");
+    wchar_t previous[8]{};const DWORD previousLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",previous,DWORD(std::size(previous)));
+    const unsigned closeFailuresBefore=eye::updates::client_detail::WinHttpCloseFailures.load(std::memory_order_relaxed);
+    const bool configured=SetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",L"1")!=FALSE;
+    eye::updates::HttpResponse response;if(configured)for(unsigned i=0;i<8;++i)response=eye::updates::latestStableReleaseResponse();
+    Sleep(5000);std::vector<DWORD>dnsHandleSamples;DWORD stableHandleBaseline=0,previousHandles=0;unsigned stableSamples=0;bool stableBaselineObserved=false;
+    for(unsigned i=0;i<15&&configured&&stableSamples<3;++i){Sleep(1000);DWORD handles=0;if(!GetProcessHandleCount(GetCurrentProcess(),&handles))break;dnsHandleSamples.push_back(handles);stableBaselineObserved=true;if(i&&handles==previousHandles)++stableSamples;else stableSamples=0;previousHandles=handles;}
+    stableHandleBaseline=previousHandles;bool repeatedHandleCountsStable=stableBaselineObserved&&stableSamples>=3;
+    for(unsigned i=0;i<20&&configured;++i){response=eye::updates::latestStableReleaseResponse();Sleep(250);DWORD handles=0;const bool observed=GetProcessHandleCount(GetCurrentProcess(),&handles)!=FALSE;dnsHandleSamples.push_back(handles);repeatedHandleCountsStable&=observed&&handles==stableHandleBaseline;}
+    const bool restoredEnvironment=previousLength?SetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",std::wstring(previous,previousLength).c_str())!=FALSE:SetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",nullptr)!=FALSE;
+    Sleep(5000);DWORD finalHandles=0;const bool handlesObserved=GetProcessHandleCount(GetCurrentProcess(),&finalHandles)!=FALSE;
+    const unsigned closeFailuresAfter=eye::updates::client_detail::WinHttpCloseFailures.load(std::memory_order_relaxed);
+    ok&=check(configured&&restoredEnvironment,"enable the fixed test-only DNS origin for one request and restore the process environment");
+    ok&=check(response.status==0&&response.body.empty()&&response.failure==eye::updates::Failure::Offline&&response.errorCode==ERROR_WINHTTP_NAME_NOT_RESOLVED,"real WinHTTP resolution of the reserved .invalid origin returns DNS-name-not-resolved, not an HTTP error");
+    const auto failed=eye::updates::evaluate(response,"1.4.0");
+    ok&=check(failed.state==eye::updates::State::Failed&&failed.error.find("Could not reach GitHub")!=std::string::npos,"report DNS failure as a recoverable offline update-check message");
+    const std::string newerRelease="{\"tag_name\":\"v1.4.1\",\"html_url\":\"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.4.1\",\"draft\":false,\"prerelease\":false,\"assets\":[{\"name\":\"EyeBreakReminder-Setup-x64.exe\",\"browser_download_url\":\"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder-Setup-x64.exe\",\"size\":128,\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"EyeBreakReminder.exe\",\"browser_download_url\":\"https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder.exe\",\"size\":128,\"digest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}]}";
+    const auto retry=eye::updates::evaluate(eye::updates::HttpResponse{200,newerRelease,eye::updates::Failure::None,0},"1.4.0");
+    ok&=check(retry.state==eye::updates::State::UpdateAvailable&&retry.latestVersion=="1.4.1","a subsequent successful stable-release response is accepted after the DNS failure");
+    std::string appAfter,settingsAfter,historyAfter;const bool filesUnchanged=eye::updates::hashFile(app,appAfter)&&eye::updates::hashFile(settings,settingsAfter)&&eye::updates::hashFile(history,historyAfter)&&appBefore==appAfter&&settingsBefore==settingsAfter&&historyBefore==historyAfter;
+    const bool noInstaller=GetFileAttributesW(marker.c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW((stage+L"\\EyeBreakReminder-Setup-x64.exe").c_str())==INVALID_FILE_ATTRIBUTES;
+    ok&=check(filesUnchanged,"DNS failure leaves disposable app, settings and history sentinels unchanged");
+    ok&=check(noInstaller,"DNS failure neither stages nor launches an installer");
+    ok&=check(closeFailuresBefore==closeFailuresAfter,"per-request WinHTTP connection and request handles close successfully after DNS failure");
+    ok&=check(stableBaselineObserved&&handlesObserved,"observe the process handle count around repeated resolver failures");
+    ok&=check(repeatedHandleCountsStable&&stableHandleBaseline==finalHandles,"reuse the bounded process WinHTTP session without accumulating handles across repeated DNS failures");
+    if(!repeatedHandleCountsStable||stableHandleBaseline!=finalHandles){std::cout<<"INFO: test-only no-proxy DNS process handles:";for(auto value:dnsHandleSamples)std::cout<<' '<<value;std::cout<<" baseline="<<stableHandleBaseline<<" settled="<<finalHandles<<" (handle count failed to stabilize after warm-up).\n";}
+    else std::cout<<"INFO: test-only no-proxy DNS handle count stabilized at "<<stableHandleBaseline<<" and stayed there for 20 repeated resolver failures.\n";
+    DeleteFileW(app.c_str());DeleteFileW(settings.c_str());DeleteFileW(history.c_str());RemoveDirectoryW(profile.c_str());DeleteFileW(marker.c_str());return ok;
 }
 bool createTestJunction(const std::wstring&link,const std::wstring&target){wchar_t systemDirectory[MAX_PATH]{};const UINT length=GetSystemDirectoryW(systemDirectory,MAX_PATH);if(!length||length>=MAX_PATH)return false;const std::wstring command=L"\""+std::wstring(systemDirectory)+L"\\cmd.exe\" /d /c mklink /J \""+link+L"\" \""+target+L"\"";std::vector<wchar_t>buffer(command.begin(),command.end());buffer.push_back(L'\0');STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION process{};if(!CreateProcessW(nullptr,buffer.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process))return false;WaitForSingleObject(process.hProcess,INFINITE);DWORD exitCode=1;GetExitCodeProcess(process.hProcess,&exitCode);CloseHandle(process.hThread);CloseHandle(process.hProcess);const DWORD attributes=GetFileAttributesW(link.c_str());return exitCode==0&&attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_REPARSE_POINT)!=0;}
 std::wstring asciiWide(const char*text){std::wstring result;for(;*text;++text)result.push_back(static_cast<unsigned char>(*text));return result;}
@@ -167,6 +271,16 @@ int runHttpsInterruption(int argc,char**argv){
 int main(int argc,char**argv){
     if(argc==3&&std::string(argv[1])=="--hold-test-coordinator-mutex")return holdTestCoordinatorMutex(argv[2]);
     if(argc>1&&std::string(argv[1])=="--https-interruption")return runHttpsInterruption(argc,argv);
+    if(argc==2&&std::string(argv[1])=="--test-signatures"){
+        const bool ok=testSignedManifestVerification();if(ok)std::cout<<"PASS: "<<assertions<<" Windows CNG signature assertions executed.\n";return ok?0:1;
+    }
+    if(argc==2&&std::string(argv[1])=="--dns-failure"){
+        const auto folder=std::filesystem::current_path()/"build"/"updater-windows-tests";
+        if(!CreateDirectoryW(folder.c_str(),nullptr)){std::cerr<<"FAIL: isolated DNS test folder must be new; refusing to reuse or remove it\n";return 1;}
+        const bool ok=testDnsResolutionFailure(folder.wstring());const bool removed=RemoveDirectoryW(folder.c_str())!=FALSE;
+        if(ok&&removed)std::cout<<"PASS: "<<assertions<<" test-only real DNS-failure assertions executed; no production endpoint override was enabled.\n";
+        return ok&&removed?0:1;
+    }
     if(argc==2&&std::string(argv[1])=="--invalid-temp-root"){
         const auto folder=std::filesystem::current_path()/"build"/"updater-windows-tests";
         if(!CreateDirectoryW(folder.c_str(),nullptr)){std::cerr<<"FAIL: isolated test folder must be new; refusing to reuse or remove it\n";return 1;}
@@ -184,6 +298,7 @@ int main(int argc,char**argv){
     const auto folder=std::filesystem::current_path()/"build"/"updater-windows-tests";
     if(!CreateDirectoryW(folder.c_str(),nullptr)){std::cerr<<"FAIL: isolated test folder must be new; refusing to reuse or remove it\n";return 1;}
     const std::wstring stage=folder.wstring();bool ok=true;
+    ok&=testSignedManifestVerification();
     ok&=check(eye::updates::safeStagingDirectory(stage),"isolated staging directory is a regular non-reparse path");
     ok&=testInvalidTemporaryRoot(stage);
     ok&=testInitialConnectionRefusal(stage);
@@ -245,7 +360,9 @@ int main(int argc,char**argv){
 
     const std::wstring validationData=stage+L"\\validation-profile";CreateDirectoryW(validationData.c_str(),nullptr);SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",validationData.c_str());std::wstring resolvedValidationData;const bool testProfileResolved=eye::updates::localDataDirectory(resolvedValidationData)&&eye::updates::samePath(validationData,resolvedValidationData);ok&=check(testProfileResolved,"transaction-validation tests use an isolated disposable test profile");
     std::wstring validationStage;const bool validationStageCreated=testProfileResolved&&eye::updates::createStagingDirectory(validationData,validationStage);const std::wstring portableDirectory=stage+L"\\portable-target";CreateDirectoryW(portableDirectory.c_str(),nullptr);const std::wstring portableTarget=portableDirectory+L"\\EyeBreakReminder.exe";ok&=check(validationStageCreated&&eye::updates::safeStagingDirectory(validationStage)&&eye::updates::safeStagingDirectory(portableDirectory)&&writeBytes(portableTarget,"old"),"create an isolated portable update transaction fixture");
-    eye::updates::Transaction validTransaction;validTransaction.stagingDirectory=validationStage;validTransaction.artifactPath=validationStage+L"\\EyeBreakReminder.exe";validTransaction.targetExecutable=portableTarget;validTransaction.dataDirectory=validationData;validTransaction.version=L"1.4.1";validTransaction.previousVersion=L"1.4.0";validTransaction.nonce=L"12345678-1234-1234-1234-123456789abc";validTransaction.kind="portable";validTransaction.artifactName="EyeBreakReminder.exe";validTransaction.sha256=std::string(64,'a');validTransaction.expectedApplicationSha256=std::string(64,'b');validTransaction.previousSha256=std::string(64,'c');validTransaction.expectedSize=3;validTransaction.ownerPid=GetCurrentProcessId();
+    EphemeralSigningKey transactionSigner;const bool testKeyReady=transactionSigner.generate();const auto validManifest=transactionManifest(transactionSigner);
+    ok&=check(validationStageCreated&&testKeyReady&&writeSignedManifest(validationStage,transactionSigner,validManifest),"create a signed test-key transaction fixture with only its public key in the isolated stage");
+    eye::updates::Transaction validTransaction;validTransaction.stagingDirectory=validationStage;validTransaction.artifactPath=validationStage+L"\\EyeBreakReminder.exe";validTransaction.targetExecutable=portableTarget;validTransaction.dataDirectory=validationData;validTransaction.version=L"1.4.1";validTransaction.previousVersion=L"1.4.0";validTransaction.nonce=L"12345678-1234-1234-1234-123456789abc";validTransaction.kind="portable";validTransaction.artifactName="EyeBreakReminder.exe";validTransaction.sha256=std::string(64,'b');validTransaction.expectedApplicationSha256=std::string(64,'b');validTransaction.previousSha256=std::string(64,'c');validTransaction.expectedSize=3;validTransaction.ownerPid=GetCurrentProcessId();
     std::string validationError;const std::wstring validTransactionPath=validationStage+L"\\transaction.ini",validCoordinatorPath=validationStage+L"\\coordinator.exe";ok&=check(validationStageCreated&&eye::updates::validateTransaction(validTransaction,validTransactionPath,validCoordinatorPath,validationError),"accept a correctly scoped disposable portable transaction");
     auto wrongProfile=validTransaction;wrongProfile.dataDirectory=stage+L"\\unrelated-profile";validationError.clear();ok&=check(!eye::updates::validateTransaction(wrongProfile,validTransactionPath,validCoordinatorPath,validationError)&&validationError.find("Windows user's Eye Break Reminder profile")!=std::string::npos,"reject a transaction directed at an unrelated user-profile destination");
     auto wrongName=validTransaction;wrongName.artifactName="..\\outside.exe";validationError.clear();ok&=check(!eye::updates::validateTransaction(wrongName,validTransactionPath,validCoordinatorPath,validationError),"reject command/path substitution in the fixed portable asset name");
@@ -260,6 +377,67 @@ int main(int argc,char**argv){
     const std::string originalSettings="theme=dark\nwork=47\n",originalTimer="workSeconds=1234\nbreakSeconds=77\n",originalHistory="sessions=42\n";
     const std::wstring settingsPath=validationData+L"\\settings.ini",timerPath=validationData+L"\\timer.dat",historyPath=validationData+L"\\history.dat";
     ok&=check(writeBytes(settingsPath,originalSettings)&&writeBytes(timerPath,originalTimer)&&writeBytes(historyPath,originalHistory),"populate an isolated settings/history recovery profile");
+    struct RejectionFixture {std::string name,manifest,signature;std::string publicPoint;bool missingSignature=false;};
+    std::vector<RejectionFixture> rejectionCases;std::string validManifestBytes=eye::updates::canonicalManifest(validManifest),validSignature;
+    ok&=check(transactionSigner.sign(validManifestBytes,validSignature),"prepare the complete valid signed-manifest baseline for the rejection matrix");
+    rejectionCases.push_back({"missing signature",validManifestBytes,{}, {},true});
+    rejectionCases.push_back({"empty signature",validManifestBytes,"",{},false});
+    rejectionCases.push_back({"truncated signature",validManifestBytes,validSignature.substr(0,63),{},false});
+    EphemeralSigningKey otherTransactionSigner;ok&=check(otherTransactionSigner.generate(),"generate an unrelated disposable key for transaction rejection coverage");
+    std::string otherSignature;otherTransactionSigner.sign(validManifestBytes,otherSignature);
+    rejectionCases.push_back({"signature from another key",validManifestBytes,otherSignature,std::string(reinterpret_cast<const char*>(otherTransactionSigner.trusted.p256Point.data()),otherTransactionSigner.trusted.p256Point.size()),false});
+    auto addRawCase=[&](const std::string&name,std::string bytes){std::string signature;if(transactionSigner.sign(bytes,signature))rejectionCases.push_back({name,std::move(bytes),std::move(signature),{},false});else ok&=check(false,"sign a controlled rejection fixture with the disposable test key");};
+    auto replaceText=[](std::string value,const std::string&from,const std::string&to,bool last=false){const auto at=last?value.rfind(from):value.find(from);if(at==std::string::npos)return std::string{};value.replace(at,from.size(),to);return value;};
+    rejectionCases.push_back({"manifest modified after signing",replaceText(validManifestBytes,"1.4.1","1.4.2"),validSignature,{},false});
+    addRawCase("malformed signed JSON","{");
+    addRawCase("unsupported signed schema",replaceText(validManifestBytes,"\"schema_version\":1","\"schema_version\":2"));
+    addRawCase("wrong signed application",replaceText(validManifestBytes,"Eye Break Reminder","Other Application"));
+    addRawCase("wrong signed repository",replaceText(validManifestBytes,"REMEDIOSSAMUEL/EYE-BREAK-REMINDER","REMEDIOSSAMUEL/OTHER-REPOSITORY"));
+    addRawCase("unauthorized prerelease channel",replaceText(validManifestBytes,"\"channel\":\"stable\"","\"channel\":\"prerelease\""));
+    addRawCase("unsupported signed architecture",replaceText(validManifestBytes,"\"architecture\":\"x64\"","\"architecture\":\"arm64\""));
+    addRawCase("unknown signing key identifier",replaceText(validManifestBytes,transactionSigner.trusted.keyId,"p256-ffffffffffffffff"));
+    addRawCase("installer/portable asset substitution",replaceText(validManifestBytes,"EyeBreakReminder-Setup-x64.exe","EyeBreakReminder.exe"));
+    auto badRole=validManifest;badRole.assets[1].role="installer";std::string badRoleBytes=eye::updates::canonicalManifest(badRole),badRoleSignature;transactionSigner.sign(badRoleBytes,badRoleSignature);rejectionCases.push_back({"conflicting signed asset role",badRoleBytes,badRoleSignature,{},false});
+    auto badInstallType=validManifest;badInstallType.assets[1].installationType="installed";std::string badInstallBytes=eye::updates::canonicalManifest(badInstallType),badInstallSignature;transactionSigner.sign(badInstallBytes,badInstallSignature);rejectionCases.push_back({"installer/portable installation-type substitution",badInstallBytes,badInstallSignature,{},false});
+    auto badSize=validManifest;badSize.assets[1].size=4;std::string badSizeBytes=eye::updates::canonicalManifest(badSize),badSizeSignature;transactionSigner.sign(badSizeBytes,badSizeSignature);rejectionCases.push_back({"signed size differs from transaction",badSizeBytes,badSizeSignature,{},false});
+    auto badDigest=validManifest;badDigest.assets[1].sha256=std::string(64,'d');std::string badDigestBytes=eye::updates::canonicalManifest(badDigest),badDigestSignature;transactionSigner.sign(badDigestBytes,badDigestSignature);rejectionCases.push_back({"signed digest differs from transaction",badDigestBytes,badDigestSignature,{},false});
+    auto stale=validManifest;stale.expiresAt="2026-01-01T00:00:00Z";std::string staleBytes=eye::updates::canonicalManifest(stale),staleSignature;transactionSigner.sign(staleBytes,staleSignature);rejectionCases.push_back({"expired signed metadata",staleBytes,staleSignature,{},false});
+    auto replay=validManifest;replay.version="1.3.0";std::string replayBytes=eye::updates::canonicalManifest(replay),replaySignature;transactionSigner.sign(replayBytes,replaySignature);rejectionCases.push_back({"replayed older release",replayBytes,replaySignature,{},false});
+    auto substitutedVersion=validManifest;substitutedVersion.version="1.4.2";std::string substitutedBytes=eye::updates::canonicalManifest(substitutedVersion),substitutedSignature;transactionSigner.sign(substitutedBytes,substitutedSignature);rejectionCases.push_back({"signed manifest version differs from transaction",substitutedBytes,substitutedSignature,{},false});
+    const std::wstring registryPath=L"Software\\EyeBreakReminder-Security-Test\\Process-"+std::to_wstring(GetCurrentProcessId());HKEY testRegistry{};
+    DWORD regDisposition=0;const LONG registryCreateStatus=RegCreateKeyExW(HKEY_CURRENT_USER,registryPath.c_str(),0,nullptr,0,KEY_SET_VALUE|KEY_QUERY_VALUE,nullptr,&testRegistry,&regDisposition);
+    const bool registryCreated=registryCreateStatus==ERROR_SUCCESS;
+    const std::wstring registrySentinel=L"unchanged";const LONG registryWriteStatus=registryCreated?RegSetValueExW(testRegistry,L"Sentinel",0,REG_SZ,reinterpret_cast<const BYTE*>(registrySentinel.c_str()),DWORD((registrySentinel.size()+1)*sizeof(wchar_t))):registryCreateStatus;const bool registryWritten=registryWriteStatus==ERROR_SUCCESS;if(testRegistry)RegCloseKey(testRegistry);
+    if(!registryWritten)std::cerr<<"SEC-028 registry setup failed: create="<<registryCreateStatus<<" write="<<registryWriteStatus<<" path="<<std::filesystem::path(registryPath).string()<<"\n";
+    ok&=check(registryWritten,"create an isolated current-user registry sentinel for SEC-028");
+    const std::wstring launchMarker=stage+L"\\unauthorized-installer-launched.marker";DeleteFileW(launchMarker.c_str());
+    auto coordinatorMutexExists=[](){HANDLE mutex=OpenMutexW(SYNCHRONIZE,FALSE,L"Local\\EyeBreakReminder.UpdateCoordinator.1");if(!mutex)return false;CloseHandle(mutex);return true;};
+    const bool mutexBefore=coordinatorMutexExists();unsigned rejectionPasses=0,fileSideEffectPasses=0;
+    for(const auto&fixture:rejectionCases){
+        bool written=writeBytes(validationStage+L"\\EyeBreakReminder-UpdateManifest.json",fixture.manifest);
+        written&=fixture.missingSignature?DeleteFileW((validationStage+L"\\EyeBreakReminder-UpdateManifest.sig").c_str())!=FALSE:
+            writeBytes(validationStage+L"\\EyeBreakReminder-UpdateManifest.sig",fixture.signature);
+        if(!fixture.publicPoint.empty())written&=writeBytes(validationStage+L"\\test-update-public-key.bin",fixture.publicPoint);
+        else written&=writeBytes(validationStage+L"\\test-update-public-key.bin",std::string(reinterpret_cast<const char*>(transactionSigner.trusted.p256Point.data()),transactionSigner.trusted.p256Point.size()));
+        std::string oldExecutable,oldSettings,oldTimer,oldHistory,oldUnrelated;eye::updates::hashFile(portableTarget,oldExecutable);
+        eye::win::read(settingsPath,oldSettings,128);eye::win::read(timerPath,oldTimer,128);eye::win::read(historyPath,oldHistory,128);eye::win::read(sentinel,oldUnrelated,128);
+        std::size_t entriesBefore=0;const bool entriesObserved=countDirectoryEntries(validationStage,entriesBefore);
+        validationError.clear();const bool rejected=written&&!eye::updates::validateTransaction(validTransaction,validTransactionPath,validCoordinatorPath,validationError)&&!validationError.empty();
+        std::string afterExecutable,afterSettings,afterTimer,afterHistory,afterUnrelated;const bool filesObserved=eye::updates::hashFile(portableTarget,afterExecutable)&&eye::win::read(settingsPath,afterSettings,128)&&eye::win::read(timerPath,afterTimer,128)&&eye::win::read(historyPath,afterHistory,128)&&eye::win::read(sentinel,afterUnrelated,128);
+        std::size_t entriesAfter=0;const bool entriesStable=entriesObserved&&countDirectoryEntries(validationStage,entriesAfter)&&entriesAfter==entriesBefore;
+        HKEY verifyRegistry{};wchar_t registryValue[32]{};DWORD registryType=0,registryBytes=sizeof(registryValue);const LONG registryOpenStatus=RegOpenKeyExW(HKEY_CURRENT_USER,registryPath.c_str(),0,KEY_QUERY_VALUE,&verifyRegistry);const LONG registryQueryStatus=registryOpenStatus==ERROR_SUCCESS?RegQueryValueExW(verifyRegistry,L"Sentinel",nullptr,&registryType,reinterpret_cast<BYTE*>(registryValue),&registryBytes):registryOpenStatus;const bool registryStable=registryQueryStatus==ERROR_SUCCESS&&registryType==REG_SZ&&wcscmp(registryValue,registrySentinel.c_str())==0;if(verifyRegistry)RegCloseKey(verifyRegistry);
+        const bool noLaunch=GetFileAttributesW(launchMarker.c_str())==INVALID_FILE_ATTRIBUTES;const bool noTemp=GetFileAttributesW((validationStage+L"\\EyeBreakReminder.exe.part").c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW((validationStage+L"\\transaction.ini.tmp").c_str())==INVALID_FILE_ATTRIBUTES;
+        const bool fileAndProcessEffectsClear=rejected&&filesObserved&&oldExecutable==afterExecutable&&oldSettings==afterSettings&&oldTimer==afterTimer&&oldHistory==afterHistory&&oldUnrelated==afterUnrelated&&coordinatorMutexExists()==mutexBefore&&entriesStable&&noLaunch&&noTemp;
+        if(fileAndProcessEffectsClear)++fileSideEffectPasses;
+        if(fileAndProcessEffectsClear&&registryStable)++rejectionPasses;
+        else if(!fileAndProcessEffectsClear||registryWritten)std::cerr<<"SEC-028 detail: "<<fixture.name<<" written="<<written<<" rejected="<<rejected<<" error="<<validationError<<" files="<<filesObserved<<" exe="<<(oldExecutable==afterExecutable)<<" settings="<<(oldSettings==afterSettings)<<" timer="<<(oldTimer==afterTimer)<<" history="<<(oldHistory==afterHistory)<<" unrelated="<<(oldUnrelated==afterUnrelated)<<" registry="<<registryStable<<" regOpen="<<registryOpenStatus<<" regQuery="<<registryQueryStatus<<" regType="<<registryType<<" mutex="<<(coordinatorMutexExists()==mutexBefore)<<" entries="<<entriesStable<<" launch="<<noLaunch<<" temp="<<noTemp<<" countBefore="<<entriesBefore<<" countAfter="<<entriesAfter<<"\n";
+        ok&=check(fileAndProcessEffectsClear,("reject "+fixture.name+" without changing app/profile/filesystem/staging or launching a helper marker").c_str());
+        if(registryWritten)ok&=check(registryStable,("reject "+fixture.name+" without changing the isolated registry sentinel").c_str());
+        ok&=check(writeSignedManifest(validationStage,transactionSigner,validManifest),"restore the valid signed test metadata after each rejection probe");
+    }
+    if(registryWritten)ok&=check(rejectionPasses==rejectionCases.size(),"SEC-028 scoped rejection matrix preserves app/profile/registry/process state across every signed-metadata rejection");
+    else {std::cerr<<"BLOCKED: SEC-028 registry side-effect observation unavailable; disposable HKCU write returned ERROR_ACCESS_DENIED. File/profile/staging observations passed "<<fileSideEffectPasses<<"/"<<rejectionCases.size()<<" cases.\n";ok=false;}
+    RegDeleteKeyW(HKEY_CURRENT_USER,registryPath.c_str());
     const std::wstring failedBackupStage=updatesRoot+L"\\backup-failure";CreateDirectoryW(failedBackupStage.c_str(),nullptr);ok&=check(writeBytes(failedBackupStage+L"\\backup-1.dat","existing-backup-sentinel"),"create a collision that makes the second settings backup fail");
     eye::updates::Transaction failedBackup;failedBackup.stagingDirectory=failedBackupStage;failedBackup.dataDirectory=validationData;
     std::string unchanged;const bool failedBackupRejected=!eye::updates::backupData(failedBackup)&&eye::win::read(settingsPath,unchanged,128)&&unchanged==originalSettings&&eye::win::read(timerPath,unchanged,128)&&unchanged==originalTimer&&eye::win::read(historyPath,unchanged,128)&&unchanged==originalHistory;
@@ -297,7 +475,7 @@ int main(int argc,char**argv){
     ok&=check(cleanDeletesOnlyAppData,"explicit history deletion removes only the three Eye Break Reminder data files");
     const bool destructiveCleanRecovery=eye::updates::restoreData(dataRecovery,true);unchanged.clear();
     ok&=check(destructiveCleanRecovery&&eye::win::read(settingsPath,unchanged,128)&&unchanged==originalSettings&&eye::win::read(timerPath,unchanged,128)&&unchanged==originalTimer&&eye::win::read(historyPath,unchanged,128)&&unchanged==originalHistory,"rollback after history deletion restores verified settings and history backups");
-    SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",nullptr);DeleteFileW(sentinel.c_str());RemoveDirectoryW(sentinelDirectory.c_str());DeleteFileW(portableTarget.c_str());RemoveDirectoryW(portableDirectory.c_str());DeleteFileW(settingsPath.c_str());DeleteFileW(timerPath.c_str());DeleteFileW(historyPath.c_str());DeleteFileW((settingsPath+L".update-restore").c_str());DeleteFileW((timerPath+L".update-restore").c_str());DeleteFileW((historyPath+L".update-restore").c_str());DeleteFileW((validationStage+L"\\backup-0.dat").c_str());DeleteFileW((validationStage+L"\\backup-1.dat").c_str());DeleteFileW((validationStage+L"\\backup-2.dat").c_str());DeleteFileW((validationStage+L"\\transaction.ini").c_str());DeleteFileW((validationStage+L"\\transaction.ini.tmp").c_str());if(validationStageCreated)RemoveDirectoryW(validationStage.c_str());RemoveDirectoryW(updatesRoot.c_str());RemoveDirectoryW(validationData.c_str());
+    SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",nullptr);DeleteFileW(sentinel.c_str());RemoveDirectoryW(sentinelDirectory.c_str());DeleteFileW(portableTarget.c_str());RemoveDirectoryW(portableDirectory.c_str());DeleteFileW(settingsPath.c_str());DeleteFileW(timerPath.c_str());DeleteFileW(historyPath.c_str());DeleteFileW((settingsPath+L".update-restore").c_str());DeleteFileW((timerPath+L".update-restore").c_str());DeleteFileW((historyPath+L".update-restore").c_str());DeleteFileW((validationStage+L"\\EyeBreakReminder-UpdateManifest.json").c_str());DeleteFileW((validationStage+L"\\EyeBreakReminder-UpdateManifest.sig").c_str());DeleteFileW((validationStage+L"\\test-update-public-key.bin").c_str());DeleteFileW((validationStage+L"\\backup-0.dat").c_str());DeleteFileW((validationStage+L"\\backup-1.dat").c_str());DeleteFileW((validationStage+L"\\backup-2.dat").c_str());DeleteFileW((validationStage+L"\\transaction.ini").c_str());DeleteFileW((validationStage+L"\\transaction.ini.tmp").c_str());if(validationStageCreated)RemoveDirectoryW(validationStage.c_str());RemoveDirectoryW(updatesRoot.c_str());RemoveDirectoryW(validationData.c_str());
 
     DeleteFileW((stage+L"\\fixture.bin").c_str());DeleteFileW((stage+L"\\transaction.ini").c_str());DeleteFileW((stage+L"\\transaction.ini.tmp").c_str());DeleteFileW((stage+L"\\previous-owned-0.dat").c_str());DeleteFileW((stage+L"\\previous-owned-1.dat").c_str());DeleteFileW((stage+L"\\previous-owned-3.dat").c_str());const bool filesRemoved=DeleteFileW((install+L"\\Uninstall.exe").c_str())&&DeleteFileW((install+L"\\README.md").c_str())&&DeleteFileW((install+L"\\VERIFICATION.md").c_str());const bool installRemoved=filesRemoved&&RemoveDirectoryW(install.c_str());const bool removed=installRemoved&&RemoveDirectoryW(stage.c_str())!=FALSE;
     ok&=check(removed,"remove exact isolated updater test folder");

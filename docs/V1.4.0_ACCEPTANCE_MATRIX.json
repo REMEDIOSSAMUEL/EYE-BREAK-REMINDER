@@ -3,10 +3,10 @@
   "generated_on": "2026-11-19",
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
-  "branch_head": "e552df905bfd70595538f401cf3f4344f1626c3f",
-  "branch_head_scope": "Latest pushed test-harness head with focused failure-edge results. Production candidate inputs remain unchanged from product commit f764f2f and source snapshot 67e8ed6; documentation commit and its required check are tracked separately.",
+  "branch_head": "a343c3f25f20fe0bb50cab6eb2e0d45cbea8a620",
+  "branch_head_scope": "Current local feature branch commit. Signed-manifest implementation, WinHTTP session-cache fix, security tests, signing-tool path guards, and completion documentation are uncommitted working-tree changes; no post-change source commit or pushed branch head exists.",
   "current_release_candidate": {
-    "status": "The exact five-file candidate from run 44498562317 remains authoritative and unchanged. Actual update/relaunch, preserve/clean settings and history policy, install/uninstall, portable recovery, backup-failure recovery and GUI acceptance passed; corrected real HTTPS body-stall timeout passed in 44505090187; exact binary soak passed 110/110 cycles with 264 PASS/0 FAIL/0 NOT TESTED; clean-runner independent candidate/evidence audit and Windows 11 ARM64 x64-emulation passed in 44527187760. Publication is NOT READY because app/setup are Authenticode NotSigned and trusted publisher authentication has not been provisioned.",
+    "status": "Historical candidate for the pre-security-change source only; it remains authoritative for its recorded previous tests, not for the signed-manifest working tree. No replacement candidate has been built. Publication is NOT READY because the current source has no production key, signed production metadata, post-change transaction tests, or current CI. The previous candidate's app/setup are Authenticode NotSigned.",
     "run_id": 44498562317,
     "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44498562317",
     "artifact_id": 14517182110,
@@ -60,7 +60,7 @@
     "independent_verification": "Downloaded from artifact 14517182110 to a clean local directory; all five file sizes and hashes independently match release-artifact-identities.json; four payload entries match the SHA-256 manifest; standalone/setup product version 1.4.0; portable ZIP embedded EXE equals standalone SHA-256; 144 source ZIP files compared against complete GitHub tree (82 raw matches, 62 normalized line endings, zero mismatches). Both PE files are Authenticode NotSigned.",
     "replacement_candidate_run_id": null,
     "replacement_candidate_run_url": null,
-    "replacement_candidate_status": "No replacement candidate was required. Exact retained candidate run 44498562317 remains unchanged; focused failure-edge scenarios on 44540906174 used its exact executable and setup payloads."
+    "replacement_candidate_status": "No authoritative replacement candidate exists. A development-only standalone executable was built and retained at build/security-development-only-20261119/EyeBreakReminder.exe, but installer/portable/source/checksum/manifest/signature assets were not produced and the binary must not be distributed."
   },
   "status_legend": [
     "PASS",
@@ -69,7 +69,21 @@
     "BLOCKED",
     "NOT APPLICABLE"
   ],
-  "warning": "The retained candidate is not publication-ready: SEC-029 production publisher authenticity is unresolved. The latest focused failure-edge evidence is run 44540906174; required Core tests and Windows package passed on pushed head e552df905bfd70595538f401cf3f4344f1626c3f in run 44540918493. Final documentation changes need a current-head check. Do not publish, tag, or merge.",
+  "warning": "The previous retained candidate does not cover current security changes. Signed-manifest verification is implemented but the production trust root is unprovisioned; Authenticode remains NotSigned and required signed-installation/SEC-028 tests and current CI have not run. Do not publish, tag, or merge.",
+  "current_security_completion": {
+    "source_commit": "a343c3f25f20fe0bb50cab6eb2e0d45cbea8a620",
+    "working_tree_changes_committed": false,
+    "pushed": false,
+    "github_authentication": "Owner authenticated gh in their interactive Windows PowerShell and supplied successful gh auth status and gh api user output. The isolated tool runner uses a separate credential context, still reports an invalid cached token, and cannot open GitHub sockets; current remote state/checks and push are unavailable here.",
+    "manifest_crypto": "Windows CNG ECDSA P-256/SHA-256 verifies exact canonical schema-1 JSON bytes. Signature is fixed-width 64-byte raw P1363. Production trust key remains intentionally unprovisioned; test staging keys compile only with EYEBREAK_TEST_BUILD.",
+    "focused_test_results": "102 manifest/parser/asset assertions passed; 4 offline signing-tool tests passed (OpenSSL interoperability, public-header generation, path-collision and no-overwrite guards); 11 Windows CNG signature assertions passed, including wrong-key/tamper rejection and 100 verifications with stable handles; production app compiled with warnings as errors; scripts/verify.py passed 83 assertions. DNS harness passed 11 assertions with stable warmed handles over 20 repeated failures; separate 40-call diagnostic stayed at 174 handles with zero WinHTTP close failures.",
+    "sec_028": "NOT TESTED. The data-driven signed-metadata rejection harness preserved app/profile/staging sentinels in 20/20 cases. Disposable HKCU creation returned ERROR_ACCESS_DENIED; no actual app/installer process execution or isolated hosted transaction-boundary observation was available.",
+    "fail_001": "NOT TESTED, partially exercised locally. Real WinHTTP resolution against fixed test-only eye-break-reminder-dns-test.invalid returned ERROR_WINHTTP_NAME_NOT_RESOLVED and mapped to Offline; disposable app/settings/history stayed unchanged, no installer was staged, and a synthetic newer-release response was accepted. After warm-up, process handles stayed at 198 across 20 retries. No isolated guest, live GUI/timer, or real successful network retry was tested.",
+    "un_009": "NOT TESTED. Existing hosted Windows Settings > Installed Apps UI attempt could not expose the page; direct uninstaller execution does not count as this requirement.",
+    "final_candidate": "No complete authoritative candidate. A development-only EXE and README are retained under build/security-development-only-20261119; EXE size 2,809,856 bytes, SHA-256 91237F4A8CE806F080BD4068A0FA9046EDE47BFE07C3E02EDDCE56AB70ECBBDF, Authenticode NotSigned. NSIS setup stopped at nsDialogs::Create; no complete package or signed metadata exists.",
+    "authenticode": "Not established. Previous exact candidate and current development-only EXE are NotSigned. SignPath may be a free external route, but eligibility is not established because the checkout has no root OSI license; no application was submitted.",
+    "publication_ready": false
+  },
   "requirements": [
     {
       "requirement_id": "UPD-001",
@@ -1335,10 +1349,10 @@
       "description": "Prove every rejection protects files/data and cleans temporary files",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "For each negative case: no unverified launch, app/data sentinel unchanged, meaningful error, temp cleanup",
-      "actual_verification_evidence": "Partial protections are evidenced by local updater path/reparse tests (40 assertions) and run 44392534668 TLS/payload-substitution checks, but this requirement covers every negative security case. The full required matrix is not complete; status remains NOT TESTED.",
-      "environment": "Local Windows/MSYS2 focused tests plus GitHub-hosted Windows Server 2025 run 44392534668; full rejection matrix not executed.",
-      "tested_source_commit": "29a35b25ce4a92af28c6bac53937af84e0d322a9",
-      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
+      "actual_verification_evidence": "The current signed-manifest rejection matrix exercised missing/empty/truncated/wrong-key signatures and tampered, malformed, duplicate, unsupported-schema, wrong-identity/repository/channel/architecture/asset, expired/replayed, version/size/digest-mismatch cases. File/profile/staging observations passed 20/20 cases, with app/settings/timer/history/unrelated sentinels unchanged and no installer marker. SEC-028 remains NOT TESTED: the disposable HKCU sentinel returned ERROR_ACCESS_DENIED, no actual app/installer process transaction ran, and no isolated Windows CI transaction boundary was available.",
+      "environment": "Local managed Windows sandbox with disposable files/profiles and CNG keys. HKCU registry sentinel was denied; no isolated Windows guest was available.",
+      "tested_source_commit": null,
+      "tested_binary_sha256": null,
       "status": "NOT TESTED",
       "implementation_evidence": [
         "src/update_checker.hpp",
@@ -1353,15 +1367,22 @@
     {
       "requirement_id": "SEC-029",
       "description": "Establish metadata authenticity/trusted publisher model",
-      "implementation_status": "BLOCKED: no production signing identity or trusted publisher root is provisioned.",
+      "implementation_status": "Signed-manifest mechanism implemented in current uncommitted source; production acceptance remains BLOCKED because no production signing identity or trusted embedded public root is provisioned. Authenticode remains separate and NotSigned.",
       "required_tests": "Review signed metadata/AuthentiCode provision and state trust limits",
-      "actual_verification_evidence": "Exact candidate Authenticode inspection: EyeBreakReminder.exe and EyeBreakReminder-Setup-x64.exe both return Status=NotSigned. Production publisher authenticity/signed metadata is not established; SHA-256 integrity metadata is verified but is not a publisher signature. Requires production signing provisioning.",
-      "environment": "Exact retained candidate files from run 44392534668; release trust/provisioning.",
-      "tested_source_commit": "80fcd8904f8aaeef790d194a13caa21e303d36b2",
-      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
+      "actual_verification_evidence": "Windows CNG signature verification, canonical manifest parser, OpenSSL signing interoperability, test-key separation, expiry/version checks and fail-closed production-root behavior passed focused local tests. The production key remains absent; no production manifest/signature or authenticated automatic update transaction exists. Historical candidate app/setup Authenticode inspection returned NotSigned. Signed-manifest trust is not Authenticode and the proposed policy alternative requires owner approval before publication.",
+      "environment": "Current local working tree and disposable test keys; production credential provisioning and final candidate are pending.",
+      "tested_source_commit": null,
+      "tested_binary_sha256": null,
       "status": "BLOCKED",
       "implementation_evidence": [
-        "docs/V1.4.0_UPDATE_SECURITY.md: publisher-authenticity limitation"
+        "src/update_manifest.hpp",
+        "src/update_signature_win.hpp",
+        "src/update_trust.hpp",
+        "scripts/update_signing.py",
+        "tests/updater_metadata_tests.cpp",
+        "tests/updater_windows_tests.cpp",
+        "tests/update_signing_tool_tests.py",
+        "docs/UPDATE_SIGNING_AND_KEY_MANAGEMENT.md"
       ]
     },
     {
@@ -1609,8 +1630,8 @@
       "description": "Recover from DNS failure/offline state",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "Controlled resolver/offline faults and retry/error result",
-      "actual_verification_evidence": "As of 2026-11-18: NOT TESTED. No qualifying completed verification evidence for this requirement is recorded in the current evidence set. The separate real connection-refusal test covers FAIL-002, not DNS resolution failure.",
-      "environment": "DNS resolver fault not separately verified; environment described in required test.",
+      "actual_verification_evidence": "NOT TESTED, partially exercised locally. Test-build-only real WinHTTP resolution to the fixed reserved .invalid origin returned ERROR_WINHTTP_NAME_NOT_RESOLVED (not an HTTP error), mapped to Offline with a recoverable message, preserved disposable app/settings/history hashes, and staged no installer. A synthetic later-release response was accepted. After warm-up, process handles stayed at 198 across 20 repeated failures; a separate 40-call diagnostic stayed at 174 with zero WinHTTP close failures. No isolated guest/live GUI timer or real-network retry was verified, so status remains NOT TESTED.",
+      "environment": "Local test-only Windows harness and disposable profile; fixed reserved .invalid origin; no DNS/hosts changes and no production endpoint override. No isolated Windows guest.",
       "tested_source_commit": null,
       "tested_binary_sha256": null,
       "status": "NOT TESTED",
@@ -4007,14 +4028,14 @@
     "BLOCKED": 11,
     "NOT APPLICABLE": 2
   },
-  "generated_at_utc": "2026-11-19T13:03:45.6241608Z",
+  "generated_at_utc": "2026-11-19T16:43:32Z",
   "latest_validation": {
     "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44505090187",
     "independent_audit_artifact_id": 14531052344,
     "retained_candidate_verification_status": "PASS. Clean-runner independent candidate/evidence audit and genuine Windows 11 ARM64 x64-emulation acceptance completed; candidate identity/provenance passed. ARM64 job: 27 PASS, 0 FAIL, 2 NOT TESTED, 1 BLOCKED; standalone and portable x64 binaries launched under emulation.",
     "targeted_gui_diagnostic_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44498553240",
     "retained_candidate_verification_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44527187760",
-    "current_required_pr_validation_status": "PASS on feature head e552df905bfd70595538f401cf3f4344f1626c3f (run 44540918493); final documentation commit requires its own required check.",
+    "current_required_pr_validation_status": "NOT RUN for current uncommitted changes. The owner authenticated gh in an interactive PowerShell, but the isolated tool runner cannot use that credential context or reach GitHub. Previous required check passed on last known pushed head e552df905bfd70595538f401cf3f4344f1626c3f in run 44540918493.",
     "latest_pr_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7",
     "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44540918493",
     "current_required_pr_validation_run_id": 44540918493,
@@ -4031,7 +4052,7 @@
     "required_ci_run_id": 44540918493,
     "windows_acceptance_status": "Terminal overall workflow failure from stale completion.json summary handoff. Its Windows Server 2025 x64 job itself passed the corrected actual HTTPS timeout and exact production-binary 110-cycle soak (110/110 cycles; 264 PASS, 0 FAIL, 0 NOT TESTED; 7,558.1 s; 2,187 metric rows; app SHA ade9b8207895cf78be50e3198fd0d38b055bd004d8751789a35b342dc3725a66). The independent and ARM64 jobs aborted at the stale PENDING summary gate. A separate workflow validated the raw records and passed both independent audit and ARM64 emulation.",
     "arm64_artifact_id": 14531132362,
-    "required_ci_status": "PASS on pushed feature head e552df905bfd70595538f401cf3f4344f1626c3f (run 44540918493); final documentation commit requires a current-head check.",
+    "required_ci_status": "NOT RUN for current working-tree changes. Previous PASS on last known pushed head e552df905bfd70595538f401cf3f4344f1626c3f (run 44540918493). Owner authentication succeeded in their PowerShell; this isolated runner remains blocked by its separate invalid credential/network context.",
     "low_space_acl_run_id": 44533230682,
     "low_space_preflight_result": "PASS for UPD-014 and FAIL-009; five hosted low-space assertions passed in run 44533230682. The separate ACL test initially used %TEMP%; corrected profile-local staging DACL plus low-space suite passed all 10 assertions in run 44535927250 (artifact 14535716950).",
     "low_space_acl_artifact_id": 14534523206,

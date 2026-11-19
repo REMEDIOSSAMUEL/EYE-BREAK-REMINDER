@@ -504,7 +504,7 @@ public:
     const bool confirmed=runUpdateModal(state)&&state.result==UPDATE_CONFIRM_BUTTON;deleteHistory=confirmed&&state.removeHistory;deferred=state.deferred;return confirmed;
    }
   void cleanupStage(const std::wstring&stage){
-    const wchar_t*files[]={L"EyeBreakReminder-Setup-x64.exe",L"EyeBreakReminder.exe",L"EyeBreakReminder-Setup-x64.exe.part",L"EyeBreakReminder.exe.part",L"transaction.ini",L"transaction-state.ini",L"transaction-state.ini.tmp",L"previous.exe",L"coordinator.exe",L"backup-0.dat",L"backup-1.dat",L"backup-2.dat",L"previous-owned-0.dat",L"previous-owned-1.dat",L"previous-owned-2.dat",L"previous-owned-3.dat"};
+   const wchar_t*files[]={L"EyeBreakReminder-Setup-x64.exe",L"EyeBreakReminder.exe",L"EyeBreakReminder-Setup-x64.exe.part",L"EyeBreakReminder.exe.part",L"EyeBreakReminder-UpdateManifest.json",L"EyeBreakReminder-UpdateManifest.sig",L"transaction.ini",L"transaction-state.ini",L"transaction-state.ini.tmp",L"previous.exe",L"coordinator.exe",L"backup-0.dat",L"backup-1.dat",L"backup-2.dat",L"previous-owned-0.dat",L"previous-owned-1.dat",L"previous-owned-2.dat",L"previous-owned-3.dat"};
    if(!updates::safeStagingDirectory(stage))return;
    for(auto name:files)DeleteFileW((stage+L"\\"+name).c_str());
    RemoveDirectoryW(stage.c_str());
@@ -527,6 +527,12 @@ public:
   }
   bool launchUpdateCoordinator(const updates::ReleaseDetails&release,const updates::SelectedAsset&asset,const updates::SelectedAsset&applicationAsset,const std::wstring&stage,const std::wstring&artifact,bool clean,bool deleteHistory){
    if(engine->snapshot().phase==Phase::Break){inform(main,L"Finish your active break first",L"Eye Break Reminder will not close during an active eye break. You can install this verified update after the break.",colors.dark,colors.systemContrast);return false;}
+   const auto authorization=updates::verifyProductionManifest(release.signedManifestBytes,release.signedManifestSignature,release.tag,utf8(installedVersion()),std::time(nullptr));
+   if(!release.manifestVerified||!authorization.ok){const std::wstring message=wide(authorization.ok?"The update lost its verified publisher metadata.":authorization.error);error(message.c_str());return false;}
+   const std::wstring manifestPath=stage+L"\\EyeBreakReminder-UpdateManifest.json",signaturePath=stage+L"\\EyeBreakReminder-UpdateManifest.sig";
+   if(!eye::win::writeAtomic(manifestPath,release.signedManifestBytes)||!eye::win::writeAtomic(signaturePath,release.signedManifestSignature)){
+    DeleteFileW(manifestPath.c_str());DeleteFileW(signaturePath.c_str());error(L"The verified publisher metadata could not be saved for the installation boundary. The current application and settings are unchanged.");return false;
+   }
    std::wstring coordinator=stage+L"\\coordinator.exe";if(!CopyFileW(executable().c_str(),coordinator.c_str(),TRUE)){error(L"Windows could not prepare the separate update coordinator. The current application was not changed.");return false;}
    GUID guid{};wchar_t raw[40]{};if(FAILED(CoCreateGuid(&guid))||!StringFromGUID2(guid,raw,40)){error(L"Windows could not create an update transaction identifier.");return false;}std::wstring nonce(raw);nonce=nonce.substr(1,36);
    updates::Transaction t;t.stagingDirectory=stage;t.artifactPath=artifact;t.targetExecutable=executable();t.dataDirectory=directory;
@@ -543,9 +549,9 @@ public:
    if(dismissedUpdateVersion==message.release.tag)return;
     if(engine->snapshot().phase==Phase::Break){deferredAutomaticUpdate=message;setUpdateLabel(UPDATE_STATUS,L"An update is available. Eye Break Reminder will wait until your active break ends before showing update options.");return;}
    std::wstring installDir;const bool installed=updates::registeredInstallDirectory(installDir)&&updates::samePath(installDir,updates::parentPath(executable()));
-   const auto selected=updates::selectAsset(message.release,installed?updates::PackageKind::Installed:updates::PackageKind::Portable);
+   const auto selected=updates::selectAuthenticatedAsset(message.release,installed?updates::PackageKind::Installed:updates::PackageKind::Portable);
    if(!selected.ok){setUpdateLabel(UPDATE_STATUS,wide(selected.error));return;}
-   const auto applicationAsset=updates::selectAsset(message.release,updates::PackageKind::Portable);
+   const auto applicationAsset=updates::selectAuthenticatedAsset(message.release,updates::PackageKind::Portable);
    if(!applicationAsset.ok){setUpdateLabel(UPDATE_STATUS,wide(applicationAsset.error));return;}
    std::wstring stage,artifact;bool ready=false;
    if(message.automatic&&settings.autoDownloadUpdates){
@@ -591,7 +597,7 @@ public:
    const std::wstring installed=installedVersion();auto dispatch=updateDispatch;
    try{updateCheckWorker=std::thread([dispatch,installed,automatic]{
      updates::CheckResult result;updates::ReleaseDetails release;
-     try{result=updates::evaluate(latestReleaseResponse(),utf8(installed),&release);}
+     try{result=updates::evaluate(latestReleaseResponse(),utf8(installed),&release);if(result.state==updates::State::UpdateAvailable){std::string authenticationError;if(!updates::authenticateReleaseMetadata(release,utf8(installed),authenticationError)){result.state=updates::State::Failed;result.error=std::move(authenticationError);}}}
      catch(...){result.error="The update check could not be completed.";}
      std::unique_ptr<UpdateMessage> message(new(std::nothrow) UpdateMessage{std::move(result),std::move(release),automatic});if(!message)return;
      std::lock_guard<std::mutex> lock(dispatch->mutex);
@@ -608,7 +614,7 @@ public:
 #endif
    if(!testSuppressConfirmation&&!startupUpdateNonce.empty()){const std::wstring name=L"Local\\EyeBreakReminder.UpdateConfirm."+startupUpdateNonce;HANDLE event=OpenEventW(EVENT_MODIFY_STATE,FALSE,name.c_str());if(event){SetEvent(event);CloseHandle(event);}}
    if(startupCleanupDirectory.empty()||!startupCoordinatorPid)return;
-   try{const auto stage=startupCleanupDirectory;const DWORD pid=startupCoordinatorPid;std::thread([stage,pid]{HANDLE helper=OpenProcess(SYNCHRONIZE,FALSE,pid);if(helper){WaitForSingleObject(helper,INFINITE);CloseHandle(helper);}if(!updates::safeStagingDirectory(stage)||!updates::recoveryRegistrationAbsent())return;const wchar_t*files[]={L"EyeBreakReminder-Setup-x64.exe",L"EyeBreakReminder.exe",L"EyeBreakReminder-Setup-x64.exe.part",L"EyeBreakReminder.exe.part",L"transaction.ini",L"transaction-state.ini",L"transaction-state.ini.tmp",L"previous.exe",L"coordinator.exe",L"backup-0.dat",L"backup-1.dat",L"backup-2.dat",L"previous-owned-0.dat",L"previous-owned-1.dat",L"previous-owned-2.dat",L"previous-owned-3.dat"};for(auto name:files)DeleteFileW((stage+L"\\"+name).c_str());RemoveDirectoryW(stage.c_str());}).detach();}catch(...){}
+   try{const auto stage=startupCleanupDirectory;const DWORD pid=startupCoordinatorPid;std::thread([stage,pid]{HANDLE helper=OpenProcess(SYNCHRONIZE,FALSE,pid);if(helper){WaitForSingleObject(helper,INFINITE);CloseHandle(helper);}if(!updates::safeStagingDirectory(stage)||!updates::recoveryRegistrationAbsent())return;const wchar_t*files[]={L"EyeBreakReminder-Setup-x64.exe",L"EyeBreakReminder.exe",L"EyeBreakReminder-Setup-x64.exe.part",L"EyeBreakReminder.exe.part",L"EyeBreakReminder-UpdateManifest.json",L"EyeBreakReminder-UpdateManifest.sig",L"test-update-public-key.bin",L"transaction.ini",L"transaction-state.ini",L"transaction-state.ini.tmp",L"previous.exe",L"coordinator.exe",L"backup-0.dat",L"backup-1.dat",L"backup-2.dat",L"previous-owned-0.dat",L"previous-owned-1.dat",L"previous-owned-2.dat",L"previous-owned-3.dat"};for(auto name:files)DeleteFileW((stage+L"\\"+name).c_str());RemoveDirectoryW(stage.c_str());}).detach();}catch(...){}
   }
  // Stop is only useful while something is playing. The audio object only posts a request (never touches the UI itself), so
  // alarm playback never runs UI code; the request is coalesced and evaluated once the audio call has returned.
