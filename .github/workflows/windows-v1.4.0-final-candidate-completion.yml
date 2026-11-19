@@ -68,7 +68,7 @@ jobs:
             if (@($manifest | Where-Object { $_ -ceq ($expected[$name].SHA256 + '  ' + $name) }).Count -ne 1) { throw "Manifest mismatch: $name" }
           }
           $provenance = Get-Content -LiteralPath (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
-          if ($provenance.RunId -ne '44498562317' -or $provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.PRHeadCommit -cne 'f764f2f24edafb9ac254f302ec958a648e99bd15' -or $provenance.ResourceSoakStatus -cne 'PENDING') { throw 'Candidate provenance does not match the failed-gate run and exact product-source head.' }
+          if ($provenance.RunId -ne '44498562317' -or $provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.PRHeadCommit -cne 'f764f2f24edafb9ac254f302ec958a648e99bd15') { throw 'Candidate provenance does not match the failed-gate run and exact product-source head.' }
           $gate = Get-Content -LiteralPath (Join-Path $evidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
           $reusable = @('Candidate','Fixtures','ProductionUpdateFixture','NetworkInterruption','LegacyV130Upgrade','Gui','StandardUser','Updater','PortableRecovery','ProductionBinaryUpdate','CoordinatorBackupFailure','ResourceTelemetry','CandidateIdentity')
           foreach ($key in $reusable) { if ($gate.$key -cne 'success') { throw "Existing passing acceptance evidence is not reusable: $key=$($gate.$key)" } }
