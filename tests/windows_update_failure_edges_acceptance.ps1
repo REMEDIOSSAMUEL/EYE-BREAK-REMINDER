@@ -82,7 +82,6 @@ public static class EBR_FAILURE_EDGE_NATIVE {
   [DllImport("kernel32.dll", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool CloseHandle(IntPtr handle);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr CreateFileW(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
-  [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandleNative(IntPtr handle);
   const uint THREAD_SUSPEND_RESUME=0x0002, GENERIC_READ=0x80000000, FILE_SHARE_READ=1, OPEN_EXISTING=3, FILE_ATTRIBUTE_NORMAL=0x80;
   public static IntPtr FindWindowByClassAndPid(string className, int processId) {
     IntPtr found=IntPtr.Zero;
@@ -103,11 +102,11 @@ public static class EBR_FAILURE_EDGE_NATIVE {
   public static IntPtr SuspendWindowThread(IntPtr hwnd) {
     uint processId=0; uint threadId=GetWindowThreadProcessId(hwnd,out processId); if(threadId==0)return IntPtr.Zero;
     IntPtr thread=OpenThread(THREAD_SUSPEND_RESUME,false,threadId); if(thread==IntPtr.Zero)return IntPtr.Zero;
-    if(SuspendThread(thread)==0xffffffff){CloseHandleNative(thread);return IntPtr.Zero;} return thread;
+    if(SuspendThread(thread)==0xffffffff){CloseHandle(thread);return IntPtr.Zero;} return thread;
   }
-  public static bool ResumeOwnedThread(IntPtr thread) { if(thread==IntPtr.Zero)return true; bool ok=ResumeThread(thread)!=0xffffffff; CloseHandleNative(thread); return ok; }
+  public static bool ResumeOwnedThread(IntPtr thread) { if(thread==IntPtr.Zero)return true; bool ok=ResumeThread(thread)!=0xffffffff; CloseHandle(thread); return ok; }
   public static IntPtr LockFileAgainstWriteAndDelete(string path) { return CreateFileW(path,GENERIC_READ,FILE_SHARE_READ,IntPtr.Zero,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,IntPtr.Zero); }
-  public static bool CloseOwnedFile(IntPtr handle) { return handle==IntPtr.Zero || CloseHandleNative(handle); }
+  public static bool CloseOwnedFile(IntPtr handle) { return handle==IntPtr.Zero || CloseHandle(handle); }
 }
 '@
 Add-Type -TypeDefinition $native -ErrorAction Stop
