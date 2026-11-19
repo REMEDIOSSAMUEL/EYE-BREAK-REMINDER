@@ -1,14 +1,6 @@
 name: Windows v1.4.0 targeted regression verification
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/windows-v1.4.0-targeted-regressions.yml'
-      - 'tests/gui_acceptance.ps1'
-      - 'tests/windows_standard_user_acceptance.ps1'
-      - 'tests/windows_v1_3_to_v1_4_upgrade_acceptance.ps1'
   workflow_dispatch:
     inputs:
       reference_run_id:
