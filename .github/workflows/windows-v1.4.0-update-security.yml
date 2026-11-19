@@ -13,6 +13,8 @@ on:
       - 'src/update_client.hpp'
       - 'src/update_coordinator.hpp'
       - 'tests/updater_windows_tests.cpp'
+      - 'tests/windows_dns_failure_gui_acceptance.ps1'
+      - '.github/workflows/windows-v1.4.0-update-security.yml'
   workflow_dispatch:
 
 permissions:
@@ -53,6 +55,10 @@ jobs:
       - name: Run real DNS resolution failure and recovery retry
         shell: pwsh
         run: '& .\build\updater-windows-tests.exe --dns-failure'
+
+      - name: Run the application GUI through DNS failure and successful retry
+        shell: pwsh
+        run: '& .\tests\windows_dns_failure_gui_acceptance.ps1 -TestApplication .\build\gui-test\EyeBreakReminder.exe'
 
       - name: Run isolated updater and SEC-028 side-effect matrix
         shell: pwsh
