@@ -79,6 +79,10 @@ $payloadBytes = 1MB
 $payload = [IO.File]::Open($payloadPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 try { $payload.SetLength($payloadBytes) } finally { $payload.Dispose() }
 $payloadHash = (Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$metadataTool = Join-Path $repoRoot 'build\updater-windows-tests.exe'
+if (-not (Test-Path -LiteralPath $metadataTool -PathType Leaf)) { throw 'The isolated disposable-key metadata fixture tool was not built.' }
+& $metadataTool --create-gui-resource-metadata $appDirectory $payloadHash $payloadBytes
+if ($LASTEXITCODE -ne 0) { throw "Could not create the disposable signed GUI resource fixture (exit $LASTEXITCODE)." }
 
 function Get-ProcessSample([string]$Phase, [int]$Cycle) {
   $p = [Diagnostics.Process]::GetProcessById($script:appPid)
@@ -152,10 +156,50 @@ function Write-CheckFailureFixture {
   [IO.File]::WriteAllText($script:responsePath,"status=503`r`nfailure=none`r`n`r`n$body",[Text.UTF8Encoding]::new($false))
 }
 function Write-UpdateFixture([bool]$BadDigest) {
-  $digest = if($BadDigest){'0000000000000000000000000000000000000000000000000000000000000000'}else{$payloadHash}
-  $asset=[ordered]@{name='EyeBreakReminder.exe';browser_download_url='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder.exe';size=$payloadBytes;digest="sha256:$digest"}
-  $release=[ordered]@{tag_name='v1.4.1';html_url='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.4.1';draft=$false;prerelease=$false;body='Controlled resource-loop fixture. No public release is created.';assets=@($asset)}
+  $stream = [IO.File]::Open($payloadPath, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+  try { $stream.SetLength(0); $stream.SetLength($payloadBytes); if($BadDigest){$stream.Position=0;$stream.WriteByte(1)} } finally { $stream.Dispose() }
+  $manifestPath=Join-Path $appDirectory 'EyeBreakReminder-UpdateManifest.json'
+  $signaturePath=Join-Path $appDirectory 'EyeBreakReminder-UpdateManifest.sig'
+  $manifest=Get-Item -LiteralPath $manifestPath;$signature=Get-Item -LiteralPath $signaturePath
+  $assets=@(
+    [ordered]@{name='EyeBreakReminder.exe';browser_download_url='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder.exe';size=$payloadBytes;digest="sha256:$payloadHash"},
+    [ordered]@{name='EyeBreakReminder-UpdateManifest.json';browser_download_url='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder-UpdateManifest.json';size=$manifest.Length;digest=('sha256:'+(Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant())},
+    [ordered]@{name='EyeBreakReminder-UpdateManifest.sig';browser_download_url='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder-UpdateManifest.sig';size=$signature.Length;digest=('sha256:'+(Get-FileHash -LiteralPath $signaturePath -Algorithm SHA256).Hash.ToLowerInvariant())}
+  )
+  $release=[ordered]@{tag_name='v1.4.1';html_url='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.4.1';draft=$false;prerelease=$false;body='Controlled resource-loop fixture. No public release is created.';assets=$assets}
   [IO.File]::WriteAllText($script:responsePath,"status=200`r`nfailure=none`r`n`r`n$($release|ConvertTo-Json -Compress -Depth 6)",[Text.UTF8Encoding]::new($false))
+}
+function Write-DnsFailureFixture {
+  [IO.File]::WriteAllText($script:responsePath,"status=200`r`nfailure=dns`r`n`r`n{}",[Text.UTF8Encoding]::new($false))
+}
+function Get-MainTimerSeconds {
+  $text=Get-ControlText $script:mainWindow 40
+  if($text -notmatch '^(\d+):(\d{2})$'){throw "The isolated application timer text is invalid: '$text'."}
+  ([int]$Matches[1]*60)+[int]$Matches[2]
+}
+function Run-DnsFailureAndSignedRetry([IntPtr]$CheckButton) {
+  $initialTimer=Get-MainTimerSeconds
+  Write-DnsFailureFixture;Trigger-Check $CheckButton;Wait-Idle $CheckButton 15
+  $status=(Get-DescendantTexts $script:mainWindow) -join ' '
+  if(-not $status.Contains('Could not reach GitHub')){throw "The app did not show a meaningful DNS failure: $status"}
+  $watch=[Diagnostics.Stopwatch]::StartNew();$timerAdvanced=$false
+  while($watch.Elapsed.TotalSeconds -lt 8){if((Get-MainTimerSeconds) -lt $initialTimer){$timerAdvanced=$true;break};Start-Sleep -Milliseconds 100}
+  if(-not $timerAdvanced){throw 'The active timer did not progress while the DNS failure was handled.'}
+  if(@(Get-Process -Name coordinator -ErrorAction SilentlyContinue | Where-Object { try {[IO.Path]::GetFullPath($_.Path) -ieq $coordinatorExe} catch {$false} }).Count){throw 'A coordinator launched after genuine update-origin DNS failure.'}
+  $appHash=(Get-FileHash -LiteralPath $testExe -Algorithm SHA256).Hash.ToLowerInvariant()
+  if($appHash -cne $sourceHash){throw 'The existing app changed after the genuine DNS failure.'}
+  Write-UpdateFixture $false;Trigger-Check $CheckButton
+  $choice=Find-TopWindow $script:appPid 'Eye Break Reminder Update'
+  $body=Get-ControlText $choice 12321
+  if(-not $body.Contains('Available version: v1.4.1')){throw "A valid signed retry did not present the successor version: $body"}
+  $later=[EBR_RESOURCE_LOOPS]::GetDlgItem($choice,12002)
+  if($later -eq [IntPtr]::Zero){throw 'The valid signed retry did not expose its Later action.'}
+  [void][EBR_RESOURCE_LOOPS]::SendMessageW($later,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+  Wait-Idle $CheckButton
+  if((Get-FileHash -LiteralPath $testExe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sourceHash){throw 'The existing app changed after the successful signed retry was deferred.'}
+  if((Get-FileHash -LiteralPath $sentinelPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sentinelHash){throw 'The isolated profile sentinel changed during DNS failure and signed retry.'}
+  $updates=Join-Path $dataDirectory 'updates';if(Test-Path -LiteralPath $updates){$remaining=@(Get-ChildItem -LiteralPath $updates -Force);if($remaining.Count){throw 'A deferred signed retry left an update transaction staged.'}}
+  $script:rows.Add([pscustomobject]@{Cycle=0;Phase='DnsFailureThenSignedRetry';Utc=[DateTime]::UtcNow.ToString('o');DnsErrorShown=$true;TimerAdvanced=$timerAdvanced;SignedRetryPresented=$true;ExistingExecutableUnchanged=$true})
 }
 function Trigger-Check([IntPtr]$Button) {
   if(-not [EBR_RESOURCE_LOOPS]::IsWindowEnabled($Button)){throw 'The update check button was not idle.'}
@@ -284,6 +328,7 @@ try {
   $script:rows.Clear()
   Run-HashFailureCycle $check 0 | Out-Null
   $script:rows.Clear()
+  Run-DnsFailureAndSignedRetry $check
   $failureSamples=[Collections.Generic.List[object]]::new()
   for($i=1;$i -le $Cycles;$i++){
     Write-CheckFailureFixture;Trigger-Check $check;Wait-Idle $check

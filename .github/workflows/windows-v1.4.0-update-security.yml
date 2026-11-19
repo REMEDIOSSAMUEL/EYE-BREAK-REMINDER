@@ -40,7 +40,9 @@ jobs:
 
       - name: Build isolated Windows updater tests
         shell: msys2 {0}
-        run: make build/updater-windows-tests.exe HOST_CXX=g++
+        run: |
+          make gui-test CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' WINDRES=windres
+          make build/updater-windows-tests.exe HOST_CXX=g++
 
       - name: Run actual Windows CNG signature verification
         shell: pwsh
@@ -52,4 +54,6 @@ jobs:
 
       - name: Run isolated updater and SEC-028 side-effect matrix
         shell: pwsh
-        run: '& .\build\updater-windows-tests.exe'
+        run: |
+          $env:EBR_TEST_PREVIOUS_APP = Join-Path $PWD 'build\gui-test\EyeBreakReminder.exe'
+          & .\build\updater-windows-tests.exe

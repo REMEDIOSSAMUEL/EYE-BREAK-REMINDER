@@ -64,6 +64,23 @@ eye::updates::UpdateManifest transactionManifest(const EphemeralSigningKey&signe
                      {"EyeBreakReminder.exe","portable-update","portable","x64",std::string(64,'b'),3}};
     return manifest;
 }
+std::wstring asciiWide(const char*text);
+bool createGuiResourceMetadata(const char*directoryText,const char*portableDigest,const char*portableSizeText){
+    if(!directoryText||!portableDigest||!portableSizeText||!eye::updates::manifest_detail::lowerHex(portableDigest,64))return false;
+    char*end=nullptr;const unsigned long long portableSize=std::strtoull(portableSizeText,&end,10);
+    if(!end||*end||!portableSize||portableSize>100ull*1024*1024)return false;
+    const std::wstring directory=asciiWide(directoryText);
+    if(GetFileAttributesW(directory.c_str())==INVALID_FILE_ATTRIBUTES)return false;
+    const wchar_t*names[]={L"EyeBreakReminder-UpdateManifest.json",L"EyeBreakReminder-UpdateManifest.sig",L"test-update-public-key.bin"};
+    for(const auto*name:names)if(GetFileAttributesW((directory+L"\\"+name).c_str())!=INVALID_FILE_ATTRIBUTES)return false;
+    EphemeralSigningKey signer;if(!signer.generate())return false;
+    auto manifest=transactionManifest(signer);if(manifest.assets.size()!=2)return false;
+    manifest.assets[0].size=100;manifest.assets[0].sha256=std::string(64,'a');
+    manifest.assets[1].size=portableSize;manifest.assets[1].sha256=portableDigest;
+    const bool written=writeSignedManifest(directory,signer,manifest);
+    if(written)std::cout<<"Created disposable GUI resource manifest and signature; private test key remained ephemeral. key_id="<<signer.trusted.keyId<<"\n";
+    return written;
+}
 bool testSignedManifestVerification(){
     using namespace eye::updates;EphemeralSigningKey signer,other;bool ok=true;
     ok&=check(signer.generate()&&other.generate(),"generate separate disposable Windows CNG P-256 test keys");
@@ -203,6 +220,50 @@ bool testDnsResolutionFailure(const std::wstring&stage){
 }
 bool createTestJunction(const std::wstring&link,const std::wstring&target){wchar_t systemDirectory[MAX_PATH]{};const UINT length=GetSystemDirectoryW(systemDirectory,MAX_PATH);if(!length||length>=MAX_PATH)return false;const std::wstring command=L"\""+std::wstring(systemDirectory)+L"\\cmd.exe\" /d /c mklink /J \""+link+L"\" \""+target+L"\"";std::vector<wchar_t>buffer(command.begin(),command.end());buffer.push_back(L'\0');STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION process{};if(!CreateProcessW(nullptr,buffer.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process))return false;WaitForSingleObject(process.hProcess,INFINITE);DWORD exitCode=1;GetExitCodeProcess(process.hProcess,&exitCode);CloseHandle(process.hThread);CloseHandle(process.hProcess);const DWORD attributes=GetFileAttributesW(link.c_str());return exitCode==0&&attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_REPARSE_POINT)!=0;}
 std::wstring asciiWide(const char*text){std::wstring result;for(;*text;++text)result.push_back(static_cast<unsigned char>(*text));return result;}
+struct RunningGuiFixture {
+    PROCESS_INFORMATION process{};HWND window{};
+    bool start(const std::wstring&image,const std::wstring&dataDirectory){
+        wchar_t priorData[32768]{};const DWORD priorLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",priorData,DWORD(std::size(priorData)));
+        if(priorLength>=std::size(priorData)||!SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",dataDirectory.c_str()))return false;
+        STARTUPINFOW startup{};startup.cb=sizeof(startup);std::wstring command=eye::updates::quoteArgument(image);
+        const BOOL created=CreateProcessW(image.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_UNICODE_ENVIRONMENT,nullptr,eye::updates::parentPath(image).c_str(),&startup,&process);
+        const BOOL restored=priorLength?SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",std::wstring(priorData,priorLength).c_str()):SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",nullptr);
+        if(process.hThread){CloseHandle(process.hThread);process.hThread=nullptr;}
+        if(!created||!restored){close();return false;}
+        for(unsigned i=0;i<200;++i){
+            DWORD exitCode=0;if(!GetExitCodeProcess(process.hProcess,&exitCode)||exitCode!=STILL_ACTIVE)return false;
+            HWND candidate=FindWindowW(L"EyeBreakReminder.Native",nullptr);DWORD owner=0;if(candidate)GetWindowThreadProcessId(candidate,&owner);
+            if(candidate&&owner==process.dwProcessId&&IsWindowVisible(candidate)){window=candidate;return responsive();}
+            Sleep(50);
+        }
+        return false;
+    }
+    bool responsive()const{
+        DWORD_PTR ignored=0;return process.hProcess&&window&&IsWindow(window)&&
+            SendMessageTimeoutW(window,WM_NULL,0,0,SMTO_ABORTIFHUNG|SMTO_BLOCK,2000,&ignored)!=0;
+    }
+    bool timerSeconds(unsigned&remaining)const{
+        if(!window||!IsWindow(window)){return false;}
+        const HWND timer=GetDlgItem(window,40);if(!timer)return false;
+        wchar_t text[32]{};if(!GetWindowTextW(timer,text,DWORD(std::size(text))))return false;
+        const wchar_t*colon=std::wcschr(text,L':');if(!colon||colon==text||std::wcslen(colon+1)!=2)return false;
+        unsigned minutes=0,seconds=0;for(const wchar_t*at=text;at<colon;++at){if(*at<L'0'||*at>L'9')return false;minutes=minutes*10+unsigned(*at-L'0');}
+        if(colon[1]<L'0'||colon[1]>L'9'||colon[2]<L'0'||colon[2]>L'9')return false;
+        seconds=unsigned(colon[1]-L'0')*10+unsigned(colon[2]-L'0');remaining=minutes*60+seconds;return true;
+    }
+    bool waitForTimerProgress(unsigned initial,unsigned timeoutMilliseconds=8000)const{
+        for(unsigned elapsed=0;elapsed<timeoutMilliseconds;elapsed+=100){unsigned current=initial;if(timerSeconds(current)&&current<initial)return true;Sleep(100);}
+        return false;
+    }
+    bool close(){
+        if(!process.hProcess)return true;
+        if(window&&IsWindow(window)){const UINT quit=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");PostMessageW(window,quit,0,0);}
+        bool exited=WaitForSingleObject(process.hProcess,10000)==WAIT_OBJECT_0;
+        if(!exited){TerminateProcess(process.hProcess,1);WaitForSingleObject(process.hProcess,5000);}
+        CloseHandle(process.hProcess);process.hProcess=nullptr;window=nullptr;return exited;
+    }
+    ~RunningGuiFixture(){close();}
+};
 int holdTestCoordinatorMutex(const char*nonce){
     const std::wstring suffix=asciiWide(nonce),mutexName=L"Local\\EyeBreakReminder.UpdaterTest.CrossProcess."+suffix;
     const std::wstring readyName=L"Local\\EyeBreakReminder.UpdaterTest.Ready."+suffix,releaseName=L"Local\\EyeBreakReminder.UpdaterTest.Release."+suffix;
@@ -287,6 +348,7 @@ int runHttpsInterruption(int argc,char**argv){
 int main(int argc,char**argv){
     if(argc==3&&std::string(argv[1])=="--hold-test-coordinator-mutex")return holdTestCoordinatorMutex(argv[2]);
     if(argc>1&&std::string(argv[1])=="--https-interruption")return runHttpsInterruption(argc,argv);
+    if(argc==5&&std::string(argv[1])=="--create-gui-resource-metadata")return createGuiResourceMetadata(argv[2],argv[3],argv[4])?0:1;
     if(argc==2&&std::string(argv[1])=="--test-signatures"){
         const bool ok=testSignedManifestVerification();if(ok)std::cout<<"PASS: "<<assertions<<" Windows CNG signature assertions executed.\n";return ok?0:1;
     }
@@ -375,7 +437,7 @@ int main(int argc,char**argv){
     ok&=check(!eye::updates::readTransaction(txPath,parsed),"duplicate transaction keys are rejected");
 
     const std::wstring validationData=stage+L"\\validation-profile";CreateDirectoryW(validationData.c_str(),nullptr);SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",validationData.c_str());std::wstring resolvedValidationData;const bool testProfileResolved=eye::updates::localDataDirectory(resolvedValidationData)&&eye::updates::samePath(validationData,resolvedValidationData);ok&=check(testProfileResolved,"transaction-validation tests use an isolated disposable test profile");
-    std::wstring validationStage;const bool validationStageCreated=testProfileResolved&&eye::updates::createStagingDirectory(validationData,validationStage);const std::wstring portableDirectory=stage+L"\\portable-target";CreateDirectoryW(portableDirectory.c_str(),nullptr);const std::wstring portableTarget=portableDirectory+L"\\EyeBreakReminder.exe";ok&=check(validationStageCreated&&eye::updates::safeStagingDirectory(validationStage)&&eye::updates::safeStagingDirectory(portableDirectory)&&writeBytes(portableTarget,"old"),"create an isolated portable update transaction fixture");
+    std::wstring validationStage;const bool validationStageCreated=testProfileResolved&&eye::updates::createStagingDirectory(validationData,validationStage);const std::wstring portableDirectory=stage+L"\\portable-target";CreateDirectoryW(portableDirectory.c_str(),nullptr);const std::wstring portableTarget=portableDirectory+L"\\EyeBreakReminder.exe";const bool targetSeeded=writeBytes(portableTarget,"old");wchar_t testPreviousAppBuffer[32768]{};const DWORD testPreviousAppLength=GetEnvironmentVariableW(L"EBR_TEST_PREVIOUS_APP",testPreviousAppBuffer,DWORD(std::size(testPreviousAppBuffer)));const std::wstring testPreviousApp=testPreviousAppLength&&testPreviousAppLength<std::size(testPreviousAppBuffer)?std::wstring(testPreviousAppBuffer,testPreviousAppLength):std::wstring{};const bool usableAppCopied=targetSeeded&&!testPreviousApp.empty()&&CopyFileW(testPreviousApp.c_str(),portableTarget.c_str(),TRUE)&&eye::updates::productVersion(portableTarget)==L"1.4.0";ok&=check(validationStageCreated&&eye::updates::safeStagingDirectory(validationStage)&&eye::updates::safeStagingDirectory(portableDirectory)&&usableAppCopied,"copy the actual isolated v1.4.0 application into the disposable portable transaction fixture");
     EphemeralSigningKey transactionSigner;const bool testKeyReady=transactionSigner.generate();const auto validManifest=transactionManifest(transactionSigner);
     ok&=check(validationStageCreated&&testKeyReady&&writeSignedManifest(validationStage,transactionSigner,validManifest),"create a signed test-key transaction fixture with only its public key in the isolated stage");
     eye::updates::Transaction validTransaction;validTransaction.stagingDirectory=validationStage;validTransaction.artifactPath=validationStage+L"\\EyeBreakReminder.exe";validTransaction.targetExecutable=portableTarget;validTransaction.dataDirectory=validationData;validTransaction.version=L"1.4.1";validTransaction.previousVersion=L"1.4.0";validTransaction.nonce=L"12345678-1234-1234-1234-123456789abc";validTransaction.kind="portable";validTransaction.artifactName="EyeBreakReminder.exe";validTransaction.sha256=std::string(64,'b');validTransaction.expectedApplicationSha256=std::string(64,'b');validTransaction.previousSha256=std::string(64,'c');validTransaction.expectedSize=3;validTransaction.ownerPid=GetCurrentProcessId();
@@ -426,9 +488,9 @@ int main(int argc,char**argv){
     const std::wstring registrySentinel=L"unchanged";const LONG registryWriteStatus=registryCreated?RegSetValueExW(testRegistry,L"Sentinel",0,REG_SZ,reinterpret_cast<const BYTE*>(registrySentinel.c_str()),DWORD((registrySentinel.size()+1)*sizeof(wchar_t))):registryCreateStatus;const bool registryWritten=registryWriteStatus==ERROR_SUCCESS;if(testRegistry)RegCloseKey(testRegistry);
     if(!registryWritten)std::cerr<<"SEC-028 registry setup failed: create="<<registryCreateStatus<<" write="<<registryWriteStatus<<" path="<<std::filesystem::path(registryPath).string()<<"\n";
     ok&=check(registryWritten,"create an isolated current-user registry sentinel for SEC-028");
-    const std::wstring launchMarker=stage+L"\\unauthorized-installer-launched.marker";DeleteFileW(launchMarker.c_str());
+    const std::wstring launchMarker=stage+L"\\unauthorized-installer-launched.marker";DeleteFileW(launchMarker.c_str());const std::wstring usabilityProfile=stage+L"\\sec028-application-profile";const bool usabilityProfileCreated=CreateDirectoryW(usabilityProfile.c_str(),nullptr)!=FALSE;RunningGuiFixture runningApplication;const bool applicationStarted=usabilityProfileCreated&&usableAppCopied&&runningApplication.start(portableTarget,usabilityProfile);unsigned appTimerInitial=0;const bool appTimerObserved=applicationStarted&&runningApplication.timerSeconds(appTimerInitial);ok&=check(applicationStarted&&appTimerObserved,"launch the actual existing Eye Break Reminder app from its disposable profile and read its active timer");
     auto coordinatorMutexExists=[](){HANDLE mutex=OpenMutexW(SYNCHRONIZE,FALSE,L"Local\\EyeBreakReminder.UpdateCoordinator.1");if(!mutex)return false;CloseHandle(mutex);return true;};
-    const bool mutexBefore=coordinatorMutexExists();unsigned rejectionPasses=0,fileSideEffectPasses=0;
+    const bool mutexBefore=coordinatorMutexExists();const unsigned launchAttemptsBefore=eye::updates::TestProcessLaunchAttempts.load(std::memory_order_relaxed);unsigned rejectionPasses=0,fileSideEffectPasses=0;
     for(const auto&fixture:rejectionCases){
         bool written=writeBytes(validationStage+L"\\EyeBreakReminder-UpdateManifest.json",fixture.manifest);
         written&=fixture.missingSignature?DeleteFileW((validationStage+L"\\EyeBreakReminder-UpdateManifest.sig").c_str())!=FALSE:
@@ -438,21 +500,26 @@ int main(int argc,char**argv){
         std::string oldExecutable,oldSettings,oldTimer,oldHistory,oldUnrelated;eye::updates::hashFile(portableTarget,oldExecutable);
         eye::win::read(settingsPath,oldSettings,128);eye::win::read(timerPath,oldTimer,128);eye::win::read(historyPath,oldHistory,128);eye::win::read(sentinel,oldUnrelated,128);
         std::size_t entriesBefore=0;const bool entriesObserved=countDirectoryEntries(validationStage,entriesBefore);
-        validationError.clear();const bool rejected=written&&!eye::updates::validateTransaction(validTransaction,validTransactionPath,validCoordinatorPath,validationError)&&!validationError.empty();
+        eye::updates::UiState rejectionUi;if(written)eye::updates::performTransaction(validTransaction,rejectionUi);
+        validationError=eye::win::utf8(rejectionUi.message);
+        const bool rejectionReported=validationError.find("manifest")!=std::string::npos||validationError.find("signature")!=std::string::npos||validationError.find("publisher")!=std::string::npos||validationError.find("stable version")!=std::string::npos;
+        const bool rejected=written&&rejectionUi.done.load()&&!rejectionUi.success&&rejectionReported;
         std::string afterExecutable,afterSettings,afterTimer,afterHistory,afterUnrelated;const bool filesObserved=eye::updates::hashFile(portableTarget,afterExecutable)&&eye::win::read(settingsPath,afterSettings,128)&&eye::win::read(timerPath,afterTimer,128)&&eye::win::read(historyPath,afterHistory,128)&&eye::win::read(sentinel,afterUnrelated,128);
         std::size_t entriesAfter=0;const bool entriesStable=entriesObserved&&countDirectoryEntries(validationStage,entriesAfter)&&entriesAfter==entriesBefore;
         HKEY verifyRegistry{};wchar_t registryValue[32]{};DWORD registryType=0,registryBytes=sizeof(registryValue);const LONG registryOpenStatus=RegOpenKeyExW(HKEY_CURRENT_USER,registryPath.c_str(),0,KEY_QUERY_VALUE,&verifyRegistry);const LONG registryQueryStatus=registryOpenStatus==ERROR_SUCCESS?RegQueryValueExW(verifyRegistry,L"Sentinel",nullptr,&registryType,reinterpret_cast<BYTE*>(registryValue),&registryBytes):registryOpenStatus;const bool registryStable=registryQueryStatus==ERROR_SUCCESS&&registryType==REG_SZ&&wcscmp(registryValue,registrySentinel.c_str())==0;if(verifyRegistry)RegCloseKey(verifyRegistry);
-        const bool noLaunch=GetFileAttributesW(launchMarker.c_str())==INVALID_FILE_ATTRIBUTES;const bool noTemp=GetFileAttributesW((validationStage+L"\\EyeBreakReminder.exe.part").c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW((validationStage+L"\\transaction.ini.tmp").c_str())==INVALID_FILE_ATTRIBUTES;
-        const bool fileAndProcessEffectsClear=rejected&&filesObserved&&oldExecutable==afterExecutable&&oldSettings==afterSettings&&oldTimer==afterTimer&&oldHistory==afterHistory&&oldUnrelated==afterUnrelated&&coordinatorMutexExists()==mutexBefore&&entriesStable&&noLaunch&&noTemp;
+        const bool noLaunch=GetFileAttributesW(launchMarker.c_str())==INVALID_FILE_ATTRIBUTES&&eye::updates::TestProcessLaunchAttempts.load(std::memory_order_relaxed)==launchAttemptsBefore;const bool noTemp=GetFileAttributesW((validationStage+L"\\EyeBreakReminder.exe.part").c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW((validationStage+L"\\transaction.ini.tmp").c_str())==INVALID_FILE_ATTRIBUTES;const bool applicationUsable=applicationStarted&&runningApplication.responsive();
+        const bool fileAndProcessEffectsClear=rejected&&filesObserved&&oldExecutable==afterExecutable&&oldSettings==afterSettings&&oldTimer==afterTimer&&oldHistory==afterHistory&&oldUnrelated==afterUnrelated&&coordinatorMutexExists()==mutexBefore&&entriesStable&&noLaunch&&noTemp&&applicationUsable;
         if(fileAndProcessEffectsClear)++fileSideEffectPasses;
         if(fileAndProcessEffectsClear&&registryStable)++rejectionPasses;
-        else if(!fileAndProcessEffectsClear||registryWritten)std::cerr<<"SEC-028 detail: "<<fixture.name<<" written="<<written<<" rejected="<<rejected<<" error="<<validationError<<" files="<<filesObserved<<" exe="<<(oldExecutable==afterExecutable)<<" settings="<<(oldSettings==afterSettings)<<" timer="<<(oldTimer==afterTimer)<<" history="<<(oldHistory==afterHistory)<<" unrelated="<<(oldUnrelated==afterUnrelated)<<" registry="<<registryStable<<" regOpen="<<registryOpenStatus<<" regQuery="<<registryQueryStatus<<" regType="<<registryType<<" mutex="<<(coordinatorMutexExists()==mutexBefore)<<" entries="<<entriesStable<<" launch="<<noLaunch<<" temp="<<noTemp<<" countBefore="<<entriesBefore<<" countAfter="<<entriesAfter<<"\n";
-        ok&=check(fileAndProcessEffectsClear,("reject "+fixture.name+" without changing app/profile/filesystem/staging or launching a helper marker").c_str());
+        else if(!fileAndProcessEffectsClear||registryWritten)std::cerr<<"SEC-028 detail: "<<fixture.name<<" written="<<written<<" rejected="<<rejected<<" error="<<validationError<<" files="<<filesObserved<<" exe="<<(oldExecutable==afterExecutable)<<" settings="<<(oldSettings==afterSettings)<<" timer="<<(oldTimer==afterTimer)<<" history="<<(oldHistory==afterHistory)<<" unrelated="<<(oldUnrelated==afterUnrelated)<<" registry="<<registryStable<<" regOpen="<<registryOpenStatus<<" regQuery="<<registryQueryStatus<<" regType="<<registryType<<" mutex="<<(coordinatorMutexExists()==mutexBefore)<<" entries="<<entriesStable<<" launch="<<noLaunch<<" temp="<<noTemp<<" appUsable="<<applicationUsable<<" countBefore="<<entriesBefore<<" countAfter="<<entriesAfter<<"\n";
+        ok&=check(fileAndProcessEffectsClear,("reject "+fixture.name+" without changing app/profile/filesystem/staging, launching a helper, or interrupting the running app").c_str());
         if(registryWritten)ok&=check(registryStable,("reject "+fixture.name+" without changing the isolated registry sentinel").c_str());
         ok&=check(writeSignedManifest(validationStage,transactionSigner,validManifest),"restore the valid signed test metadata after each rejection probe");
     }
     if(registryWritten)ok&=check(rejectionPasses==rejectionCases.size(),"SEC-028 scoped rejection matrix preserves app/profile/registry/process state across every signed-metadata rejection");
     else {std::cerr<<"BLOCKED: SEC-028 registry side-effect observation unavailable; disposable HKCU write returned ERROR_ACCESS_DENIED. File/profile/staging observations passed "<<fileSideEffectPasses<<"/"<<rejectionCases.size()<<" cases.\n";ok=false;}
+    ok&=check(appTimerObserved&&runningApplication.waitForTimerProgress(appTimerInitial),"the running application's timer continues progressing during repeated signed-manifest rejection checks");
+    ok&=check(runningApplication.close(),"close the isolated prior application normally after the rejection matrix");
     RegDeleteKeyW(HKEY_CURRENT_USER,registryPath.c_str());
     const std::wstring failedBackupStage=updatesRoot+L"\\backup-failure";CreateDirectoryW(failedBackupStage.c_str(),nullptr);ok&=check(writeBytes(failedBackupStage+L"\\backup-1.dat","existing-backup-sentinel"),"create a collision that makes the second settings backup fail");
     eye::updates::Transaction failedBackup;failedBackup.stagingDirectory=failedBackupStage;failedBackup.dataDirectory=validationData;

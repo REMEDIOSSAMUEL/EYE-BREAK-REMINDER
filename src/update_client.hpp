@@ -175,6 +175,46 @@ inline bool fetchReleaseMetadataAsset(const ReleaseAsset&asset,std::uint64_t max
     out.clear();if(asset.size==0||asset.size>maximum||asset.downloadUrl.empty()){
         error="The signed release metadata has an invalid size or download address.";return false;
     }
+#ifdef EYEBREAK_TEST_BUILD
+    // The GUI resource harness supplies fixed, signed metadata beside its
+    // isolated test executable. This branch is absent from production builds
+    // and accepts only the two fixed metadata filenames from the official URL.
+    if(asset.name==UpdateManifestName||asset.name==UpdateManifestSignatureName){
+        const std::string officialPrefix="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v";
+        const std::string suffix="/"+asset.name;
+        if(asset.downloadUrl.compare(0,officialPrefix.size(),officialPrefix)!=0||
+           asset.downloadUrl.size()<=officialPrefix.size()+suffix.size()+4||
+           asset.downloadUrl.compare(asset.downloadUrl.size()-suffix.size(),suffix.size(),suffix)!=0){
+            error="The test update metadata address is outside the official release path.";return false;
+        }
+        std::vector<wchar_t> executablePath(32768);const DWORD pathLength=GetModuleFileNameW(nullptr,executablePath.data(),DWORD(executablePath.size()));
+        if(!pathLength||pathLength>=executablePath.size()){error="The isolated test executable path could not be resolved.";return false;}
+        std::wstring localPath(executablePath.data(),pathLength);const auto slash=localPath.find_last_of(L"\\/");
+        if(slash==std::wstring::npos){error="The isolated test executable directory could not be resolved.";return false;}
+        localPath.resize(slash+1);localPath.append(asset.name.begin(),asset.name.end());
+        HANDLE file=CreateFileW(localPath.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+        if(file==INVALID_HANDLE_VALUE){error="The isolated signed test metadata file is missing or unreadable.";return false;}
+        FILE_ATTRIBUTE_TAG_INFO tag{};LARGE_INTEGER size{};
+        bool ok=GetFileInformationByHandleEx(file,FileAttributeTagInfo,&tag,sizeof(tag))&&
+            !(tag.FileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))&&GetFileSizeEx(file,&size)&&
+            size.QuadPart>=0&&static_cast<std::uint64_t>(size.QuadPart)==asset.size;
+        if(ok){out.resize(static_cast<std::size_t>(asset.size));std::size_t offset=0;while(offset<out.size()){
+            const DWORD request=static_cast<DWORD>(std::min<std::size_t>(out.size()-offset,MAXDWORD));DWORD got=0;
+            if(!ReadFile(file,out.data()+offset,request,&got,nullptr)||!got){ok=false;break;}offset+=got;
+        }}
+        CloseHandle(file);
+        if(!ok){out.clear();error="The isolated signed test metadata size or bytes are invalid.";return false;}
+        if(!asset.digest.empty()){
+            const auto separator=asset.digest.find(':');HashProvider hash;std::array<BYTE,32>digest{};
+            if(separator==std::string::npos||asset.digest.substr(0,separator)!="sha256"||!hash.open()||
+               BCryptHashData(hash.hash,reinterpret_cast<PUCHAR>(out.data()),ULONG(out.size()),0)<0||
+               BCryptFinishHash(hash.hash,digest.data(),DWORD(digest.size()),0)<0||asset.digest!="sha256:"+hex(digest.data(),digest.size())){
+                out.clear();error="The isolated test metadata digest did not match its response fixture.";return false;
+            }
+        }
+        return true;
+    }
+#endif
     std::wstring current;try{current.assign(asset.downloadUrl.begin(),asset.downloadUrl.end());}catch(...){error="The signed release metadata address is invalid.";return false;}
     HINTERNET session=processSession(WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,5000,5000,5000,10000);
     if(!session){
@@ -228,12 +268,27 @@ inline bool fetchReleaseMetadataAsset(const ReleaseAsset&asset,std::uint64_t max
 
 inline bool authenticateReleaseMetadata(ReleaseDetails&release,std::string_view installedVersion,std::string&error){
     release.manifestVerified=false;release.signedManifestBytes.clear();release.signedManifestSignature.clear();release.authenticatedManifest={};
-    if(!ProductionUpdateKeyProvisioned){error="Publisher update authentication is not configured on this build.";return false;}
+    TrustedPublicKey trustedKey;bool testTrust=false;
+#ifdef EYEBREAK_TEST_BUILD
+    if(!ProductionUpdateKeyProvisioned){
+        std::vector<wchar_t> executablePath(32768);const DWORD pathLength=GetModuleFileNameW(nullptr,executablePath.data(),DWORD(executablePath.size()));
+        if(pathLength&&pathLength<executablePath.size()){
+            std::wstring directory(executablePath.data(),pathLength);const auto slash=directory.find_last_of(L"\\/");
+            if(slash!=std::wstring::npos){directory.resize(slash);testTrust=readTestPublicKey(directory,trustedKey);}
+        }
+    }
+#endif
+    if(!testTrust){
+        if(!ProductionUpdateKeyProvisioned){error="Publisher update authentication is not configured on this build.";return false;}
+        trustedKey.keyId.assign(ProductionUpdateKeyId.data(),ProductionUpdateKeyId.size());
+        trustedKey.p256Point.assign(ProductionUpdatePublicKey.begin(),ProductionUpdatePublicKey.end());
+    }
     const auto manifestAsset=selectManifestAsset(release,UpdateManifestName),signatureAsset=selectManifestAsset(release,UpdateManifestSignatureName);
     if(!manifestAsset.ok){error=manifestAsset.error;return false;}if(!signatureAsset.ok){error=signatureAsset.error;return false;}
     std::string manifestBytes,signatureBytes;
     if(!fetchReleaseMetadataAsset(manifestAsset.asset,16384,manifestBytes,error)||!fetchReleaseMetadataAsset(signatureAsset.asset,64,signatureBytes,error))return false;
-    const auto authorization=verifyProductionManifest(manifestBytes,signatureBytes,release.tag,installedVersion,std::time(nullptr));
+    const auto authorization=testTrust?verifyManifestWithKey(manifestBytes,signatureBytes,release.tag,installedVersion,std::time(nullptr),trustedKey):
+        verifyProductionManifest(manifestBytes,signatureBytes,release.tag,installedVersion,std::time(nullptr));
     if(!authorization.ok){error=authorization.error;return false;}
     release.signedManifestBytes=std::move(manifestBytes);release.signedManifestSignature=std::move(signatureBytes);
     release.authenticatedManifest=authorization.manifest;release.manifestVerified=true;return true;

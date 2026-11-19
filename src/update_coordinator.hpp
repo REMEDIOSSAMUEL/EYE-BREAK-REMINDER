@@ -139,7 +139,15 @@ inline DWORD confirmationWaitMilliseconds(){
 #endif
     return 45000;
 }
-inline bool launchProcess(const std::wstring&image,const std::wstring&arguments,PROCESS_INFORMATION&pi){STARTUPINFOW si{};si.cb=sizeof(si);std::wstring command=quoteArgument(image)+(arguments.empty()?L"":L" "+arguments);return CreateProcessW(image.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_UNICODE_ENVIRONMENT,nullptr,parentPath(image).c_str(),&si,&pi)!=FALSE;}
+#ifdef EYEBREAK_TEST_BUILD
+inline std::atomic<unsigned> TestProcessLaunchAttempts{0};
+#endif
+inline bool launchProcess(const std::wstring&image,const std::wstring&arguments,PROCESS_INFORMATION&pi){
+#ifdef EYEBREAK_TEST_BUILD
+    TestProcessLaunchAttempts.fetch_add(1,std::memory_order_relaxed);
+#endif
+    STARTUPINFOW si{};si.cb=sizeof(si);std::wstring command=quoteArgument(image)+(arguments.empty()?L"":L" "+arguments);return CreateProcessW(image.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_UNICODE_ENVIRONMENT,nullptr,parentPath(image).c_str(),&si,&pi)!=FALSE;
+}
 inline bool writeVersionRegistry(const std::wstring&version){HKEY key{};if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\EyeBreakReminder",0,KEY_SET_VALUE,&key)!=ERROR_SUCCESS)return false;LONG result=RegSetValueExW(key,L"DisplayVersion",0,REG_SZ,reinterpret_cast<const BYTE*>(version.c_str()),DWORD((version.size()+1)*sizeof(wchar_t)));RegCloseKey(key);return result==ERROR_SUCCESS;}
 inline bool setStartupRegistration(const Transaction&t,bool enabled){
     HKEY key{};if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,nullptr,0,KEY_QUERY_VALUE|KEY_SET_VALUE,nullptr,&key,nullptr)!=ERROR_SUCCESS)return false;

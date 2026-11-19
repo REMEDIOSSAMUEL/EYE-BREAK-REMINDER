@@ -1,31 +1,16 @@
 name: Windows v1.4.0 update failure edges
 
 on:
-  push:
-    branches:
-      - feature/v1.4.0-automatic-updater
-    paths:
-      - '.github/workflows/windows-v1.4.0-update-failure-edges.yml'
-      - 'tests/windows_update_failure_edges_acceptance.ps1'
-      - 'tests/build_production_update_fixture.ps1'
-      - 'installer/**'
-      - 'src/update_manifest.hpp'
-      - 'src/update_signature_win.hpp'
-      - 'src/update_trust.hpp'
-      - 'src/update_coordinator.hpp'
-      - 'src/app.cpp'
   workflow_dispatch:
     inputs:
       reference_run_id:
         description: Completed run containing the exact v1.4.0 candidate artifact
         required: true
         type: string
-        default: '44498562317'
       candidate_artifact_name:
         description: Exact candidate artifact name from reference_run_id
         required: true
         type: string
-        default: 'eye-break-reminder-v1.4.0-candidate-44498562317'
 
 permissions:
   actions: read

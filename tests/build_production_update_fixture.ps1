@@ -21,7 +21,7 @@ function Invoke-Checked([string]$Executable, [string[]]$Arguments, [string]$Labe
 foreach ($directory in @('src', 'assets', 'installer', 'docs', 'release')) {
   [void][IO.Directory]::CreateDirectory((Join-Path $fixtureRoot $directory))
 }
-foreach ($name in @('app.cpp', 'core.hpp', 'theme.hpp', 'update_checker.hpp', 'update_client.hpp', 'update_coordinator.hpp', 'update_accessibility.hpp', 'windows_services.hpp', 'app.manifest', 'resources.rc')) {
+foreach ($name in @('app.cpp', 'core.hpp', 'theme.hpp', 'update_checker.hpp', 'update_client.hpp', 'update_coordinator.hpp', 'update_accessibility.hpp', 'update_manifest.hpp', 'update_signature_win.hpp', 'update_trust.hpp', 'windows_services.hpp', 'app.manifest', 'resources.rc')) {
   Copy-Item -LiteralPath (Join-Path $sourceRoot "src\$name") -Destination (Join-Path $fixtureRoot "src\$name")
 }
 foreach ($name in @('App.ico', 'Gentle.wav', 'Bell.wav', 'Chime.wav', 'Clear.wav', 'Soft.wav')) {

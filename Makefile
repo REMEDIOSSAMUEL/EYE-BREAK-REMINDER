@@ -29,11 +29,11 @@ build/github-updater-smoke.exe: tests/github_updater_smoke.cpp src/update_checke
 github-updater-smoke: build/github-updater-smoke.exe
 	./build/github-updater-smoke.exe $(UPDATER_SMOKE_ARGS)
 build/updater-windows-tests.exe: tests/updater_windows_tests.cpp src/update_checker.hpp src/update_manifest.hpp src/update_signature_win.hpp src/update_trust.hpp src/update_client.hpp src/update_coordinator.hpp src/windows_services.hpp | build
-	$(HOST_CXX) -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -static-libgcc -static-libstdc++ -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE $< -o $@ -lwinhttp -lbcrypt -lole32
+	$(HOST_CXX) -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -static-libgcc -static-libstdc++ -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE $< -o $@ -lwinhttp -lbcrypt -lole32 -lversion
 build/updater-production-policy-test.exe: tests/updater_production_url_policy.cpp src/update_checker.hpp src/update_manifest.hpp src/update_signature_win.hpp src/update_trust.hpp src/update_client.hpp | build
 	$(HOST_CXX) -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -static-libgcc -static-libstdc++ -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE $< -o $@ -lwinhttp -lbcrypt
-updater-windows-test: build/updater-windows-tests.exe build/updater-production-policy-test.exe
-	./build/updater-windows-tests.exe
+updater-windows-test: build/updater-windows-tests.exe build/updater-production-policy-test.exe build/gui-test/EyeBreakReminder.exe
+	EBR_TEST_PREVIOUS_APP="$$(cygpath -aw build/gui-test/EyeBreakReminder.exe)" ./build/updater-windows-tests.exe
 	./build/updater-production-policy-test.exe
 build/updater-failing-installer-resources.o: tests/updater_failing_installer.rc | build
 	$(WINDRES) $< -O coff -o $@

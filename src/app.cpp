@@ -402,13 +402,20 @@ public:
    updates::HttpResponse response;response.status=200;auto separator=fixture.find("\r\n\r\n");std::size_t bodyStart=separator==std::string::npos?std::string::npos:separator+4;
    if(separator==std::string::npos){separator=fixture.find("\n\n");if(separator!=std::string::npos)bodyStart=separator+2;}
    if(separator==std::string::npos){response.body=std::move(fixture);return response;}
-   std::istringstream headers(fixture.substr(0,separator));std::string line;
+   std::istringstream headers(fixture.substr(0,separator));std::string line;bool dnsFailure=false;
    while(std::getline(headers,line)){if(!line.empty()&&line.back()=='\r')line.pop_back();const auto equals=line.find('=');if(equals==std::string::npos)continue;const auto key=line.substr(0,equals),value=line.substr(equals+1);
     if(key=="status")response.status=std::clamp(std::atoi(value.c_str()),0,999);
-    else if(key=="failure"){if(value=="offline")response.failure=updates::Failure::Offline;else if(value=="timeout")response.failure=updates::Failure::Timeout;else if(value=="tls")response.failure=updates::Failure::SecureConnection;else if(value=="other")response.failure=updates::Failure::Other;}
+    else if(key=="failure"){if(value=="offline")response.failure=updates::Failure::Offline;else if(value=="timeout")response.failure=updates::Failure::Timeout;else if(value=="tls")response.failure=updates::Failure::SecureConnection;else if(value=="other")response.failure=updates::Failure::Other;else if(value=="dns")dnsFailure=true;}
     else if(key=="error")response.errorCode=std::strtoul(value.c_str(),nullptr,10);
     else if(key=="barrier"&&value=="1"){if(!waitForUpdateTestBarrier()){response.failure=updates::Failure::Timeout;response.errorCode=WAIT_TIMEOUT;return response;}}
     else if(key=="delay_ms")Sleep(std::min<DWORD>(30000,DWORD(std::strtoul(value.c_str(),nullptr,10))));
+   }
+   if(dnsFailure){
+    wchar_t previous[16]{};const DWORD previousLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",previous,DWORD(std::size(previous)));
+    if(previousLength>=std::size(previous)||!SetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",L"1")){response.failure=updates::Failure::Other;response.errorCode=GetLastError();return response;}
+    response=updates::latestStableReleaseResponse();const BOOL restored=previousLength?SetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",std::wstring(previous,previousLength).c_str()):SetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",nullptr);
+    if(!restored){response.failure=updates::Failure::Other;response.errorCode=GetLastError();response.body.clear();}
+    return response;
    }
    response.body=fixture.substr(bodyStart);return response;
   }
