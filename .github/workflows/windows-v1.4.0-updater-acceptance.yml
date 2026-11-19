@@ -189,6 +189,23 @@ jobs:
             -EvidencePath '.\build\v1.4.0-updater-evidence\https-interruption.json'
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Prove an HTTPS response-body stall times out safely
+        id: download-body-timeout
+        if: ${{ !cancelled() && github.event.inputs.acceptance_scope != 'UpdatePreferences' && steps.candidate.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_download_stall_timeout_acceptance.ps1 `
+            -EvidencePath '.\build\v1.4.0-updater-evidence\download-stall-timeout.json'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $result = Get-Content -LiteralPath '.\build\v1.4.0-updater-evidence\download-stall-timeout.json' -Raw | ConvertFrom-Json
+          if ($result.status -ne 'PASS' -or -not $result.nativeResult.timeout_error_reported -or
+              -not $result.nativeResult.partial_and_final_download_files_removed -or
+              -not $result.nativeResult.preexisting_sentinel_preserved_byte_for_byte) {
+            throw 'Actual HTTPS response-body timeout evidence is incomplete or failed.'
+          }
+
       - name: Probe availability of the interactive Windows desktop
         id: desktop
         if: always()
@@ -268,6 +285,29 @@ jobs:
             -EvidenceDirectory '.\build\v1.4.0-updater-evidence' `
             -Scenario "$env:ACCEPTANCE_SCOPE"
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Exercise real portable replacement failures and recovery
+        id: portable-recovery
+        if: ${{ !cancelled() && github.event.inputs.acceptance_scope != 'UpdatePreferences' && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        timeout-minutes: 5
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          mkdir -p build/v1.4.0-updater-evidence
+          x86_64-w64-mingw32-g++ \
+            -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -static -static-libgcc -static-libstdc++ \
+            -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE \
+            tests/updater_portable_recovery_tests.cpp \
+            -o build/updater-portable-recovery-tests.exe \
+            -lcomctl32 -lcomdlg32 -ldwmapi -lwtsapi32 -lwinmm -lgdiplus \
+            -lshell32 -lole32 -loleaut32 -luuid -ladvapi32 -luxtheme \
+            -lwinhttp -lversion -lbcrypt
+          test -s build/updater-portable-recovery-tests.exe
+          ./build/updater-portable-recovery-tests.exe \
+            "$(cygpath -aw build/gui-test/baseline-test-executable.exe)" \
+            "$(cygpath -aw build/gui-test/update-test-executable.exe)" \
+            2>&1 | tee build/v1.4.0-updater-evidence/portable-recovery-tests.log
 
       - name: Build the test-only unverified-executable launch sentinel
         id: launch-sentinel

@@ -5,6 +5,7 @@
 #include "update_accessibility.hpp"
 #include <winver.h>
 #include <atomic>
+#include <array>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -19,8 +20,18 @@ struct Transaction {
     std::uint64_t expectedSize=0;
     unsigned backupMask=0,ownedFileMask=0;
     std::string expectedApplicationSha256,previousSha256;
+    std::array<std::string,3> backupSha256{};
+    std::array<std::string,4> ownedFileSha256{};
     bool clean=false,deleteHistory=false,dark=false,forcedColors=false,previousStartup=false;
 };
+
+inline bool digestText(const std::string&value){return value.size()==64&&std::all_of(value.begin(),value.end(),[](unsigned char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');});}
+// These hashes detect accidental or corrupt staged backups. The journal and backups share the user's profile ACL, so they are not authentication against code already running as that user.
+inline bool backupDigestMetadataValid(const Transaction&t){
+    for(unsigned i=0;i<t.backupSha256.size();++i){const bool present=(t.backupMask&(1u<<i))!=0;if(present?!digestText(t.backupSha256[i]):!t.backupSha256[i].empty())return false;}
+    for(unsigned i=0;i<t.ownedFileSha256.size();++i){const bool present=(t.ownedFileMask&(1u<<i))!=0;if(present?!digestText(t.ownedFileSha256[i]):!t.ownedFileSha256[i].empty())return false;}
+    return true;
+}
 
 inline std::wstring absolutePath(const std::wstring&path){std::vector<wchar_t>buffer(32768);DWORD n=GetFullPathNameW(path.c_str(),DWORD(buffer.size()),buffer.data(),nullptr);return n&&n<buffer.size()?std::wstring(buffer.data(),n):std::wstring{};}
 inline bool samePath(const std::wstring&a,const std::wstring&b){auto x=absolutePath(a),y=absolutePath(b);return !x.empty()&&!y.empty()&&CompareStringOrdinal(x.c_str(),-1,y.c_str(),-1,TRUE)==CSTR_EQUAL;}
@@ -51,20 +62,22 @@ inline bool writeJournal(const Transaction&t,const wchar_t*phase,const std::wstr
     HANDLE f=CreateFileW(temp.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_WRITE_THROUGH,nullptr);if(f==INVALID_HANDLE_VALUE)return false;DWORD wrote=0;bool ok=WriteFile(f,content.data(),DWORD(content.size()),&wrote,nullptr)&&wrote==content.size()&&FlushFileBuffers(f);CloseHandle(f);if(ok)ok=MoveFileExW(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);if(!ok)DeleteFileW(temp.c_str());return ok;
 }
 inline std::string transactionText(const Transaction&t){
-    return "staging="+eye::win::utf8(t.stagingDirectory)+"\nartifact="+eye::win::utf8(t.artifactPath)+"\ntarget="+eye::win::utf8(t.targetExecutable)+"\ndata="+eye::win::utf8(t.dataDirectory)+"\nversion="+eye::win::utf8(t.version)+"\nprevious="+eye::win::utf8(t.previousVersion)+"\nnonce="+eye::win::utf8(t.nonce)+"\nkind="+t.kind+"\nname="+t.artifactName+"\nsha256="+t.sha256+"\napplicationSha256="+t.expectedApplicationSha256+"\npreviousSha256="+t.previousSha256+"\nsize="+std::to_string(t.expectedSize)+"\nbackupMask="+std::to_string(t.backupMask)+"\nownedFileMask="+std::to_string(t.ownedFileMask)+"\npid="+std::to_string(t.ownerPid)+"\nclean="+(t.clean?"1":"0")+"\ndeleteHistory="+(t.deleteHistory?"1":"0")+"\ndark="+(t.dark?"1":"0")+"\nforcedColors="+(t.forcedColors?"1":"0")+"\npreviousStartup="+(t.previousStartup?"1":"0")+"\n";
+    std::string text="staging="+eye::win::utf8(t.stagingDirectory)+"\nartifact="+eye::win::utf8(t.artifactPath)+"\ntarget="+eye::win::utf8(t.targetExecutable)+"\ndata="+eye::win::utf8(t.dataDirectory)+"\nversion="+eye::win::utf8(t.version)+"\nprevious="+eye::win::utf8(t.previousVersion)+"\nnonce="+eye::win::utf8(t.nonce)+"\nkind="+t.kind+"\nname="+t.artifactName+"\nsha256="+t.sha256+"\napplicationSha256="+t.expectedApplicationSha256+"\npreviousSha256="+t.previousSha256+"\nsize="+std::to_string(t.expectedSize)+"\nbackupMask="+std::to_string(t.backupMask)+"\nownedFileMask="+std::to_string(t.ownedFileMask)+"\npid="+std::to_string(t.ownerPid)+"\nclean="+(t.clean?"1":"0")+"\ndeleteHistory="+(t.deleteHistory?"1":"0")+"\ndark="+(t.dark?"1":"0")+"\nforcedColors="+(t.forcedColors?"1":"0")+"\npreviousStartup="+(t.previousStartup?"1":"0")+"\n";
+    for(unsigned i=0;i<t.backupSha256.size();++i)text+="backupSha256"+std::to_string(i)+"="+t.backupSha256[i]+"\n";
+    for(unsigned i=0;i<t.ownedFileSha256.size();++i)text+="ownedFileSha256"+std::to_string(i)+"="+t.ownedFileSha256[i]+"\n";
+    return text;
 }
 inline bool writeTransaction(const Transaction&t){return eye::win::writeAtomic(t.stagingDirectory+L"\\transaction.ini",transactionText(t));}
 inline bool readTransaction(const std::wstring&path,Transaction&out){
     if(!safeFile(path,32768))return false;
-    std::string data;if(!eye::win::read(path,data,32768))return false;Transaction t;std::array<bool,21>seen{};std::istringstream input(data);std::string line;
+    std::string data;if(!eye::win::read(path,data,32768))return false;Transaction t;std::array<bool,28>seen{};std::istringstream input(data);std::string line;
     while(std::getline(input,line)){if(line.empty())continue;auto eq=line.find('=');if(eq==std::string::npos)return false;const auto key=line.substr(0,eq),value=line.substr(eq+1);auto setWide=[&](std::wstring&target,std::size_t index){if(seen[index])return false;seen[index]=true;target=eye::win::wide(value);return !target.empty()&&target.find_first_of(L"\r\n") == std::wstring::npos;};auto setBool=[&](bool&target,std::size_t index){if(seen[index]||(value!="0"&&value!="1"))return false;seen[index]=true;target=value=="1";return true;};auto setUint=[&](std::uint64_t&target,std::size_t index){if(seen[index]||value.empty())return false;seen[index]=true;try{std::size_t used=0;target=std::stoull(value,&used);return used==value.size();}catch(...){return false;}};
-        if(key=="staging"){if(!setWide(t.stagingDirectory,0))return false;}else if(key=="artifact"){if(!setWide(t.artifactPath,1))return false;}else if(key=="target"){if(!setWide(t.targetExecutable,2))return false;}else if(key=="data"){if(!setWide(t.dataDirectory,3))return false;}else if(key=="version"){if(!setWide(t.version,4))return false;}else if(key=="previous"){if(!setWide(t.previousVersion,5))return false;}else if(key=="nonce"){if(!setWide(t.nonce,6))return false;}else if(key=="kind"){if(seen[7]||(value!="installed"&&value!="portable"))return false;seen[7]=true;t.kind=value;}else if(key=="name"){if(seen[8])return false;seen[8]=true;t.artifactName=value;}else if(key=="sha256"){if(seen[9]||value.size()!=64)return false;seen[9]=true;t.sha256=value;}else if(key=="applicationSha256"){if(seen[10]||value.size()!=64)return false;seen[10]=true;t.expectedApplicationSha256=value;}else if(key=="previousSha256"){if(seen[11]||value.size()!=64)return false;seen[11]=true;t.previousSha256=value;}else if(key=="size"){if(!setUint(t.expectedSize,12))return false;}else if(key=="backupMask"){std::uint64_t mask=0;if(!setUint(mask,13)||mask>7)return false;t.backupMask=unsigned(mask);}else if(key=="pid"){if(seen[14]||value.empty())return false;seen[14]=true;try{std::size_t used=0;auto n=std::stoul(value,&used);if(used!=value.size()||n==0||n>UINT32_MAX)return false;t.ownerPid=DWORD(n);}catch(...){return false;}}else if(key=="clean"){if(!setBool(t.clean,15))return false;}else if(key=="deleteHistory"){if(!setBool(t.deleteHistory,16))return false;}else if(key=="dark"){if(!setBool(t.dark,17))return false;}else if(key=="forcedColors"){if(!setBool(t.forcedColors,18))return false;}else if(key=="previousStartup"){if(!setBool(t.previousStartup,19))return false;}else if(key=="ownedFileMask"){std::uint64_t mask=0;if(!setUint(mask,20)||mask>15)return false;t.ownedFileMask=unsigned(mask);}else return false;
+        if(key=="staging"){if(!setWide(t.stagingDirectory,0))return false;}else if(key=="artifact"){if(!setWide(t.artifactPath,1))return false;}else if(key=="target"){if(!setWide(t.targetExecutable,2))return false;}else if(key=="data"){if(!setWide(t.dataDirectory,3))return false;}else if(key=="version"){if(!setWide(t.version,4))return false;}else if(key=="previous"){if(!setWide(t.previousVersion,5))return false;}else if(key=="nonce"){if(!setWide(t.nonce,6))return false;}else if(key=="kind"){if(seen[7]||(value!="installed"&&value!="portable"))return false;seen[7]=true;t.kind=value;}else if(key=="name"){if(seen[8])return false;seen[8]=true;t.artifactName=value;}else if(key=="sha256"){if(seen[9]||value.size()!=64)return false;seen[9]=true;t.sha256=value;}else if(key=="applicationSha256"){if(seen[10]||value.size()!=64)return false;seen[10]=true;t.expectedApplicationSha256=value;}else if(key=="previousSha256"){if(seen[11]||value.size()!=64)return false;seen[11]=true;t.previousSha256=value;}else if(key=="size"){if(!setUint(t.expectedSize,12))return false;}else if(key=="backupMask"){std::uint64_t mask=0;if(!setUint(mask,13)||mask>7)return false;t.backupMask=unsigned(mask);}else if(key=="pid"){if(seen[14]||value.empty())return false;seen[14]=true;try{std::size_t used=0;auto n=std::stoul(value,&used);if(used!=value.size()||n==0||n>UINT32_MAX)return false;t.ownerPid=DWORD(n);}catch(...){return false;}}else if(key=="clean"){if(!setBool(t.clean,15))return false;}else if(key=="deleteHistory"){if(!setBool(t.deleteHistory,16))return false;}else if(key=="dark"){if(!setBool(t.dark,17))return false;}else if(key=="forcedColors"){if(!setBool(t.forcedColors,18))return false;}else if(key=="previousStartup"){if(!setBool(t.previousStartup,19))return false;}else if(key=="ownedFileMask"){std::uint64_t mask=0;if(!setUint(mask,20)||mask>15)return false;t.ownedFileMask=unsigned(mask);}else if(key=="backupSha256"+std::to_string(0)){if(seen[21]||(!value.empty()&&!digestText(value)))return false;seen[21]=true;t.backupSha256[0]=value;}else if(key=="backupSha256"+std::to_string(1)){if(seen[22]||(!value.empty()&&!digestText(value)))return false;seen[22]=true;t.backupSha256[1]=value;}else if(key=="backupSha256"+std::to_string(2)){if(seen[23]||(!value.empty()&&!digestText(value)))return false;seen[23]=true;t.backupSha256[2]=value;}else if(key=="ownedFileSha256"+std::to_string(0)){if(seen[24]||(!value.empty()&&!digestText(value)))return false;seen[24]=true;t.ownedFileSha256[0]=value;}else if(key=="ownedFileSha256"+std::to_string(1)){if(seen[25]||(!value.empty()&&!digestText(value)))return false;seen[25]=true;t.ownedFileSha256[1]=value;}else if(key=="ownedFileSha256"+std::to_string(2)){if(seen[26]||(!value.empty()&&!digestText(value)))return false;seen[26]=true;t.ownedFileSha256[2]=value;}else if(key=="ownedFileSha256"+std::to_string(3)){if(seen[27]||(!value.empty()&&!digestText(value)))return false;seen[27]=true;t.ownedFileSha256[3]=value;}else return false;
     }
-    if(!std::all_of(seen.begin(),seen.end(),[](bool value){return value;}))return false;
+    if(!std::all_of(seen.begin(),seen.end(),[](bool value){return value;})||!backupDigestMetadataValid(t))return false;
     out=std::move(t);return true;
 }
 inline bool registeredInstallDirectory(std::wstring&out){HKEY key{};if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\EyeBreakReminder",0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS)return false;wchar_t value[32768]{};DWORD type=0,bytes=sizeof(value);LONG result=RegQueryValueExW(key,L"InstallDir",nullptr,&type,reinterpret_cast<BYTE*>(value),&bytes);RegCloseKey(key);if(result!=ERROR_SUCCESS||type!=REG_SZ||!value[0])return false;out=value;return true;}
-inline bool digestText(const std::string&value){return value.size()==64&&std::all_of(value.begin(),value.end(),[](unsigned char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');});}
 inline bool validateTransaction(const Transaction&t,const std::wstring&transactionPath,const std::wstring&coordinatorPath,std::string&error,bool allowMissingTarget=false){
     Version newer,older;if(!detail::parseVersion(eye::win::utf8(t.version),newer)||!detail::parseVersion(eye::win::utf8(t.previousVersion),older)||detail::compare(newer,older)<=0){error="The update transaction has invalid or non-upgrading version metadata.";return false;}
     if(!safeStagingDirectory(t.stagingDirectory)||!samePath(transactionPath,t.stagingDirectory+L"\\transaction.ini")||!samePath(coordinatorPath,t.stagingDirectory+L"\\coordinator.exe")){error="The update staging path failed its safety checks.";return false;}
@@ -81,7 +94,7 @@ inline bool validateTransaction(const Transaction&t,const std::wstring&transacti
     else if((targetAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))||!safeFile(t.targetExecutable)){error="The current application executable is not a regular file.";return false;}
     if(t.kind=="installed"&&!samePath(t.artifactPath,t.stagingDirectory+L"\\EyeBreakReminder-Setup-x64.exe")){error="The downloaded installer is not in the private staging folder.";return false;}
     if(t.nonce.size()!=36||t.nonce.find_first_not_of(L"0123456789abcdefABCDEF-")!=std::wstring::npos){error="The update confirmation token is invalid.";return false;}
-    if(!digestText(t.sha256)||!digestText(t.expectedApplicationSha256)||!digestText(t.previousSha256)||t.expectedSize==0||t.expectedSize>100ull*1024*1024||t.backupMask>7||t.ownedFileMask>15||(t.deleteHistory&&!t.clean)){error="The update integrity or backup metadata is invalid.";return false;}
+    if(!digestText(t.sha256)||!digestText(t.expectedApplicationSha256)||!digestText(t.previousSha256)||t.expectedSize==0||t.expectedSize>100ull*1024*1024||t.backupMask>7||t.ownedFileMask>15||!backupDigestMetadataValid(t)||(t.deleteHistory&&!t.clean)){error="The update integrity or backup metadata is invalid.";return false;}
     return true;
 }
 
@@ -136,10 +149,88 @@ inline bool acquireCoordinatorMutex(HANDLE&mutex,const wchar_t*name=L"Local\\Eye
     return true;
 }
 inline std::wstring journalPhase(const Transaction&t){std::string data;if(!eye::win::read(t.stagingDirectory+L"\\transaction-state.ini",data,4096))return{};const auto end=data.find('\n');if(end==std::string::npos||data.compare(0,6,"phase=")!=0)return{};return eye::win::wide(data.substr(6,end-6));}
-inline bool backupData(Transaction&t){const wchar_t*names[]={L"settings.ini",L"timer.dat",L"history.dat"};for(unsigned i=0;i<3;++i){std::wstring path=t.dataDirectory+L"\\"+names[i];DWORD attr=GetFileAttributesW(path.c_str());if(attr==INVALID_FILE_ATTRIBUTES){if(GetLastError()==ERROR_FILE_NOT_FOUND)continue;return false;}if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(path,32ull*1024*1024))return false;const std::wstring backup=t.stagingDirectory+L"\\backup-"+std::to_wstring(i)+L".dat";if(!CopyFileW(path.c_str(),backup.c_str(),TRUE))return false;t.backupMask|=1u<<i;}return writeTransaction(t);}
-inline bool backupInstalledFiles(Transaction&t){if(t.kind!="installed")return true;const wchar_t*names[]={L"Uninstall.exe",L"README.md",L"PRIVACY.md",L"VERIFICATION.md"};for(unsigned i=0;i<4;++i){const std::wstring path=parentPath(t.targetExecutable)+L"\\"+names[i];DWORD attr=GetFileAttributesW(path.c_str());if(attr==INVALID_FILE_ATTRIBUTES){if(GetLastError()==ERROR_FILE_NOT_FOUND)continue;return false;}if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(path))return false;const std::wstring backup=t.stagingDirectory+L"\\previous-owned-"+std::to_wstring(i)+L".dat";if(!CopyFileW(path.c_str(),backup.c_str(),TRUE))return false;t.ownedFileMask|=1u<<i;}return writeTransaction(t);}
-inline bool restoreInstalledFiles(const Transaction&t){if(t.kind!="installed")return true;const wchar_t*names[]={L"Uninstall.exe",L"README.md",L"PRIVACY.md",L"VERIFICATION.md"};for(unsigned i=0;i<4;++i){const std::wstring target=parentPath(t.targetExecutable)+L"\\"+names[i];if(t.ownedFileMask&(1u<<i)){const std::wstring backup=t.stagingDirectory+L"\\previous-owned-"+std::to_wstring(i)+L".dat";if(!safeFile(backup)||!copyAtomic(backup,target))return false;}else{DWORD attr=GetFileAttributesW(target.c_str());if(attr!=INVALID_FILE_ATTRIBUTES){if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!DeleteFileW(target.c_str()))return false;}else if(GetLastError()!=ERROR_FILE_NOT_FOUND)return false;}}return true;}
-inline bool restoreData(const Transaction&t,bool restoringClean){const wchar_t*names[]={L"settings.ini",L"timer.dat",L"history.dat"};for(unsigned i=0;i<3;++i){const bool affected=restoringClean&&(i<2||t.deleteHistory);if(!affected&&!(t.backupMask&(1u<<i)))continue;const std::wstring target=t.dataDirectory+L"\\"+names[i],backup=t.stagingDirectory+L"\\backup-"+std::to_wstring(i)+L".dat";if(t.backupMask&(1u<<i)){if(!safeFile(backup,32ull*1024*1024)||!copyAtomic(backup,target))return false;}else if(affected){DWORD attr=GetFileAttributesW(target.c_str());if(attr!=INVALID_FILE_ATTRIBUTES){if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!DeleteFileW(target.c_str()))return false;}else if(GetLastError()!=ERROR_FILE_NOT_FOUND)return false;}}return true;}
+inline bool backupData(Transaction&t){
+    const wchar_t*names[]={L"settings.ini",L"timer.dat",L"history.dat"};
+    for(unsigned i=0;i<3;++i){
+        const std::wstring path=t.dataDirectory+L"\\"+names[i];DWORD attr=GetFileAttributesW(path.c_str());
+        if(attr==INVALID_FILE_ATTRIBUTES){if(GetLastError()==ERROR_FILE_NOT_FOUND)continue;return false;}
+        if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(path,32ull*1024*1024))return false;
+        const std::wstring backup=t.stagingDirectory+L"\\backup-"+std::to_wstring(i)+L".dat";std::string sourceHash,backupHash;
+        if(!hashFile(path,sourceHash)||!CopyFileW(path.c_str(),backup.c_str(),TRUE))return false;
+        if(!hashFile(backup,backupHash)||sourceHash!=backupHash){DeleteFileW(backup.c_str());return false;}
+        t.backupMask|=1u<<i;t.backupSha256[i]=std::move(backupHash);
+    }
+    return writeTransaction(t);
+}
+inline bool backupInstalledFiles(Transaction&t){
+    if(t.kind!="installed")return true;
+    const wchar_t*names[]={L"Uninstall.exe",L"README.md",L"PRIVACY.md",L"VERIFICATION.md"};
+    for(unsigned i=0;i<4;++i){
+        const std::wstring path=parentPath(t.targetExecutable)+L"\\"+names[i];DWORD attr=GetFileAttributesW(path.c_str());
+        if(attr==INVALID_FILE_ATTRIBUTES){if(GetLastError()==ERROR_FILE_NOT_FOUND)continue;return false;}
+        if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(path))return false;
+        const std::wstring backup=t.stagingDirectory+L"\\previous-owned-"+std::to_wstring(i)+L".dat";std::string sourceHash,backupHash;
+        if(!hashFile(path,sourceHash)||!CopyFileW(path.c_str(),backup.c_str(),TRUE))return false;
+        if(!hashFile(backup,backupHash)||sourceHash!=backupHash){DeleteFileW(backup.c_str());return false;}
+        t.ownedFileMask|=1u<<i;t.ownedFileSha256[i]=std::move(backupHash);
+    }
+    return writeTransaction(t);
+}
+inline bool prepareVerifiedRestore(const std::wstring&source,const std::wstring&target,const std::string&expected,std::uint64_t maximum,std::wstring&prepared){
+    if(!digestText(expected)||!safeFile(source,maximum))return false;
+    const DWORD targetAttributes=GetFileAttributesW(target.c_str());
+    if(targetAttributes==INVALID_FILE_ATTRIBUTES){if(GetLastError()!=ERROR_FILE_NOT_FOUND)return false;}
+    else if(targetAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))return false;
+    const std::wstring temp=target+L".update-restore";
+    if(!CopyFileW(source.c_str(),temp.c_str(),TRUE))return false;
+    prepared=temp;
+    std::string stagedHash;
+    if(!safeFile(prepared,maximum)||!hashFile(prepared,stagedHash)||stagedHash!=expected){DeleteFileW(prepared.c_str());prepared.clear();return false;}
+    return true;
+}
+inline void discardPreparedRestores(const std::array<std::wstring,4>&prepared){for(const auto&path:prepared)if(!path.empty())DeleteFileW(path.c_str());}
+inline bool commitPreparedRestore(const std::wstring&prepared,const std::wstring&target){return MoveFileExW(prepared.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=FALSE;}
+inline bool restoreInstalledFiles(const Transaction&t){
+    if(t.kind!="installed")return true;
+    const wchar_t*names[]={L"Uninstall.exe",L"README.md",L"PRIVACY.md",L"VERIFICATION.md"};
+    std::array<std::wstring,4>prepared{},targets{};const std::wstring installDirectory=parentPath(t.targetExecutable);
+    for(unsigned i=0;i<4;++i){
+        targets[i]=installDirectory+L"\\"+names[i];const DWORD attr=GetFileAttributesW(targets[i].c_str());
+        if(t.ownedFileMask&(1u<<i)){
+            const std::wstring backup=t.stagingDirectory+L"\\previous-owned-"+std::to_wstring(i)+L".dat";
+            if(!prepareVerifiedRestore(backup,targets[i],t.ownedFileSha256[i],512ull*1024*1024,prepared[i])){discardPreparedRestores(prepared);return false;}
+        }else if(attr!=INVALID_FILE_ATTRIBUTES){
+            if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(targets[i])){discardPreparedRestores(prepared);return false;}
+        }else if(GetLastError()!=ERROR_FILE_NOT_FOUND){discardPreparedRestores(prepared);return false;}
+    }
+    for(unsigned i=0;i<4;++i){
+        const bool ok=(t.ownedFileMask&(1u<<i))?commitPreparedRestore(prepared[i],targets[i]):DeleteFileW(targets[i].c_str())||GetLastError()==ERROR_FILE_NOT_FOUND;
+        if(!ok){discardPreparedRestores(prepared);return false;}
+        prepared[i].clear();
+    }
+    discardPreparedRestores(prepared);return true;
+}
+inline bool restoreData(const Transaction&t,bool restoringClean){
+    const wchar_t*names[]={L"settings.ini",L"timer.dat",L"history.dat"};
+    std::array<std::wstring,4>prepared{};std::array<std::wstring,3>targets{};std::array<bool,3>affected{};
+    for(unsigned i=0;i<3;++i){
+        affected[i]=restoringClean&&(i<2||t.deleteHistory);if(!affected[i]&&!(t.backupMask&(1u<<i)))continue;
+        targets[i]=t.dataDirectory+L"\\"+names[i];const DWORD attr=GetFileAttributesW(targets[i].c_str());
+        if(t.backupMask&(1u<<i)){
+            const std::wstring backup=t.stagingDirectory+L"\\backup-"+std::to_wstring(i)+L".dat";
+            if(!prepareVerifiedRestore(backup,targets[i],t.backupSha256[i],32ull*1024*1024,prepared[i])){discardPreparedRestores(prepared);return false;}
+        }else if(affected[i]&&attr!=INVALID_FILE_ATTRIBUTES){
+            if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(targets[i],32ull*1024*1024)){discardPreparedRestores(prepared);return false;}
+        }else if(affected[i]&&GetLastError()!=ERROR_FILE_NOT_FOUND){discardPreparedRestores(prepared);return false;}
+    }
+    for(unsigned i=0;i<3;++i){
+        if(!affected[i]&&!(t.backupMask&(1u<<i)))continue;
+        const bool ok=(t.backupMask&(1u<<i))?commitPreparedRestore(prepared[i],targets[i]):DeleteFileW(targets[i].c_str())||GetLastError()==ERROR_FILE_NOT_FOUND;
+        if(!ok){discardPreparedRestores(prepared);return false;}
+        prepared[i].clear();
+    }
+    discardPreparedRestores(prepared);return true;
+}
 inline bool applyCleanPolicy(const Transaction&t){const wchar_t*names[]={L"settings.ini",L"timer.dat",L"history.dat"};for(int i=0;i<3;++i){if(i==2&&!t.deleteHistory)continue;const std::wstring path=t.dataDirectory+L"\\"+names[i];DWORD attr=GetFileAttributesW(path.c_str());if(attr==INVALID_FILE_ATTRIBUTES&&GetLastError()==ERROR_FILE_NOT_FOUND)continue;if(attr==INVALID_FILE_ATTRIBUTES||(attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!DeleteFileW(path.c_str()))return false;}return true;}
 inline bool targetApplicationRunning(const Transaction&t,DWORD expectedPid=0){HWND window=FindWindowW(L"EyeBreakReminder.Native",nullptr);if(!window)return false;DWORD pid=0;GetWindowThreadProcessId(window,&pid);if(!pid||(expectedPid&&pid!=expectedPid))return false;HANDLE process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!process)return false;wchar_t path[32768]{};DWORD length=DWORD(std::size(path));const bool same=QueryFullProcessImageNameW(process,0,path,&length)&&samePath(path,t.targetExecutable);CloseHandle(process);return same;}
 inline bool startPrevious(const Transaction&t){
