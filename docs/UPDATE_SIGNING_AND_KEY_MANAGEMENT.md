@@ -1,6 +1,6 @@
 # Update signing and key management
 
-**Status (2026-11-19):** ECDSA P-256/SHA-256 update-manifest verification and offline signing tooling are implemented. The production verification key is deliberately unprovisioned, so this source build rejects every update. A development-only executable exists, but no complete or production release candidate has been created.
+**Status (2026-11-19):** ECDSA P-256/SHA-256 manifest verification and offline signing tooling are implemented. Current-head CI, hosted CNG/DNS/SEC-028 tests, test-key signed update/recovery integration and resource loops pass. The production verification key remains deliberately unprovisioned; therefore no production-signed release candidate exists and the app fails closed. Authenticode is a separate unresolved control.
 
 ## What the signature protects
 
@@ -28,6 +28,14 @@ Metadata is valid for at most 90 days, permits at most five minutes of clock ske
 `src/update_trust.hpp` currently has `ProductionUpdateKeyProvisioned=false` and no production point. That is intentional fail-closed behavior. A production updater never reads its trust key from a release, environment variable, command line, or staging directory.
 
 The only staging-key path is compiled under `EYEBREAK_TEST_BUILD`. It supports disposable Windows integration fixtures. The regular application build cannot read or trust that key file. OpenSSL/CNG test keys are generated temporarily and must not be copied into `src/update_trust.hpp`, release artifacts, or production GitHub secrets.
+
+## Current verification evidence
+
+- Actual Windows CNG verification passed 11 assertions, including malformed, tampered and other-key signatures, in [run 44626772320](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44626772320).
+- Signed GUI update, settings-preservation/clean-install policy and transaction failure/recovery passed with disposable test keys in [run 44614219099](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44614219099). Production-key jobs were skipped because no production key exists in the environment.
+- The same current-head security run passed SEC-028 for 25/25 rejection paths and FAIL-001 through an actual GUI DNS failure and successful normal GitHub retry. The only prior NOT TESTED item now is UN-009; the hosted runner does not provide the Installed Apps settings page.
+- Required Core tests and Windows package passed on current feature head in [run 44626772318](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44626772318). Updater resource loops passed in [run 44626760993](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44626760993).
+- Current count: 217 PASS, 0 FAIL, 1 NOT TESTED, 11 BLOCKED, 2 NOT APPLICABLE. No complete current candidate or production metadata signature has been produced. Do not treat test-key artifacts as production candidates.
 
 ## Provision a production key
 
