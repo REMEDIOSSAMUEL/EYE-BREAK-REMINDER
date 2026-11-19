@@ -1,6 +1,12 @@
 name: Windows v1.4.0 update-dialog handle attribution
 
 on:
+  push:
+    branches:
+      - feature/v1.4.0-automatic-updater
+    paths:
+      - '.github/workflows/windows-v1.4.0-gui-handle-diagnostic.yml'
+      - 'scripts/v1.4.0-gui-handle-diagnostic.ps1'
   workflow_dispatch:
 
 permissions:
