@@ -35,6 +35,7 @@ public static class EBR_HANDLE_DIAGNOSTIC {
   public static string Text(IntPtr hwnd) { var text = new StringBuilder(512); GetWindowTextW(hwnd, text, text.Capacity); return text.ToString(); }
   public static IntPtr[] TopWindows(int pid) { var result = new List<IntPtr>(); EnumCallback cb = delegate(IntPtr hwnd, IntPtr ignored) { uint actual; GetWindowThreadProcessId(hwnd, out actual); if (actual == (uint)pid) result.Add(hwnd); return true; }; EnumWindows(cb, IntPtr.Zero); GC.KeepAlive(cb); return result.ToArray(); }
   public static IntPtr[] Children(IntPtr parent) { var result = new List<IntPtr>(); EnumCallback cb = delegate(IntPtr hwnd, IntPtr ignored) { result.Add(hwnd); return true; }; EnumChildWindows(parent, cb, IntPtr.Zero); GC.KeepAlive(cb); return result.ToArray(); }
+  public static IntPtr FindChildById(IntPtr parent, int id) { foreach (IntPtr child in Children(parent)) if (GetDlgCtrlID(child) == id) return child; return IntPtr.Zero; }
 }
 '@
 Add-Type -TypeDefinition $native -Language CSharp -ErrorAction Stop
@@ -114,7 +115,7 @@ try {
   [void][EBR_HANDLE_DIAGNOSTIC]::SendMessageW($navSettings,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
   $section=[EBR_HANDLE_DIAGNOSTIC]::GetDlgItem($script:main,135)
   [void][EBR_HANDLE_DIAGNOSTIC]::SendMessageW($section,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
-  $check=[EBR_HANDLE_DIAGNOSTIC]::GetDlgItem($script:main,160)
+  $check=[EBR_HANDLE_DIAGNOSTIC]::FindChildById($script:main,160)
   if ($check -eq [IntPtr]::Zero) { throw 'Could not find update check control 160.' }
 
   $sameTag=$baseVersion.ToString()
