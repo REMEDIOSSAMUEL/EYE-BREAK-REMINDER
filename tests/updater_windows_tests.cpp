@@ -17,6 +17,42 @@ namespace {
 int assertions=0;
 bool check(bool value,const char*name){++assertions;if(!value)std::cerr<<"FAIL: "<<name<<'\n';return value;}
 bool writeBytes(const std::wstring&path,const std::string&value){HANDLE file=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return false;DWORD wrote=0;const bool ok=WriteFile(file,value.data(),DWORD(value.size()),&wrote,nullptr)&&wrote==value.size();CloseHandle(file);return ok;}
+bool testInvalidTemporaryRoot(const std::wstring&stage){
+    const std::wstring invalidDataRoot=stage+L"\\missing-parent\\EyeBreakReminder";
+    std::wstring rejectedStage;
+    const bool invalidTempRootRejected=!eye::updates::createStagingDirectory(invalidDataRoot,rejectedStage)&&rejectedStage.empty()&&
+      GetFileAttributesW((stage+L"\\missing-parent").c_str())==INVALID_FILE_ATTRIBUTES&&
+      GetFileAttributesW(invalidDataRoot.c_str())==INVALID_FILE_ATTRIBUTES;
+    return check(invalidTempRootRejected,"a missing temporary data root is rejected without creating parent or staging directories");
+}
+bool countDirectoryEntries(const std::wstring&path,std::size_t&count){
+    count=0;std::error_code error;
+    for(const auto&entry:std::filesystem::directory_iterator(path,error)){(void)entry;if(error)return false;++count;}
+    return !error;
+}
+bool testRepeatedPayloadVerification(const std::wstring&stage){
+    constexpr unsigned iterations=100;
+    const std::wstring source=stage+L"\\verification-fixture.bin",destination=stage+L"\\EyeBreakReminder.exe",partial=destination+L".part";
+    const bool sourceCreated=writeBytes(source,"abc");DWORD baselineHandles=0;
+    const bool baselineObserved=GetProcessHandleCount(GetCurrentProcess(),&baselineHandles)!=FALSE;
+    eye::updates::ReleaseAsset asset{"EyeBreakReminder.exe","https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.3.0/EyeBreakReminder.exe","sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",3};
+    std::atomic_bool cancelled{false};bool allVerified=sourceCreated&&baselineObserved;DWORD maximumPostCallHandles=baselineHandles;bool filesCleanPerIteration=true;
+    for(unsigned i=0;i<iterations;++i){
+        const auto result=eye::updates::downloadVerifiedFixture(asset,source,stage,L"EyeBreakReminder.exe",cancelled);
+        DWORD handles=0;const bool handlesObserved=GetProcessHandleCount(GetCurrentProcess(),&handles)!=FALSE;if(handlesObserved)maximumPostCallHandles=std::max(maximumPostCallHandles,handles);
+        std::size_t stagedEntries=0;const bool stagedCountObserved=countDirectoryEntries(stage,stagedEntries);
+        allVerified&=result.ok&&result.received==asset.size&&result.sha256==asset.digest.substr(7)&&handlesObserved;
+        filesCleanPerIteration&=stagedCountObserved&&stagedEntries==2&&GetFileAttributesW(destination.c_str())!=INVALID_FILE_ATTRIBUTES&&GetFileAttributesW(partial.c_str())==INVALID_FILE_ATTRIBUTES;
+        const bool outputRemoved=DeleteFileW(destination.c_str())!=FALSE;std::size_t afterCleanup=0;
+        filesCleanPerIteration&=outputRemoved&&countDirectoryEntries(stage,afterCleanup)&&afterCleanup==1&&GetFileAttributesW(partial.c_str())==INVALID_FILE_ATTRIBUTES;
+    }
+    const bool sourceRemoved=DeleteFileW(source.c_str())!=FALSE;std::size_t finalEntries=0;const bool noResidualFiles=sourceRemoved&&countDirectoryEntries(stage,finalEntries)&&finalEntries==0;
+    DWORD finalHandles=0;const bool finalHandlesObserved=GetProcessHandleCount(GetCurrentProcess(),&finalHandles)!=FALSE;
+    const bool handlesStable=finalHandlesObserved&&finalHandles==baselineHandles&&maximumPostCallHandles==baselineHandles;
+    const bool passed=check(allVerified&&filesCleanPerIteration&&noResidualFiles&&handlesStable,"100 successful fixture SHA-256 verifications leave process handle counts and staging files at baseline");
+    std::cout<<"SHA256 soak: iterations="<<iterations<<" baseline_handles="<<baselineHandles<<" max_post_call_handles="<<maximumPostCallHandles<<" final_handles="<<finalHandles<<" residual_stage_entries="<<finalEntries<<"\n";
+    return passed;
+}
 struct RefusedLoopbackPort {
     using StartupFn=int (WSAAPI*)(WORD,LPWSADATA);using SocketFn=SOCKET (WSAAPI*)(int,int,int);using BindFn=int (WSAAPI*)(SOCKET,const sockaddr*,int);using NameFn=int (WSAAPI*)(SOCKET,sockaddr*,int*);using InetAddrFn=u_long (WSAAPI*)(const char*);using NtohsFn=u_short (WSAAPI*)(u_short);using CloseFn=int (WSAAPI*)(SOCKET);using CleanupFn=int (WSAAPI*)();
     HMODULE module{};SOCKET reservation=INVALID_SOCKET;CloseFn closeSocket{};CleanupFn cleanup{};bool winsockStarted=false;unsigned short port=0;
@@ -131,10 +167,25 @@ int runHttpsInterruption(int argc,char**argv){
 int main(int argc,char**argv){
     if(argc==3&&std::string(argv[1])=="--hold-test-coordinator-mutex")return holdTestCoordinatorMutex(argv[2]);
     if(argc>1&&std::string(argv[1])=="--https-interruption")return runHttpsInterruption(argc,argv);
+    if(argc==2&&std::string(argv[1])=="--invalid-temp-root"){
+        const auto folder=std::filesystem::current_path()/"build"/"updater-windows-tests";
+        if(!CreateDirectoryW(folder.c_str(),nullptr)){std::cerr<<"FAIL: isolated test folder must be new; refusing to reuse or remove it\n";return 1;}
+        const bool ok=testInvalidTemporaryRoot(folder.wstring());
+        if(ok)std::cout<<"PASS: "<<assertions<<" invalid temporary-root assertion executed.\n";
+        return ok?0:1;
+    }
+    if(argc==2&&std::string(argv[1])=="--repeat-sha256"){
+        const auto folder=std::filesystem::current_path()/"build"/"updater-windows-tests";
+        if(!CreateDirectoryW(folder.c_str(),nullptr)){std::cerr<<"FAIL: isolated test folder must be new; refusing to reuse or remove it\n";return 1;}
+        const bool ok=testRepeatedPayloadVerification(folder.wstring());RemoveDirectoryW(folder.c_str());
+        if(ok)std::cout<<"PASS: "<<assertions<<" repeated payload verification assertion executed.\n";
+        return ok?0:1;
+    }
     const auto folder=std::filesystem::current_path()/"build"/"updater-windows-tests";
     if(!CreateDirectoryW(folder.c_str(),nullptr)){std::cerr<<"FAIL: isolated test folder must be new; refusing to reuse or remove it\n";return 1;}
     const std::wstring stage=folder.wstring();bool ok=true;
     ok&=check(eye::updates::safeStagingDirectory(stage),"isolated staging directory is a regular non-reparse path");
+    ok&=testInvalidTemporaryRoot(stage);
     ok&=testInitialConnectionRefusal(stage);
     const std::wstring testMutexName=L"Local\\EyeBreakReminder.UpdaterTest."+std::to_wstring(GetCurrentProcessId());HANDLE firstMutex{},duplicateMutex{};
     const bool firstAcquired=eye::updates::acquireCoordinatorMutex(firstMutex,testMutexName.c_str());const bool duplicateRejected=!eye::updates::acquireCoordinatorMutex(duplicateMutex,testMutexName.c_str())&&duplicateMutex==nullptr;
