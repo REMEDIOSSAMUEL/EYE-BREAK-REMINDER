@@ -102,5 +102,6 @@ $identity = [pscustomobject]@{
   ProductionSourceVersionOnlyChanged = @('src/resources.rc version resource', 'installer/setup.nsi version resource')
 }
 $identityPath = Join-Path (Join-Path $sourceRoot 'build\v1.4.0-updater-evidence') 'production-update-fixture-identities.json'
+New-Item -ItemType Directory -Path (Split-Path -Parent $identityPath) -Force | Out-Null
 $identity | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $identityPath -Encoding UTF8
 Write-Host ($identity | ConvertTo-Json -Depth 6)
