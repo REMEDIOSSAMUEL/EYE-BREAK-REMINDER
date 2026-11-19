@@ -30,6 +30,8 @@ on:
       - '!tests/windows_download_stall_timeout_acceptance.ps1'
       - '!tests/download_stall_timeout_feed.py'
       - '!tests/updater_download_stall_timeout.cpp'
+      - '!tests/updater_disk_acl_tests.cpp'
+      - '!tests/windows_update_failure_edges_acceptance.ps1'
       - '!tests/updater_portable_recovery_tests.cpp'
       - '!README.md'
       - '!CHANGELOG.md'
@@ -40,7 +42,6 @@ on:
       - 'tests/windows_v1_4_updater_acceptance.ps1'
       - 'tests/windows_v1_3_to_v1_4_upgrade_acceptance.ps1'
       - 'tests/gui_acceptance.ps1'
-      - '.github/workflows/windows-v1.4.0-updater-acceptance.yml'
   workflow_dispatch:
     inputs:
       acceptance_scope:

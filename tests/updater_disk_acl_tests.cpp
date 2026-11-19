@@ -3,6 +3,7 @@
 #include <aclapi.h>
 #include <sddl.h>
 #include <atomic>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -57,15 +58,29 @@ bool assertNoBroadWritableAce(const std::wstring&path){
     const DWORD status=GetNamedSecurityInfoW(const_cast<LPWSTR>(path.c_str()),SE_FILE_OBJECT,DACL_SECURITY_INFORMATION,nullptr,nullptr,&dacl,nullptr,&descriptor);
     if(status!=ERROR_SUCCESS||!descriptor||!dacl){if(descriptor)LocalFree(descriptor);return false;}
     bool broadWrite=false;
+    const DWORD writes=FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY|FILE_WRITE_DATA|DELETE|WRITE_DAC|WRITE_OWNER|GENERIC_WRITE|GENERIC_ALL;
+    const auto isBroadWritable=[&](PSID sid,ACCESS_MASK mask){return IsValidSid(sid)&&(mask&writes)&&(IsWellKnownSid(sid,WinWorldSid)||IsWellKnownSid(sid,WinBuiltinUsersSid)||IsWellKnownSid(sid,WinAuthenticatedUserSid));};
     for(DWORD index=0;index<dacl->AceCount;++index){
         void*raw=nullptr;if(!GetAce(dacl,index,&raw)){broadWrite=true;break;}
         const auto*header=static_cast<const ACE_HEADER*>(raw);
-        if(header->AceType==ACCESS_ALLOWED_OBJECT_ACE_TYPE){broadWrite=true;break;}
-        if(header->AceType!=ACCESS_ALLOWED_ACE_TYPE)continue;
-        const auto*ace=static_cast<const ACCESS_ALLOWED_ACE*>(raw);
-        const PSID sid=const_cast<DWORD*>(&ace->SidStart);
-        const DWORD writes=FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY|FILE_WRITE_DATA|DELETE|WRITE_DAC|WRITE_OWNER|GENERIC_WRITE|GENERIC_ALL;
-        if((ace->Mask&writes)&&(IsWellKnownSid(sid,WinWorldSid)||IsWellKnownSid(sid,WinBuiltinUsersSid)||IsWellKnownSid(sid,WinAuthenticatedUserSid)))broadWrite=true;
+        if(header->AceType==ACCESS_ALLOWED_ACE_TYPE){
+            const auto*ace=static_cast<const ACCESS_ALLOWED_ACE*>(raw);
+            if(isBroadWritable(const_cast<DWORD*>(&ace->SidStart),ace->Mask))broadWrite=true;
+        }else if(header->AceType==ACCESS_ALLOWED_OBJECT_ACE_TYPE){
+            const auto*ace=static_cast<const ACCESS_ALLOWED_OBJECT_ACE*>(raw);
+            std::size_t offset=offsetof(ACCESS_ALLOWED_OBJECT_ACE,ObjectType);
+            if(ace->Flags&ACE_OBJECT_TYPE_PRESENT)offset+=sizeof(GUID);
+            if(ace->Flags&ACE_INHERITED_OBJECT_TYPE_PRESENT)offset+=sizeof(GUID);
+            if(offset>=header->AceSize||header->AceSize-offset<sizeof(DWORD)){broadWrite=true;break;}
+            auto*sid=reinterpret_cast<PSID>(reinterpret_cast<BYTE*>(raw)+offset);
+            if(isBroadWritable(sid,ace->Mask))broadWrite=true;
+        }
+    }
+    if(broadWrite){
+        LPWSTR sddl=nullptr;
+        if(ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor,SDDL_REVISION_1,DACL_SECURITY_INFORMATION,&sddl,nullptr)){
+            std::wcerr<<L"Observed staging DACL: "<<sddl<<L'\n';LocalFree(sddl);
+        }
     }
     LocalFree(descriptor);return !broadWrite;
 }
@@ -113,11 +128,11 @@ bool testStagingAclAndGuid(const std::wstring&root){
 }
 
 int main(){
-    wchar_t temp[MAX_PATH]{};const DWORD length=GetTempPathW(MAX_PATH,temp);
-    if(!length||length>=MAX_PATH){std::cerr<<"FAIL: acquire bounded per-user TEMP root\n";return 1;}
+    wchar_t profile[MAX_PATH]{};const DWORD length=GetEnvironmentVariableW(L"LOCALAPPDATA",profile,MAX_PATH);
+    if(!length||length>=MAX_PATH){std::cerr<<"FAIL: acquire bounded per-user LOCALAPPDATA root\n";return 1;}
     GUID id{};wchar_t guid[40]{};if(FAILED(CoCreateGuid(&id))||!StringFromGUID2(id,guid,40)){std::cerr<<"FAIL: create unique disposable test root name\n";return 1;}
     std::wstring suffix(guid);suffix.erase(std::remove(suffix.begin(),suffix.end(),L'{'),suffix.end());suffix.erase(std::remove(suffix.begin(),suffix.end(),L'}'),suffix.end());
-    const std::wstring root=std::wstring(temp)+L"EyeBreakReminder-DiskAcl-"+suffix;
+    const std::wstring root=std::wstring(profile)+L"\\EyeBreakReminder-DiskAcl-"+suffix;
     if(!CreateDirectoryW(root.c_str(),nullptr)){std::cerr<<"FAIL: create a fresh disposable test root; refusing to reuse or delete an existing path\n";return 1;}
     bool ok=testLowDiskSpacePreflight(root)&&testStagingAclAndGuid(root);
     RemoveDirectoryW(root.c_str());

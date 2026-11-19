@@ -64,16 +64,16 @@ jobs:
       - name: Download the unchanged authoritative v1.4.0 candidate
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: ${{ inputs.candidate_artifact_name }}
+          name: ${{ inputs.candidate_artifact_name || 'eye-break-reminder-v1.4.0-candidate-44498562317' }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.reference_run_id }}
+          run-id: ${{ inputs.reference_run_id || '44498562317' }}
           github-token: ${{ github.token }}
           path: candidate-input
 
       - name: Verify candidate identity and build only the controlled successor fixture
         shell: pwsh
         env:
-          REFERENCE_RUN_ID: ${{ inputs.reference_run_id }}
+          REFERENCE_RUN_ID: ${{ inputs.reference_run_id || '44498562317' }}
         run: |
           $ErrorActionPreference = 'Stop'
           $appFiles = @(Get-ChildItem -LiteralPath 'candidate-input' -Filter 'EyeBreakReminder.exe' -File -Recurse | Where-Object { $_.Directory.Name -ceq 'release' })
