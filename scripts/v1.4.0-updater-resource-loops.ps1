@@ -190,6 +190,10 @@ function Run-DnsFailureAndSignedRetry([IntPtr]$CheckButton) {
   if(@(Get-Process -Name coordinator -ErrorAction SilentlyContinue | Where-Object { try {[IO.Path]::GetFullPath($_.Path) -ieq $coordinatorExe} catch {$false} }).Count){throw 'A coordinator launched after genuine update-origin DNS failure.'}
   $appHash=(Get-FileHash -LiteralPath $testExe -Algorithm SHA256).Hash.ToLowerInvariant()
   if($appHash -cne $sourceHash){throw 'The existing app changed after the genuine DNS failure.'}
+  $settingsNav=[EBR_RESOURCE_LOOPS]::GetDlgItem($script:mainWindow,12)
+  if($settingsNav -eq [IntPtr]::Zero){throw 'Could not return to Settings after verifying timer progress.'}
+  [void][EBR_RESOURCE_LOOPS]::SendMessageW($settingsNav,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
+  if(-not [EBR_RESOURCE_LOOPS]::IsWindowVisible($CheckButton)){throw 'The isolated update-check control was not visible after returning to Settings.'}
   Write-UpdateFixture $false;Trigger-Check $CheckButton
   $choice=Find-TopWindow $script:appPid 'Eye Break Reminder Update'
   $body=Get-ControlText $choice 12321
@@ -205,6 +209,7 @@ function Run-DnsFailureAndSignedRetry([IntPtr]$CheckButton) {
 }
 function Trigger-Check([IntPtr]$Button) {
   if(-not [EBR_RESOURCE_LOOPS]::IsWindowEnabled($Button)){throw 'The update check button was not idle.'}
+  if(-not [EBR_RESOURCE_LOOPS]::IsWindowVisible($Button)){throw 'The update check button is hidden; select Settings before using it.'}
   [void][EBR_RESOURCE_LOOPS]::SendMessageW($Button,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
 }
 function Open-Download([IntPtr]$Button) {

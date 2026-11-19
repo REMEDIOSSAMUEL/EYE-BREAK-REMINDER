@@ -42,7 +42,8 @@ jobs:
       - name: Build isolated Windows updater tests
         shell: msys2 {0}
         run: |
-          make gui-test CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' WINDRES=windres
+          strip --version
+          make gui-test CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' WINDRES=windres STRIP=strip
           make build/updater-windows-tests.exe HOST_CXX=g++
 
       - name: Run actual Windows CNG signature verification

@@ -1,0 +1,164 @@
+name: Windows v1.4.0 development candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-audit:
+    name: Build and independently audit the unsigned development candidate
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out the selected feature-branch source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install the Windows cross compiler and package tools
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+
+      - name: Install upstream NSIS 3.11
+        uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1
+        with:
+          version: '3.11'
+
+      - name: Build the package once with the required project verifier
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          if ! command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
+            cp "$(command -v strip)" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          fi
+          makensis_path="$(cygpath -u "$NSISDIR")/makensis.exe"
+          test -x "$makensis_path"
+          make -B package \
+            CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
+            WINDRES=windres \
+            STRIP=strip \
+            "MAKENSIS=$makensis_path" \
+            PYTHON=python
+
+      - name: Label, inventory, and verify the exact five-file development package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $allReleaseFiles = @(Get-ChildItem -LiteralPath 'release' -File)
+          $verificationReport = @($allReleaseFiles | Where-Object Name -CEQ 'BINARY-VERIFICATION.json')
+          if ($verificationReport.Count -ne 1) { throw 'The package verifier did not produce its expected audit record.' }
+          $files = @($allReleaseFiles | Where-Object Name -CNE 'BINARY-VERIFICATION.json' | Sort-Object Name)
+          if (($files.Name -join "`n") -cne (($expected | Sort-Object) -join "`n")) { throw 'The development candidate artifact set must contain exactly the five documented files.' }
+          $trust = Get-Content -LiteralPath 'src/update_trust.hpp' -Raw
+          if ($trust -notmatch 'ProductionUpdateKeyProvisioned\s*=\s*false' -or $trust -match 'ProductionUpdateKeyId\s*=\s*"p256-[0-9a-f]{16}"') { throw 'The development candidate must fail closed with no provisioned production trust root.' }
+          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe')) {
+            $item = Get-Item -LiteralPath (Join-Path 'release' $name)
+            if ($item.VersionInfo.ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw "Unexpected executable version: $name" }
+            if ((Get-AuthenticodeSignature -LiteralPath $item.FullName).Status -ne [Management.Automation.SignatureStatus]::NotSigned) { throw "Development candidate must remain explicitly Authenticode NotSigned: $name" }
+          }
+          $manifest = @(Get-Content -LiteralPath 'release/EyeBreakReminder-SHA256.txt')
+          if ($manifest.Count -ne 4) { throw 'The checksum file must cover exactly the four payload/archive assets.' }
+          foreach ($line in $manifest) {
+            if ($line -notmatch '^([0-9a-f]{64})  (EyeBreakReminder\.exe|EyeBreakReminder-Setup-x64\.exe|EyeBreakReminder-Portable-x64\.zip|EyeBreakReminder-Source\.zip)$') { throw "Unexpected release checksum entry: $line" }
+            $actual = (Get-FileHash -LiteralPath (Join-Path 'release' $Matches[2]) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -cne $Matches[1]) { throw "Checksum mismatch: $($Matches[2])" }
+          }
+          $portable = [IO.Compression.ZipFile]::OpenRead((Join-Path (Get-Location) 'release/EyeBreakReminder-Portable-x64.zip'))
+          try {
+            $status = $portable.GetEntry('SIGNING-STATUS.txt')
+            $portableExe = $portable.GetEntry('EyeBreakReminder.exe')
+            if ($null -eq $status -or $null -eq $portableExe) { throw 'Portable package lacks its executable or signing status.' }
+            $reader = [IO.StreamReader]::new($status.Open()); try { $statusText = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            if ($statusText -notmatch 'DEVELOPMENT CANDIDATE' -or $statusText -notmatch 'not for production release') { throw 'Portable package does not clearly prohibit production use.' }
+            $exeStream = $portableExe.Open(); $shaProvider = [Security.Cryptography.SHA256]::Create()
+            try { $portableHash = $shaProvider.ComputeHash($exeStream) } finally { $shaProvider.Dispose(); $exeStream.Dispose() }
+            $portableSha = [Convert]::ToHexString($portableHash).ToLowerInvariant()
+            $standaloneSha = (Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($portableSha -cne $standaloneSha) { throw 'Portable archive executable does not match the standalone candidate.' }
+          } finally { $portable.Dispose() }
+          $source = [IO.Compression.ZipFile]::OpenRead((Join-Path (Get-Location) 'release/EyeBreakReminder-Source.zip'))
+          try {
+            $sourceNames = @($source.Entries | ForEach-Object FullName)
+            if ($sourceNames -cnotcontains 'EyeBreakReminder/docs/UPDATE_SIGNING_AND_KEY_MANAGEMENT.md') { throw 'Source archive omits signing and key-management instructions.' }
+            $forbidden = @($sourceNames | Where-Object { $_ -match '\.(pem|pfx|p12|key)$' })
+            if ($forbidden.Count) { throw "Source archive contains signing-key material paths: $($forbidden -join ', ')" }
+          } finally { $source.Dispose() }
+          New-Item -ItemType Directory -Force -Path 'candidate/release','candidate/evidence' | Out-Null
+          foreach ($name in $expected) { Copy-Item -LiteralPath (Join-Path 'release' $name) -Destination 'candidate/release' }
+          Copy-Item -LiteralPath $verificationReport[0].FullName -Destination 'candidate/evidence/BINARY-VERIFICATION.json'
+          $identities = foreach ($name in $expected) {
+            $item = Get-Item -LiteralPath (Join-Path 'release' $name)
+            [pscustomobject]@{Name=$name;Bytes=[long]$item.Length;SHA256=(Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant();ProductVersion=if($name.EndsWith('.exe')){$item.VersionInfo.ProductVersion}else{$null}}
+          }
+          [ordered]@{
+            Application='Eye Break Reminder';Version='1.4.0';Branch=$env:GITHUB_REF_NAME;SourceCommit=$env:GITHUB_SHA;RunId=$env:GITHUB_RUN_ID
+            RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            CandidateClass='DEVELOPMENT CANDIDATE';ProductionManifestKeyProvisioned=$false;ProductionManifestSignature='Not present';Authenticode='NotSigned'
+            PublicationReady=$false;ReleaseAssets=@($identities);VerifiedUtc=[DateTime]::UtcNow.ToString('o')
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'candidate/evidence/candidate-provenance.json' -Encoding UTF8
+
+      - name: Upload the exact release file set and its build identity
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-development-candidate-${{ github.run_id }}
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 90
+
+  independent-download-audit:
+    name: Re-download and independently verify candidate bytes
+    needs: build-and-audit
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Download this run's exact development candidate into a clean runner
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.4.0-development-candidate-${{ github.run_id }}
+          path: candidate-download
+
+      - name: Check provenance, complete file set, signatures, and hashes independently
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = 'candidate-download/release'
+          $evidence = Get-Content -LiteralPath 'candidate-download/evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
+          if ($evidence.SourceCommit -cne $env:GITHUB_SHA -or $evidence.RunId -ne $env:GITHUB_RUN_ID -or $evidence.CandidateClass -cne 'DEVELOPMENT CANDIDATE' -or $evidence.PublicationReady -ne $false -or $evidence.ProductionManifestKeyProvisioned -ne $false -or $evidence.Authenticode -cne 'NotSigned') { throw 'Candidate provenance does not match this unsigned development run.' }
+          $expected = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $files = @(Get-ChildItem -LiteralPath $release -File | Sort-Object Name)
+          if (($files.Name -join "`n") -cne (($expected | Sort-Object) -join "`n")) { throw 'Independent download does not contain exactly the five release assets.' }
+          if ($evidence.ReleaseAssets.Count -ne 5) { throw 'Candidate provenance does not list exactly five release identities.' }
+          foreach ($name in $expected) {
+            $item = Get-Item -LiteralPath (Join-Path $release $name)
+            $identity = @($evidence.ReleaseAssets | Where-Object Name -CEQ $name)
+            $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($identity.Count -ne 1 -or $item.Length -ne [long]$identity[0].Bytes -or $hash -cne $identity[0].SHA256) { throw "Independent candidate identity mismatch: $name" }
+          }
+          foreach ($line in Get-Content -LiteralPath (Join-Path $release 'EyeBreakReminder-SHA256.txt')) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw 'Malformed checksum manifest entry.' }
+            $actual = (Get-FileHash -LiteralPath (Join-Path $release $Matches[2]) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -cne $Matches[1]) { throw "Independent checksum verification failed: $($Matches[2])" }
+          }
+          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe')) {
+            if ((Get-AuthenticodeSignature -LiteralPath (Join-Path $release $name)).Status -ne [Management.Automation.SignatureStatus]::NotSigned) { throw "Unexpected Authenticode status after artifact download: $name" }
+          }
+          [pscustomobject]@{Status='PASS';SourceCommit=$env:GITHUB_SHA;RunId=$env:GITHUB_RUN_ID;CandidateClass=$evidence.CandidateClass;Files=$evidence.ReleaseAssets;Authenticode='NotSigned';ProductionManifestSignature='Not present';IndependentRunner=$env:ImageOS;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'independent-candidate-verification.json' -Encoding UTF8
+
+      - name: Retain independent download verification record
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-development-candidate-independent-verification-${{ github.run_id }}
+          path: independent-candidate-verification.json
+          if-no-files-found: error
+          retention-days: 90

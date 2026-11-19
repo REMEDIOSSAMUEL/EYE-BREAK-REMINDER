@@ -57,7 +57,8 @@ jobs:
           fi
           make gui-test \
             CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
-            WINDRES=windres
+            WINDRES=windres \
+            STRIP=strip
           make build/updater-windows-tests.exe HOST_CXX=g++
 
       - name: Measure repeated updater resource paths
