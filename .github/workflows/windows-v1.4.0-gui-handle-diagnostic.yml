@@ -37,6 +37,9 @@ jobs:
         shell: msys2 {0}
         run: |
           set -euo pipefail
+          if ! command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
+            cp "$(command -v strip)" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          fi
           make gui-test \
             CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
             WINDRES=windres
