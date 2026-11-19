@@ -120,7 +120,7 @@ for name in ['EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip']:
     require('EyeBreakReminder/.git' not in names,'Source archive excludes the local Git pointer file')
     require('EyeBreakReminder/.github/workflows/windows-pre-release-validation.yml' in names,'Source archive includes the public Windows validation workflow')
     require('EyeBreakReminder/.github/workflows/windows-v1.4.0-updater-acceptance.yml' in names,'Source archive includes the integrated updater release acceptance workflow')
-    require('EyeBreakReminder/.github/workflows/windows-v1.4.0-development-candidate.yml' in names,'Source archive includes the manually dispatched development-candidate build and independent audit')
+    require('EyeBreakReminder/.github/workflows/windows-v1.4.0-update-failure-edges.yml' in names,'Source archive includes the manual signed-transaction, recovery and development-candidate build/audit workflow')
     require('EyeBreakReminder/docs/UPDATE_SIGNING_AND_KEY_MANAGEMENT.md' in names,'Source archive includes the offline update-signing and key-management procedure')
     require('EyeBreakReminder/tests/windows_v1_4_updater_acceptance.ps1' in names,'Source archive includes disposable installed/portable updater acceptance')
     require('EyeBreakReminder/tests/windows_v1_3_to_v1_4_upgrade_acceptance.ps1' in names,'Source archive includes the actual v1.3.0-to-v1.4.0 upgrade acceptance')

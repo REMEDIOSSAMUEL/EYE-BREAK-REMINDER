@@ -46,8 +46,8 @@ checks = {
     "include signed update security verification workflow": included(
         Path(".github/workflows/windows-v1.4.0-update-security.yml")
     ),
-    "include the manually dispatched development-candidate build and audit": included(
-        Path(".github/workflows/windows-v1.4.0-development-candidate.yml")
+    "include the manual signed-transaction, recovery, and development-candidate workflow": included(
+        Path(".github/workflows/windows-v1.4.0-update-failure-edges.yml")
     ),
     "include updater metadata regression test": included(
         Path("tests/updater_metadata_tests.cpp")
