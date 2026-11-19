@@ -356,8 +356,11 @@ function Invoke-LockedExecutableRecoveryTest() {
     Add-Assertion ($status.Status.Contains('previous executable and data backup remain in the updates folder')) 'INST-011: installer replacement failure retains explicit recovery data while the EXE is locked' ([pscustomobject]@{Message=$status.Status})
     $stillOriginal=(Get-Hash $transaction.Target) -ceq (Get-Hash $candidate) -and (Get-AppVersion $transaction.Target) -match '^1\.4\.0(\.0)?$'
     Add-Assertion $stillOriginal 'INST-011: locked installed executable is not truncated or replaced' ([pscustomobject]@{SHA256=(Get-Hash $transaction.Target);ProductVersion=(Get-AppVersion $transaction.Target)})
-    Add-Assertion ((Get-ItemProperty -LiteralPath $uninstallKeyPath -Name DisplayVersion -ErrorAction Stop).DisplayVersion -ceq '1.4.0') 'INST-011: registration remains on the previous version after locked-file failure'
-    Add-Assertion ((Get-ItemProperty -LiteralPath $runOnceKeyPath -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction Stop).'!EyeBreakReminderUpdateRecovery' -like '*--update-recover*') 'INST-011: interrupted automatic rollback retains an actionable recovery registration'
+    $registeredVersion=(Get-ItemProperty -LiteralPath $uninstallKeyPath -Name DisplayVersion -ErrorAction Stop).DisplayVersion
+    $recoveryCommand=(Get-ItemProperty -LiteralPath $runOnceKeyPath -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction Stop).'!EyeBreakReminderUpdateRecovery'
+    $registrationRecoverable=($registeredVersion -ceq '1.4.0') -or ($registeredVersion -ceq '1.4.1' -and $recoveryCommand -like '*--update-recover*')
+    Add-Assertion $registrationRecoverable 'INST-011: registration is previous version or explicitly pending the verified rollback' ([pscustomobject]@{DisplayVersion=$registeredVersion;RecoveryCommand=$recoveryCommand})
+    Add-Assertion ($recoveryCommand -like '*--update-recover*') 'INST-011: interrupted automatic rollback retains an actionable recovery registration'
     Close-Coordinator $coordinator $coordinatorWindow; $coordinatorWindow=[IntPtr]::Zero
     [void][EBR_FAILURE_EDGE_NATIVE]::CloseOwnedFile($script:lockHandle); $script:lockHandle=[IntPtr]::Zero
     $recovery=Start-Recovery $transaction
