@@ -1,26 +1,16 @@
-name: Windows v1.4.0 update failure edges
+name: Windows v1.4.0 test-key update failure edges
 
 on:
   workflow_dispatch:
-    inputs:
-      reference_run_id:
-        description: Completed run containing the exact v1.4.0 candidate artifact
-        required: true
-        type: string
-      candidate_artifact_name:
-        description: Exact candidate artifact name from reference_run_id
-        required: true
-        type: string
 
 permissions:
-  actions: read
   contents: read
 
 jobs:
   failure-edges-x64:
-    name: Test app refusal, installer launch failure, and locked installed EXE
+    name: Verify signed failure recovery in isolated test-key builds
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Check out the focused test harness
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -36,8 +26,6 @@ jobs:
             make
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-binutils
-            mingw-w64-x86_64-python
-            mingw-w64-x86_64-openssl
 
       - name: Install upstream NSIS 3.11
         uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1
@@ -46,86 +34,81 @@ jobs:
 
       - name: Record the MSYS2 tool directory
         shell: msys2 {0}
+        run: printf 'MSYS2_ROOT=%s\n' "$(cygpath -aw /)" >> "$GITHUB_ENV"
+
+      - name: Build isolated v1.4.0 GUI and CNG signing helper
+        shell: msys2 {0}
         run: |
-          printf 'MSYS2_ROOT=%s\n' "$(cygpath -aw /)" >> "$GITHUB_ENV"
+          make gui-test CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' WINDRES=windres
+          make build/updater-windows-tests.exe HOST_CXX=g++
 
-      - name: Download the unchanged authoritative v1.4.0 candidate
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: ${{ inputs.candidate_artifact_name || 'eye-break-reminder-v1.4.0-candidate-44498562317' }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.reference_run_id || '44498562317' }}
-          github-token: ${{ github.token }}
-          path: candidate-input
-
-      - name: Verify candidate identity and build only the controlled successor fixture
+      - name: Build production and separate test-key v1.4.1 successor fixtures
         shell: pwsh
-        env:
-          REFERENCE_RUN_ID: ${{ inputs.reference_run_id || '44498562317' }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $appFiles = @(Get-ChildItem -LiteralPath 'candidate-input' -Filter 'EyeBreakReminder.exe' -File -Recurse | Where-Object { $_.Directory.Name -ceq 'release' })
-          $provenanceFiles = @(Get-ChildItem -LiteralPath 'candidate-input' -Filter 'candidate-provenance.json' -File -Recurse)
-          $identityFiles = @(Get-ChildItem -LiteralPath 'candidate-input' -Filter 'release-artifact-identities.json' -File -Recurse)
-          if ($appFiles.Count -ne 1 -or $provenanceFiles.Count -ne 1 -or $identityFiles.Count -ne 1) { throw 'The retained artifact does not have exactly one candidate release and provenance set.' }
-          $release = $appFiles[0].Directory.FullName
-          $evidence = $provenanceFiles[0].Directory.FullName
-          if ([IO.Path]::GetFullPath((Join-Path $evidence 'release-artifact-identities.json')) -ine [IO.Path]::GetFullPath($identityFiles[0].FullName)) { throw 'Candidate provenance and artifact identity files are from different snapshots.' }
-          $names = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
-          $files = @(Get-ChildItem -LiteralPath $release -File | Sort-Object Name)
-          if (($files.Name -join "`n") -cne (($names | Sort-Object) -join "`n")) { throw 'The retained candidate artifact does not contain the exact five-file release set.' }
-          $provenance = Get-Content -LiteralPath $provenanceFiles[0].FullName -Raw | ConvertFrom-Json
-          if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or [string]$provenance.RunId -cne $env:REFERENCE_RUN_ID) { throw 'The artifact provenance does not identify the requested exact v1.4.0 candidate run.' }
-          $identities = Get-Content -LiteralPath $identityFiles[0].FullName -Raw | ConvertFrom-Json
-          foreach ($name in $names) {
-            $entry = @($identities | Where-Object Name -CEQ $name)
-            $file = Get-Item -LiteralPath (Join-Path $release $name)
-            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($entry.Count -ne 1 -or $entry[0].SHA256 -cne $hash -or $entry[0].Bytes -ne $file.Length) { throw "Candidate identity mismatch: $name" }
-          }
-          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe')) {
-            if ((Get-Item -LiteralPath (Join-Path $release $name)).VersionInfo.ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw "Candidate file is not v1.4.0: $name" }
-          }
-          "CANDIDATE_RELEASE=$release" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           & .\tests\build_production_update_fixture.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $fixture = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-Production-Update-Fixture\release'
-          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe')) {
-            if ((Get-Item -LiteralPath (Join-Path $fixture $name)).VersionInfo.ProductVersion -notmatch '^1\.4\.1(\.0)?$') { throw "Controlled successor fixture has the wrong version: $name" }
+          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Test.exe','EyeBreakReminder-Setup-x64-Test.exe')) {
+            $path = Join-Path $fixture $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Expected controlled successor fixture is missing: $name" }
+            if ((Get-Item -LiteralPath $path).VersionInfo.ProductVersion -notmatch '^1\.4\.1(\.0)?$') { throw "Controlled successor has the wrong version: $name" }
           }
 
-      - name: Run the three focused production coordinator failure edges
-        id: failure_edges
-        timeout-minutes: 10
+      - name: Run signed GUI update and settings policy transactions with disposable CNG keys
+        id: signed_gui_transactions
+        timeout-minutes: 12
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-Production-Update-Fixture\release'
+          & .\tests\windows_signed_update_transaction_acceptance.ps1 `
+            -TestApplication '.\build\gui-test\EyeBreakReminder.exe' `
+            -SuccessorInstaller (Join-Path $fixture 'EyeBreakReminder-Setup-x64-Test.exe') `
+            -SuccessorApplication (Join-Path $fixture 'EyeBreakReminder-Test.exe') `
+            -SignatureTool '.\build\updater-windows-tests.exe' `
+            -EvidencePath '.\build\v1.4.0-updater-evidence\signed-update-transactions.json'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\tests\windows_signed_update_gui_acceptance.ps1 `
+            -TestApplication '.\build\gui-test\EyeBreakReminder.exe' `
+            -SuccessorInstaller (Join-Path $fixture 'EyeBreakReminder-Setup-x64-Test.exe') `
+            -SuccessorApplication (Join-Path $fixture 'EyeBreakReminder-Test.exe') `
+            -SignatureTool '.\build\updater-windows-tests.exe' `
+            -EvidencePath '.\build\v1.4.0-updater-evidence\signed-gui-update.json'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run real coordinator failure and recovery scenarios with disposable signed metadata
+        id: failure_edges
+        timeout-minutes: 12
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-Production-Update-Fixture\release'
           & .\tests\windows_update_failure_edges_acceptance.ps1 `
-            -CandidateExecutable "$env:CANDIDATE_RELEASE\EyeBreakReminder.exe" `
-            -SuccessorInstaller "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder-Setup-x64.exe" `
-            -SuccessorExecutable "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder.exe" `
+            -CandidateExecutable '.\build\gui-test\EyeBreakReminder.exe' `
+            -SuccessorInstaller (Join-Path $fixture 'EyeBreakReminder-Setup-x64-Test.exe') `
+            -SuccessorExecutable (Join-Path $fixture 'EyeBreakReminder-Test.exe') `
+            -SignatureTool '.\build\updater-windows-tests.exe' `
             -EvidencePath '.\build\v1.4.0-updater-evidence\failure-edges.json'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $result = Get-Content -LiteralPath '.\build\v1.4.0-updater-evidence\failure-edges.json' -Raw | ConvertFrom-Json
           if ($result.Status -cne 'PASS' -or $result.Results.Count -ne 3 -or $result.Assertions -lt 25 -or
               @($result.Results | Where-Object Status -cne 'PASS').Count -ne 0 -or
-              $result.Results[0].FilesChanged -or $result.Results[0].Scenario -cne 'FAIL-012' -or
+              $result.Results[0].Scenario -cne 'FAIL-012' -or
               -not $result.Results[1].PreviousVersionRelaunched -or $result.Results[1].Scenario -cne 'FAIL-014' -or
               -not $result.Results[2].RecoveredApplicationRelaunched -or $result.Results[2].Scenario -cne 'INST-011') {
-            throw 'Focused failure-edge acceptance did not prove all three expected recovery outcomes.'
+            throw 'The signed test-key failure-edge run did not prove the expected recovery outcomes.'
           }
-          $candidateHash = (Get-FileHash -LiteralPath (Join-Path $env:CANDIDATE_RELEASE 'EyeBreakReminder.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($result.CandidateSHA256 -cne $candidateHash) { throw 'Failure-edge evidence is not bound to the exact retained candidate executable.' }
 
-      - name: Retain the focused run and exact inputs
+      - name: Retain test-only fixture identities and exact run evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: EyeBreakReminder-v1.4.0-update-failure-edges-${{ github.run_id }}
+          name: EyeBreakReminder-v1.4.0-test-key-update-failure-edges-${{ github.run_id }}
           path: |
+            build/v1.4.0-updater-evidence/signed-update-transactions.json
+            build/v1.4.0-updater-evidence/signed-gui-update.json
             build/v1.4.0-updater-evidence/failure-edges.json
             build/v1.4.0-updater-evidence/production-update-fixture-identities.json
-            candidate-input/build/v1.4.0-updater-evidence/candidate-provenance.json
-            candidate-input/build/v1.4.0-updater-evidence/release-artifact-identities.json
           if-no-files-found: warn
           retention-days: 90

@@ -81,6 +81,24 @@ bool createGuiResourceMetadata(const char*directoryText,const char*portableDiges
     if(written)std::cout<<"Created disposable GUI resource manifest and signature; private test key remained ephemeral. key_id="<<signer.trusted.keyId<<"\n";
     return written;
 }
+bool signUpdateManifestForFiles(const char*stageText,const char*setupText,const char*portableText){
+    if(!stageText||!setupText||!portableText)return false;
+    const std::wstring stage=asciiWide(stageText),setupPath=asciiWide(setupText),portablePath=asciiWide(portableText);
+    auto measure=[](const std::wstring&path,std::uint64_t&size,std::string&digest){
+        if(!eye::updates::safeFile(path,100ull*1024*1024)||!eye::updates::hashFile(path,digest))return false;
+        WIN32_FILE_ATTRIBUTE_DATA info{};if(!GetFileAttributesExW(path.c_str(),GetFileExInfoStandard,&info))return false;
+        size=(std::uint64_t(info.nFileSizeHigh)<<32)|info.nFileSizeLow;return size>0&&size<=100ull*1024*1024;
+    };
+    std::uint64_t setupSize=0,portableSize=0;std::string setupDigest,portableDigest;
+    if(!measure(setupPath,setupSize,setupDigest)||!measure(portablePath,portableSize,portableDigest))return false;
+    EphemeralSigningKey signer;if(!signer.generate())return false;
+    auto manifest=transactionManifest(signer);if(manifest.assets.size()!=2)return false;
+    manifest.assets[0].size=setupSize;manifest.assets[0].sha256=setupDigest;
+    manifest.assets[1].size=portableSize;manifest.assets[1].sha256=portableDigest;
+    const bool written=writeSignedManifest(stage,signer,manifest);
+    if(written)std::cout<<"Created disposable test-key update manifest for controlled Windows payloads; private test key remained ephemeral. key_id="<<signer.trusted.keyId<<"\n";
+    return written;
+}
 bool testSignedManifestVerification(){
     using namespace eye::updates;EphemeralSigningKey signer,other;bool ok=true;
     ok&=check(signer.generate()&&other.generate(),"generate separate disposable Windows CNG P-256 test keys");
@@ -349,6 +367,7 @@ int main(int argc,char**argv){
     if(argc==3&&std::string(argv[1])=="--hold-test-coordinator-mutex")return holdTestCoordinatorMutex(argv[2]);
     if(argc>1&&std::string(argv[1])=="--https-interruption")return runHttpsInterruption(argc,argv);
     if(argc==5&&std::string(argv[1])=="--create-gui-resource-metadata")return createGuiResourceMetadata(argv[2],argv[3],argv[4])?0:1;
+    if(argc==5&&std::string(argv[1])=="--sign-update-manifest")return signUpdateManifestForFiles(argv[2],argv[3],argv[4])?0:1;
     if(argc==2&&std::string(argv[1])=="--test-signatures"){
         const bool ok=testSignedManifestVerification();if(ok)std::cout<<"PASS: "<<assertions<<" Windows CNG signature assertions executed.\n";return ok?0:1;
     }

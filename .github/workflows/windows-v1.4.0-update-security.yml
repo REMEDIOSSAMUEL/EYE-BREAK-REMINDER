@@ -37,6 +37,7 @@ jobs:
           install: >-
             make
             mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
 
       - name: Build isolated Windows updater tests
         shell: msys2 {0}

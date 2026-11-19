@@ -2,6 +2,7 @@ param(
   [Parameter(Mandatory=$true)][string]$CandidateExecutable,
   [Parameter(Mandatory=$true)][string]$SuccessorInstaller,
   [Parameter(Mandatory=$true)][string]$SuccessorExecutable,
+  [Parameter(Mandatory=$true)][string]$SignatureTool,
   [string]$EvidencePath = 'build/v1.4.0-updater-evidence/failure-edges.json'
 )
 
@@ -23,7 +24,8 @@ if (Test-Path -LiteralPath $testRoot) { throw "Refusing to reuse an existing fai
 $candidate = [IO.Path]::GetFullPath($CandidateExecutable)
 $successorInstaller = [IO.Path]::GetFullPath($SuccessorInstaller)
 $successorExecutable = [IO.Path]::GetFullPath($SuccessorExecutable)
-foreach ($file in @($candidate, $successorInstaller, $successorExecutable)) {
+$signatureTool = [IO.Path]::GetFullPath($SignatureTool)
+foreach ($file in @($candidate, $successorInstaller, $successorExecutable, $signatureTool)) {
   if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Required test executable is missing: $file" }
 }
 if ((Get-Item -LiteralPath $candidate).VersionInfo.ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw 'The candidate executable is not v1.4.0.' }
@@ -34,6 +36,7 @@ $dataRoot = [IO.Path]::GetFullPath((Join-Path ([Environment]::GetFolderPath([Env
 $expectedLocalAppData = [IO.Path]::GetFullPath($env:LOCALAPPDATA)
 if (-not $dataRoot.StartsWith($expectedLocalAppData.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'The app data path is not within this runner user profile.' }
 if (Test-Path -LiteralPath $dataRoot) { throw "Refusing to touch pre-existing app data on the runner: $dataRoot" }
+$env:EBR_GUI_TEST_DATA_DIRECTORY = $dataRoot
 
 $appKeyPath = 'HKCU:\Software\EyeBreakReminder'
 $uninstallKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder'
@@ -155,15 +158,19 @@ function New-Transaction([string]$Scenario, [string]$InstallDirectory, [int]$Own
   $target = Join-Path $InstallDirectory 'EyeBreakReminder.exe'
   [void][IO.Directory]::CreateDirectory($InstallDirectory)
   if (-not (Test-Path -LiteralPath $target)) { Copy-Item -LiteralPath $candidate -Destination $target }
-  if ((Get-Hash $target) -cne (Get-Hash $candidate)) { throw "The disposable $Scenario target does not match the authoritative candidate executable." }
+  if ((Get-Hash $target) -cne (Get-Hash $candidate)) { throw "The disposable $Scenario target does not match the controlled v1.4.0 test integration executable." }
   if (-not (Test-Path -LiteralPath (Join-Path $dataRoot 'settings.ini'))) { Write-Profile }
 
   $stage = Join-Path (Join-Path $dataRoot 'updates') ([guid]::NewGuid().ToString('D'))
   [void][IO.Directory]::CreateDirectory($stage)
   Copy-Item -LiteralPath $candidate -Destination (Join-Path $stage 'coordinator.exe')
   Copy-Item -LiteralPath $successorInstaller -Destination (Join-Path $stage 'EyeBreakReminder-Setup-x64.exe')
+  $portable = Join-Path $stage 'EyeBreakReminder.exe'
+  Copy-Item -LiteralPath $successorExecutable -Destination $portable
   $nonce = [guid]::NewGuid().ToString('D')
   $setup = Join-Path $stage 'EyeBreakReminder-Setup-x64.exe'
+  & $signatureTool --sign-update-manifest $stage $setup $portable
+  if ($LASTEXITCODE -ne 0) { throw "Could not create a disposable CNG-signed test manifest for $Scenario (exit $LASTEXITCODE)." }
   $values = [ordered]@{
     staging=$stage; artifact=$setup; target=$target; data=$dataRoot
     version='1.4.1'; previous='1.4.0'; nonce=$nonce
@@ -178,7 +185,7 @@ function New-Transaction([string]$Scenario, [string]$InstallDirectory, [int]$Own
   $transaction = Join-Path $stage 'transaction.ini'
   $text = ($values.GetEnumerator() | ForEach-Object { '{0}={1}' -f $_.Key,$_.Value }) -join "`n"
   [IO.File]::WriteAllText($transaction,$text+"`n",[Text.UTF8Encoding]::new($false))
-  return [pscustomobject]@{Scenario=$Scenario;InstallDirectory=$InstallDirectory;Target=$target;Stage=$stage;Transaction=$transaction;Setup=$setup;Nonce=$nonce}
+  return [pscustomobject]@{Scenario=$Scenario;InstallDirectory=$InstallDirectory;Target=$target;Stage=$stage;Transaction=$transaction;Setup=$setup;Portable=$portable;Nonce=$nonce;TrustRoot='Disposable CNG test key; never embedded in production'}
 }
 
 function Get-StatusUntil([Diagnostics.Process]$Process, [string]$Substring, [int]$TimeoutSeconds) {
@@ -287,7 +294,7 @@ function Invoke-OwnerRefusesExitTest() {
     foreach ($name in @('settings.ini','history.dat','unrelated-sentinel.txt')) { Add-Assertion ($profileAfter[$name] -ceq $profileBefore[$name]) "FAIL-012: $name is unchanged byte-for-byte" @{Before=$profileBefore[$name];After=$profileAfter[$name]} }
     $uninstall=Get-ItemProperty -LiteralPath $uninstallKeyPath -Name DisplayVersion -ErrorAction Stop
     Add-Assertion ($uninstall.DisplayVersion -ceq '1.4.0') 'FAIL-012: Installed Apps registration remains on v1.4.0'
-    return [pscustomobject]@{Status='PASS';Scenario='FAIL-012';Assertions=6;Message=$status.Status;OwnerProcess='Exact v1.4.0 candidate; UI thread suspended only in this disposable runner test process';TargetSHA256=$targetHash;SettingsHistorySentinelUnchanged=$true;FilesChanged=$false}
+    return [pscustomobject]@{Status='PASS';Scenario='FAIL-012';Assertions=6;Message=$status.Status;OwnerProcess='Disposable v1.4.0 test-key integration build; UI thread suspended only in this disposable runner test process';TargetSHA256=$targetHash;SettingsHistorySentinelUnchanged=$true;FilesChanged=$false}
   } finally {
     if ($suspended -and $script:suspendedThread -ne [IntPtr]::Zero) { [void][EBR_FAILURE_EDGE_NATIVE]::ResumeOwnedThread($script:suspendedThread); $script:suspendedThread=[IntPtr]::Zero }
     if ($null -ne $app) { try { Close-DisposableApp $app } catch { Write-Warning $_ } }
@@ -399,6 +406,8 @@ try {
     Assertions=$script:assertions;Results=$results;CandidateSHA256=(Get-Hash $candidate)
     SuccessorInstallerSHA256=(Get-Hash $successorInstaller);SuccessorExecutableSHA256=(Get-Hash $successorExecutable)
     HostScope='Disposable GitHub Actions Windows runner only';TestRoot=$testRoot;DataRoot=$dataRoot
+    TestTrustRoot='Disposable CNG P-256 test key written as a public key to each stage; production updater trust remains separate'
+    CandidateTestBuildSHA256=(Get-Hash $candidate);SignatureToolSHA256=(Get-Hash $signatureTool)
     HostRebooted=$false;HostShutdown=$false;HostLocked=$false;HostSuspended=$false
     TestApplicationThreadSuspendedDuringFAIL012=$true;UtcStarted=$runStarted.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')
   }

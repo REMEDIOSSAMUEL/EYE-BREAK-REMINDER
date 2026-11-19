@@ -80,6 +80,20 @@ try {
     Invoke-Checked $compiler $compilerArgs 'compile the unmodified production updater as controlled v1.4.1'
     Invoke-Checked $strip @('release/EyeBreakReminder.exe') 'strip controlled successor application'
     Invoke-Checked $makensis @('-NOCD', 'installer/setup.nsi') 'build controlled successor installer with pinned NSIS 3.11'
+    $testCompilerArgs = @(
+      '-std=c++17', '-O2', '-Wall', '-Wextra', '-Wpedantic', '-Werror', '-municode', '-mwindows', '-static', '-static-libgcc', '-static-libstdc++',
+      '-D_WIN32_WINNT=0x0A00', '-DWINVER=0x0A00', '-DUNICODE', '-D_UNICODE', '-DEYEBREAK_TEST_BUILD', 'src/app.cpp', 'release/resources.o', '-o', 'release/EyeBreakReminder-Test.exe',
+      '-lcomctl32', '-lcomdlg32', '-ldwmapi', '-lwtsapi32', '-lwinmm', '-lgdiplus', '-lshell32', '-lole32', '-loleaut32', '-luuid', '-ladvapi32', '-luxtheme', '-lwinhttp', '-lversion', '-lbcrypt',
+      '-Wl,--dynamicbase,--nxcompat,--high-entropy-va'
+    )
+    Invoke-Checked $compiler $testCompilerArgs 'compile a separate disposable-key v1.4.1 integration application'
+    Invoke-Checked $strip @('release/EyeBreakReminder-Test.exe') 'strip the test-only successor application'
+    $testInstallerText = $installerText.Replace('OutFile "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Setup-x64.exe"', 'OutFile "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Setup-x64-Test.exe"')
+    $testInstallerText = $testInstallerText.Replace('File "${EB_PROJECT_ROOT}\release\EyeBreakReminder.exe"', 'File "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Test.exe"')
+    if (-not $testInstallerText.Contains('OutFile "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Setup-x64-Test.exe"') -or
+        -not $testInstallerText.Contains('File "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Test.exe"')) { throw 'The test-only NSIS fixture does not embed its matching v1.4.1 integration executable.' }
+    [IO.File]::WriteAllText((Join-Path $fixtureRoot 'installer\setup-test.nsi'), $testInstallerText, [Text.UTF8Encoding]::new($false))
+    Invoke-Checked $makensis @('-NOCD', 'installer/setup-test.nsi') 'build a separate test-only successor installer with matching executable identity'
   } finally {
     Pop-Location
   }
@@ -89,8 +103,11 @@ try {
 
 $app = Get-Item -LiteralPath (Join-Path $fixtureRoot 'release\EyeBreakReminder.exe')
 $setup = Get-Item -LiteralPath (Join-Path $fixtureRoot 'release\EyeBreakReminder-Setup-x64.exe')
+$testApp = Get-Item -LiteralPath (Join-Path $fixtureRoot 'release\EyeBreakReminder-Test.exe')
+$testSetup = Get-Item -LiteralPath (Join-Path $fixtureRoot 'release\EyeBreakReminder-Setup-x64-Test.exe')
 if ($app.VersionInfo.ProductVersion -ne '1.4.1.0' -and $app.VersionInfo.ProductVersion -ne '1.4.1') { throw "Controlled application has unexpected product version '$($app.VersionInfo.ProductVersion)'." }
 if ($setup.VersionInfo.ProductVersion -ne '1.4.1.0' -and $setup.VersionInfo.ProductVersion -ne '1.4.1') { throw "Controlled installer has unexpected product version '$($setup.VersionInfo.ProductVersion)'." }
+if ($testApp.VersionInfo.ProductVersion -notmatch '^1\.4\.1(\.0)?$' -or $testSetup.VersionInfo.ProductVersion -notmatch '^1\.4\.1(\.0)?$') { throw 'The disposable-key integration pair has an inconsistent successor version.' }
 $identity = [pscustomobject]@{
   Status = 'PASS'
   Kind = 'Test-only controlled successor built without EYEBREAK_TEST_BUILD'
@@ -98,6 +115,8 @@ $identity = [pscustomobject]@{
   FixtureSourceRoot = $fixtureRoot
   Application = [pscustomobject]@{ Name=$app.Name; ProductVersion=$app.VersionInfo.ProductVersion; Bytes=$app.Length; SHA256=(Get-FileHash -LiteralPath $app.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
   Installer = [pscustomobject]@{ Name=$setup.Name; ProductVersion=$setup.VersionInfo.ProductVersion; Bytes=$setup.Length; SHA256=(Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+  TestOnlyIntegrationApplication = [pscustomobject]@{ Name=$testApp.Name; ProductVersion=$testApp.VersionInfo.ProductVersion; Bytes=$testApp.Length; SHA256=(Get-FileHash -LiteralPath $testApp.FullName -Algorithm SHA256).Hash.ToLowerInvariant(); Define='EYEBREAK_TEST_BUILD'; ProductionTrustRoot='Not compiled into this integration test build' }
+  TestOnlyIntegrationInstaller = [pscustomobject]@{ Name=$testSetup.Name; ProductVersion=$testSetup.VersionInfo.ProductVersion; Bytes=$testSetup.Length; SHA256=(Get-FileHash -LiteralPath $testSetup.FullName -Algorithm SHA256).Hash.ToLowerInvariant(); EmbedsTestOnlyIntegrationApplication=$true }
   TestEndpointOverrideCompiledIntoFixture = $false
   ProductionSourceVersionOnlyChanged = @('src/resources.rc version resource', 'installer/setup.nsi version resource')
 }

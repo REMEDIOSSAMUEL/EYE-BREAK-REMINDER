@@ -182,6 +182,8 @@ function Run-DnsFailureAndSignedRetry([IntPtr]$CheckButton) {
   Write-DnsFailureFixture;Trigger-Check $CheckButton;Wait-Idle $CheckButton 15
   $status=(Get-DescendantTexts $script:mainWindow) -join ' '
   if(-not $status.Contains('Could not reach GitHub')){throw "The app did not show a meaningful DNS failure: $status"}
+  # The update controls live on Settings. Return to the timer page so the visible countdown is refreshed while the engine continues.
+  [void][EBR_RESOURCE_LOOPS]::SendMessageW([EBR_RESOURCE_LOOPS]::GetDlgItem($script:mainWindow,10),0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)
   $watch=[Diagnostics.Stopwatch]::StartNew();$timerAdvanced=$false
   while($watch.Elapsed.TotalSeconds -lt 8){if((Get-MainTimerSeconds) -lt $initialTimer){$timerAdvanced=$true;break};Start-Sleep -Milliseconds 100}
   if(-not $timerAdvanced){throw 'The active timer did not progress while the DNS failure was handled.'}

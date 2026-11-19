@@ -534,12 +534,24 @@ public:
   }
   bool launchUpdateCoordinator(const updates::ReleaseDetails&release,const updates::SelectedAsset&asset,const updates::SelectedAsset&applicationAsset,const std::wstring&stage,const std::wstring&artifact,bool clean,bool deleteHistory){
    if(engine->snapshot().phase==Phase::Break){inform(main,L"Finish your active break first",L"Eye Break Reminder will not close during an active eye break. You can install this verified update after the break.",colors.dark,colors.systemContrast);return false;}
-   const auto authorization=updates::verifyProductionManifest(release.signedManifestBytes,release.signedManifestSignature,release.tag,utf8(installedVersion()),std::time(nullptr));
+   updates::ManifestAuthorization authorization;
+#ifdef EYEBREAK_TEST_BUILD
+   updates::TrustedPublicKey testKey;const bool testTrust=updates::readTestPublicKey(updates::parentPath(executable()),testKey);
+   authorization=testTrust?updates::verifyManifestWithKey(release.signedManifestBytes,release.signedManifestSignature,release.tag,utf8(installedVersion()),std::time(nullptr),testKey):
+    updates::verifyProductionManifest(release.signedManifestBytes,release.signedManifestSignature,release.tag,utf8(installedVersion()),std::time(nullptr));
+#else
+   authorization=updates::verifyProductionManifest(release.signedManifestBytes,release.signedManifestSignature,release.tag,utf8(installedVersion()),std::time(nullptr));
+#endif
    if(!release.manifestVerified||!authorization.ok){const std::wstring message=wide(authorization.ok?"The update lost its verified publisher metadata.":authorization.error);error(message.c_str());return false;}
    const std::wstring manifestPath=stage+L"\\EyeBreakReminder-UpdateManifest.json",signaturePath=stage+L"\\EyeBreakReminder-UpdateManifest.sig";
    if(!eye::win::writeAtomic(manifestPath,release.signedManifestBytes)||!eye::win::writeAtomic(signaturePath,release.signedManifestSignature)){
     DeleteFileW(manifestPath.c_str());DeleteFileW(signaturePath.c_str());error(L"The verified publisher metadata could not be saved for the installation boundary. The current application and settings are unchanged.");return false;
    }
+#ifdef EYEBREAK_TEST_BUILD
+   if(testTrust&&!CopyFileW((updates::parentPath(executable())+L"\\test-update-public-key.bin").c_str(),(stage+L"\\test-update-public-key.bin").c_str(),TRUE)){
+    DeleteFileW(manifestPath.c_str());DeleteFileW(signaturePath.c_str());error(L"The isolated test verification key could not be carried to the update coordinator. The current application and settings are unchanged.");return false;
+   }
+#endif
    std::wstring coordinator=stage+L"\\coordinator.exe";if(!CopyFileW(executable().c_str(),coordinator.c_str(),TRUE)){error(L"Windows could not prepare the separate update coordinator. The current application was not changed.");return false;}
    GUID guid{};wchar_t raw[40]{};if(FAILED(CoCreateGuid(&guid))||!StringFromGUID2(guid,raw,40)){error(L"Windows could not create an update transaction identifier.");return false;}std::wstring nonce(raw);nonce=nonce.substr(1,36);
    updates::Transaction t;t.stagingDirectory=stage;t.artifactPath=artifact;t.targetExecutable=executable();t.dataDirectory=directory;
