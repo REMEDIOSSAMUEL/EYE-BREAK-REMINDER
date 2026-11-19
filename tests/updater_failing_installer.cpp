@@ -88,6 +88,30 @@ bool mutateOnlyDisposableInstall(std::wstring& markerPath) {
     return markerWritten;
 }
 
+bool markProductionTestLaunch(std::wstring& markerPath) {
+    std::array<wchar_t, 32768> runnerTempBuffer{};
+    const DWORD runnerLength = GetEnvironmentVariableW(L"RUNNER_TEMP", runnerTempBuffer.data(), DWORD(runnerTempBuffer.size()));
+    std::array<wchar_t, 32768> markerBuffer{};
+    const DWORD markerLength = GetEnvironmentVariableW(L"EBR_TEST_INSTALLER_LAUNCH_MARKER", markerBuffer.data(), DWORD(markerBuffer.size()));
+    if (!runnerLength || runnerLength >= runnerTempBuffer.size() || !markerLength || markerLength >= markerBuffer.size()) return false;
+    std::wstring expected;
+    if (!fullPath(std::wstring(runnerTempBuffer.data(), runnerLength) +
+                  L"\\EyeBreakReminder-Production-Update-Acceptance\\controlled-installer-launched.txt", expected)) return false;
+    std::wstring actual;
+    if (!fullPath(std::wstring(markerBuffer.data(), markerLength), actual) ||
+        CompareStringOrdinal(expected.c_str(), -1, actual.c_str(), -1, TRUE) != CSTR_EQUAL) return false;
+    HANDLE marker = CreateFileW(actual.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (marker == INVALID_HANDLE_VALUE) return false;
+    constexpr char evidence[] = "controlled-installer-executed\r\n";
+    DWORD written = 0;
+    const bool ok = WriteFile(marker, evidence, DWORD(sizeof(evidence) - 1), &written, nullptr) != FALSE &&
+                    written == sizeof(evidence) - 1;
+    CloseHandle(marker);
+    if (ok) markerPath = actual;
+    return ok;
+}
+
 } // namespace
 
 // Test-only installer stand-in. It validates the disposable GitHub Actions
@@ -96,5 +120,7 @@ bool mutateOnlyDisposableInstall(std::wstring& markerPath) {
 // controlled failure. The real update coordinator must restore the prior app.
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     std::wstring marker;
+    if (GetEnvironmentVariableW(L"EBR_TEST_INSTALLER_LAUNCH_MARKER", nullptr, 0))
+        return markProductionTestLaunch(marker) ? 37 : 38;
     return mutateOnlyDisposableInstall(marker) ? 37 : 38;
 }

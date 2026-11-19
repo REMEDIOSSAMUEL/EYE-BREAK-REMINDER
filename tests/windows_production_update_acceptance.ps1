@@ -3,6 +3,7 @@ param(
   [Parameter(Mandatory=$true)][string]$CandidateExecutable,
   [Parameter(Mandatory=$true)][string]$ControlledInstaller,
   [Parameter(Mandatory=$true)][string]$ControlledExecutable,
+  [string]$CoordinatorFailureInstaller,
   [Parameter(Mandatory=$true)][string]$LaunchSentinelExecutable,
   [string]$EvidenceDirectory = 'build/v1.4.0-updater-evidence',
   [ValidateSet('All','CoordinatorBackupFailure')][string]$Scenario = 'All'
@@ -14,6 +15,13 @@ $candidateInstallerPath = [IO.Path]::GetFullPath($CandidateInstaller)
 $candidateExecutablePath = [IO.Path]::GetFullPath($CandidateExecutable)
 $controlledInstallerPath = [IO.Path]::GetFullPath($ControlledInstaller)
 $controlledExecutablePath = [IO.Path]::GetFullPath($ControlledExecutable)
+$coordinatorFailureInstallerPath = if ([string]::IsNullOrWhiteSpace($CoordinatorFailureInstaller)) { $null } else { [IO.Path]::GetFullPath($CoordinatorFailureInstaller) }
+$feedSetupPath = $controlledInstallerPath
+if ($Scenario -eq 'CoordinatorBackupFailure') {
+  if (-not $coordinatorFailureInstallerPath -or -not (Test-Path -LiteralPath $coordinatorFailureInstallerPath -PathType Leaf)) { throw 'CoordinatorBackupFailure requires the isolated test-only controlled failing-installer fixture.' }
+  if ((Get-Item -LiteralPath $coordinatorFailureInstallerPath).VersionInfo.ProductVersion -notmatch '^1\.4\.1(\.0)?$') { throw 'Coordinator failure fixture must identify as controlled version 1.4.1.' }
+  $feedSetupPath = $coordinatorFailureInstallerPath
+} elseif ($coordinatorFailureInstallerPath) { throw 'The test-only failure installer is accepted only by the CoordinatorBackupFailure scenario.' }
  $launchSentinelPath = [IO.Path]::GetFullPath($LaunchSentinelExecutable)
 foreach ($path in @($candidateInstallerPath, $candidateExecutablePath, $controlledInstallerPath, $controlledExecutablePath, $launchSentinelPath)) {
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required production-update transaction input is missing: $path" }
@@ -54,6 +62,7 @@ $originalHostsText = [Text.Encoding]::ASCII.GetString($originalHostsBytes)
 $hostsChanged = $false
 $rootThumbprint = $null
 $serverProcess = $null
+$originalInstallerLaunchMarker = $env:EBR_TEST_INSTALLER_LAUNCH_MARKER
 $appProcess = $null
 $setupExitCode = $null
 $uninstallExitCode = $null
@@ -252,6 +261,7 @@ try {
     CandidateInstaller=[pscustomobject]@{Path=$candidateInstallerPath;Version=(Get-Item $candidateInstallerPath).VersionInfo.ProductVersion;Bytes=(Get-Item $candidateInstallerPath).Length;SHA256=(Get-FileHash $candidateInstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()}
     ControlledExecutable=[pscustomobject]@{Path=$controlledExecutablePath;Version=(Get-Item $controlledExecutablePath).VersionInfo.ProductVersion;Bytes=(Get-Item $controlledExecutablePath).Length;SHA256=(Get-FileHash $controlledExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}
     ControlledInstaller=[pscustomobject]@{Path=$controlledInstallerPath;Version=(Get-Item $controlledInstallerPath).VersionInfo.ProductVersion;Bytes=(Get-Item $controlledInstallerPath).Length;SHA256=(Get-FileHash $controlledInstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+    FeedSetup=[pscustomobject]@{Path=$feedSetupPath;Version=(Get-Item $feedSetupPath).VersionInfo.ProductVersion;Bytes=(Get-Item $feedSetupPath).Length;SHA256=(Get-FileHash $feedSetupPath -Algorithm SHA256).Hash.ToLowerInvariant()}
   })
 
   $openssl=(Get-Command openssl.exe -ErrorAction Stop).Source
@@ -284,7 +294,7 @@ try {
   Assert ($unexpectedRedirectAddresses.Count-eq2-and($unexpectedRedirectAddresses-contains'127.0.0.1')-and($unexpectedRedirectAddresses-contains'::1')) 'unexpected HTTPS redirect hostname resolves only to the isolated IPv4/IPv6 loopback test feed so a followed redirect is observable' $unexpectedRedirectAddresses
 
   $scriptPath=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'production_update_test_feed.py'))
-  $serverArgs=@($scriptPath,'--certificate',$leafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$controlledInstallerPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$readyPath,'--redirect-marker',$redirectMarkerPath)
+  $serverArgs=@($scriptPath,'--certificate',$leafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$feedSetupPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$readyPath,'--redirect-marker',$redirectMarkerPath)
   $serverStopped=$false
   $serverProcess=Start-Process -FilePath $python -ArgumentList $serverArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr
   $listenWatch=[Diagnostics.Stopwatch]::StartNew()
@@ -359,7 +369,7 @@ try {
 
   if($serverProcess){$serverProcess.Kill();if(-not$serverProcess.WaitForExit(5000)){throw 'Trusted-host TLS feed did not stop before the wrong-host case.'};$serverProcess.Dispose();$serverProcess=$null;$serverStopped=$true}
   Remove-Item -LiteralPath $wrongReadyPath -Force -ErrorAction SilentlyContinue
-  $wrongServerArgs=@($scriptPath,'--certificate',$wrongLeafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$controlledInstallerPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$wrongReadyPath)
+  $wrongServerArgs=@($scriptPath,'--certificate',$wrongLeafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$feedSetupPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$wrongReadyPath)
   $wrongServerStdout=Join-Path $EvidenceDirectory 'wrong-host-feed.stdout.log';$wrongServerStderr=Join-Path $EvidenceDirectory 'wrong-host-feed.stderr.log'
   $serverProcess=Start-Process -FilePath $python -ArgumentList $wrongServerArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $wrongServerStdout -RedirectStandardError $wrongServerStderr;$serverStopped=$false
   $wrongListenWatch=[Diagnostics.Stopwatch]::StartNew()
@@ -387,7 +397,7 @@ try {
   Stop-ProductionApplication;$appProcess=$null
   if($serverProcess){$serverProcess.Kill();if(-not$serverProcess.WaitForExit(5000)){throw 'Wrong-host HTTPS feed did not stop before restoring the trusted feed.'};$serverProcess.Dispose();$serverProcess=$null;$serverStopped=$true}
   Remove-Item -LiteralPath $readyPath -Force -ErrorAction SilentlyContinue
-  $serverArgs=@($scriptPath,'--certificate',$leafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$controlledInstallerPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$readyPath,'--redirect-marker',$redirectMarkerPath)
+  $serverArgs=@($scriptPath,'--certificate',$leafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$feedSetupPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$readyPath,'--redirect-marker',$redirectMarkerPath)
   $serverProcess=Start-Process -FilePath $python -ArgumentList $serverArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr;$serverStopped=$false
   $listenWatch=[Diagnostics.Stopwatch]::StartNew()
   while($listenWatch.Elapsed.TotalSeconds-lt15-and-not(Test-Path -LiteralPath $readyPath)){if($serverProcess.HasExited){throw "Trusted-host TLS feed exited before it became ready. $([IO.File]::ReadAllText($serverStderr))"};Start-Sleep -Milliseconds 100}
@@ -405,6 +415,9 @@ try {
   Record 'Test-only unverified-executable sentinel identity' 'INFO' ([pscustomobject]@{Path=$launchSentinelPath;Bytes=$sentinelBytes.Length;SHA256=(Get-FileHash -LiteralPath $launchSentinelPath -Algorithm SHA256).Hash.ToLowerInvariant();MarkerPath=$launchSentinelMarker})
 
   if($Scenario-eq'CoordinatorBackupFailure'){
+    $controlledInstallerMarker=Join-Path $testRoot 'controlled-installer-launched.txt'
+    if(Test-Path -LiteralPath $controlledInstallerMarker){throw 'The test-only controlled-installer launch marker unexpectedly exists before the backup-failure test.'}
+    $env:EBR_TEST_INSTALLER_LAUNCH_MARKER=$controlledInstallerMarker
     $appProcess=Start-Process -FilePath $installedExe -PassThru
     Record 'Exact candidate launched for coordinator backup-failure injection' 'INFO' ([pscustomobject]@{ProcessId=$appProcess.Id;ExecutablePath=$installedExe;ProductVersion=(Get-Item $installedExe).VersionInfo.ProductVersion})
     $choice=Find-Dialog 'Eye Break Reminder Update Available' $appProcess.Id 90
@@ -424,7 +437,7 @@ try {
     $backupFailure=Find-Dialog 'The current application or its settings could not be backed up and verified.' 0 180
     $backupFailureText=$backupFailure.Names -join ' '
     Assert ($backupFailure.WindowTitle-eq'Eye Break Reminder Update'-and$backupFailureText.Contains('The current application or its settings could not be backed up and verified.')-and$backupFailureText.Contains('The update was not installed.')) 'the actual production coordinator reports an actionable backup failure before installer execution' $backupFailureText
-    Assert (-not(Test-Path -LiteralPath $launchSentinelMarker)) 'coordinator backup failure does not launch the unverified-executable sentinel'
+    Assert (-not(Test-Path -LiteralPath $controlledInstallerMarker)) 'coordinator backup failure rejects before the controlled installer process is launched' $controlledInstallerMarker
     Assert ((Get-Item -LiteralPath $installedExe).VersionInfo.ProductVersion-match'^1\.4\.0(\.0)?$'-and(Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()-ceq(Get-FileHash -LiteralPath $candidateExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()) 'coordinator backup failure leaves the exact tested v1.4.0 installed executable unchanged' ([pscustomobject]@{Version=(Get-Item $installedExe).VersionInfo.ProductVersion;SHA256=(Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant()})
     Assert ((Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Stop).DisplayVersion-eq'1.4.0') 'coordinator backup failure leaves Installed Apps registration at v1.4.0'
     $settingsAfterFailure=Read-SettingsMap (Join-Path $dataDir 'settings.ini')
@@ -444,7 +457,7 @@ try {
     while($stageWatch.Elapsed.TotalSeconds-lt20-and(Test-Path -LiteralPath $backupStages[0].FullName)){Start-Sleep -Milliseconds 100}
     Assert (-not(Test-Path -LiteralPath $backupStages[0].FullName)) 'recovery cleanup removes the collision marker and private staging directory' ([pscustomobject]@{StagePath=$backupStages[0].FullName;Removed=(-not(Test-Path -LiteralPath $backupStages[0].FullName));CollisionSHA256=$collisionHash;WaitSeconds=[Math]::Round($stageWatch.Elapsed.TotalSeconds,2)})
     Assert (@(Get-Content -LiteralPath $requestLogPath|ForEach-Object{$_|ConvertFrom-Json}|Where-Object{$_.host-eq'github.com'-and$_.path-eq'/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/EyeBreakReminder-Setup-x64.exe'}).Count-ge1) 'the isolated feed records the verified successor-setup download that preceded the coordinator backup failure'
-    Record 'Exact production coordinator backup failure and recovery' 'PASS' ([pscustomobject]@{CandidateVersion='1.4.0';NoInstallerLaunch=(-not(Test-Path -LiteralPath $launchSentinelMarker));PreviousApplicationRelaunched=$true;UserDataPreserved=$true;StageCleaned=$true})
+    Record 'Exact production coordinator backup failure and recovery' 'PASS' ([pscustomobject]@{CandidateVersion='1.4.0';NoInstallerLaunch=(-not(Test-Path -LiteralPath $controlledInstallerMarker));PreviousApplicationRelaunched=$true;UserDataPreserved=$true;StageCleaned=$true;ServedTestInstallerSHA256=(Get-FileHash -LiteralPath $feedSetupPath -Algorithm SHA256).Hash.ToLowerInvariant()})
     $script:resultStatus='PASS'
     return
   }
@@ -565,6 +578,7 @@ finally {
     }
   }
   Remove-Item Env:EBR_TEST_UNVERIFIED_LAUNCH_MARKER -ErrorAction SilentlyContinue
+  if ($null -eq $originalInstallerLaunchMarker) { Remove-Item Env:EBR_TEST_INSTALLER_LAUNCH_MARKER -ErrorAction SilentlyContinue } else { $env:EBR_TEST_INSTALLER_LAUNCH_MARKER = $originalInstallerLaunchMarker }
   if($serverProcess){try{if(-not$serverProcess.HasExited){$serverProcess.Kill();[void]$serverProcess.WaitForExit(5000)};$serverStopped=$serverProcess.HasExited;$serverProcess.Dispose();if(-not$serverStopped){throw 'Loopback HTTPS feed did not terminate.'}}catch{Record 'Stop isolated HTTPS feed' 'FAIL' $_.Exception.Message}}
   if($hostsChanged){
     try{[IO.File]::WriteAllBytes($hostsPath,$originalHostsBytes);& ipconfig.exe /flushdns|Out-Null;if($LASTEXITCODE-ne0){throw 'DNS flush after restoring hosts file failed.'};$restored=[IO.File]::ReadAllBytes($hostsPath);$equal=([Convert]::ToBase64String($originalHostsBytes)-ceq[Convert]::ToBase64String($restored));if(-not$equal){throw 'Hosts file did not return byte-for-byte to its original contents.'};$hostsRestoreStatus='PASS';Record 'Restore runner hosts file' 'PASS' ([pscustomobject]@{ByteIdentical=$equal})}catch{$hostsRestoreStatus='FAIL';Record 'Restore runner hosts file' 'FAIL' $_.Exception.Message}

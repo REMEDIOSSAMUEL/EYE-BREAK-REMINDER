@@ -4,10 +4,9 @@ on:
   pull_request:
     branches:
       - main
-    # Full GUI/installer/soak acceptance runs for production inputs and broad
-    # acceptance changes. The focused workflow validates only its changed
-    # download/portable harnesses against the retained exact candidate and
-    # performs the required soak without replaying successful GUI/installer tests.
+    # The full hosted suite runs for production inputs and acceptance harnesses.
+    # The soak is reused only after validating the exact retained executable hash
+    # and the complete prior 110-cycle evidence bundle.
     paths:
       - 'src/**'
       - 'assets/**'
@@ -228,6 +227,12 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & .\tests\gui_acceptance.ps1 -TestSystemHighContrast
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $report = Get-Content -LiteralPath '.\build\gui-test\evidence\gui-acceptance-results.json' -Raw | ConvertFrom-Json
+          if ($report.InteractiveDesktopAvailable -ne $true -or $report.Assertions -le 0) {
+            throw 'The GUI acceptance result does not prove an interactive run with assertions.'
+          }
+          $resource = Import-Csv -LiteralPath '.\build\gui-test\evidence\update-dialog-resource-time-series.csv'
+          if ($resource.Count -ne 20) { throw "Expected 20 measured update dialogs, found $($resource.Count)." }
 
       - name: Test the real v1.3.0 to v1.4.0 per-user installer transition
         id: legacy_upgrade
@@ -342,6 +347,39 @@ jobs:
             -EvidenceDirectory '.\build\v1.4.0-updater-evidence'
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify production coordinator aborts safely when settings backup fails
+        id: coordinator_backup_failure
+        if: ${{ !cancelled() && steps.candidate.outcome == 'success' && steps.production_update.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.launch-sentinel.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (github.event.inputs.acceptance_scope == 'UpdatePreferences' || (steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success')) }}
+        shell: pwsh
+        timeout-minutes: 30
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = '.\build\v1.4.0-updater-evidence'
+          $resultPath = Join-Path $evidence 'production-update-acceptance-results.json'
+          $logPath = Join-Path $evidence 'production-update-acceptance.log'
+          if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf) -or -not (Test-Path -LiteralPath $logPath -PathType Leaf)) {
+            throw 'The primary exact-candidate update acceptance report is missing; refusing to replace it with the backup-failure report.'
+          }
+          Copy-Item -LiteralPath $resultPath -Destination (Join-Path $evidence 'production-update-acceptance-successful-update-results.json')
+          Copy-Item -LiteralPath $logPath -Destination (Join-Path $evidence 'production-update-acceptance-successful-update.log')
+          $failureInstaller = '.\build\updater-failing-installer.exe'
+          if (-not (Test-Path -LiteralPath $failureInstaller -PathType Leaf)) { throw 'The controlled failing-installer fixture is missing.' }
+          & .\tests\windows_production_update_acceptance.ps1 `
+            -CandidateInstaller '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -CandidateExecutable '.\release\EyeBreakReminder.exe' `
+            -ControlledInstaller "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder-Setup-x64.exe" `
+            -ControlledExecutable "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder.exe" `
+            -CoordinatorFailureInstaller $failureInstaller `
+            -LaunchSentinelExecutable "$env:UPDATE_LAUNCH_SENTINEL_PATH" `
+            -EvidenceDirectory $evidence `
+            -Scenario CoordinatorBackupFailure
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $report = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+          $event = @($report.Events | Where-Object Name -CEQ 'Exact production coordinator backup failure and recovery')
+          if ($report.Status -ne 'PASS' -or $report.Scenario -ne 'CoordinatorBackupFailure' -or $event.Count -ne 1 -or $event[0].Status -ne 'PASS') {
+            throw 'The real coordinator backup-failure scenario did not produce its required exact-candidate recovery evidence.'
+          }
+
       - name: Verify Windows resource telemetry zero-session handling
         id: resource_telemetry
         if: ${{ always() }}
@@ -357,10 +395,10 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: eye-break-reminder-v1.4.0-candidate-44345729932
+          name: eye-break-reminder-v1.4.0-candidate-44453271527
           path: build/prior-v1.4.0-soak-candidate
           repository: ${{ github.repository }}
-          run-id: '44345729932'
+          run-id: '44453271527'
           github-token: ${{ github.token }}
 
       - name: Reuse soak only when candidate hash and complete hosted evidence match
@@ -399,10 +437,10 @@ jobs:
             $eventsClean = @($summary.Events | Where-Object { $_.Status -in @('FAIL','NOT TESTED') }).Count -eq 0
             $cyclesClean = $cycles.Count -eq 110 -and @($cycles | Where-Object { [int]$_.BreakWindowsOpened -lt 1 -or [int]$_.BreakWindowsAfter -ne 0 -or $_.StatusAfter -cne 'Running' }).Count -eq 0
             $reuseChecks = [ordered]@{
-              'reference run ID' = $provenance.RunId -eq '44345729932'
+              'reference run ID' = $provenance.RunId -eq '44453271527'
               'reference application/version' = $provenance.Application -ceq 'Eye Break Reminder' -and $provenance.Version -ceq '1.4.0'
               'reference feature branch' = $provenance.Branch -ceq 'feature/v1.4.0-automatic-updater'
-              'reference PR head' = $provenance.PRHeadCommit -ceq '69408fb0f0dbc7166e98628d1f117b688b96d434'
+              'reference PR head' = $provenance.PRHeadCommit -ceq 'dfb0145f311253383b57a922b67fd2660204aa56'
               'candidate gate succeeded' = $referenceGate.Candidate -ceq 'success'
               'resource telemetry gate succeeded' = $referenceGate.ResourceTelemetry -ceq 'success'
               'resource soak gate succeeded' = $referenceGate.ResourceSoak -ceq 'success'
@@ -434,13 +472,13 @@ jobs:
               New-Item -ItemType Directory -Force -Path $destination | Out-Null
               Copy-Item -Path (Join-Path $referenceSoak '*') -Destination $destination -Recurse -Force
               $files = @(Get-ChildItem -LiteralPath $destination -File -Recurse | ForEach-Object { [pscustomobject]@{Path=$_.FullName.Substring((Get-Location).Path.Length + 1);Bytes=$_.Length;SHA256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()} })
-              [pscustomobject]@{Status='PASS';Reused=$true;ReferenceRunId='44345729932';ReferenceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44345729932';ReferencePRHead=$provenance.PRHeadCommit;ReferenceMergeCommit=$provenance.SourceCommit;CurrentSourceCommit=$env:GITHUB_SHA;CurrentPRHeadCommit=if($env:GITHUB_EVENT_PATH){(Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw|ConvertFrom-Json).pull_request.head.sha}else{$null};CandidateSHA256=$candidateHash;Soak=$summary;CopiedEvidenceFiles=$files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse.json' -Encoding UTF8
+              [pscustomobject]@{Status='PASS';Reused=$true;ReferenceRunId='44453271527';ReferenceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44453271527';ReferencePRHead=$provenance.PRHeadCommit;ReferenceMergeCommit=$provenance.SourceCommit;CurrentSourceCommit=$env:GITHUB_SHA;CurrentPRHeadCommit=if($env:GITHUB_EVENT_PATH){(Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw|ConvertFrom-Json).pull_request.head.sha}else{$null};CandidateSHA256=$candidateHash;Soak=$summary;CopiedEvidenceFiles=$files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse.json' -Encoding UTF8
               $reused = $true
             }
           } catch { $reason = $_.Exception.Message }
           "reused=$($reused.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           if (-not $reused) {
-            [pscustomobject]@{Status='NOT REUSED';Reused=$false;Reason=$reason;FailedChecks=$failedReuseChecks;ReferenceRunId='44345729932';CurrentCandidateSHA256=(Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant();ReferenceCandidateSHA256=$referenceAssetHash;ReferenceSoakSHA256=$summary.SHA256;Utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse-attempt.json' -Encoding UTF8
+            [pscustomobject]@{Status='NOT REUSED';Reused=$false;Reason=$reason;FailedChecks=$failedReuseChecks;ReferenceRunId='44453271527';CurrentCandidateSHA256=(Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant();ReferenceCandidateSHA256=$referenceAssetHash;ReferenceSoakSHA256=$summary.SHA256;Utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse-attempt.json' -Encoding UTF8
             Write-Host "Prior soak will not be reused: $reason"
           } else { Write-Host 'Prior soak evidence was reused after exact-binary and full-evidence validation.' }
 
@@ -454,6 +492,16 @@ jobs:
             -ExecutablePath '.\release\EyeBreakReminder.exe' `
             -EvidenceDirectory '.\build\v1.4.0-updater-evidence\resource-soak' `
             -Cycles 110 -ExpectedProductVersion '1.4.0' -ExpectedResourceBehavior NoGrowth
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate and calculate thread-count resource trend
+        if: ${{ !cancelled() && (steps.soak.outcome == 'success' || steps.soak_reuse.outputs.reused == 'true') }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_resource_soak_summary_tests.ps1 `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence\resource-soak' `
+            -ExecutablePath '.\release\EyeBreakReminder.exe'
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify the exact candidate package stayed byte-identical after runtime acceptance
@@ -488,6 +536,7 @@ jobs:
           PORTABLE_RECOVERY_OUTCOME: ${{ steps.portable-recovery.outcome }}
           STANDARD_USER_OUTCOME: ${{ steps.standard_user.outcome }}
           PRODUCTION_UPDATE_OUTCOME: ${{ steps.production_update.outcome }}
+          COORDINATOR_BACKUP_FAILURE_OUTCOME: ${{ steps.coordinator_backup_failure.outcome }}
           RESOURCE_TELEMETRY_OUTCOME: ${{ steps.resource_telemetry.outcome }}
           SOAK_OUTCOME: ${{ steps.soak.outcome }}
           SOAK_REUSED: ${{ steps.soak_reuse.outputs.reused }}
@@ -498,14 +547,14 @@ jobs:
           $desktopAvailable = $false
           if (Test-Path -LiteralPath $probePath) { $desktopAvailable = [bool](Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json).interactiveDesktopAvailable }
           $soakPassed = $env:SOAK_OUTCOME -eq 'success' -or $env:SOAK_REUSED -eq 'true'
-          $fullAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:DOWNLOAD_BODY_TIMEOUT_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:STANDARD_USER_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PORTABLE_RECOVERY_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $soakPassed -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
-          $preferenceAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success' -and $env:SOAK_REUSED -eq 'true'
+          $fullAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:DOWNLOAD_BODY_TIMEOUT_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:STANDARD_USER_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PORTABLE_RECOVERY_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $env:COORDINATOR_BACKUP_FAILURE_OUTCOME -eq 'success' -and $soakPassed -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
+          $preferenceAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $env:COORDINATOR_BACKUP_FAILURE_OUTCOME -eq 'success' -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success' -and $env:SOAK_REUSED -eq 'true'
           $status = if (($env:ACCEPTANCE_SCOPE -eq 'UpdatePreferences' -and $preferenceAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'All' -and $fullAcceptance)) {'PASS'} else {'NOT READY'}
-          [pscustomobject]@{Status=$status;Scope=$env:ACCEPTANCE_SCOPE;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;ProductionUpdateFixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;DownloadBodyTimeout=$env:DOWNLOAD_BODY_TIMEOUT_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;StandardUser=$env:STANDARD_USER_OUTCOME;Updater=$env:UPDATER_OUTCOME;PortableRecovery=$env:PORTABLE_RECOVERY_OUTCOME;ProductionBinaryUpdate=$env:PRODUCTION_UPDATE_OUTCOME;ResourceTelemetry=$env:RESOURCE_TELEMETRY_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;ResourceSoakReused=$env:SOAK_REUSED;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
+          [pscustomobject]@{Status=$status;Scope=$env:ACCEPTANCE_SCOPE;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;ProductionUpdateFixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;DownloadBodyTimeout=$env:DOWNLOAD_BODY_TIMEOUT_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;StandardUser=$env:STANDARD_USER_OUTCOME;Updater=$env:UPDATER_OUTCOME;PortableRecovery=$env:PORTABLE_RECOVERY_OUTCOME;ProductionBinaryUpdate=$env:PRODUCTION_UPDATE_OUTCOME;CoordinatorBackupFailure=$env:COORDINATOR_BACKUP_FAILURE_OUTCOME;ResourceTelemetry=$env:RESOURCE_TELEMETRY_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;ResourceSoakReused=$env:SOAK_REUSED;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
             ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Encoding UTF8
           if ($status -ne 'PASS') {
             if (-not $desktopAvailable) { throw 'Windows updater release acceptance is NOT TESTED: this runner exposed no interactive Explorer desktop. The exact development candidate is retained as evidence but is not release-ready.' }
-            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; production update fixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME; network interruption=$env:NETWORK_INTERRUPTION_OUTCOME; stalled body timeout=$env:DOWNLOAD_BODY_TIMEOUT_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; standard user=$env:STANDARD_USER_OUTCOME; updater=$env:UPDATER_OUTCOME; portable recovery=$env:PORTABLE_RECOVERY_OUTCOME; production binary update=$env:PRODUCTION_UPDATE_OUTCOME; resource telemetry=$env:RESOURCE_TELEMETRY_OUTCOME; soak=$env:SOAK_OUTCOME; soak reused=$env:SOAK_REUSED; identity=$env:IDENTITY_OUTCOME."
+            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; production update fixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME; network interruption=$env:NETWORK_INTERRUPTION_OUTCOME; stalled body timeout=$env:DOWNLOAD_BODY_TIMEOUT_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; standard user=$env:STANDARD_USER_OUTCOME; updater=$env:UPDATER_OUTCOME; portable recovery=$env:PORTABLE_RECOVERY_OUTCOME; production binary update=$env:PRODUCTION_UPDATE_OUTCOME; coordinator backup failure=$env:COORDINATOR_BACKUP_FAILURE_OUTCOME; resource telemetry=$env:RESOURCE_TELEMETRY_OUTCOME; soak=$env:SOAK_OUTCOME; soak reused=$env:SOAK_REUSED; identity=$env:IDENTITY_OUTCOME."
           }
 
       - name: Upload the exact candidate and all Windows evidence

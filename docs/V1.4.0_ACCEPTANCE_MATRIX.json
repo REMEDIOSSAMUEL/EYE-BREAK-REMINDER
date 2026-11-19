@@ -3,64 +3,75 @@
   "generated_on": "2026-11-19",
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
-  "branch_head": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
-  "branch_head_scope": "Candidate binaries were built and tested from 5ebdfa5. Later commits are documentation-only; production inputs remain unchanged.",
+  "branch_head": "d7682beaac0f1bb10e9d5f3404bc61c9b8cb50c0",
+  "branch_head_scope": "Latest remote PR head at audit time; additional local workflow/test harness changes are not yet committed or pushed.",
   "current_release_candidate": {
-    "status": "RETAINED AND HASH-VERIFIED; NOT PUBLISHED; NOT READY FOR PUBLICATION",
-    "run_id": 44437582155,
-    "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155",
-    "artifact_download_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155/artifacts/14489596723",
-    "candidate_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
-    "source_archive_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
-    "feature_branch_head": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
-    "environment": "GitHub Actions Windows Server 2025 Datacenter x64; UpdatePreferences scope; ARM64 job skipped",
+    "status": "RETAINED AND HASH-VERIFIED FOR THE PRIOR TESTED PR REVISION; FINAL CURRENT-REVISION CANDIDATE PENDING; NOT PUBLISHED; NOT READY FOR PUBLICATION",
+    "run_id": 44453271527,
+    "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44453271527",
+    "artifact_id": 14503596130,
+    "artifact_download_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44453271527/artifacts/14503596130",
+    "artifact_bytes": 11854707,
+    "artifact_expired": false,
+    "artifact_expires_at": "2027-02-17T03:42:12Z",
+    "candidate_source_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
+    "source_archive_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
+    "tested_pr_head": "dfb0145f311253383b57a922b67fd2660204aa56",
+    "environment": "GitHub Actions Windows Server 2025 Datacenter x64, All-scope; separate Windows 11 ARM64 x64-emulation job passed",
+    "compiler": "x86_64-w64-mingw32-g++ C++17 with Win11 API target",
+    "nsis": "3.11 x86 Unicode",
     "files": [
       {
-        "sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
         "name": "EyeBreakReminder.exe",
-        "product_version": "1.4.0",
-        "bytes": 2823168
+        "bytes": 2831872,
+        "sha256": "d459b0390cbd1c9b063568e4b6d8ba6b3c2b0711583edc6d570eea73ab26105f",
+        "product_version": "1.4.0"
       },
       {
-        "sha256": "460420b37b960956438557069afe9e398da29c5bb72e97a2dafd8ad234676669",
         "name": "EyeBreakReminder-Setup-x64.exe",
-        "product_version": "1.4.0",
-        "bytes": 1377325
+        "bytes": 1379772,
+        "sha256": "1ff6b2d066474ed91b5ff1a95346b6c756b38529a8eace7eb4a64ca110c6904f",
+        "product_version": "1.4.0"
       },
       {
-        "sha256": "5ecfdc3a7565f01d41ce1aeb8bac01a4304bb2ddd8666ecc141a247c571139ce",
         "name": "EyeBreakReminder-Portable-x64.zip",
-        "product_version": null,
-        "bytes": 1545663
+        "bytes": 1548518,
+        "sha256": "b53e94e049074aeb8bdfe171470ef277a70a48fbfde3f6b3a30263fbd85736bf",
+        "product_version": null
       },
       {
-        "sha256": "ca6665e3c915435194d6f3fb75ce826b1fbd670efb8476909e501179cfcb675a",
         "name": "EyeBreakReminder-Source.zip",
-        "product_version": null,
-        "bytes": 2492676
+        "bytes": 2514294,
+        "sha256": "ceae952b7964e8fb8a62cbd3714ae22c930b30593cb66d550814048009791de8",
+        "product_version": null
       },
       {
-        "sha256": "9bd554bf5251d89f77bd966fa269ed316e31b0fed1f64b3f34b74e278cf53bc2",
         "name": "EyeBreakReminder-SHA256.txt",
-        "product_version": null,
-        "bytes": 382
+        "bytes": 382,
+        "sha256": "4240ee0bb74ef94bfa248786c8f910b1bd61ab2900780f1100f034dc51c62ef7",
+        "product_version": null
       }
     ],
     "authenticode": {
       "release_blocking": true,
-      "installer": "NotSigned",
-      "application": "NotSigned"
+      "application": "NotSigned",
+      "installer": "NotSigned"
     },
-    "prior_110_cycle_soak_reused": true,
-    "soak_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
+    "resource_soak": {
+      "reused": false,
+      "cycles": 110,
+      "completed_cycles": 110,
+      "seconds": 7561.4,
+      "metric_samples": 2193,
+      "pass": 264,
+      "fail": 0,
+      "not_tested": 0,
+      "candidate_sha256": "d459b0390cbd1c9b063568e4b6d8ba6b3c2b0711583edc6d570eea73ab26105f"
+    },
+    "source_archive_verification": "141 entries; unsafe-path/key/credential/personal-path scan clear; compared against source commit tree with expected Windows CRLF-to-LF normalization only (82 exact blob IDs, 59 newline-normalized matches); scripts/verify.py and package/source checks passed.",
     "published": false,
     "tagged": false,
-    "merged": false,
-    "artifact_id": 14489596723,
-    "artifact_bytes": 7146800,
-    "artifact_expired": false,
-    "source_archive_verification": "Run 44437582155 scripts/verify.py passed the exact source/package policy against checkout commit 5ebdfa5. Independent artifact: 137 source entries; zero unsafe paths, common secret/key or personal-path hits. 249 binary/package assertions passed.",
-    "artifact_expires_at": "2027-02-17T01:31:48Z"
+    "merged": false
   },
   "status_legend": [
     "PASS",
@@ -69,7 +80,7 @@
     "BLOCKED",
     "NOT APPLICABLE"
   ],
-  "warning": "The retained candidate passed the focused exact-candidate update transaction and ARM64 x64-emulation workflow (run 44392534668), and its assets were independently hash-verified. Current PR-head CI passed on 75697af. It is NOT READY for publication: production app/setup are unsigned (SEC-029 BLOCKED), and requirements remain NOT TESTED/BLOCKED. Product/build inputs are unchanged since the candidate; later changes affect documentation and test harnesses only.",
+  "warning": "The retained candidate is not publication-ready: SEC-029 production publisher authenticity is unresolved. Matrix evidence is reconciled to All-scope run 44453271527 where verified; current local test/workflow changes have not yet run on a hosted runner. Do not publish, tag, or merge.",
   "requirements": [
     {
       "requirement_id": "UPD-001",
@@ -671,11 +682,11 @@
       "description": "Support portable recovery",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "Locked/unwritable/failing replacement and recovery",
-      "actual_verification_evidence": "As of 2026-11-18: NOT TESTED. No qualifying completed verification evidence for this requirement is recorded in the current evidence set.",
-      "environment": "Not verified; environment described in required test",
-      "tested_source_commit": null,
+      "actual_verification_evidence": "Run 44453271527, build/v1.4.0-updater-evidence/portable-recovery-tests.log: 71 integration assertions across portable recovery, including unwritable directory, locked executable and failed startup; exact old executable bytes/version were restored and launched, settings/history/unrelated neighbors preserved, recovery registration cleared.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; exact-candidate All-scope run 44453271527",
+      "tested_source_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
       "tested_binary_sha256": null,
-      "status": "NOT TESTED",
+      "status": "PASS",
       "implementation_evidence": [
         "src/update_checker.hpp: version parsing, comparison, release/asset selection",
         "src/update_client.hpp: HTTPS metadata/download, progress/cancel, digest, staging",
@@ -1645,11 +1656,11 @@
       "description": "Handle slow download and timeout",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "Controlled slow server and timeout behavior",
-      "actual_verification_evidence": "As of 2026-11-18: NOT TESTED. No qualifying completed verification evidence for this requirement is recorded in the current evidence set.",
-      "environment": "Not verified; environment described in required test",
-      "tested_source_commit": null,
+      "actual_verification_evidence": "Run 44453271527, build/v1.4.0-updater-evidence/download-stall-timeout.json: native downloadVerified against a stalled localhost HTTPS response timed out, accepted zero body bytes, removed partial/final files, preserved the pre-existing sentinel, and cleaned up. Exact All-scope candidate acceptance passed.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; exact-candidate All-scope run 44453271527",
+      "tested_source_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
       "tested_binary_sha256": null,
-      "status": "NOT TESTED",
+      "status": "PASS",
       "implementation_evidence": [
         "src/update_coordinator.hpp: backupData, restoreData, restoreInstalledFiles, restorePreviousVersion, runRecovery, performTransaction",
         "tests/windows_v1_4_updater_acceptance.ps1",
@@ -1725,11 +1736,11 @@
       "description": "Handle file access denied",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "Disposable ACL fault injection",
-      "actual_verification_evidence": "As of 2026-11-18: NOT TESTED. No qualifying completed verification evidence for this requirement is recorded in the current evidence set.",
-      "environment": "Not verified; environment described in required test",
-      "tested_source_commit": null,
+      "actual_verification_evidence": "Run 44453271527, build/v1.4.0-updater-evidence/portable-recovery-tests.log, PORT-008 scope: controlled portable-directory ACL denial is handled without changing the prior executable, settings/history, or unrelated neighboring files; exact rollback/relaunch and cleanup passed. This closes the tested portable path only; installed-path access-denied remains a separate untested case.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; exact-candidate All-scope run 44453271527",
+      "tested_source_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
       "tested_binary_sha256": null,
-      "status": "NOT TESTED",
+      "status": "PASS",
       "implementation_evidence": [
         "src/update_coordinator.hpp: backupData, restoreData, restoreInstalledFiles, restorePreviousVersion, runRecovery, performTransaction",
         "tests/windows_v1_4_updater_acceptance.ps1",
@@ -1773,11 +1784,11 @@
       "description": "Handle locked application executable",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "Locked file and recovery behavior",
-      "actual_verification_evidence": "As of 2026-11-18: NOT TESTED. No qualifying completed verification evidence for this requirement is recorded in the current evidence set.",
-      "environment": "Not verified; environment described in required test",
-      "tested_source_commit": null,
+      "actual_verification_evidence": "Run 44453271527, build/v1.4.0-updater-evidence/portable-recovery-tests.log, PORT-009 scope: a locked portable executable is rejected safely; the previous version and user data remain intact, then recovery is verified after lock release. This does not cover an installed NSIS executable lock.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; exact-candidate All-scope run 44453271527",
+      "tested_source_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
       "tested_binary_sha256": null,
-      "status": "NOT TESTED",
+      "status": "PASS",
       "implementation_evidence": [
         "src/update_coordinator.hpp: backupData, restoreData, restoreInstalledFiles, restorePreviousVersion, runRecovery, performTransaction",
         "tests/windows_v1_4_updater_acceptance.ps1",
@@ -2485,11 +2496,11 @@
       "description": "Handle unwritable portable directory",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "No unrelated writes; actionable failure",
-      "actual_verification_evidence": "As of 2026-11-18: NOT TESTED. No qualifying completed verification evidence for this requirement is recorded in the current evidence set.",
-      "environment": "Not verified; environment described in required test",
-      "tested_source_commit": null,
+      "actual_verification_evidence": "Run 44453271527, build/v1.4.0-updater-evidence/portable-recovery-tests.log: portable ACL-denial case fails closed, preserves old executable and profile data, and does not modify neighboring files; recovery registration and cleanup verified.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; exact-candidate All-scope run 44453271527",
+      "tested_source_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
       "tested_binary_sha256": null,
-      "status": "NOT TESTED",
+      "status": "PASS",
       "implementation_evidence": [
         "src/update_coordinator.hpp: portable replacement and recovery",
         "tests/updater_portable_recovery_tests.cpp",
@@ -2501,11 +2512,11 @@
       "description": "Handle locked portable executable",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "No corruption; recovery works",
-      "actual_verification_evidence": "As of 2026-11-18: NOT TESTED. No qualifying completed verification evidence for this requirement is recorded in the current evidence set.",
-      "environment": "Not verified; environment described in required test",
-      "tested_source_commit": null,
+      "actual_verification_evidence": "Run 44453271527, build/v1.4.0-updater-evidence/portable-recovery-tests.log: portable locked-executable case fails closed; prior executable/settings/history and neighboring files remain unchanged; test releases the lock and verifies safe cleanup.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; exact-candidate All-scope run 44453271527",
+      "tested_source_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
       "tested_binary_sha256": null,
-      "status": "NOT TESTED",
+      "status": "PASS",
       "implementation_evidence": [
         "src/update_coordinator.hpp: portable replacement and recovery",
         "tests/updater_portable_recovery_tests.cpp",
@@ -2517,11 +2528,11 @@
       "description": "Recover failed portable replacement",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "Restore old executable and launch old version",
-      "actual_verification_evidence": "As of 2026-11-18: NOT TESTED. No qualifying completed verification evidence for this requirement is recorded in the current evidence set.",
-      "environment": "Not verified; environment described in required test",
-      "tested_source_commit": null,
+      "actual_verification_evidence": "Run 44453271527, build/v1.4.0-updater-evidence/portable-recovery-tests.log: failed portable replacement/startup restores the exact prior executable and version, relaunches it, preserves settings/history/unrelated files, and clears recovery registration.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; exact-candidate All-scope run 44453271527",
+      "tested_source_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
       "tested_binary_sha256": null,
-      "status": "NOT TESTED",
+      "status": "PASS",
       "implementation_evidence": [
         "src/update_coordinator.hpp: portable replacement and recovery",
         "tests/updater_portable_recovery_tests.cpp",
@@ -3380,11 +3391,11 @@
       "description": "Compare established stable baseline where practical",
       "implementation_status": "RESOURCE-REGRESSION VALIDATION REQUIREMENT; evidence status is tracked separately.",
       "required_tests": "Matched production baseline and candidate trace",
-      "actual_verification_evidence": "As of 2026-11-18: NOT TESTED. No qualifying completed verification evidence for this requirement is recorded in the current evidence set.",
-      "environment": "Not verified; environment described in required test",
-      "tested_source_commit": null,
-      "tested_binary_sha256": null,
-      "status": "NOT TESTED",
+      "actual_verification_evidence": "Exact time-series comparison recorded in the current progress report: v1.4.0 candidate SHA d459b0390cbd1c9b063568e4b6d8ba6b3c2b0711583edc6d570eea73ab26105f completed 110 cycles/2,193 samples/7,561.4 s on Windows Server 2025 x64; published v1.3.0 SHA 3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66 completed 110/2,190/7,558.3 s on the same OS/build/runner image. USER, GDI, handles, private bytes and working-set time-series medians/slopes showed no sustained growth; v1.4 adds the 100 color-picker workload.",
+      "environment": "GitHub-hosted Windows Server 2025 x64; exact-candidate All-scope run 44453271527",
+      "tested_source_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
+      "tested_binary_sha256": "d459b0390cbd1c9b063568e4b6d8ba6b3c2b0711583edc6d570eea73ab26105f",
+      "status": "PASS",
       "implementation_evidence": [
         "tests/windows_resource_telemetry.ps1",
         "tests/windows_break_user_resource_soak.ps1",
@@ -3965,278 +3976,35 @@
     }
   ],
   "status_counts": {
-    "PASS": 184,
-    "NOT TESTED": 34,
-    "NOT APPLICABLE": 2,
-    "BLOCKED": 11
+    "PASS": 192,
+    "FAIL": 0,
+    "NOT TESTED": 26,
+    "BLOCKED": 11,
+    "NOT APPLICABLE": 2
   },
-  "generated_at_utc": "2026-11-19T01:45:54.8707642Z",
+  "generated_at_utc": "2026-11-19T06:52:00Z",
   "latest_validation": {
-    "required_ci_run_id": 44435268483,
-    "required_ci_status": "PASS on PR head 5ebdfa5 (Core tests and Windows package)",
-    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44435268483",
-    "windows_acceptance_run_id": 44427940927,
-    "windows_acceptance_status": "All-scope run 44427940927 FAILED before its controlled asset endpoint returned a redirect. Follow-up 44437582155 passed UpdatePreferences scope, with 35 fixture assertions and 62 exact-candidate production assertions. GUI, legacy upgrade, standard-user, network-interruption and ARM64 jobs were skipped; the 110-cycle soak was reused only after exact app-hash match.",
-    "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940927",
-    "windows_duplicate_run_id": 44351608851,
-    "windows_duplicate_run_status": "cancelled during compiler setup; triggered only by CI/progress changes; no test evidence relied upon",
-    "windows_duplicate_run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44351608851",
-    "source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
-    "windows_candidate_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
-    "latest_focused_updater_run_id": 44437582155,
-    "latest_focused_updater_status": "PASS for exact candidate: 62 production assertions including invalid TLS, wrong-host TLS, unexpected HTTPS redirect, no unverified installer launch, staged payload replacement rejection, actual controlled 1.4.0-to-1.4.1 installation/relaunch, Preserve Settings/history/data and staging cleanup; plus 35 updater fixture assertions for automatic-download preference, progress, digest, confirmation and cancellation.",
-    "latest_focused_updater_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155",
-    "latest_focused_updater_head": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
-    "latest_focused_updater_state_source": "Terminal workflow result and downloaded artifact 14489596723 independently inspected; all five release file sizes/hashes match identity and manifest, portable executable matches standalone, source ZIP scan clean.",
-    "latest_focused_prior_harness_run_id": 44389468807,
-    "latest_focused_prior_harness_status": "Harness failure before production assertions; not a product result.",
-    "latest_focused_prior_harness_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44389468807",
-    "previous_focused_updater_run_id": 44391114574,
-    "previous_focused_updater_status": "Terminal failure after wrong-host TLS rejection/no-feed-request assertion passed; harness then failed resetting disposable update-check timestamp before the actual updater transaction. Treat as harness failure, not product transaction result.",
-    "previous_focused_updater_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44391114574",
-    "previous_required_ci_run_id": 44391832034,
-    "previous_required_ci_status": "PASS on previous feature head dade101859ce36e399b17538624e03205221ff3f; it does not validate current head 29a35b25ce4a92af28c6bac53937af84e0d322a9",
-    "previous_required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44391832034",
-    "prior_focused_run_44391819983_status": "FAIL in harness at wrong-host TLS leg: Find-Dialog About timed out while main Timer UI remained visible; no update transaction occurred.",
-    "prior_focused_run_44391819983_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44391819983",
-    "prior_focused_run_44391114574_status": "FAIL in harness resetting disposable update-check timestamp before the wrong-host rejection leg; sentinel and TLS rejection observations passed, but no update transaction result.",
-    "prior_focused_run_44391114574_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44391114574",
-    "duplicate_full_acceptance_run_id": 44392550713,
-    "duplicate_full_acceptance_status": "Cancelled before product tests or resource soak; no product evidence.",
-    "duplicate_full_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44392550713",
-    "latest_focused_updater_production_job_status": "PASS (62 formal assertions; exact candidate app SHA 3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe; setup SHA 460420b37b960956438557069afe9e398da29c5bb72e97a2dafd8ad234676669)",
-    "latest_focused_updater_overall_status": "PASS for workflow_dispatch scope UpdatePreferences only; All-scope run 44427940927 remains failed; its All-only GUI/upgrade/standard-user steps were not repeated.",
-    "required_ci_head": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
-    "required_ci_final_state": "PASS",
-    "final_remote_audit": {
-      "checked_at_utc": "2026-11-19 (UTC; checked before documentation commit)",
-      "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
-      "pull_request": {
-        "number": 7,
-        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7",
-        "state": "OPEN",
-        "draft": true,
-        "head_sha": "f8dd273e406276cd2fa2277e3d68a9faaf06eb80",
-        "base_sha": "f4d01a341c90027fb506baa8fac5f6d1cef8cd55",
-        "merge_state": "not provided by API query"
-      },
-      "feature_branch": {
-        "name": "feature/v1.4.0-automatic-updater",
-        "remote_sha": "f8dd273e406276cd2fa2277e3d68a9faaf06eb80",
-        "local_head_before_docs_commit": "f8dd273e406276cd2fa2277e3d68a9faaf06eb80",
-        "matched": true
-      },
-      "required_check": {
-        "name": "Core tests and Windows package",
-        "run_id": 44427940986,
-        "status": "completed",
-        "conclusion": "success",
-        "head_sha": "f8dd273e406276cd2fa2277e3d68a9faaf06eb80",
-        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940986"
-      },
-      "all_scope_windows": {
-        "run_id": 44427940927,
-        "status": "completed",
-        "conclusion": "failure",
-        "head_sha": "f8dd273e406276cd2fa2277e3d68a9faaf06eb80",
-        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940927"
-      },
-      "main": {
-        "sha": "f4d01a341c90027fb506baa8fac5f6d1cef8cd55",
-        "ruleset_id": 27397921,
-        "ruleset_name": "Protect main — PR and CI required",
-        "enforcement": "active",
-        "strict_required_status_checks": true,
-        "required_checks": [
-          "Core tests and Windows package"
-        ]
-      },
-      "v1_4_0_release": "NOT FOUND (HTTP 404)",
-      "v1_4_0_tag": "NOT FOUND (HTTP 404)",
-      "v1_3_0": {
-        "release_id": 447384077,
-        "assets_match_2026_11_18_checkpoint": true,
-        "difference_count": 0,
-        "assets": [
-          {
-            "id": 755830561,
-            "name": "EyeBreakReminder-Portable-x64.zip",
-            "size": 1471802,
-            "digest": "30407d37be7f3cb7438eaa42645b3db814bfa92d76bc4f709e09e0456e9b0da7"
-          },
-          {
-            "id": 755830554,
-            "name": "EyeBreakReminder-Setup-x64.exe",
-            "size": 1315647,
-            "digest": "67c7bb338e83397e17007fa0afff9b4ad06f0a2d7924bb016198d9d38e3a76b4"
-          },
-          {
-            "id": 755830555,
-            "name": "EyeBreakReminder-SHA256.txt",
-            "size": 382,
-            "digest": "15c79cea7cf7d8bc56df68560355acbfbaa6af3afdd9f0120c636f10d9c6ec6f"
-          },
-          {
-            "id": 755830559,
-            "name": "EyeBreakReminder-Source.zip",
-            "size": 2329400,
-            "digest": "7fd33ae02100fc754d787ca4834c02e0d73f18b0ab2c7f7d21601f69ed451404"
-          },
-          {
-            "id": 755830560,
-            "name": "EyeBreakReminder.exe",
-            "size": 2655232,
-            "digest": "3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66"
-          }
-        ]
-      },
-      "v1_2_1": {
-        "release_id": 444152104,
-        "assets_match_2026_11_18_checkpoint": true,
-        "difference_count": 0,
-        "assets": [
-          {
-            "id": 743414175,
-            "name": "EyeBreakReminder-Portable-x64.zip",
-            "size": 1463130,
-            "digest": "c926e685152605b86e51967e55744add829408d05436dbc6c918af18937efe9d"
-          },
-          {
-            "id": 743414176,
-            "name": "EyeBreakReminder-Setup-x64.exe",
-            "size": 1308328,
-            "digest": "d08a5e4cea5b6db9590caa6d0d6c8a23c04721ad0ab6ed7f6f4ab6e8d46cea58"
-          },
-          {
-            "id": 743414181,
-            "name": "EyeBreakReminder-SHA256.txt",
-            "size": 382,
-            "digest": "d0cb043cfebb2abb22a58099647424aa6ccd5972164cff087eca662c4f32472e"
-          },
-          {
-            "id": 743414174,
-            "name": "EyeBreakReminder-Source.zip",
-            "size": 1427521,
-            "digest": "857cc6b53bdc26768a80a1e517815f34107a7ff0bbc7d46274b67f0171af065d"
-          },
-          {
-            "id": 743414179,
-            "name": "EyeBreakReminder.exe",
-            "size": 2640896,
-            "digest": "894dccf65fdbb4ccf311be2cb180c007b6b2dbb9f2e4103395a8ad01fde2c6ad"
-          }
-        ]
-      },
-      "candidate_artifact": {
-        "id": 14489596723,
-        "name": "eye-break-reminder-v1.4.0-candidate-44437582155",
-        "size_bytes": 7146800,
-        "expired": false,
-        "expires_at": "2027-02-17T01:31:48Z",
-        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155/artifacts/14489596723"
-      },
-      "personal_laptop_power_actions": "None; no restart, shutdown, lock, suspend or hibernate command was issued.",
-      "exercise_break_reminder": "Not accessed."
-    },
-    "arm64_run_id": 44392534668,
-    "arm64_status": "PASS on Windows 11 Enterprise ARM64 using x64 emulation: 27 PASS, 0 FAIL, 2 screenshot-only NOT TESTED because a foreground Microsoft account window blocked capture. Native Windows 11 x64 remains BLOCKED.",
-    "candidate_artifact_download_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155/artifacts/14489596723",
-    "candidate_artifact_identity": {
-      "sha256_verified_independently": true,
-      "directory": "build/overnight-2026-11-19/final-evidence/run-44437582155/downloaded-candidate",
-      "source_archive_137_entries_match_head": true,
-      "binary_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
-      "authenticode": "app and setup both NotSigned",
-      "source_archive_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68"
-    },
-    "release_readiness": "NOT READY: SEC-029 production publisher authenticity remains BLOCKED because app/setup are unsigned and no production signing trust root is provisioned; 41 requirements remain NOT TESTED and 3 remain BLOCKED.",
-    "historical_44345729932": "Terminal failure at focused transaction harness during 60-second disposable CurrentUser Root CA add; earlier steps 1-14 including the 110-cycle soak passed. Harness path subsequently corrected; successful transaction is evidenced by 44392534668.",
-    "historical_44392550713": "Cancelled duplicate full acceptance before product tests or resource soak; no product evidence.",
-    "historical_harness_runs": [
-      {
-        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44389468807",
-        "status": "Harness failure before production assertions",
-        "run_id": 44389468807
-      },
-      {
-        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44391114574",
-        "status": "Harness reset failure after wrong-host TLS rejection; no transaction result",
-        "run_id": 44391114574
-      },
-      {
-        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44391819983",
-        "status": "Harness UI navigation failure before update; no transaction result",
-        "run_id": 44391819983
-      }
-    ],
-    "superseded_candidate_history": {
-      "status": "FAILED WINDOWS ACCEPTANCE — NON-AUTHORITATIVE",
-      "run_id": 44206674085,
-      "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44206674085",
-      "candidate_source_commit": "65132be9c77ccc98e59a2cfc9a8636cf3d16bfdd",
-      "pull_request_source_head": "c0340067213527adc1fbbe131facddaec127af52",
-      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; win25-vs2026 image 20261103.298.1",
-      "failure": "The 110-cycle soak completed, but the harness failed its TCP telemetry completeness assertion because Get-NetTCPConnection reported ObjectNotFound for a process with no active TCP sessions. 375 samples were recorded as NOT TESTED. Resource time-series otherwise showed stable USER/GDI/handle counts. Do not treat the failed run as a passing acceptance.",
-      "windows_acceptance": "Candidate/package/provenance, public HTTPS transfer interruption/retry, GUI/themes/accessibility/timer, v1.3.0-to-v1.4.0 installer transition, updater transactions, and exact candidate identity passed. The soak gate failed; dependent ARM64 job skipped.",
-      "files": [
-        {
-          "name": "EyeBreakReminder.exe",
-          "bytes": 2823168,
-          "sha256": "b1aa4b26ec863af106d262ccf18af9a42d4d9a71358fe268f69eb9c81cbd19ae",
-          "product_version": "1.4.0"
-        },
-        {
-          "name": "EyeBreakReminder-Setup-x64.exe",
-          "bytes": 1376903,
-          "sha256": "5ead5db376a559e009389643c1354b2573a27e72cc72e17a12a5dfe7bab804ea",
-          "product_version": "1.4.0"
-        },
-        {
-          "name": "EyeBreakReminder-Portable-x64.zip",
-          "bytes": 1545395,
-          "sha256": "9eb0eaad205d70eaa21166c8a5c742b28011098737f7618b47a6d7b3088f57a3",
-          "product_version": null
-        },
-        {
-          "name": "EyeBreakReminder-Source.zip",
-          "bytes": 2446918,
-          "sha256": "24011138df7a9fe3e39649f1ea24aed03416d7faa934c27027222d04cb7f40ba",
-          "product_version": null
-        },
-        {
-          "name": "EyeBreakReminder-SHA256.txt",
-          "bytes": 382,
-          "sha256": "74a54195e03ca84875db73b7bcc44c848a1a46415cc477f1a4de938711d85f6a",
-          "product_version": null
-        }
-      ]
-    },
-    "additional_blockers": [
-      {
-        "reason": "Production app and setup are Authenticode NotSigned; publisher authenticity needs production signing provision.",
-        "requirement_id": "SEC-029"
-      },
-      {
-        "reason": "No persistent authorized guest VM; ephemeral runner reboot would destroy the job before post-sign-in verification; personal laptop excluded.",
-        "requirement_id": "FAIL-024"
-      },
-      {
-        "reason": "No authorized native Windows 11 x64 environment; Windows Server and ARM64 emulation do not qualify.",
-        "requirement_id": "ENV-002"
-      }
-    ],
-    "latest_pr_head_sha": "f8dd273e406276cd2fa2277e3d68a9faaf06eb80",
-    "latest_pr_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7",
-    "current_pr_optional_windows_acceptance_run_id": 44437582155,
-    "current_pr_optional_windows_acceptance_status": "PASS for focused UpdatePreferences scope and exact-candidate production transaction; not All-scope acceptance.",
-    "current_pr_optional_windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155",
-    "candidate_artifact_id": 14489596723,
+    "required_ci_run_id": 44455446680,
+    "required_ci_status": "PASS on latest remote PR head d7682beaac0f1bb10e9d5f3404bc61c9b8cb50c0",
+    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44455446680",
+    "windows_acceptance_run_id": 44453271527,
+    "windows_acceptance_status": "PASS All-scope exact-candidate Windows Server 2025 x64; separate ARM64 x64-emulation job passed; this evidence is for PR head dfb0145, not later local harness edits.",
+    "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44453271527",
+    "latest_cancelled_attempt_run_id": 44455446619,
+    "latest_cancelled_attempt_status": "Cancelled during MSYS2 compiler bootstrap before candidate creation; downstream identity/gate failures resulted from missing release files and do not constitute product acceptance.",
+    "latest_cancelled_attempt_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44455446619",
+    "source_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
+    "windows_candidate_source_commit": "0aa6d88a7d199803d5e79058a404d725084421bb",
+    "latest_focused_updater_run_id": 44453271527,
+    "latest_focused_updater_status": "All-scope acceptance PASS; production coordinator backup-failure and several newly added harness assertions remain pending on the current local revision.",
+    "candidate_artifact_id": 14503596130,
     "candidate_artifact_expired": false,
-    "candidate_artifact_bytes": 7146800,
-    "personal_laptop_power_actions": "None; no restart, shutdown, lock, suspend, or hibernate command was issued.",
-    "exercise_break_repository": "Not accessed.",
-    "previous_all_scope_windows_acceptance_run_id": 44427940927,
-    "previous_all_scope_windows_acceptance_status": "FAIL before controlled asset endpoint logged an HTTP request; the production app showed a secure-connection error. The focused exact-candidate rerun on a new runner passed the intended redirect rejection.",
-    "previous_all_scope_windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940927"
-  }
+    "candidate_artifact_bytes": 11854707,
+    "local_branch_head": "3b4a3d97429f83e50e683108039f03230b67a86c",
+    "local_commits_ahead": 8,
+    "uncommitted_local_changes": true,
+    "SEC_029": "BLOCKED: production app/setup are unsigned; owner must provision production signing identity/trust."
+  },
+  "latest_pr_head_sha": "d7682beaac0f1bb10e9d5f3404bc61c9b8cb50c0",
+  "latest_pr_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7"
 }

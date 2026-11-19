@@ -20,7 +20,7 @@ Changed
 
 Verification status
 
-- Development verification is in progress. Do not treat this section as release acceptance; see `docs/V1.4.0_FINAL_PRE_RELEASE_VERIFICATION.md` for evidence and NOT TESTED items before any publication decision.
+- Full-scope exact-candidate acceptance passed on GitHub Actions Windows Server 2025 x64, with a separate Windows 11 ARM64 x64-emulation pass (run `44453271527`). Required Core tests and Windows package passed on remote PR head `d7682be` (run `44455446680`); current local test/workflow changes still require hosted validation. The app and setup remain unsigned, so v1.4.0 is **not ready for publication approval**. See `docs/V1.4.0_FINAL_PRE_RELEASE_VERIFICATION.md` and `docs/V1.4.0_ACCEPTANCE_MATRIX.json` for exact candidate identities, evidence, NOT TESTED and BLOCKED items.
 
 ## 1.3.0 (feature branch; prepared, not published)
 
