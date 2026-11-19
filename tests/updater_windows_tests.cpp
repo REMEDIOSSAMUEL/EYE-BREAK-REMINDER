@@ -480,19 +480,25 @@ int main(int argc,char**argv){
     const std::string originalSettings="theme=dark\nwork=47\n",originalTimer="workSeconds=1234\nbreakSeconds=77\n",originalHistory="sessions=42\n";
     const std::wstring settingsPath=validationData+L"\\settings.ini",timerPath=validationData+L"\\timer.dat",historyPath=validationData+L"\\history.dat";
     ok&=check(writeBytes(settingsPath,originalSettings)&&writeBytes(timerPath,originalTimer)&&writeBytes(historyPath,originalHistory),"populate an isolated settings/history recovery profile");
-    struct RejectionFixture {std::string name,manifest,signature;std::string publicPoint;bool missingSignature=false;};
+    struct RejectionFixture {std::string name,manifest,signature;std::string publicPoint;bool missingSignature=false;bool missingManifest=false;};
     std::vector<RejectionFixture> rejectionCases;std::string validManifestBytes=eye::updates::canonicalManifest(validManifest),validSignature;
     ok&=check(transactionSigner.sign(validManifestBytes,validSignature),"prepare the complete valid signed-manifest baseline for the rejection matrix");
     rejectionCases.push_back({"missing signature",validManifestBytes,{}, {},true});
+    rejectionCases.push_back({"missing manifest",{}, {}, {},false,true});
     rejectionCases.push_back({"empty signature",validManifestBytes,"",{},false});
     rejectionCases.push_back({"truncated signature",validManifestBytes,validSignature.substr(0,63),{},false});
+    rejectionCases.push_back({"invalid signature encoding",validManifestBytes,std::string(64,'\0'),{},false});
     EphemeralSigningKey otherTransactionSigner;ok&=check(otherTransactionSigner.generate(),"generate an unrelated disposable key for transaction rejection coverage");
     std::string otherSignature;otherTransactionSigner.sign(validManifestBytes,otherSignature);
     rejectionCases.push_back({"signature from another key",validManifestBytes,otherSignature,std::string(reinterpret_cast<const char*>(otherTransactionSigner.trusted.p256Point.data()),otherTransactionSigner.trusted.p256Point.size()),false});
     auto addRawCase=[&](const std::string&name,std::string bytes){std::string signature;if(transactionSigner.sign(bytes,signature))rejectionCases.push_back({name,std::move(bytes),std::move(signature),{},false});else ok&=check(false,"sign a controlled rejection fixture with the disposable test key");};
     auto replaceText=[](std::string value,const std::string&from,const std::string&to,bool last=false){const auto at=last?value.rfind(from):value.find(from);if(at==std::string::npos)return std::string{};value.replace(at,from.size(),to);return value;};
+    addRawCase("empty signed JSON","");
     rejectionCases.push_back({"manifest modified after signing",replaceText(validManifestBytes,"1.4.1","1.4.2"),validSignature,{},false});
     addRawCase("malformed signed JSON","{");
+    const auto duplicateSchema=replaceText(validManifestBytes,"\"schema_version\":1,","\"schema_version\":1,\"schema_version\":1,");
+    ok&=check(!duplicateSchema.empty(),"create a signed duplicate-JSON-field rejection fixture");
+    if(!duplicateSchema.empty())addRawCase("duplicate JSON schema field",duplicateSchema);
     addRawCase("unsupported signed schema",replaceText(validManifestBytes,"\"schema_version\":1","\"schema_version\":2"));
     addRawCase("wrong signed application",replaceText(validManifestBytes,"Eye Break Reminder","Other Application"));
     addRawCase("wrong signed repository",replaceText(validManifestBytes,"REMEDIOSSAMUEL/EYE-BREAK-REMINDER","REMEDIOSSAMUEL/OTHER-REPOSITORY"));
@@ -501,6 +507,7 @@ int main(int argc,char**argv){
     addRawCase("unknown signing key identifier",replaceText(validManifestBytes,transactionSigner.trusted.keyId,"p256-ffffffffffffffff"));
     addRawCase("installer/portable asset substitution",replaceText(validManifestBytes,"EyeBreakReminder-Setup-x64.exe","EyeBreakReminder.exe"));
     auto badRole=validManifest;badRole.assets[1].role="installer";std::string badRoleBytes=eye::updates::canonicalManifest(badRole),badRoleSignature;transactionSigner.sign(badRoleBytes,badRoleSignature);rejectionCases.push_back({"conflicting signed asset role",badRoleBytes,badRoleSignature,{},false});
+    auto duplicateAsset=validManifest;duplicateAsset.assets.push_back(duplicateAsset.assets.back());std::string duplicateAssetBytes=eye::updates::canonicalManifest(duplicateAsset),duplicateAssetSignature;const bool duplicateAssetSigned=transactionSigner.sign(duplicateAssetBytes,duplicateAssetSignature);ok&=check(duplicateAssetSigned,"sign a conflicting duplicate-asset rejection fixture with the disposable test key");if(duplicateAssetSigned)rejectionCases.push_back({"duplicate signed asset entry",duplicateAssetBytes,duplicateAssetSignature,{},false});
     auto badInstallType=validManifest;badInstallType.assets[1].installationType="installed";std::string badInstallBytes=eye::updates::canonicalManifest(badInstallType),badInstallSignature;transactionSigner.sign(badInstallBytes,badInstallSignature);rejectionCases.push_back({"installer/portable installation-type substitution",badInstallBytes,badInstallSignature,{},false});
     auto badSize=validManifest;badSize.assets[1].size=4;std::string badSizeBytes=eye::updates::canonicalManifest(badSize),badSizeSignature;transactionSigner.sign(badSizeBytes,badSizeSignature);rejectionCases.push_back({"signed size differs from transaction",badSizeBytes,badSizeSignature,{},false});
     auto badDigest=validManifest;badDigest.assets[1].sha256=std::string(64,'d');std::string badDigestBytes=eye::updates::canonicalManifest(badDigest),badDigestSignature;transactionSigner.sign(badDigestBytes,badDigestSignature);rejectionCases.push_back({"signed digest differs from transaction",badDigestBytes,badDigestSignature,{},false});
@@ -517,9 +524,17 @@ int main(int argc,char**argv){
     auto coordinatorMutexExists=[](){HANDLE mutex=OpenMutexW(SYNCHRONIZE,FALSE,L"Local\\EyeBreakReminder.UpdateCoordinator.1");if(!mutex)return false;CloseHandle(mutex);return true;};
     const bool mutexBefore=coordinatorMutexExists();const unsigned launchAttemptsBefore=eye::updates::TestProcessLaunchAttempts.load(std::memory_order_relaxed);unsigned rejectionPasses=0,fileSideEffectPasses=0;
     for(const auto&fixture:rejectionCases){
-        bool written=writeBytes(validationStage+L"\\EyeBreakReminder-UpdateManifest.json",fixture.manifest);
-        written&=fixture.missingSignature?DeleteFileW((validationStage+L"\\EyeBreakReminder-UpdateManifest.sig").c_str())!=FALSE:
-            writeBytes(validationStage+L"\\EyeBreakReminder-UpdateManifest.sig",fixture.signature);
+        const std::wstring manifestPath=validationStage+L"\\EyeBreakReminder-UpdateManifest.json",signaturePath=validationStage+L"\\EyeBreakReminder-UpdateManifest.sig";
+        bool written=true;
+        if(fixture.missingManifest){
+            written=(DeleteFileW(manifestPath.c_str())!=FALSE||GetFileAttributesW(manifestPath.c_str())==INVALID_FILE_ATTRIBUTES);
+            written=written&&(DeleteFileW(signaturePath.c_str())!=FALSE||GetFileAttributesW(signaturePath.c_str())==INVALID_FILE_ATTRIBUTES);
+        }else{
+            written=writeBytes(manifestPath,fixture.manifest);
+            const bool signaturePrepared=fixture.missingSignature?
+                DeleteFileW(signaturePath.c_str())!=FALSE:writeBytes(signaturePath,fixture.signature);
+            written=written&&signaturePrepared;
+        }
         if(!fixture.publicPoint.empty())written&=writeBytes(validationStage+L"\\test-update-public-key.bin",fixture.publicPoint);
         else written&=writeBytes(validationStage+L"\\test-update-public-key.bin",std::string(reinterpret_cast<const char*>(transactionSigner.trusted.p256Point.data()),transactionSigner.trusted.p256Point.size()));
         std::string oldExecutable,oldSettings,oldTimer,oldHistory,oldUnrelated;eye::updates::hashFile(portableTarget,oldExecutable);
@@ -543,6 +558,7 @@ int main(int argc,char**argv){
     }
     if(registryWritten)ok&=check(rejectionPasses==rejectionCases.size(),"SEC-028 scoped rejection matrix preserves app/profile/registry/process state across every signed-metadata rejection");
     else {std::cerr<<"BLOCKED: SEC-028 registry side-effect observation unavailable; disposable HKCU write returned ERROR_ACCESS_DENIED. File/profile/staging observations passed "<<fileSideEffectPasses<<"/"<<rejectionCases.size()<<" cases.\n";ok=false;}
+    if(registryWritten&&rejectionPasses==rejectionCases.size())std::cout<<"PASS: SEC-028 observed "<<rejectionPasses<<"/"<<rejectionCases.size()<<" rejection paths with unchanged executable, settings, timer, history, unrelated file, registry sentinel, staging entries and coordinator state; zero helper launches; running app remained responsive.\n";
     ok&=check(appTimerObserved&&runningApplication.waitForTimerProgress(appTimerInitial),"the running application's timer continues progressing during repeated signed-manifest rejection checks");
     ok&=check(runningApplication.close(),"close the isolated prior application normally after the rejection matrix");
     RegDeleteKeyW(HKEY_CURRENT_USER,registryPath.c_str());
