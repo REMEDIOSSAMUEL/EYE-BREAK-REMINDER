@@ -661,7 +661,8 @@ function Run-UpdateDialogResourceCycle([int]$Cycle,[string]$ReleaseBody,[bool]$M
   Click-Control $script:mainWindow 160 "Update-dialog resource cycle $Cycle"
   $dialog=Find-NativeUpdateDialog 12
   $install=[EBR_GUI_NATIVE]::GetDlgItem($dialog,12001);$later=[EBR_GUI_NATIVE]::GetDlgItem($dialog,12002)
-  if([EBR_GUI_NATIVE]::Text($install)-cne'Download & Install'){throw "Update-dialog cycle $Cycle did not expose the expected native install action."}
+  $installLabel=[EBR_GUI_NATIVE]::Text($install)
+  if($installLabel-cne'Download && Install'){throw "Update-dialog cycle $Cycle did not expose the expected native install action. Raw button text='$installLabel'."}
   if([EBR_GUI_NATIVE]::Text($later)-cne'Remind Me Later'){throw "Update-dialog cycle $Cycle did not expose the expected native dismiss action."}
   Click-Control $dialog 12002 'Update-dialog Remind Me Later'
   $watch=[Diagnostics.Stopwatch]::StartNew();$enabled=$false

@@ -231,7 +231,9 @@ $resultStatus='FAIL'
 $hostsRestoreStatus='NOT RUN'
 $trustRootCleanupStatus='NOT RUN'
 $serverStopped=$true
-$requestLogPath=Join-Path $EvidenceDirectory 'production-update-feed-requests.jsonl'
+$requestLogName=if($Scenario-eq'CoordinatorBackupFailure'){'production-update-feed-requests-coordinator-backup-failure.jsonl'}else{'production-update-feed-requests.jsonl'}
+$requestLogPath=Join-Path $EvidenceDirectory $requestLogName
+if(Test-Path -LiteralPath $requestLogPath){throw "The production updater evidence request log already exists for scenario '$Scenario'; refusing to reuse stale feed evidence: $requestLogPath"}
 $serverStdout=Join-Path $EvidenceDirectory 'production-update-feed.stdout.log'
 $serverStderr=Join-Path $EvidenceDirectory 'production-update-feed.stderr.log'
 $rootCertificatePath=Join-Path $testRoot 'test-root.cer'
@@ -307,11 +309,13 @@ try {
   Assert ($rootRemoveBeforeRejection) 'the test-only TLS issuer is removed before invalid-certificate rejection' $rootThumbprint
   $rootAbsentBeforeRejection=Get-TemporaryRootCertificate $rootThumbprint
   Assert (-not$rootAbsentBeforeRejection.Present) 'the test-only TLS issuer is absent before the invalid-certificate rejection case' $rootThumbprint
+  $requestsBeforePretrust=@(Get-Content -LiteralPath $requestLogPath -ErrorAction SilentlyContinue).Count
   $pretrustProbeFailed=$false;$pretrustProbeMessage=''
   try { [void](Invoke-WebRequest -Uri 'https://api.github.com/repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/latest' -UseBasicParsing -TimeoutSec 10) }
   catch { $pretrustProbeFailed=$true;$pretrustProbeMessage=$_.Exception.ToString() }
   Assert ($pretrustProbeFailed-and$pretrustProbeMessage-match'certificate|trust|secure|SSL|TLS') 'Windows rejects the isolated feed certificate while its issuer is untrusted' $pretrustProbeMessage
-  Assert (@(Get-Content -LiteralPath $requestLogPath -ErrorAction SilentlyContinue).Count-eq0) 'an untrusted TLS handshake sends no HTTP request to the isolated release feed'
+  $requestsAfterPretrust=@(Get-Content -LiteralPath $requestLogPath -ErrorAction SilentlyContinue).Count
+  Assert ($requestsAfterPretrust-eq$requestsBeforePretrust) 'an untrusted TLS handshake adds no HTTP request to the isolated release feed' ([pscustomobject]@{RequestsBefore=$requestsBeforePretrust;RequestsAfter=$requestsAfterPretrust;Scenario=$Scenario})
 
   [void][IO.Directory]::CreateDirectory($installDir)
   Record 'Begin isolated fresh install of the exact candidate' 'INFO' $candidateInstallerPath

@@ -3,8 +3,8 @@
   "generated_on": "2026-11-19",
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
-  "branch_head": "2005338403fd1fbe9fd6b851f0cc4fb426b42d3b",
-  "branch_head_scope": "Latest pushed PR head. Two focused harness corrections are local and pending commit/push and hosted Windows revalidation.",
+  "branch_head": "6c204656635fff404954822991cbea2a5ae64eeb",
+  "branch_head_scope": "Latest pushed PR head before the current uncommitted focused harness fixes.",
   "current_release_candidate": {
     "status": "RETAINED AND HASH-VERIFIED FOR THE PRIOR TESTED PR REVISION; FINAL CURRENT-REVISION CANDIDATE PENDING; NOT PUBLISHED; NOT READY FOR PUBLICATION",
     "run_id": 44453271527,
@@ -1860,16 +1860,17 @@
       "description": "Recover from partial installation",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "Interrupted file replacement and restore verification",
-      "actual_verification_evidence": "As of 2026-11-18: NOT TESTED. No qualifying completed verification evidence for this requirement is recorded in the current evidence set.",
-      "environment": "Not verified; environment described in required test",
-      "tested_source_commit": null,
-      "tested_binary_sha256": null,
-      "status": "NOT TESTED",
+      "actual_verification_evidence": "Run 44484687881 updater integration (720 assertions) injected a controlled installer that mutated existing install files/registration then returned exit 37. Assertions verified restoration of the previous executable hash/version, installer-owned README bytes and Installed Apps registration; all 19 seeded settings, a valid active timer checkpoint and history bytes; then relaunched the previous executable from its exact installed path. The rollback transaction used an isolated updater acceptance test build (SHA-256 3d9e488a22848a7ab694cd36f48bac665c3bdf1d94668b95ee9225d121cd69d2) and controlled failing-installer fixture, not the production candidate binary.",
+      "environment": "GitHub Actions Windows Server 2025 Datacenter x64; isolated disposable profile; controlled updater acceptance test build and failing installer fixture; run 44484687881.",
+      "tested_source_commit": "142b48571f364edf72e8296044525acb30ebb551",
+      "tested_binary_sha256": "3d9e488a22848a7ab694cd36f48bac665c3bdf1d94668b95ee9225d121cd69d2",
+      "status": "PASS",
       "implementation_evidence": [
         "src/update_coordinator.hpp: backupData, restoreData, restoreInstalledFiles, restorePreviousVersion, runRecovery, performTransaction",
         "tests/windows_v1_4_updater_acceptance.ps1",
         "tests/windows_production_update_acceptance.ps1"
-      ]
+      ],
+      "tested_installer_sha256": "b2723b58e3f1a3f69a98865da45cff4fc673b18163321b4808b4092bbaf0b828"
     },
     {
       "requirement_id": "FAIL-017",
@@ -2002,17 +2003,18 @@
       "description": "Fresh v1.4.0 install",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "Actual disposable per-user install and files/registry/shortcut",
-      "actual_verification_evidence": "Run 44392534668 completed a fresh per-user install using the exact candidate setup and verified the installed executable identity, v1.4.0 file version, and Installed Apps version. The fresh-install Start Menu shortcut check required by this row is not present in this run's assertions; the separate v1.3-to-v1.4 shortcut test does not prove the fresh-install case.",
-      "environment": "GitHub Actions Windows Server 2025 Datacenter x64; exact candidate setup from run 44392534668.",
-      "tested_source_commit": "29a35b25ce4a92af28c6bac53937af84e0d322a9",
-      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
-      "status": "NOT TESTED",
+      "actual_verification_evidence": "Run 44484687881 installed the exact v1.4.0 candidate per-user and verified executable hash/version, Installed Apps registration and uninstaller. The standard-user acceptance in the same run verified the per-user Start Menu shortcut path and exact executable target. Artifact 14510163880 is diagnostic because the overall run later failed independent test-harness gates; this row records only its completed install assertions.",
+      "environment": "GitHub Actions Windows Server 2025 Datacenter x64; exact candidate setup and isolated standard-user profile; run 44484687881.",
+      "tested_source_commit": "142b48571f364edf72e8296044525acb30ebb551",
+      "tested_binary_sha256": "d459b0390cbd1c9b063568e4b6d8ba6b3c2b0711583edc6d570eea73ab26105f",
+      "status": "PASS",
       "implementation_evidence": [
         "installer/setup.nsi",
         "tests/windows_v1_3_to_v1_4_upgrade_acceptance.ps1",
         "tests/windows_standard_user_acceptance.ps1",
         "tests/windows_production_update_acceptance.ps1"
-      ]
+      ],
+      "tested_installer_sha256": "6aec377802d50662542c7afd45ae5113a6c9a13b5bcd4e499b2bf6ab38c76e39"
     },
     {
       "requirement_id": "INST-002",
@@ -4009,39 +4011,65 @@
     }
   ],
   "status_counts": {
-    "PASS": 192,
-    "FAIL": 0,
-    "NOT TESTED": 26,
     "BLOCKED": 11,
-    "NOT APPLICABLE": 2
+    "NOT TESTED": 24,
+    "NOT APPLICABLE": 2,
+    "PASS": 194
   },
-  "generated_at_utc": "2026-11-19T08:03:02Z",
+  "generated_at_utc": "2026-11-19T08:30:37Z",
   "latest_validation": {
-    "required_ci_run_id": 44479547286,
-    "required_ci_status": "PASS on pushed PR head 2005338403fd1fbe9fd6b851f0cc4fb426b42d3b.",
-    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44479547286",
-    "windows_acceptance_run_id": 44479547509,
-    "windows_acceptance_status": "FAIL at GUI handle sampling and rollback state comparisons. Diagnostics established two harness issues: UIA references remained live while measuring handles, and rollback assertions compared persisted files to pre-launch bytes although the app saves update-check/window/timer state. The local correction uses native HWND controls and seeded preference/valid timer checks; it requires hosted revalidation. Product-binary update and coordinator backup failure were skipped behind the gate.",
-    "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44479547509",
+    "required_ci_run_id": 44484687915,
+    "required_ci_status": "PASS on pushed PR head 6c204656635fff404954822991cbea2a5ae64eeb.",
+    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44484687915",
+    "windows_acceptance_run_id": 44484687881,
+    "windows_acceptance_status": "FAIL. Candidate build/identity, fixtures, HTTPS interruption/retry and timeout, v1.3.0 upgrade, standard-user install/uninstall, 720 updater assertions, portable recovery, exact production-binary v1.4.0-to-v1.4.1 update, and telemetry passed. GUI acceptance stopped at the first native install-button raw-label assertion before resource-cycle sampling; native Win32 text is escaped as Download && Install while UIA normalizes it to Download & Install. Coordinator backup-failure test stopped at a stale request-log count because Scenario=All records were reused; its separate coordinator transaction was not reached. Exact-hash soak reuse was valid for the unchanged app hash. Local harness fixes are pending a hosted rerun.",
+    "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44484687881",
     "latest_cancelled_attempt_run_id": 44455446619,
     "latest_cancelled_attempt_status": "Cancelled during MSYS2 compiler bootstrap before candidate creation; downstream identity/gate failures resulted from missing release files and do not constitute product acceptance.",
     "latest_cancelled_attempt_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44455446619",
-    "source_commit": "0c9c7ee3261f57e486aa867b7625ec3e2bf5163d",
-    "windows_candidate_source_commit": "0c9c7ee3261f57e486aa867b7625ec3e2bf5163d",
-    "latest_focused_updater_run_id": 44479547509,
-    "latest_focused_updater_status": "Acceptance updater suite reached 546 assertions, then failed a stale exact-file expectation in the test harness. Its diagnostics and corrected assertions are pending a new hosted run.",
+    "source_commit": "142b48571f364edf72e8296044525acb30ebb551",
+    "windows_candidate_source_commit": "142b48571f364edf72e8296044525acb30ebb551",
+    "latest_focused_updater_run_id": 44484687881,
+    "latest_focused_updater_status": "PASS: 720 integration assertions for updater/settings/clean-install/history/rollback flows; Windows Settings > Installed Apps UI remains NOT TESTED. Separate actual production binary update passed 62 assertions. CoordinatorBackupFailure did not reach the backup injection because the test harness reused the prior scenario request log.",
     "candidate_artifact_id": 14503596130,
     "candidate_artifact_expired": false,
     "candidate_artifact_bytes": 11854707,
-    "local_branch_head": "2005338403fd1fbe9fd6b851f0cc4fb426b42d3b",
+    "local_branch_head": "6c204656635fff404954822991cbea2a5ae64eeb",
     "local_commits_ahead": 0,
     "uncommitted_local_changes": true,
     "SEC_029": "BLOCKED: production app/setup are unsigned; owner must provision production signing identity/trust.",
-    "diagnostic_candidate_artifact_id": 14508252538,
-    "diagnostic_candidate_artifact_bytes": 11444941,
-    "diagnostic_candidate_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44479547509/artifacts/14508252538",
-    "failure_log_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44479547509"
+    "diagnostic_candidate_artifact_id": 14510163880,
+    "diagnostic_candidate_artifact_bytes": 11597146,
+    "diagnostic_candidate_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44484687881/artifacts/14510163880",
+    "failure_log_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44484687881",
+    "diagnostic_candidate_files": [
+      {
+        "bytes": 2831872,
+        "name": "EyeBreakReminder.exe",
+        "sha256": "d459b0390cbd1c9b063568e4b6d8ba6b3c2b0711583edc6d570eea73ab26105f"
+      },
+      {
+        "bytes": 1377180,
+        "name": "EyeBreakReminder-Setup-x64.exe",
+        "sha256": "6aec377802d50662542c7afd45ae5113a6c9a13b5bcd4e499b2bf6ab38c76e39"
+      },
+      {
+        "bytes": 1548518,
+        "name": "EyeBreakReminder-Portable-x64.zip",
+        "sha256": "9a934b921953b51ee0877a7c7699852933838d6e501b2ab4be408080d846c83c"
+      },
+      {
+        "bytes": 2524959,
+        "name": "EyeBreakReminder-Source.zip",
+        "sha256": "a2f97f1ef1b2a20455c6394ae11d6f9ec7442a9b860084506491f840a1bccb0d"
+      },
+      {
+        "bytes": 382,
+        "name": "EyeBreakReminder-SHA256.txt",
+        "sha256": "0cffc339c819453504853b03e68e955b57d076acbb39adbba59527740f471008"
+      }
+    ]
   },
-  "latest_pr_head_sha": "2005338403fd1fbe9fd6b851f0cc4fb426b42d3b",
+  "latest_pr_head_sha": "6c204656635fff404954822991cbea2a5ae64eeb",
   "latest_pr_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7"
 }
