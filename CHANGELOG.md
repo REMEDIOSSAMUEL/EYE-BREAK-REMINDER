@@ -8,6 +8,7 @@ Added
 - A themed native update dialog with release notes, current/available versions, Preserve Settings by default, and an explicitly confirmed Clean Install option. History/statistics deletion is a separate unchecked choice.
 - Optional daily update checks and background downloads. Both preferences default off, and installation always waits for user confirmation.
 - An external per-user update coordinator, durable recovery journal, previous-application/data backups, startup confirmation, and a next-sign-in rollback hook for interrupted future updates.
+- SHA-256-verified settings/history and installer-owned-file backups; recovery validates the complete backup set before applying changes, so a corrupted backup is rejected without partially restoring user data.
 - Interactive uninstall data retention choices. Silent uninstall keeps settings and history and removes only the transient timer checkpoint.
 - Version/asset validation tests, a Windows-only real GitHub release-download smoke tool, and updater architecture/security/acceptance documentation.
 

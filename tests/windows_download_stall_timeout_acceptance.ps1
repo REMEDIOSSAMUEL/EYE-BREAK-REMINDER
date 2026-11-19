@@ -48,8 +48,10 @@ $finalEvidence = $null
 $failure = $null
 $serverStdout = Join-Path $rootFull 'server.stdout.log'
 $serverStderr = Join-Path $rootFull 'server.stderr.log'
+$phase = 'initialization'
 
 try {
+    Write-Host "Stall test phase: validate tools and isolated root at $([DateTime]::UtcNow.ToString('o'))"
     $openssl = Get-Command openssl -ErrorAction Stop
     $python = Get-Command python -ErrorAction Stop
     $compiler = Get-Command x86_64-w64-mingw32-g++ -ErrorAction Stop
@@ -62,12 +64,16 @@ try {
     $leafPem = Join-Path $rootFull 'localhost-test-server.pem'
     $leafExt = Join-Path $rootFull 'localhost-test-server.ext'
 
+    $phase = 'generate disposable test CA'
+    Write-Host "Stall test phase: $phase"
     Invoke-CheckedProcess $openssl.Source @(
         'req','-x509','-newkey','rsa:2048','-sha256','-nodes','-keyout',$caKey,'-out',$caPem,
         '-days','1','-subj','/CN=EyeBreakReminder-Disposable-DownloadTimeout-Test-CA',
         '-addext','basicConstraints=critical,CA:TRUE,pathlen:0',
         '-addext','keyUsage=critical,keyCertSign,cRLSign'
     ) 'Generate the disposable test certificate authority'
+    $phase = 'generate localhost certificate request'
+    Write-Host "Stall test phase: $phase"
     Invoke-CheckedProcess $openssl.Source @(
         'req','-newkey','rsa:2048','-sha256','-nodes','-keyout',$leafKey,'-out',$leafCsr,
         '-subj','/CN=localhost'
@@ -80,12 +86,18 @@ try {
         'subjectKeyIdentifier=hash'
         'authorityKeyIdentifier=keyid,issuer'
     ) | Set-Content -LiteralPath $leafExt -Encoding ascii
+    $phase = 'sign localhost certificate'
+    Write-Host "Stall test phase: $phase"
     Invoke-CheckedProcess $openssl.Source @(
         'x509','-req','-in',$leafCsr,'-CA',$caPem,'-CAkey',$caKey,'-CAcreateserial',
         '-out',$leafPem,'-days','1','-sha256','-extfile',$leafExt
     ) 'Sign the localhost server certificate with the disposable test CA'
+    $phase = 'export disposable CA certificate'
+    Write-Host "Stall test phase: $phase"
     Invoke-CheckedProcess $openssl.Source @('x509','-in',$caPem,'-outform','DER','-out',$caDer) 'Prepare the disposable CA for Windows trust'
 
+    $phase = 'load and install disposable CA in CurrentUser Root'
+    Write-Host "Stall test phase: $phase"
     $caCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new($caDer)
     $trustedThumbprint = $caCertificate.Thumbprint
     if ([string]::IsNullOrWhiteSpace($trustedThumbprint)) { throw 'The disposable CA certificate has no thumbprint.' }
@@ -94,6 +106,8 @@ try {
     if (-not $trust -or -not $trust.Thumbprint) { throw 'Windows did not import the disposable test CA.' }
     if ([string]$trust.Thumbprint -cne $trustedThumbprint) { throw 'Windows imported a certificate with an unexpected identity.' }
 
+    $phase = 'reserve loopback TLS feed port'
+    Write-Host "Stall test phase: $phase"
     $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::IPv6Any, 0)
     $probe.Server.DualMode = $true
     $probe.Start()
@@ -107,6 +121,8 @@ try {
         (Quote-ProcessArgument $leafPem), (Quote-ProcessArgument $leafKey),
         (Quote-ProcessArgument $statePath), '20'
     ) -join ' '
+    $phase = 'start loopback TLS feed'
+    Write-Host "Stall test phase: $phase"
     $serverProcess = Start-Process -FilePath $python.Source -ArgumentList $serverArgs -WindowStyle Hidden `
         -PassThru -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr
     $serverPid = $serverProcess.Id
@@ -118,6 +134,8 @@ try {
     }
     if (-not (Test-Path -LiteralPath $statePath)) { throw 'The loopback TLS feed did not signal readiness.' }
 
+    $phase = 'compile the native WinHTTP stalled-body test'
+    Write-Host "Stall test phase: $phase"
     $testExe = Join-Path $rootFull 'updater-download-stall-timeout.exe'
     Invoke-CheckedProcess $compiler.Source @(
         '-std=c++17','-O2','-DWINVER=0x0A00','-D_WIN32_WINNT=0x0A00',
@@ -125,10 +143,38 @@ try {
         '-o',$testExe,'-municode','-lwinhttp','-lbcrypt','-lole32'
     ) 'Compile the focused WinHTTP stalled-body timeout test'
 
+    $phase = 'execute the native WinHTTP stalled-body test'
+    Write-Host "Stall test phase: $phase"
     $resultPath = Join-Path $rootFull 'native-test-result.json'
     $testProcess = Start-Process -FilePath $testExe -ArgumentList @(
         [string]$port, (Quote-ProcessArgument $rootFull), (Quote-ProcessArgument $resultPath)
-    ) -WindowStyle Hidden -PassThru -Wait
+    ) -WindowStyle Hidden -PassThru
+    if (-not $testProcess.WaitForExit(15000)) {
+        $stalledFeedState = if (Test-Path -LiteralPath $statePath) {
+            Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        } else { $null }
+        $elapsed = [DateTime]::UtcNow - $testProcess.StartTime.ToUniversalTime()
+        Stop-Process -Id $testProcess.Id -Force -ErrorAction Stop
+        $testChildTerminated = $testProcess.WaitForExit(5000)
+        if (-not $testChildTerminated) { throw "The native timeout-test child PID $($testProcess.Id) did not terminate after the harness stopped it." }
+        $finalEvidence = [pscustomobject]@{
+            test = 'FAIL-005 actual stalled HTTPS asset-body timeout'
+            status = 'FAIL'
+            failure = "Native test did not exit within 15 seconds; elapsedMs=$([int]$elapsed.TotalMilliseconds); phase=$phase; feedState=$($stalledFeedState | ConvertTo-Json -Compress -Depth 5)"
+            sourceCommit = $env:GITHUB_SHA
+            runnerImage = $env:ImageOS
+            nativeProcessId = $testProcess.Id
+            nativeTestChildTerminated = $testChildTerminated
+            feedEvidence = $stalledFeedState
+            trust = [pscustomobject]@{ store = 'Cert:\CurrentUser\Root'; installAttempted = $trustInstallAttempted; thumbprint = $trustedThumbprint; removalVerified = $false }
+            cleanup = [pscustomobject]@{ runnerTempTestDirectoryRemoved = $false; errors = @() }
+            serverStdout = if (Test-Path -LiteralPath $serverStdout) { Get-Content -LiteralPath $serverStdout -Raw -ErrorAction SilentlyContinue } else { $null }
+            serverStderr = if (Test-Path -LiteralPath $serverStderr) { Get-Content -LiteralPath $serverStderr -Raw -ErrorAction SilentlyContinue } else { $null }
+            laptopRestarted = $false
+            destructiveInstallPerformed = $false
+        }
+        throw $finalEvidence.failure
+    }
     if ($testProcess.ExitCode -ne 0) {
         $nativeResult = if (Test-Path -LiteralPath $resultPath) { Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json } else { $null }
         throw "The focused actual-download timeout test failed with exit code $($testProcess.ExitCode): $($nativeResult | ConvertTo-Json -Compress -Depth 5)"
@@ -168,10 +214,10 @@ try {
 }
 catch {
     $failure = $_
-    $finalEvidence = [pscustomobject]@{
+    if (-not $finalEvidence) { $finalEvidence = [pscustomobject]@{
         test = 'FAIL-005 actual stalled HTTPS asset-body timeout'
         status = 'FAIL'
-        failure = [string]$failure
+        failure = "phase=$phase; $([string]$failure)"
         sourceCommit = $env:GITHUB_SHA
         runnerImage = $env:ImageOS
         trust = [pscustomobject]@{ store = 'Cert:\CurrentUser\Root'; installAttempted = $trustInstallAttempted; thumbprint = $trustedThumbprint; removalVerified = $false }
@@ -180,7 +226,7 @@ catch {
         destructiveInstallPerformed = $false
         serverStdout = if (Test-Path -LiteralPath $serverStdout) { Get-Content -LiteralPath $serverStdout -Raw } else { $null }
         serverStderr = if (Test-Path -LiteralPath $serverStderr) { Get-Content -LiteralPath $serverStderr -Raw } else { $null }
-    }
+    } }
 }
 finally {
     if ($serverPid -and (Get-Process -Id $serverPid -ErrorAction SilentlyContinue)) {

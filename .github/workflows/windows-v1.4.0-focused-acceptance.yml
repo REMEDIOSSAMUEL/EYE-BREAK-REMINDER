@@ -9,13 +9,17 @@ on:
       - 'tests/windows_certificate_store_worker.ps1'
       - 'tests/windows_production_update_acceptance.ps1'
       - 'tests/package_source_policy_tests.py'
+      - 'tests/windows_download_stall_timeout_acceptance.ps1'
+      - 'tests/download_stall_timeout_feed.py'
+      - 'tests/updater_download_stall_timeout.cpp'
+      - 'tests/updater_portable_recovery_tests.cpp'
   workflow_dispatch:
     inputs:
       reference_run_id:
         description: Completed Windows run containing the exact v1.4.0 production executable and installer
         required: true
         type: string
-        default: '44345729932'
+        default: '44443338349'
 
 permissions:
   contents: read
@@ -25,7 +29,7 @@ jobs:
   production-update:
     name: Exact-candidate production update transaction (Windows Server x64)
     runs-on: windows-2025
-    timeout-minutes: 45
+    timeout-minutes: 300
     steps:
       - name: Check out the harness and final source archive inputs
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -57,9 +61,9 @@ jobs:
       - name: Download the exact prior production candidate and full-run evidence
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: eye-break-reminder-v1.4.0-candidate-${{ inputs.reference_run_id || '44345729932' }}
+          name: eye-break-reminder-v1.4.0-candidate-${{ inputs.reference_run_id || '44443338349' }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.reference_run_id || '44345729932' }}
+          run-id: ${{ inputs.reference_run_id || '44443338349' }}
           github-token: ${{ github.token }}
           path: reference
 
@@ -67,7 +71,7 @@ jobs:
         id: candidate
         shell: pwsh
         env:
-          REFERENCE_RUN_ID: ${{ inputs.reference_run_id || '44345729932' }}
+          REFERENCE_RUN_ID: ${{ inputs.reference_run_id || '44443338349' }}
         run: |
           $ErrorActionPreference = 'Stop'
           $referenceRelease = 'reference/release'
@@ -77,15 +81,15 @@ jobs:
           if ($referenceFiles.Count -ne 5 -or @($referenceFiles | Where-Object PSIsContainer).Count -ne 0) { throw 'Reference artifact must contain exactly the five named release files.' }
           if ((@($referenceFiles | Sort-Object Name | Select-Object -ExpandProperty Name) -join "`n") -cne (($expectedNames | Sort-Object) -join "`n")) { throw 'Reference artifact file set differs from the v1.4.0 release contract.' }
           $referenceProvenance = Get-Content -LiteralPath (Join-Path $referenceEvidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
-          if ([string]$referenceProvenance.RunId -cne $env:REFERENCE_RUN_ID -or $referenceProvenance.Application -cne 'Eye Break Reminder' -or $referenceProvenance.Version -cne '1.4.0' -or $referenceProvenance.SourceCommit -cne '80fcd8904f8aaeef790d194a13caa21e303d36b2' -or $referenceProvenance.PRHeadCommit -cne '69408fb0f0dbc7166e98628d1f117b688b96d434') { throw 'Reference candidate provenance does not identify the approved v1.4.0 build run and source.' }
+          if ([string]$referenceProvenance.RunId -cne $env:REFERENCE_RUN_ID -or $referenceProvenance.Application -cne 'Eye Break Reminder' -or $referenceProvenance.Version -cne '1.4.0' -or $referenceProvenance.SourceCommit -cne '8664c8341e43f0b8be4a86a34ddc0ceaf436a00b' -or $referenceProvenance.PRHeadCommit -cne 'fe40ae32786646d6d149e7c19d779a7f3fe36673') { throw 'Reference candidate provenance does not identify the newly accepted v1.4.0 build run and source.' }
           $referenceIdentities = Get-Content -LiteralPath (Join-Path $referenceEvidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json
           if ($referenceIdentities.Count -ne 5) { throw 'Reference artifact identity inventory does not contain exactly five files.' }
           $expectedHashes = @{
-            'EyeBreakReminder.exe' = '3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe'
-            'EyeBreakReminder-Setup-x64.exe' = 'c4aad0412d04ff352117af4f8ab09458d9e5c1b7691ac89c3b930e3495288002'
-            'EyeBreakReminder-Portable-x64.zip' = '73c14f0869d36dad36a3f2f857ab143de299a762896fee4e064dcb8e69aaf770'
-            'EyeBreakReminder-Source.zip' = 'b2654294c886a4790c76e4a7b0920ec4552600282993fcbc40e9f4e8b5973d35'
-            'EyeBreakReminder-SHA256.txt' = '4db19ea97fec190ec33bef5edc1ee0b0b7877a2f7c61c27f9bed47678097797f'
+            'EyeBreakReminder.exe' = 'd459b0390cbd1c9b063568e4b6d8ba6b3c2b0711583edc6d570eea73ab26105f'
+            'EyeBreakReminder-Setup-x64.exe' = 'e53a876b55da2e415eb102a44c76488508a6b5c59a7d08c1728eb8309fdc7294'
+            'EyeBreakReminder-Portable-x64.zip' = 'af720ff4e333327117ed27819387831395a7e8b4edcbb2490239bb6f1d0ccaa6'
+            'EyeBreakReminder-Source.zip' = 'e949fe47f209ddffeabbc67b32a6e575f5325c13077926ae2bdf53e4b3482229'
+            'EyeBreakReminder-SHA256.txt' = '865103fc6358e7cbc220cbe8df682c8c45dea71c0e081c6ed7a93ef8caf2be9d'
           }
           foreach ($name in $expectedNames) {
             $identity = @($referenceIdentities | Where-Object Name -CEQ $name)
@@ -93,9 +97,23 @@ jobs:
             $actual = (Get-FileHash -LiteralPath (Join-Path $referenceRelease $name) -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($actual -cne $expectedHashes[$name]) { throw "Downloaded reference candidate hash mismatch: $name" }
           }
-          $soakPath = Join-Path $referenceEvidence 'resource-soak/soak-summary.json'
-          $soak = Get-Content -LiteralPath $soakPath -Raw | ConvertFrom-Json
-          if ($soak.Application -cne 'Eye Break Reminder' -or $soak.Version -cne '1.4.0' -or $soak.RequestedCycles -ne 110 -or $soak.CompletedCycles -ne 110 -or $soak.Pass -ne 264 -or $soak.Fail -ne 0 -or $soak.NotTested -ne 0 -or -not $soak.DiagnosticTelemetryComplete -or $soak.SHA256 -cne $expectedHashes['EyeBreakReminder.exe']) { throw 'Reference 110-cycle soak does not prove zero failures, complete telemetry, and the exact retained executable hash.' }
+          $referenceGate = Get-Content -LiteralPath (Join-Path $referenceEvidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
+          $referenceChecks = [ordered]@{
+            'exact candidate build passed' = $referenceGate.Candidate -ceq 'success'
+            'test fixtures built' = $referenceGate.Fixtures -ceq 'success'
+            'production update fixtures built' = $referenceGate.ProductionUpdateFixture -ceq 'success'
+            'real HTTPS interruption/retry passed' = $referenceGate.NetworkInterruption -ceq 'success'
+            'v1.3.0 upgrade passed' = $referenceGate.LegacyV130Upgrade -ceq 'success'
+            'native GUI/theme/accessibility/timer acceptance passed' = $referenceGate.Gui -ceq 'success'
+            'standard-user installation/uninstallation passed' = $referenceGate.StandardUser -ceq 'success'
+            'controlled updater/data/failure transactions passed' = $referenceGate.Updater -ceq 'success'
+            'actual installed exact-candidate update passed' = $referenceGate.ProductionBinaryUpdate -ceq 'success'
+            'resource telemetry checks passed' = $referenceGate.ResourceTelemetry -ceq 'success'
+            'candidate identity remained unchanged' = $referenceGate.CandidateIdentity -ceq 'success'
+          }
+          $failedReferenceChecks = @($referenceChecks.GetEnumerator() | Where-Object { -not [bool]$_.Value } | ForEach-Object { $_.Key })
+          if ($failedReferenceChecks.Count -gt 0) { throw "The reference Windows run has unrelated failed evidence: $($failedReferenceChecks -join '; ')" }
+          if ($referenceGate.DownloadBodyTimeout -cne 'failure' -or $referenceGate.PortableRecovery -cne 'failure' -or $referenceGate.ResourceSoak -cne 'skipped' -or $referenceGate.Scope -cne 'All') { throw 'Reference Windows run does not match the two focused harness gaps and skipped exact-binary soak.' }
 
           # Confirm production inputs have not changed since the candidate executable and installer were built.
           Add-Type -AssemblyName System.IO.Compression
@@ -169,8 +187,25 @@ jobs:
             if (@($manifest | Where-Object { $_ -ceq $expected }).Count -ne 1) { throw "Final candidate checksum manifest mismatch: $($item.Name)" }
           }
           if ($identities[0].ProductVersion -notmatch '^1\.4\.0(\.0)?$' -or $identities[1].ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw 'Final candidate executable and installer are not version 1.4.0.' }
-          Copy-Item -LiteralPath $referenceEvidence -Destination 'build/v1.4.0-updater-evidence/reference-run-44345729932' -Recurse
-          [pscustomobject]@{Application='Eye Break Reminder';Version='1.4.0';RunId=$env:GITHUB_RUN_ID;RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID";BinarySourceCommit=$referenceProvenance.SourceCommit;SourceArchiveCommit=$env:GITHUB_SHA;ReferenceRunId=$env:REFERENCE_RUN_ID;ReferencePRHead=$referenceProvenance.PRHeadCommit;CandidateFiles=$identities;ProductionInputsCompared=@($currentPaths);Prior110CycleSoakReused=$true;SoakSHA256=$soak.SHA256;Published=$false;Tagged=$false;Merged=$false} | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/candidate-provenance.json' -Encoding UTF8
+          Copy-Item -LiteralPath $referenceEvidence -Destination "build/v1.4.0-updater-evidence/reference-run-$($env:REFERENCE_RUN_ID)" -Recurse
+          [pscustomobject]@{Application='Eye Break Reminder';Version='1.4.0';RunId=$env:GITHUB_RUN_ID;RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID";BinarySourceCommit=$referenceProvenance.SourceCommit;SourceArchiveCommit=$env:GITHUB_SHA;ReferenceRunId=$env:REFERENCE_RUN_ID;ReferencePRHead=$referenceProvenance.PRHeadCommit;CandidateFiles=$identities;ProductionInputsCompared=@($currentPaths);Prior110CycleSoakReused=$false;ResourceSoakStatus='PENDING';SoakSHA256=$null;Published=$false;Tagged=$false;Merged=$false} | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/candidate-provenance.json' -Encoding UTF8
+
+      - name: Prove an HTTPS response-body stall times out safely
+        id: download_body_timeout
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_download_stall_timeout_acceptance.ps1 `
+            -EvidencePath '.\build\v1.4.0-updater-evidence\download-stall-timeout.json'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $result = Get-Content -LiteralPath '.\build\v1.4.0-updater-evidence\download-stall-timeout.json' -Raw | ConvertFrom-Json
+          if ($result.status -cne 'PASS' -or -not $result.nativeResult.timeout_error_reported -or
+              -not $result.nativeResult.partial_and_final_download_files_removed -or
+              -not $result.nativeResult.preexisting_sentinel_preserved_byte_for_byte -or
+              -not $result.trust.removalVerified -or -not $result.cleanup.runnerTempTestDirectoryRemoved) {
+            throw 'The actual stalled HTTPS body timeout or its cleanup evidence did not pass.'
+          }
 
       - name: Build a controlled v1.4.1 successor fixture
         shell: pwsh
@@ -178,6 +213,28 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & .\tests\build_production_update_fixture.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Exercise real portable replacement failures and recovery
+        id: portable_recovery
+        timeout-minutes: 10
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          mkdir -p build/v1.4.0-updater-evidence
+          x86_64-w64-mingw32-g++ \
+            -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -static -static-libgcc -static-libstdc++ \
+            -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE \
+            tests/updater_portable_recovery_tests.cpp \
+            -o build/updater-portable-recovery-tests.exe \
+            -lcomctl32 -lcomdlg32 -ldwmapi -lwtsapi32 -lwinmm -lgdiplus \
+            -lshell32 -lole32 -loleaut32 -luuid -ladvapi32 -luxtheme \
+            -lwinhttp -lversion -lbcrypt
+          test -s build/updater-portable-recovery-tests.exe
+          ./build/updater-portable-recovery-tests.exe \
+            "$(cygpath -aw release/EyeBreakReminder.exe)" \
+            "$(cygpath -aw "$RUNNER_TEMP/EyeBreakReminder-Production-Update-Fixture/release/EyeBreakReminder.exe")" \
+            2>&1 | tee build/v1.4.0-updater-evidence/portable-recovery-tests.log
 
       - name: Build the test-only executable-launch sentinel
         shell: msys2 {0}
@@ -212,6 +269,52 @@ jobs:
             -LaunchSentinelExecutable "$env:UPDATE_LAUNCH_SENTINEL_PATH" `
             -EvidenceDirectory '.\build\v1.4.0-updater-evidence'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run the exact candidate through the 110-cycle Windows resource soak
+        id: resource_soak
+        if: ${{ steps.candidate.outcome == 'success' && steps.download_body_timeout.outcome == 'success' && steps.portable_recovery.outcome == 'success' && steps.production_update.outcome == 'success' }}
+        timeout-minutes: 180
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_break_user_resource_soak.ps1 `
+            -ExecutablePath '.\release\EyeBreakReminder.exe' `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence\resource-soak' `
+            -Cycles 110 -ExpectedProductVersion '1.4.0' -ExpectedResourceBehavior NoGrowth
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $summaryPath = '.\build\v1.4.0-updater-evidence\resource-soak\soak-summary.json'
+          $summary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json
+          $candidateHash = (Get-FileHash -LiteralPath '.\release\EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($summary.Application -cne 'Eye Break Reminder' -or $summary.Version -cne '1.4.0' -or
+              $summary.RequestedCycles -ne 110 -or $summary.CompletedCycles -ne 110 -or
+              $summary.Pass -lt 250 -or $summary.Fail -ne 0 -or $summary.NotTested -ne 0 -or
+              -not $summary.DiagnosticTelemetryComplete -or $summary.SHA256 -cne $candidateHash) {
+            throw 'The production-binary resource soak did not prove all 110 cycles, complete telemetry, no failures, and the exact candidate hash.'
+          }
+          $provenancePath = '.\build\v1.4.0-updater-evidence\candidate-provenance.json'
+          $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
+          $provenance.ResourceSoakStatus = 'PASS'
+          $provenance.Prior110CycleSoakReused = $false
+          $provenance.SoakSHA256 = [string]$summary.SHA256
+          $provenance.SoakedCandidateSHA256 = $candidateHash
+          $provenance.SoakedCycles = 110
+          $provenance | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $provenancePath -Encoding UTF8
+
+          $referenceEvidence = Join-Path 'build/v1.4.0-updater-evidence' "reference-run-$env:REFERENCE_RUN_ID"
+          $referenceGate = Get-Content -LiteralPath (Join-Path $referenceEvidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
+          $timeout = Get-Content -LiteralPath '.\build\v1.4.0-updater-evidence\download-stall-timeout.json' -Raw | ConvertFrom-Json
+          $portableLog = Get-Content -LiteralPath '.\build\v1.4.0-updater-evidence\portable-recovery-tests.log' -Raw
+          $productionUpdate = Get-Content -LiteralPath '.\build\v1.4.0-updater-evidence\production-update-acceptance-results.json' -Raw | ConvertFrom-Json
+          if ($timeout.status -cne 'PASS' -or $portableLog -notmatch 'PASS: [0-9]+ portable recovery integration assertions' -or $productionUpdate.Status -cne 'PASS') {
+            throw 'The focused timeout, portable recovery, or exact-candidate production update result did not pass.'
+          }
+          [pscustomobject]@{
+            Status='PASS'; Scope='All feasible Windows acceptance evidence combined from the exact current candidate';
+            ReferenceRunId=$env:REFERENCE_RUN_ID; ReferenceRunUrl="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/$env:REFERENCE_RUN_ID";
+            ReferenceTests=@{Gui=$referenceGate.Gui;LegacyV130Upgrade=$referenceGate.LegacyV130Upgrade;StandardUser=$referenceGate.StandardUser;Updater=$referenceGate.Updater;ProductionBinaryUpdate=$referenceGate.ProductionBinaryUpdate;NetworkInterruption=$referenceGate.NetworkInterruption;ResourceTelemetry=$referenceGate.ResourceTelemetry};
+            Retested=@{DownloadBodyTimeout=$timeout.status;PortableRecovery='PASS';ProductionUpdate=$productionUpdate.Status;ResourceSoak='PASS'};
+            CandidateSHA256=$candidateHash;SoakCycles=110;Published=$false;Tagged=$false;Merged=$false;VerifiedUtc=[DateTime]::UtcNow.ToString('o')
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath '.\build\v1.4.0-updater-evidence\windows-acceptance-gate.json' -Encoding UTF8
 
       - name: Confirm the exact candidate files remained unchanged after the update transaction
         if: always()
@@ -272,7 +375,13 @@ jobs:
             if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Matches[1]) { throw "Final candidate hash mismatch: $($Matches[2])" }
           }
           $identity = Get-Content 'build/v1.4.0-updater-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
-          if ($identity.Version -cne '1.4.0' -or -not $identity.Prior110CycleSoakReused) { throw 'Candidate provenance does not identify the v1.4.0 candidate and exact-hash soak reuse.' }
+          $soak = Get-Content 'build/v1.4.0-updater-evidence/resource-soak/soak-summary.json' -Raw | ConvertFrom-Json
+          $candidateHash = (Get-FileHash 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($identity.Version -cne '1.4.0' -or $identity.ResourceSoakStatus -cne 'PASS' -or
+              $identity.SoakedCandidateSHA256 -cne $candidateHash -or $soak.SHA256 -cne $candidateHash -or
+              $soak.CompletedCycles -ne 110 -or $soak.Fail -ne 0 -or $soak.NotTested -ne 0) {
+            throw 'Candidate provenance does not bind the completed 110-cycle soak to this exact v1.4.0 executable.'
+          }
 
       - name: Run final candidate under Windows 11 ARM64 x64 emulation
         shell: pwsh

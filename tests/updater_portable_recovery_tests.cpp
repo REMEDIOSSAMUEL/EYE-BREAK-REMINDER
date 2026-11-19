@@ -363,7 +363,7 @@ int main(int argc, char** argv) {
     const DWORD tempLength = GetEnvironmentVariableW(L"RUNNER_TEMP", runnerTempRaw, DWORD(std::size(runnerTempRaw)));
     const DWORD osLength = GetEnvironmentVariableW(L"RUNNER_OS", runnerOs, DWORD(std::size(runnerOs)));
     if (actionsLength != 4 || _wcsicmp(actions, L"true") != 0 || !tempLength ||
-        tempLength >= std::size(runnerTempRaw) || osLength != 5 || _wcsicmp(runnerOs, L"Windows") != 0) {
+        tempLength >= std::size(runnerTempRaw) || osLength != 7 || _wcsicmp(runnerOs, L"Windows") != 0) {
         std::cerr << "BLOCKED: this test may run only on a disposable GitHub Actions Windows runner with RUNNER_TEMP.\n";
         return 2;
     }

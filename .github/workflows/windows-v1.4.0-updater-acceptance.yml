@@ -4,10 +4,10 @@ on:
   pull_request:
     branches:
       - main
-    # Full GUI/installer/soak acceptance runs for product and package inputs.
-    # The targeted certificate-store harness and final documentation are
-    # exercised by the focused workflow/required PR CI without repeating the
-    # two-hour 110-cycle soak.
+    # Full GUI/installer/soak acceptance runs for production inputs and broad
+    # acceptance changes. The focused workflow validates only its changed
+    # download/portable harnesses against the retained exact candidate and
+    # performs the required soak without replaying successful GUI/installer tests.
     paths:
       - 'src/**'
       - 'assets/**'
@@ -25,6 +25,12 @@ on:
       - '!tests/windows_production_update_acceptance.ps1'
       - '!tests/windows_v1_4_updater_acceptance.ps1'
       - '!tests/package_source_policy_tests.py'
+      - '!tests/windows_download_stall_timeout_acceptance.ps1'
+      - '!tests/download_stall_timeout_feed.py'
+      - '!tests/updater_download_stall_timeout.cpp'
+      - '!tests/updater_portable_recovery_tests.cpp'
+      - '!README.md'
+      - '!CHANGELOG.md'
   workflow_dispatch:
     inputs:
       acceptance_scope:
