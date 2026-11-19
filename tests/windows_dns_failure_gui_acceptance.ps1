@@ -37,6 +37,7 @@ public static class EBR_DNS_GUI_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessageW(IntPtr hwnd, uint message, IntPtr w, IntPtr l);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageW(IntPtr hwnd, uint message, IntPtr w, IntPtr l);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint message, IntPtr w, IntPtr l, uint flags, uint timeout, out IntPtr result);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern uint RegisterWindowMessageW(string name);
   public static IntPtr FindMainWindowByPid(int wantedPid) {
@@ -62,6 +63,7 @@ public static class EBR_DNS_GUI_NATIVE {
 Add-Type -TypeDefinition $native -Language CSharp -ErrorAction Stop
 
 function Get-Hash([string]$path){(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+function Click-Control([IntPtr]$window,[int]$controlId){$control=[EBR_DNS_GUI_NATIVE]::FindChildById($window,$controlId);if($control -eq [IntPtr]::Zero){throw "The isolated app did not expose control $controlId."};[void][EBR_DNS_GUI_NATIVE]::SendMessageW($control,0x00F5,[IntPtr]::Zero,[IntPtr]::Zero)}
 function Get-TimerSeconds([IntPtr]$window){$text=[EBR_DNS_GUI_NATIVE]::ChildText($window,40);if($text -notmatch '^(\d+):(\d{2})$'){throw "Unexpected timer text '$text'."};return ([int]$Matches[1]*60+[int]$Matches[2])}
 function Wait-AppWindow([Diagnostics.Process]$process,[int]$timeoutSeconds=30){$watch=[Diagnostics.Stopwatch]::StartNew();while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds){$process.Refresh();if($process.HasExited){throw "The isolated app exited during startup with code $($process.ExitCode)."};$window=[EBR_DNS_GUI_NATIVE]::FindMainWindowByPid($process.Id);if($window -ne [IntPtr]::Zero -and [EBR_DNS_GUI_NATIVE]::Responsive($window)){return $window};Start-Sleep -Milliseconds 100};throw 'The isolated app did not expose a responsive native main window.'}
 function Wait-UpdateResult([Diagnostics.Process]$process,[IntPtr]$window,[int]$timeoutSeconds=60){$watch=[Diagnostics.Stopwatch]::StartNew();$latest='';$status='';while($watch.Elapsed.TotalSeconds -lt $timeoutSeconds){$process.Refresh();if($process.HasExited){throw "The app exited while checking updates with code $($process.ExitCode)."};$latest=[EBR_DNS_GUI_NATIVE]::ChildText($window,163);$status=[EBR_DNS_GUI_NATIVE]::ChildText($window,162);$checking=$status -ceq 'Checking the official stable release on GitHub…';$failed=$latest -ceq 'Latest stable version: unavailable' -and $status.Contains('Could not reach GitHub');$succeeded=$latest -match '^Latest stable version: \d+\.\d+\.\d+' -and -not $checking;if($failed -or $succeeded){return [pscustomobject]@{Latest=$latest;Status=$status}};Start-Sleep -Milliseconds 100};throw "Timed out waiting for a completed update-check result; latest='$latest'; status='$status'."}
@@ -75,7 +77,7 @@ try{
   $install=Join-Path $testRoot 'install';$data=Join-Path $testRoot 'profile';[void][IO.Directory]::CreateDirectory($install);[void][IO.Directory]::CreateDirectory($data)
   $target=Join-Path $install 'EyeBreakReminder.exe';Copy-Item -LiteralPath $testApp -Destination $target
   $settingsPath=Join-Path $data 'settings.ini';$historyPath=Join-Path $data 'history.dat';$sentinelPath=Join-Path $data 'unrelated-sentinel.txt'
-  $settings="workMinutes=47`nbreakSeconds=20`nvolume=32`ntheme=2`nalarm=0`nrepeat=0`nnotifications=0`nsnooze=0`nautoStart=1`nstartup=0`nhistory=1`ntray=0`nautoCheckUpdates=1`nautoDownloadUpdates=0`nupdateLastCheck=0`n"
+  $settings="workMinutes=47`nbreakSeconds=20`nvolume=32`ntheme=2`nalarm=0`nrepeat=0`nnotifications=0`nsnooze=0`nautoStart=1`nstartup=0`nhistory=1`ntray=0`nautoCheckUpdates=0`nautoDownloadUpdates=0`nupdateLastCheck=0`n"
   [IO.File]::WriteAllText($settingsPath,$settings,[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText($historyPath,"$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()-120) 1 20`n",[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText($sentinelPath,'dns-gui-sentinel',[Text.UTF8Encoding]::new($false))
   $appHash=Get-Hash $target;$settingsHash=Get-Hash $settingsPath;$historyHash=Get-Hash $historyPath;$sentinelHash=Get-Hash $sentinelPath
 
@@ -83,9 +85,12 @@ try{
   $script:firstProcess=Start-Process -FilePath $target -WorkingDirectory $install -PassThru
   Remove-Item Env:\EBR_GUI_TEST_DNS_FAILURE -ErrorAction SilentlyContinue
   $script:firstWindow=Wait-AppWindow $script:firstProcess
+  Click-Control $script:firstWindow 12
+  Click-Control $script:firstWindow 160
   $firstResult=Wait-UpdateResult $script:firstProcess $script:firstWindow
   Assert-That ($firstResult.Latest -ceq 'Latest stable version: unavailable' -and $firstResult.Status.Contains('Could not reach GitHub')) 'the actual application displays a recoverable DNS failure from its real WinHTTP request'
   Assert-That ([EBR_DNS_GUI_NATIVE]::Responsive($script:firstWindow)) 'the app window remains responsive after the DNS failure'
+  Click-Control $script:firstWindow 10
   $timerInitial=Get-TimerSeconds $script:firstWindow
   Assert-That (Wait-TimerProgress $script:firstWindow $timerInitial) 'the running timer continues progressing after the DNS failure'
   Assert-That ((Get-Hash $target) -ceq $appHash -and (Get-Hash $settingsPath) -ceq $settingsHash -and (Get-Hash $historyPath) -ceq $historyHash -and (Get-Hash $sentinelPath) -ceq $sentinelHash) 'the DNS failure leaves the executable, settings, history and unrelated sentinel byte-identical'
@@ -97,6 +102,8 @@ try{
   $env:EBR_GUI_TEST_DATA_DIRECTORY=$data
   $script:secondProcess=Start-Process -FilePath $target -WorkingDirectory $install -PassThru
   $script:secondWindow=Wait-AppWindow $script:secondProcess
+  Click-Control $script:secondWindow 12
+  Click-Control $script:secondWindow 160
   $secondResult=Wait-UpdateResult $script:secondProcess $script:secondWindow
   Assert-That ($secondResult.Latest -match '^Latest stable version: \d+\.\d+\.\d+' -and -not $secondResult.Status.Contains('Could not reach GitHub')) 'a later real HTTPS retry to the official GitHub release API succeeds after the DNS override is removed'
   $settingsAfterRetry=[IO.File]::ReadAllText($settingsPath)
