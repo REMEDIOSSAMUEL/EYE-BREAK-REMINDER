@@ -3,47 +3,47 @@
   "generated_on": "2026-11-19",
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
-  "branch_head": "f8dd273e406276cd2fa2277e3d68a9faaf06eb80",
-  "branch_head_scope": "Feature branch source head used by candidate build; build GITHUB_SHA is synthetic PR merge commit ea0ce43461ae506e5a6c780d8f85e237f7228c22. Documentation-only completion updates follow; release binaries remain tested against this source.",
+  "branch_head": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+  "branch_head_scope": "Candidate binaries were built and tested from 5ebdfa5. Later commits are documentation-only; production inputs remain unchanged.",
   "current_release_candidate": {
     "status": "RETAINED AND HASH-VERIFIED; NOT PUBLISHED; NOT READY FOR PUBLICATION",
-    "run_id": 44427940927,
-    "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940927",
-    "artifact_download_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940927/artifacts/14486656139",
-    "candidate_source_commit": "ea0ce43461ae506e5a6c780d8f85e237f7228c22",
-    "source_archive_commit": "ea0ce43461ae506e5a6c780d8f85e237f7228c22",
-    "feature_branch_head": "f8dd273e406276cd2fa2277e3d68a9faaf06eb80",
-    "environment": "GitHub Actions Windows Server 2025 Datacenter x64; ARM64 validation on Windows 11 Enterprise ARM64 using x64 emulation",
+    "run_id": 44437582155,
+    "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155",
+    "artifact_download_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155/artifacts/14489596723",
+    "candidate_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+    "source_archive_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+    "feature_branch_head": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+    "environment": "GitHub Actions Windows Server 2025 Datacenter x64; UpdatePreferences scope; ARM64 job skipped",
     "files": [
       {
-        "name": "EyeBreakReminder.exe",
-        "bytes": 2823168,
         "sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
-        "product_version": "1.4.0"
+        "name": "EyeBreakReminder.exe",
+        "product_version": "1.4.0",
+        "bytes": 2823168
       },
       {
+        "sha256": "460420b37b960956438557069afe9e398da29c5bb72e97a2dafd8ad234676669",
         "name": "EyeBreakReminder-Setup-x64.exe",
-        "bytes": 1378156,
-        "sha256": "209fdbd4f926c925d947d4d58e2679054cd465a3a6d0afebee0e9d3430399ca6",
-        "product_version": "1.4.0"
+        "product_version": "1.4.0",
+        "bytes": 1377325
       },
       {
+        "sha256": "5ecfdc3a7565f01d41ce1aeb8bac01a4304bb2ddd8666ecc141a247c571139ce",
         "name": "EyeBreakReminder-Portable-x64.zip",
-        "bytes": 1545663,
-        "sha256": "1d910adefbe90998199ab7c179d691a8cfe17c5df644f982919bda9bb5db1f43",
-        "product_version": null
+        "product_version": null,
+        "bytes": 1545663
       },
       {
+        "sha256": "ca6665e3c915435194d6f3fb75ce826b1fbd670efb8476909e501179cfcb675a",
         "name": "EyeBreakReminder-Source.zip",
-        "bytes": 2492166,
-        "sha256": "2eb3dcaec133d8049cadccb6fa3362d5fff3edd925e8541a5ba2c258b8187cbc",
-        "product_version": null
+        "product_version": null,
+        "bytes": 2492676
       },
       {
+        "sha256": "9bd554bf5251d89f77bd966fa269ed316e31b0fed1f64b3f34b74e278cf53bc2",
         "name": "EyeBreakReminder-SHA256.txt",
-        "bytes": 382,
-        "sha256": "796c8f2940f188891d03ef7b0ed232ac9d7d8844e3858317a19d3b139ac98cc6",
-        "product_version": null
+        "product_version": null,
+        "bytes": 382
       }
     ],
     "authenticode": {
@@ -56,11 +56,11 @@
     "published": false,
     "tagged": false,
     "merged": false,
-    "artifact_id": 14486656139,
-    "artifact_bytes": 11758846,
+    "artifact_id": 14489596723,
+    "artifact_bytes": 7146800,
     "artifact_expired": false,
-    "source_archive_verification": "137 entries; 124 byte-identical and 13 match after CRLF/LF normalization against PR source head f8dd273; no missing or mismatched files. No unsafe paths, credential/key files, common token/private-key matches or personal paths.",
-    "artifact_expires_at": "2027-02-17T00:18:28Z"
+    "source_archive_verification": "Run 44437582155 scripts/verify.py passed the exact source/package policy against checkout commit 5ebdfa5. Independent artifact: 137 source entries; zero unsafe paths, common secret/key or personal-path hits. 249 binary/package assertions passed.",
+    "artifact_expires_at": "2027-02-17T01:31:48Z"
   },
   "status_legend": [
     "PASS",
@@ -142,10 +142,10 @@
       "description": "Require user confirmation before installation",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Confirm and cancel branches",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: exact candidate update reached the verified-ready dialog; acceptance explicitly activated Install Update before coordinator execution. Formal production suite: 62 assertions; app SHA 3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe; setup SHA 460420b37b960956438557069afe9e398da29c5bb72e97a2dafd8ad234676669.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -230,10 +230,10 @@
       "description": "Verify payload SHA-256",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Valid digest, mismatch, malformed and missing digest cases",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: actual payload reached 100% and matched the declared SHA-256; a same-size post-verification substitution was rejected by a final coordinator rehash, followed by a successful clean verified retry. 62 formal production assertions.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -263,10 +263,10 @@
       "description": "Coordinate update process safely",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Single coordinator, duplicate attempt, locks and shutdown timeout",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: exact production coordinator rejected a staged payload substitution, then completed the verified install transaction and preserved registered install path; 62 formal production assertions.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -274,10 +274,10 @@
       "description": "Shut down app safely before install",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Visible and tray-hidden process shutdown and lock handling",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: exact candidate exited through its registered safe-shutdown message before install; the controlled successor process was then launched from the verified install path.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -285,10 +285,10 @@
       "description": "Automatically launch installer",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Actual installer launch and exit result",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: exact candidate setup SHA 460420b37b960956438557069afe9e398da29c5bb72e97a2dafd8ad234676669 was automatically launched by the real updater coordinator; transaction completed successfully.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -296,10 +296,10 @@
       "description": "Verify installation result",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Files, process, registry, exit status and file version",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: exact candidate production update verified successor path, SHA-256 026fb87952fa693aa3a09c77eba19d38ed3ba24185d030be533ca3f5bad5efbc, file version 1.4.1, installer result and Installed Apps registration.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -307,10 +307,10 @@
       "description": "Relaunch updated application",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Observe launched process and actual running version",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: updater launched a new process from the verified installed path after the controlled 1.4.1 installation.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -318,10 +318,10 @@
       "description": "Verify new version at runtime",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Installed path, process identity and version confirmation",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: installed/running controlled successor was v1.4.1 and its executable bytes matched verified download SHA-256 026fb87952fa693aa3a09c77eba19d38ed3ba24185d030be533ca3f5bad5efbc.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -329,10 +329,10 @@
       "description": "Preserve Settings update mode",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Full profile file/settings comparison after actual update",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: exact production Preserve Settings kept every seeded setting and schedule in the real settings file, history and unrelated files byte-for-byte, install path and startup registration; only expected update-check timestamp changed.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -703,9 +703,9 @@
       "description": "Reject unexpected redirect",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Redirect policy negative test",
-      "actual_verification_evidence": "Run 44422037441 production-update-acceptance-results.json, event Unexpected HTTPS update redirect rejection PASS. The exact application SHA-256 3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe matches this retained candidate byte-for-byte. The controlled asset endpoint returned HTTPS 302 to https://unexpected-updates.example.invalid/unsafe.exe; the app rejected it before a request to that host, did not launch the sentinel installer, preserved installed app/registry/settings/history/unrelated data, displayed an error, and cleaned staging after cancel. Run 44427940927 is separately recorded as failed before its asset endpoint received an HTTP request and does not count as a redirect test.",
-      "environment": "GitHub Actions Windows Server 2025 Datacenter x64, run 44422037441; exact candidate application binary, controlled HTTPS redirect",
-      "tested_source_commit": "80fcd8904f8aaeef790d194a13caa21e303d36b2",
+      "actual_verification_evidence": "Run 44437582155 production-update-acceptance-results.json: controlled HTTPS asset returned one 302 to an unexpected host; app rejected before a request to that host and before launching the sentinel. App/registry/settings/history/unrelated files remained unchanged; no staged payload remained and dismissal cleaned transaction staging. This follow-up passes the redirect scenario that failed before the HTTP response in All-scope run 44427940927.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
       "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
@@ -725,9 +725,9 @@
       "description": "Reject invalid TLS certificate",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Untrusted and wrong-host certificate negative tests",
-      "actual_verification_evidence": "Run 44392534668 build/v1.4.0-updater-evidence/production-update-acceptance-results.json: both an untrusted certificate and a trusted certificate with wrong api.github.com SAN were rejected; no HTTP release-feed request was received, meaningful UI error was shown, no staging directory was created, installed executable/version remained unchanged, and history/unrelated profile data stayed byte-identical. Exact production candidate SHA-256 3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe; test harness head 29a35b25ce4a92af28c6bac53937af84e0d322a9; binary source 80fcd8904f8aaeef790d194a13caa21e303d36b2.",
-      "environment": "GitHub Actions Windows Server 2025 Datacenter x64; production candidate 1.4.0; isolated loopback TLS feed.",
-      "tested_source_commit": "29a35b25ce4a92af28c6bac53937af84e0d322a9",
+      "actual_verification_evidence": "Run 44437582155: exact candidate rejected untrusted TLS chain and trusted certificate with wrong api.github.com SAN before feed HTTP. Meaningful UI errors appeared; no staging/install/data change occurred; settings/history/unrelated data remained byte-identical. Test-only trust material was removed.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
       "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
@@ -791,9 +791,9 @@
       "description": "Detect payload replacement after verification",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Rehash at final launch boundary; replace-between-phases test",
-      "actual_verification_evidence": "Run 44392534668 build/v1.4.0-updater-evidence/production-update-acceptance-results.json: same-size staged installer replacement changed SHA-256; coordinator final execution-boundary rehash rejected it, sentinel payload was not launched, installed v1.4.0 executable/registration/history/unrelated data remained unchanged, and a clean verified retry then installed/relaunched v1.4.1. Exact production candidate SHA-256 3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe; test harness head 29a35b25ce4a92af28c6bac53937af84e0d322a9; binary source 80fcd8904f8aaeef790d194a13caa21e303d36b2.",
-      "environment": "GitHub Actions Windows Server 2025 Datacenter x64; isolated disposable profile and controlled HTTPS feed.",
-      "tested_source_commit": "29a35b25ce4a92af28c6bac53937af84e0d322a9",
+      "actual_verification_evidence": "Run 44437582155: same-size post-verification staged installer replacement changed digest and was rejected at the coordinator boundary; sentinel did not run, prior app/version/settings/history stayed intact, then a verified v1.4.1 retry installed and relaunched.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
       "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
@@ -846,10 +846,10 @@
       "description": "Discover a controlled newer release in the app",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Actual test application and fixture release",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: exact candidate discovered controlled stable successor v1.4.1 from the isolated HTTPS GitHub-shaped feed and displayed the installed/available versions.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -857,10 +857,10 @@
       "description": "Open update dialog and select mode",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Native GUI scenario on disposable runner",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: actual update dialog displayed v1.4.0/v1.4.1 and release notes; verified-ready dialog exposed explicit Install Update action.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -868,10 +868,10 @@
       "description": "Start download and expose progress",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Actual download, progress evidence",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: exact-candidate downloader completed actual byte progress for the controlled release asset; rendered progress screenshot retained in artifact.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -879,10 +879,10 @@
       "description": "Complete download and integrity verification",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Payload hash/size evidence",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: actual downloaded installer matched expected SHA-256 before launch; a same-size replacement after verification was rejected by the final-boundary rehash.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -901,10 +901,10 @@
       "description": "Confirm installation then shut down safely",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "User confirmation and actual process exit",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: acceptance automation activated Install Update only after verification; exact candidate exited safely before the actual setup process ran.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -912,10 +912,10 @@
       "description": "Launch installer and replace existing app",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Actual NSIS setup transaction",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: exact candidate coordinator launched the controlled v1.4.1 NSIS installer, which replaced the old executable after app shutdown.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -923,10 +923,10 @@
       "description": "Verify successful installation and relaunch",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Exit status, executable hash/path/version, registry and running process",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: successor hash matched verified payload, file/registration version was 1.4.1, and a new process relaunched from installed path.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -934,10 +934,10 @@
       "description": "Verify user-data policy and temporary cleanup",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "Exact files before/after and staging cleanup",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative.",
-      "environment": "GitHub-hosted Windows Server 2025 x64 (PR merge commit)",
-      "tested_source_commit": "fb920e2869af9e7cf81fb988e8b31a770d3d1e54",
-      "tested_binary_sha256": null,
+      "actual_verification_evidence": "Run 44437582155: seeded settings/schedule remained in real settings file (except check timestamp); history and unrelated profile data stayed byte-identical; staging was removed.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS"
     },
     {
@@ -1409,10 +1409,10 @@
       "description": "Verify installed version and registry registration",
       "implementation_status": "Implementation is present or documented; this field does not imply the acceptance test passed.",
       "required_tests": "File version, uninstall registration and install location",
-      "actual_verification_evidence": "Hosted acceptance run 44175875234 logged this case before the later harness assertion failed. Candidate runtime is an interim unsuccessful package; do not treat it as authoritative. Exact v1.4.0 candidate executable SHA-256: b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e; candidate installer SHA-256: 563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b. The overall acceptance workflow later failed in a separate uninstaller harness, so this is item-level evidence only.",
-      "environment": "GitHub-hosted Windows Server 2025 x64; v1.3.0 to v1.4.0 candidate transition run 44179592402",
-      "tested_source_commit": "a36a29143fd45076b741b9e85d2dc67b6d524916",
-      "tested_binary_sha256": "b4674aaf205165f3927c75ac68cb6b8eab589a3f090bb8179d447e5b2996806e",
+      "actual_verification_evidence": "Run 44437582155: exact current setup fresh-installed v1.4.0 with correct Installed Apps version; subsequent update preserved the registered install path and successor version.",
+      "environment": "GitHub-hosted Windows Server 2025 Datacenter x64; workflow 44437582155; exact retained production candidate",
+      "tested_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+      "tested_binary_sha256": "3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe",
       "status": "PASS",
       "tested_installer_sha256": "563ccdbfc64be7f88438d803273ccbb90c91fd288f92a88f334c4ef004e3d46b"
     },
@@ -2627,24 +2627,24 @@
     "BLOCKED": 3,
     "NOT APPLICABLE": 2
   },
-  "generated_at_utc": "2026-11-19T01:03:05Z",
+  "generated_at_utc": "2026-11-19T01:45:54.8707642Z",
   "latest_validation": {
-    "required_ci_run_id": 44427940986,
-    "required_ci_status": "PASS on PR source head f8dd273e406276cd2fa2277e3d68a9faaf06eb80 (Core tests and Windows package)",
-    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940986",
+    "required_ci_run_id": 44435268483,
+    "required_ci_status": "PASS on PR head 5ebdfa5 (Core tests and Windows package)",
+    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44435268483",
     "windows_acceptance_run_id": 44427940927,
-    "windows_acceptance_status": "FAIL at exact production-candidate update redirect scenario. Packaging/provenance, GUI, v1.3.0 upgrade, standard-user tests, 709 fixture assertions, resource telemetry, exact-hash soak reuse, candidate immutability and artifact upload passed. Production updater showed a TLS secure-connection error before the controlled github.com asset endpoint logged any request; no HTTP redirect response was tested in this run. Not an overall PASS.",
+    "windows_acceptance_status": "All-scope run 44427940927 FAILED before its controlled asset endpoint returned a redirect. Follow-up 44437582155 passed UpdatePreferences scope, with 35 fixture assertions and 62 exact-candidate production assertions. GUI, legacy upgrade, standard-user, network-interruption and ARM64 jobs were skipped; the 110-cycle soak was reused only after exact app-hash match.",
     "windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940927",
     "windows_duplicate_run_id": 44351608851,
     "windows_duplicate_run_status": "cancelled during compiler setup; triggered only by CI/progress changes; no test evidence relied upon",
     "windows_duplicate_run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44351608851",
-    "source_commit": "ea0ce43461ae506e5a6c780d8f85e237f7228c22",
-    "windows_candidate_source_commit": "ea0ce43461ae506e5a6c780d8f85e237f7228c22",
-    "latest_focused_updater_run_id": 44422037441,
-    "latest_focused_updater_status": "PASS for exact candidate EXE SHA256: 62 production assertions including real HTTPS redirect rejection, controlled successor installation/relaunch, settings/history protection and cleanup; separate from failed All-scope run 44427940927.",
-    "latest_focused_updater_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44422037441",
-    "latest_focused_updater_head": "29a35b25ce4a92af28c6bac53937af84e0d322a9",
-    "latest_focused_updater_state_source": "Parent-confirmed terminal GitHub status; production transaction artifact locally inspected; candidate files independently rehashed in a clean download directory.",
+    "source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+    "windows_candidate_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+    "latest_focused_updater_run_id": 44437582155,
+    "latest_focused_updater_status": "PASS for exact candidate: 62 production assertions including invalid TLS, wrong-host TLS, unexpected HTTPS redirect, no unverified installer launch, staged payload replacement rejection, actual controlled 1.4.0-to-1.4.1 installation/relaunch, Preserve Settings/history/data and staging cleanup; plus 35 updater fixture assertions for automatic-download preference, progress, digest, confirmation and cancellation.",
+    "latest_focused_updater_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155",
+    "latest_focused_updater_head": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
+    "latest_focused_updater_state_source": "Terminal workflow result and downloaded artifact 14489596723 independently inspected; all five release file sizes/hashes match identity and manifest, portable executable matches standalone, source ZIP scan clean.",
     "latest_focused_prior_harness_run_id": 44389468807,
     "latest_focused_prior_harness_status": "Harness failure before production assertions; not a product result.",
     "latest_focused_prior_harness_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44389468807",
@@ -2661,9 +2661,9 @@
     "duplicate_full_acceptance_run_id": 44392550713,
     "duplicate_full_acceptance_status": "Cancelled before product tests or resource soak; no product evidence.",
     "duplicate_full_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44392550713",
-    "latest_focused_updater_production_job_status": "PASS (62 assertions; run 44422037441)",
-    "latest_focused_updater_overall_status": "Focused transaction PASS; not an overall pass for run 44427940927.",
-    "required_ci_head": "f8dd273e406276cd2fa2277e3d68a9faaf06eb80",
+    "latest_focused_updater_production_job_status": "PASS (62 formal assertions; exact candidate app SHA 3fe4f96fb0735d4753592051845681e591618f26f66d5c79ee952f86b0e597fe; setup SHA 460420b37b960956438557069afe9e398da29c5bb72e97a2dafd8ad234676669)",
+    "latest_focused_updater_overall_status": "PASS for workflow_dispatch scope UpdatePreferences only; All-scope run 44427940927 remains failed; its All-only GUI/upgrade/standard-user steps were not repeated.",
+    "required_ci_head": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
     "required_ci_final_state": "PASS",
     "final_remote_audit": {
       "checked_at_utc": "2026-11-19 (UTC; checked before documentation commit)",
@@ -2785,26 +2785,26 @@
         ]
       },
       "candidate_artifact": {
-        "id": 14486656139,
-        "name": "eye-break-reminder-v1.4.0-candidate-44427940927",
-        "size_bytes": 11758846,
+        "id": 14489596723,
+        "name": "eye-break-reminder-v1.4.0-candidate-44437582155",
+        "size_bytes": 7146800,
         "expired": false,
-        "expires_at": "2027-02-17T00:18:28Z",
-        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940927/artifacts/14486656139"
+        "expires_at": "2027-02-17T01:31:48Z",
+        "url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155/artifacts/14489596723"
       },
       "personal_laptop_power_actions": "None; no restart, shutdown, lock, suspend or hibernate command was issued.",
       "exercise_break_reminder": "Not accessed."
     },
     "arm64_run_id": 44392534668,
     "arm64_status": "PASS on Windows 11 Enterprise ARM64 using x64 emulation: 27 PASS, 0 FAIL, 2 screenshot-only NOT TESTED because a foreground Microsoft account window blocked capture. Native Windows 11 x64 remains BLOCKED.",
-    "candidate_artifact_download_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940927/artifacts/14486656139",
+    "candidate_artifact_download_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155/artifacts/14489596723",
     "candidate_artifact_identity": {
       "sha256_verified_independently": true,
-      "directory": "build/overnight-2026-11-18/final-candidate-44392534668",
+      "directory": "build/overnight-2026-11-19/final-evidence/run-44437582155/downloaded-candidate",
       "source_archive_137_entries_match_head": true,
-      "binary_source_commit": "80fcd8904f8aaeef790d194a13caa21e303d36b2",
+      "binary_source_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68",
       "authenticode": "app and setup both NotSigned",
-      "source_archive_commit": "29a35b25ce4a92af28c6bac53937af84e0d322a9"
+      "source_archive_commit": "5ebdfa5bbe09916267706e01d2655d6b3f4a4b68"
     },
     "release_readiness": "NOT READY: SEC-029 production publisher authenticity remains BLOCKED because app/setup are unsigned and no production signing trust root is provisioned; 41 requirements remain NOT TESTED and 3 remain BLOCKED.",
     "historical_44345729932": "Terminal failure at focused transaction harness during 60-second disposable CurrentUser Root CA add; earlier steps 1-14 including the 110-cycle soak passed. Harness path subsequently corrected; successful transaction is evidenced by 44392534668.",
@@ -2884,13 +2884,16 @@
     ],
     "latest_pr_head_sha": "f8dd273e406276cd2fa2277e3d68a9faaf06eb80",
     "latest_pr_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7",
-    "current_pr_optional_windows_acceptance_run_id": 44427940927,
-    "current_pr_optional_windows_acceptance_status": "FAIL; exact production update path stopped before HTTP redirect response; see run logs.",
-    "current_pr_optional_windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940927",
-    "candidate_artifact_id": 14486656139,
+    "current_pr_optional_windows_acceptance_run_id": 44437582155,
+    "current_pr_optional_windows_acceptance_status": "PASS for focused UpdatePreferences scope and exact-candidate production transaction; not All-scope acceptance.",
+    "current_pr_optional_windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44437582155",
+    "candidate_artifact_id": 14489596723,
     "candidate_artifact_expired": false,
-    "candidate_artifact_bytes": 11758846,
+    "candidate_artifact_bytes": 7146800,
     "personal_laptop_power_actions": "None; no restart, shutdown, lock, suspend, or hibernate command was issued.",
-    "exercise_break_repository": "Not accessed."
+    "exercise_break_repository": "Not accessed.",
+    "previous_all_scope_windows_acceptance_run_id": 44427940927,
+    "previous_all_scope_windows_acceptance_status": "FAIL before controlled asset endpoint logged an HTTP request; the production app showed a secure-connection error. The focused exact-candidate rerun on a new runner passed the intended redirect rejection.",
+    "previous_all_scope_windows_acceptance_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44427940927"
   }
 }
