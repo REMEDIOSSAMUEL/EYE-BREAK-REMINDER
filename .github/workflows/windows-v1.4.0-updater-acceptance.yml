@@ -112,6 +112,7 @@ jobs:
             EBR_TEST_PREVIOUS_APP="$(cygpath -aw release/EyeBreakReminder.exe)" ./build/updater-windows-tests.exe 2>&1 | tee build/v1.4.0-updater-evidence/updater-windows-test.log
             ./build/updater-production-policy-test.exe 2>&1 | tee build/v1.4.0-updater-evidence/updater-production-policy-test.log
             make updater-test-artifacts "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/updater-failure-fixture-build.log
+            mkdir -p build/gui-test
             make github-updater-smoke "${common_args[@]}" UPDATER_SMOKE_ARGS=--save-v1.3.0-setup 2>&1 | tee build/v1.4.0-updater-evidence/github-updater-smoke.log
             saved_trust=build/v1.4.0-updater-evidence/production-update-trust.hpp
             cp src/update_trust.hpp "$saved_trust"
