@@ -11,6 +11,13 @@ Added
 - SHA-256-verified settings/history and installer-owned-file backups; recovery validates the complete backup set before applying changes, so a corrupted backup is rejected without partially restoring user data.
 - Interactive uninstall data retention choices. Silent uninstall keeps settings and history and removes only the transient timer checkpoint.
 - Version/asset validation tests, a Windows-only real GitHub release-download smoke tool, and updater architecture/security/acceptance documentation.
+- Production automatic updates require a detached ECDSA P-256/SHA-256 signed manifest and reject unsigned or invalid metadata. Test signing roots are isolated from production trust.
+
+Security and initial installation
+
+- The owner-approved v1.4.0 policy makes signed update manifests and production verification mandatory. Authenticode and SignPath are optional for this release; the initial installer may remain unsigned if clearly disclosed.
+- The first installer is a manual bootstrap and is not authenticated by the later update manifest. GitHub HTTPS and checksums do not independently authenticate the publisher if the same release channel is compromised. Windows may show unsigned-publisher or SmartScreen warnings.
+- The production update key is not yet provisioned. The retained candidate is development-only, unsigned, has no production manifest signature and is not approved for distribution.
 
 Changed
 
@@ -20,7 +27,9 @@ Changed
 
 Verification status
 
-- The exact five-file candidate from run `44498562317` passed the actual in-app update/relaunch, settings/history policies, installer/uninstaller, portable recovery and coordinator backup-failure acceptance. The corrected actual HTTPS timeout and exact-candidate 110-cycle soak passed in run `44505090187` (110/110 cycles; 264 PASS, 0 FAIL, 0 NOT TESTED). Clean-runner candidate/hash/provenance audit and Windows 11 ARM64 x64-emulation passed in [run `44527187760`](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44527187760). Focused updater resource loops passed in [run `44533230263`](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44533230263), corrected low-space/profile-ACL checks passed in [run `44535927250`](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44535927250), and the targeted refusal-to-exit, denied installer launch, and locked-file recovery cases passed 27 assertions in [run `44540906174`](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44540906174). Required **Core tests and Windows package** passed on feature head `e552df905bfd70595538f401cf3f4344f1626c3f` in [run `44540918493`](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44540918493); the final documentation update still requires a current-head check. The matrix has 215 PASS, 0 FAIL, 3 NOT TESTED, 11 BLOCKED, and 2 NOT APPLICABLE. The app and setup remain unsigned, so v1.4.0 is **not ready for publication approval**. See the final verification report and machine-readable acceptance matrix for exact identities and remaining gaps.
+- Current candidate source commit `2f1a64eb1bb9914668f4283dfe5d9d4c6c3f4031` has a retained five-file development candidate, artifact [14584378992](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44637430056/artifacts/14584378992), independently verified by artifact [14583418284](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44637430056/artifacts/14583418284). The candidate is not production-authenticated.
+- Required **Core tests and Windows package** passed on report-only feature head `ce819264c7fb133ca933137a1fb97dd57cf5bbca` in [run `44679840526`](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44679840526); CNG, DNS, GUI retry and SEC-028 passed on that head in [run `44679840540`](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44679840540). Signed test-key integration passed in [run `44637430056`](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44637430056), and targeted resource loops passed in [run `44636046501`](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44636046501). The matrix has 217 PASS, 0 FAIL, 1 NOT TESTED, 11 BLOCKED, and 2 NOT APPLICABLE. Production trust remains unprovisioned, and the candidate is not ready for publication approval. See the final verification report and acceptance matrix for exact identities and remaining gaps.
+- Local continuation on top of `ce819264c7fb133ca933137a1fb97dd57cf5bbca`: 10/10 focused signing/finalizer tests and 11/11 Windows CNG assertions pass. A read-only final candidate assembly/independent verification workflow and a `ProductionCandidateOnly` acceptance scope were added locally; they have not been pushed or run. The production key and signed candidate are still pending.
 
 ## 1.3.0 (feature branch; prepared, not published)
 

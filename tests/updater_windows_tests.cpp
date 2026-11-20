@@ -113,9 +113,10 @@ bool testSignedManifestVerification(){
     std::string badEncoding=signature;badEncoding[0]=char(badEncoding[0]^0x80);ok&=check(!verifyManifestSignature(bytes,badEncoding,signer.trusted),"reject an invalid raw signature encoding");
     ok&=check(!verifyManifestSignature(bytes,signature,other.trusted),"reject a signature from a different key");
     TrustedPublicKey unknown=signer.trusted;unknown.keyId="p256-ffffffffffffffff";ok&=check(!verifyManifestSignature(bytes,signature,unknown),"reject an unknown or mismatched signing key identifier");
-    const bool productionSeparate=!ProductionUpdateKeyProvisioned&&ProductionUpdateKeyId.empty()&&
+    const bool productionRootConsistent=ProductionUpdateKeyProvisioned?!ProductionUpdateKeyId.empty():ProductionUpdateKeyId.empty();
+    const bool productionSeparate=productionRootConsistent&&
         !verifyProductionManifest(bytes,signature,"v1.4.1","1.4.0",std::time(nullptr)).ok;
-    ok&=check(productionSeparate,"a disposable test-key signature is rejected by the unprovisioned production trust configuration");
+    ok&=check(productionSeparate,"a disposable test-key signature is rejected by the production trust configuration");
     DWORD before=0,after=0;const bool handleBaseline=GetProcessHandleCount(GetCurrentProcess(),&before)!=FALSE;
     bool repeated=handleBaseline;for(unsigned i=0;i<100;++i)repeated&=verifyManifestSignature(bytes,signature,signer.trusted);
     const bool handlesObserved=GetProcessHandleCount(GetCurrentProcess(),&after)!=FALSE;ok&=check(repeated&&handlesObserved&&before==after,"100 signature verifications release CNG handles back to the process baseline");

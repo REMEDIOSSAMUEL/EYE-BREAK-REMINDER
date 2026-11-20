@@ -12,10 +12,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import update_signing as signing
+import finalize_candidate as candidate
 
 
 def valid_manifest(key_id: str) -> dict[str, object]:
@@ -203,11 +205,143 @@ class SigningToolTests(unittest.TestCase):
             signing.write_trust_header(public, header)
             self.assertIn(signing.key_id(point), header.read_text(encoding="ascii"))
             self.assertIn("ProductionUpdateKeyProvisioned=true", header.read_text(encoding="ascii"))
+            self.assertEqual(signing.public_key_from_trust_header(header), (signing.key_id(point), point))
+            signing.verify_embedded_signature(header, manifest_path, signature_path)
             changed = bytearray(manifest_path.read_bytes())
             changed[changed.index(b"1.4.1")] = ord("9")
             manifest_path.write_bytes(changed)
             with self.assertRaises((ValueError, RuntimeError)):
                 signing.verify_signature(public, manifest_path, signature_path)
+            with self.assertRaises((ValueError, RuntimeError)):
+                signing.verify_embedded_signature(header, manifest_path, signature_path)
+
+    def test_embedded_signature_requires_exact_provisioned_trust_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ebr-embedded-root-test-") as folder:
+            root = Path(folder)
+            unprovisioned = root / "unprovisioned.hpp"
+            unprovisioned.write_text(
+                "inline constexpr bool ProductionUpdateKeyProvisioned=false;\n"
+                'inline constexpr std::string_view ProductionUpdateKeyId="";\n'
+                "inline constexpr std::array<unsigned char,64> ProductionUpdatePublicKey{};\n",
+                encoding="ascii",
+            )
+            with self.assertRaises(ValueError):
+                signing.public_key_from_trust_header(unprovisioned)
+
+            wrong_id = root / "wrong-id.hpp"
+            wrong_id.write_text(
+                "inline constexpr bool ProductionUpdateKeyProvisioned=true;\n"
+                'inline constexpr std::string_view ProductionUpdateKeyId="p256-0000000000000000";\n'
+                "inline constexpr std::array<unsigned char,64> ProductionUpdatePublicKey{{\n"
+                + ",".join("0x00" for _ in range(64))
+                + "\n}};\n",
+                encoding="ascii",
+            )
+            with self.assertRaises(ValueError):
+                signing.public_key_from_trust_header(wrong_id)
+
+    def test_final_candidate_assembly_checks_embedded_signature_and_exact_payloads(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ebr-final-candidate-test-") as folder:
+            root = Path(folder)
+            release = root / "release"
+            release.mkdir()
+            standalone = release / "EyeBreakReminder.exe"
+            installer = release / "EyeBreakReminder-Setup-x64.exe"
+            portable = release / "EyeBreakReminder-Portable-x64.zip"
+            source = release / "EyeBreakReminder-Source.zip"
+            standalone.write_bytes(b"standalone-v1.4.0-test-payload")
+            installer.write_bytes(b"installer-v1.4.0-test-payload")
+            with zipfile.ZipFile(portable, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(standalone, "EyeBreakReminder.exe")
+            with zipfile.ZipFile(source, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("EyeBreakReminder/README.md", "test source snapshot")
+
+            checksum = "".join(
+                f"{candidate.sha256(release / name)}  {name}\n"
+                for name in candidate.CHECKSUM_FILES
+            )
+            (release / "EyeBreakReminder-SHA256.txt").write_text(checksum, encoding="ascii")
+
+            private = root / "disposable-test-private.pem"
+            public = root / "disposable-test-public.pem"
+            header = root / "test-trust.hpp"
+            manifest_path = root / "signed-manifest.json"
+            signature_path = root / "signed-manifest.sig"
+            der_path = root / "signature.der"
+            subprocess.run(
+                ["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256", "-out", str(private)],
+                check=True, stdout=subprocess.DEVNULL,
+            )
+            subprocess.run(["openssl", "pkey", "-in", str(private), "-pubout", "-out", str(public)],
+                           check=True, stdout=subprocess.DEVNULL)
+            point = signing.point_from_public_pem(public)
+            manifest = valid_manifest(signing.key_id(point))
+            manifest["version"] = "1.4.0"
+            manifest["assets"][0]["size"] = installer.stat().st_size
+            manifest["assets"][0]["sha256"] = candidate.sha256(installer)
+            manifest["assets"][1]["size"] = standalone.stat().st_size
+            manifest["assets"][1]["sha256"] = candidate.sha256(standalone)
+            manifest_path.write_bytes(signing.canonical_json(manifest))
+            signing.run_openssl("dgst", "-sha256", "-sign", str(private), "-out", str(der_path), str(manifest_path))
+            signature_path.write_bytes(signing.der_signature_to_raw(der_path.read_bytes()))
+            signing.write_trust_header(public, header)
+
+            result = candidate.finalize_candidate(release, manifest_path, signature_path, header)
+            self.assertEqual(result["status"], "PASS")
+            self.assertTrue(result["manifest_signature_verified_against_embedded_key"])
+            self.assertEqual(len(result["release_files"]), 7)
+            self.assertTrue((release / "EyeBreakReminder-UpdateManifest.json").is_file())
+            audited = candidate.verify_candidate(release, header)
+            self.assertEqual(audited["production_key_id"], signing.key_id(point))
+
+            (release / "EyeBreakReminder-UpdateManifest.json").unlink()
+            (release / "EyeBreakReminder-UpdateManifest.sig").unlink()
+            with zipfile.ZipFile(source, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("EyeBreakReminder/production-private.pem", "placeholder private-key file")
+            checksum = "".join(
+                f"{candidate.sha256(release / name)}  {name}\n"
+                for name in candidate.CHECKSUM_FILES
+            )
+            (release / "EyeBreakReminder-SHA256.txt").write_text(checksum, encoding="ascii")
+            with self.assertRaises(ValueError):
+                candidate.finalize_candidate(release, manifest_path, signature_path, header)
+            self.assertFalse((release / "EyeBreakReminder-UpdateManifest.json").exists())
+            self.assertFalse((release / "EyeBreakReminder-UpdateManifest.sig").exists())
+
+    def test_final_candidate_rejects_payload_change_without_partial_metadata(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ebr-final-candidate-reject-") as folder:
+            root = Path(folder)
+            release = root / "release"
+            release.mkdir()
+            for name, data in (
+                ("EyeBreakReminder.exe", b"portable"),
+                ("EyeBreakReminder-Setup-x64.exe", b"installer"),
+                ("EyeBreakReminder-Portable-x64.zip", b"zip"),
+                ("EyeBreakReminder-Source.zip", b"source"),
+                ("EyeBreakReminder-SHA256.txt", b"checksums\n"),
+            ):
+                (release / name).write_bytes(data)
+            private = root / "disposable-test-private.pem"
+            public = root / "disposable-test-public.pem"
+            header = root / "test-trust.hpp"
+            manifest_path = root / "signed-manifest.json"
+            signature_path = root / "signed-manifest.sig"
+            subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256", "-out", str(private)],
+                           check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["openssl", "pkey", "-in", str(private), "-pubout", "-out", str(public)],
+                           check=True, stdout=subprocess.DEVNULL)
+            signing.write_trust_header(public, header)
+            point = signing.point_from_public_pem(public)
+            manifest = valid_manifest(signing.key_id(point))
+            raw = signing.canonical_json(manifest)
+            manifest_path.write_bytes(raw)
+            der = root / "signature.der"
+            signing.run_openssl("dgst", "-sha256", "-sign", str(private), "-out", str(der), str(manifest_path))
+            signature_path.write_bytes(signing.der_signature_to_raw(der.read_bytes()))
+            with self.assertRaises(ValueError):
+                candidate.finalize_candidate(release, manifest_path, signature_path, header)
+            self.assertFalse((release / "EyeBreakReminder-UpdateManifest.json").exists())
+            self.assertFalse((release / "EyeBreakReminder-UpdateManifest.sig").exists())
 
 
 if __name__ == "__main__":

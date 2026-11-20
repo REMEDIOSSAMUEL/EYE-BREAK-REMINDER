@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       acceptance_scope:
-        description: Run the full acceptance matrix or only the update preference/download round-trip.
+        description: Run the full acceptance matrix, the update preference round-trip, or production-candidate-only installation and resource acceptance.
         type: choice
         required: true
         default: All
         options:
           - All
           - UpdatePreferences
+          - ProductionCandidateOnly
 
 permissions:
   contents: read
@@ -141,7 +142,7 @@ jobs:
 
       - name: Build a controlled v1.4.1 successor without updater test hooks
         id: production_update_fixture
-        if: steps.candidate.outcome == 'success'
+        if: ${{ steps.candidate.outcome == 'success' && github.event.inputs.acceptance_scope != 'ProductionCandidateOnly' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -288,7 +289,7 @@ jobs:
 
       - name: Build the test-only unverified-executable launch sentinel
         id: launch-sentinel
-        if: ${{ !cancelled() && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (github.event.inputs.acceptance_scope == 'UpdatePreferences' || (steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success')) }}
+        if: ${{ !cancelled() && github.event.inputs.acceptance_scope != 'ProductionCandidateOnly' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (github.event.inputs.acceptance_scope == 'UpdatePreferences' || (steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success')) }}
         shell: msys2 {0}
         run: |
           set -euo pipefail
@@ -301,7 +302,7 @@ jobs:
 
       - name: Update the installed exact production candidate through its real updater
         id: production_update
-        if: ${{ !cancelled() && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.launch-sentinel.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (github.event.inputs.acceptance_scope == 'UpdatePreferences' || (steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success')) }}
+        if: ${{ !cancelled() && github.event.inputs.acceptance_scope != 'ProductionCandidateOnly' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.launch-sentinel.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (github.event.inputs.acceptance_scope == 'UpdatePreferences' || (steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success')) }}
         shell: pwsh
         timeout-minutes: 30
         run: |
@@ -317,7 +318,7 @@ jobs:
 
       - name: Verify production coordinator aborts safely when settings backup fails
         id: coordinator_backup_failure
-        if: ${{ !cancelled() && steps.candidate.outcome == 'success' && steps.production_update.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.launch-sentinel.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (github.event.inputs.acceptance_scope == 'UpdatePreferences' || (steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success')) }}
+        if: ${{ !cancelled() && github.event.inputs.acceptance_scope != 'ProductionCandidateOnly' && steps.candidate.outcome == 'success' && steps.production_update.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.launch-sentinel.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (github.event.inputs.acceptance_scope == 'UpdatePreferences' || (steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success')) }}
         shell: pwsh
         timeout-minutes: 30
         run: |
@@ -517,7 +518,8 @@ jobs:
           $soakPassed = $env:SOAK_OUTCOME -eq 'success' -or $env:SOAK_REUSED -eq 'true'
           $fullAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:DOWNLOAD_BODY_TIMEOUT_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:STANDARD_USER_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PORTABLE_RECOVERY_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $env:COORDINATOR_BACKUP_FAILURE_OUTCOME -eq 'success' -and $soakPassed -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
           $preferenceAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $env:COORDINATOR_BACKUP_FAILURE_OUTCOME -eq 'success' -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success' -and $env:SOAK_REUSED -eq 'true'
-          $status = if (($env:ACCEPTANCE_SCOPE -eq 'UpdatePreferences' -and $preferenceAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'All' -and $fullAcceptance)) {'PASS'} else {'NOT READY'}
+          $productionCandidateAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:DOWNLOAD_BODY_TIMEOUT_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:STANDARD_USER_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PORTABLE_RECOVERY_OUTCOME -eq 'success' -and $soakPassed -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
+          $status = if (($env:ACCEPTANCE_SCOPE -eq 'UpdatePreferences' -and $preferenceAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'All' -and $fullAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'ProductionCandidateOnly' -and $productionCandidateAcceptance)) {'PASS'} else {'NOT READY'}
           [pscustomobject]@{Status=$status;Scope=$env:ACCEPTANCE_SCOPE;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;ProductionUpdateFixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;DownloadBodyTimeout=$env:DOWNLOAD_BODY_TIMEOUT_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;StandardUser=$env:STANDARD_USER_OUTCOME;Updater=$env:UPDATER_OUTCOME;PortableRecovery=$env:PORTABLE_RECOVERY_OUTCOME;ProductionBinaryUpdate=$env:PRODUCTION_UPDATE_OUTCOME;CoordinatorBackupFailure=$env:COORDINATOR_BACKUP_FAILURE_OUTCOME;ResourceTelemetry=$env:RESOURCE_TELEMETRY_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;ResourceSoakReused=$env:SOAK_REUSED;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
             ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Encoding UTF8
           if ($status -ne 'PASS') {

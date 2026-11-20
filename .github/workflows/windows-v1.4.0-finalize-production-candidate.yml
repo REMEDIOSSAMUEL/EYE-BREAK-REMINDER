@@ -1,0 +1,232 @@
+name: Finalize signed v1.4.0 production candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful Windows acceptance run that built and tested the exact candidate
+        required: true
+        type: string
+      candidate_source_commit:
+        description: Full 40-character source commit used by that candidate run
+        required: true
+        type: string
+      manifest_base64:
+        description: Base64 of the public canonical signed update manifest; never enter a private key or passphrase
+        required: true
+        type: string
+      signature_base64:
+        description: Base64 of the public 64-byte raw ECDSA signature
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+
+jobs:
+  finalize:
+    if: ${{ github.ref == 'refs/heads/feature/v1.4.0-automatic-updater' }}
+    name: Assemble and authenticate the exact signed candidate
+    runs-on: windows-2025
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    steps:
+      - name: Check out the exact production trust configuration
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install the public metadata verification tools
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+
+      - name: Verify candidate run identity, branch, artifact retention, and embedded key
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_COMMIT: ${{ inputs.candidate_source_commit }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:CANDIDATE_RUN_ID -notmatch '^\d{5,}$') { throw 'Candidate run ID must be a decimal GitHub Actions run ID.' }
+          if ($env:CANDIDATE_SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$' -or $env:CANDIDATE_SOURCE_COMMIT -cne $env:GITHUB_SHA) { throw 'Candidate source commit must equal this exact feature-branch workflow commit.' }
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          $base = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY"
+          $candidate = Invoke-RestMethod -Headers $headers -Uri "$base/actions/runs/$env:CANDIDATE_RUN_ID"
+          if ($candidate.name -cne 'Windows v1.4.0 updater and release-candidate acceptance' -or $candidate.status -cne 'completed' -or $candidate.conclusion -cne 'success' -or $candidate.head_branch -cne 'feature/v1.4.0-automatic-updater' -or $candidate.head_sha -cne $env:CANDIDATE_SOURCE_COMMIT) { throw 'Candidate run must be the completed successful Windows acceptance workflow on the feature branch at the exact declared commit.' }
+          $checks = Invoke-RestMethod -Headers $headers -Uri "$base/commits/$env:CANDIDATE_SOURCE_COMMIT/check-runs?filter=latest&per_page=100"
+          $requiredCheck = @($checks.check_runs | Where-Object { $_.name -ceq 'Core tests and Windows package' -and $_.head_sha -ceq $env:CANDIDATE_SOURCE_COMMIT })
+          if ($requiredCheck.Count -ne 1 -or $requiredCheck[0].status -cne 'completed' -or $requiredCheck[0].conclusion -cne 'success') { throw 'The exact candidate commit must have a successful latest Core tests and Windows package check.' }
+          $env:REQUIRED_CHECK_RUN_ID = [string]$requiredCheck[0].id
+          $env:REQUIRED_CHECK_URL = [string]$requiredCheck[0].html_url
+          "REQUIRED_CHECK_RUN_ID=$env:REQUIRED_CHECK_RUN_ID" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "REQUIRED_CHECK_URL=$env:REQUIRED_CHECK_URL" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $artifacts = Invoke-RestMethod -Headers $headers -Uri "$base/actions/runs/$env:CANDIDATE_RUN_ID/artifacts?per_page=100"
+          $artifactName = "eye-break-reminder-v1.4.0-candidate-$env:CANDIDATE_RUN_ID"
+          $artifact = @($artifacts.artifacts | Where-Object { $_.name -ceq $artifactName -and -not $_.expired })
+          if ($artifact.Count -ne 1) { throw 'The exact successful Windows acceptance artifact is missing, expired, or ambiguous.' }
+          $trust = Get-Content -LiteralPath 'src/update_trust.hpp' -Raw
+          if ($trust -notmatch 'ProductionUpdateKeyProvisioned\s*=\s*true\s*;' -or $trust -notmatch 'ProductionUpdateKeyId\s*=\s*"p256-[0-9a-f]{16}"') { throw 'The feature source does not embed a provisioned production P-256 trust key.' }
+          if ($trust -match 'TestUpdateKey|TestPublicKey|EYBREAK_TEST_BUILD') { throw 'Production trust configuration contains a test-root marker.' }
+          $env:PRODUCTION_KEY_ID = [regex]::Match($trust, 'ProductionUpdateKeyId\s*=\s*"(p256-[0-9a-f]{16})"').Groups[1].Value
+          if (-not $env:PRODUCTION_KEY_ID) { throw 'Could not identify the embedded production key.' }
+          "PRODUCTION_KEY_ID=$env:PRODUCTION_KEY_ID" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Download the exact candidate and Windows acceptance evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.4.0-candidate-${{ inputs.candidate_run_id }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: candidate-input
+
+      - name: Decode the public manifest and signature without logging their contents
+        shell: pwsh
+        env:
+          MANIFEST_BASE64: ${{ inputs.manifest_base64 }}
+          SIGNATURE_BASE64: ${{ inputs.signature_base64 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:MANIFEST_BASE64 -notmatch '^[A-Za-z0-9+/]+={0,2}$' -or ($env:MANIFEST_BASE64.Length % 4) -ne 0) { throw 'Manifest input is not canonical base64.' }
+          if ($env:SIGNATURE_BASE64 -notmatch '^[A-Za-z0-9+/]+={0,2}$' -or ($env:SIGNATURE_BASE64.Length % 4) -ne 0) { throw 'Signature input is not canonical base64.' }
+          $manifestBytes = [Convert]::FromBase64String($env:MANIFEST_BASE64)
+          $signatureBytes = [Convert]::FromBase64String($env:SIGNATURE_BASE64)
+          if ($manifestBytes.Length -lt 1 -or $manifestBytes.Length -gt 16384 -or $signatureBytes.Length -ne 64) { throw 'Manifest or raw ECDSA signature length is invalid.' }
+          $metadata = Join-Path $PWD 'build/v1.4.0-finalized-evidence/signed-input'
+          New-Item -ItemType Directory -Path $metadata -ErrorAction Stop | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $metadata 'EyeBreakReminder-UpdateManifest.json'), $manifestBytes)
+          [IO.File]::WriteAllBytes((Join-Path $metadata 'EyeBreakReminder-UpdateManifest.sig'), $signatureBytes)
+
+      - name: Confirm payload versions and unsigned-bootstrap disclosure
+        shell: pwsh
+        env:
+          CANDIDATE_SOURCE_COMMIT: ${{ inputs.candidate_source_commit }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = 'candidate-input/release'
+          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe')) {
+            $path = Join-Path $release $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate payload is missing: $name" }
+            if ((Get-Item -LiteralPath $path).VersionInfo.ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw "Wrong product version in $name" }
+            if ((Get-AuthenticodeSignature -LiteralPath $path).Status -ne [Management.Automation.SignatureStatus]::NotSigned) { throw "This candidate was expected to remain Authenticode unsigned under the approved policy: $name" }
+          }
+          $provenance = Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
+          if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.SourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.RunId -ne $env:CANDIDATE_RUN_ID) { throw 'Candidate artifact provenance does not match the requested source and run.' }
+
+      - name: Assemble seven release assets and verify signature, payloads, and source archive
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          python scripts/finalize_candidate.py \
+            --assemble \
+            --release-dir candidate-input/release \
+            --manifest build/v1.4.0-finalized-evidence/signed-input/EyeBreakReminder-UpdateManifest.json \
+            --signature build/v1.4.0-finalized-evidence/signed-input/EyeBreakReminder-UpdateManifest.sig \
+            --trust-header src/update_trust.hpp \
+            --report build/v1.4.0-finalized-evidence/candidate-verification.json
+          mkdir -p final-candidate final-candidate-evidence
+          cp candidate-input/release/EyeBreakReminder.exe final-candidate/
+          cp candidate-input/release/EyeBreakReminder-Setup-x64.exe final-candidate/
+          cp candidate-input/release/EyeBreakReminder-Portable-x64.zip final-candidate/
+          cp candidate-input/release/EyeBreakReminder-Source.zip final-candidate/
+          cp candidate-input/release/EyeBreakReminder-SHA256.txt final-candidate/
+          cp candidate-input/release/EyeBreakReminder-UpdateManifest.json final-candidate/
+          cp candidate-input/release/EyeBreakReminder-UpdateManifest.sig final-candidate/
+          cp build/v1.4.0-finalized-evidence/candidate-verification.json final-candidate-evidence/
+
+      - name: Record exact candidate provenance and retain signed files
+        shell: pwsh
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_COMMIT: ${{ inputs.candidate_source_commit }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = Get-Content -LiteralPath 'final-candidate-evidence/candidate-verification.json' -Raw | ConvertFrom-Json
+          if ($identity.status -cne 'PASS' -or $identity.production_key_id -cne $env:PRODUCTION_KEY_ID) { throw 'Production signature verification did not match the source trust root.' }
+          [pscustomobject]@{Status='PASS';Application=$identity.application;Version=$identity.version;RequiredCheckName='Core tests and Windows package';RequiredCheckRunId=$env:REQUIRED_CHECK_RUN_ID;RequiredCheckUrl=$env:REQUIRED_CHECK_URL;CandidateAcceptanceRunId=$env:CANDIDATE_RUN_ID;CandidateAcceptanceRunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:CANDIDATE_RUN_ID";CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;FinalizationRunId=$env:GITHUB_RUN_ID;FinalizationSourceCommit=$env:GITHUB_SHA;ProductionKeyId=$identity.production_key_id;ManifestSignatureVerified=$true;Authenticode='NotSigned (owner-approved for v1.4.0; unsigned initial bootstrap must be disclosed)';Published=$false;Tagged=$false;Merged=$false;ReleaseFiles=$identity.release_files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'final-candidate-evidence/candidate-provenance.json' -Encoding UTF8
+
+      - name: Upload the exact signed candidate for publication review
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-${{ github.run_id }}
+          path: |
+            final-candidate/**
+            final-candidate-evidence/**
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  independent-audit:
+    needs: finalize
+    if: ${{ needs.finalize.result == 'success' }}
+    name: Independently download and verify the retained signed candidate
+    runs-on: windows-2025
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the same embedded production verification key
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install independent public verification tools
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+
+      - name: Download the exact retained production candidate into a clean directory
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-${{ github.run_id }}
+          path: clean-download
+
+      - name: Reverify every artifact and the embedded-key manifest signature
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          python scripts/finalize_candidate.py \
+            --verify-existing \
+            --release-dir clean-download/final-candidate \
+            --trust-header src/update_trust.hpp \
+            --report clean-download/final-candidate-evidence/independent-verification.json
+          test "$(find clean-download/final-candidate -maxdepth 1 -type f | wc -l)" -eq 7
+          ! find clean-download/final-candidate -mindepth 1 -maxdepth 1 -type d | grep -q .
+
+      - name: Confirm exact source and candidate provenance
+        shell: pwsh
+        env:
+          CANDIDATE_SOURCE_COMMIT: ${{ inputs.candidate_source_commit }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = Get-Content -LiteralPath 'clean-download/final-candidate-evidence/independent-verification.json' -Raw | ConvertFrom-Json
+          $provenance = Get-Content -LiteralPath 'clean-download/final-candidate-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
+          if ($identity.status -cne 'PASS' -or $identity.production_key_id -cne $provenance.ProductionKeyId -or $provenance.RequiredCheckName -cne 'Core tests and Windows package' -or -not $provenance.RequiredCheckRunId -or -not $provenance.RequiredCheckUrl -or $provenance.CandidateSourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.CandidateAcceptanceRunId -cne $env:CANDIDATE_RUN_ID -or $provenance.FinalizationSourceCommit -cne $env:GITHUB_SHA) { throw 'Independent artifact provenance or embedded-key verification did not match.' }
+
+      - name: Retain independent verification evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.4.0-independent-candidate-verification-${{ github.run_id }}
+          path: clean-download/final-candidate-evidence/independent-verification.json
+          if-no-files-found: error
+          retention-days: 90

@@ -8,7 +8,9 @@ A native Windows desktop eye-break utility, compiled from Linux with C++17 and M
 
 **Portable:** extract `EyeBreakReminder-Portable-x64.zip` and double-click `EyeBreakReminder.exe`. You can also use the separately supplied `EyeBreakReminder.exe` directly: its icon and five sounds are embedded. No compiler or SDK is needed to run it. Only Windows 11 on a native x64 operating system is supported.
 
-**Signing:** this build is unsigned. No trusted signing certificate or publisher identity was supplied. Windows may show its normal warnings for unsigned downloads; this project does not change or bypass Windows security.
+**Windows signing:** the v1.4.0 installer and executable may be Authenticode unsigned under the owner's approved release policy. Windows can show publisher or SmartScreen warnings; this project does not change or bypass Windows security. The initial installer is a manual bootstrap and is not authenticated by the updater manifest. GitHub HTTPS and a checksum do not independently authenticate the publisher if the repository or release channel is compromised.
+
+**Automatic update trust:** after a trusted initial installation, v1.4.0 production updates must include an ECDSA P-256/SHA-256 signed manifest verified by the public key embedded in the application. The manifest binds each supported update payload to its identity, version, architecture, size and SHA-256 digest. Missing or invalid signatures are rejected with no unsigned-update fallback. This signature does not Authenticode-sign the initial installer or remove Windows warnings. The current candidate is development-only and is not approved for distribution.
 
 ## Controls
 

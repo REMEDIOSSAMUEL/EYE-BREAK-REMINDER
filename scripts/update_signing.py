@@ -333,6 +333,41 @@ def verify_signature(public_key: Path, manifest: Path, signature: Path) -> None:
     print(f"PASS: authenticated {value['repository']} v{value['version']} with key {value['key_id']}")
 
 
+def public_key_from_trust_header(path: Path) -> tuple[str, bytes]:
+    text = path.read_text(encoding="ascii")
+    provisioned = re.search(r"ProductionUpdateKeyProvisioned\s*=\s*(true|false)\s*;", text)
+    key_identifier = re.search(r'ProductionUpdateKeyId\s*=\s*"(p256-[0-9a-f]{16})"', text)
+    public_array = re.search(r"ProductionUpdatePublicKey\s*\{\{([\s\S]*?)\}\}\s*;", text)
+    if not provisioned or provisioned.group(1) != "true" or not key_identifier or not public_array:
+        raise ValueError("The production trust header does not contain a provisioned public key.")
+    encoded = public_array.group(1)
+    values = re.findall(r"0x([0-9a-fA-F]{2})", encoded)
+    remainder = re.sub(r"0x[0-9a-fA-F]{2}|[\s,]", "", encoded)
+    point = bytes.fromhex("".join(values))
+    if remainder or len(point) != 64:
+        raise ValueError("The embedded production P-256 public point is malformed.")
+    identifier = key_identifier.group(1)
+    if key_id(point) != identifier:
+        raise ValueError("The embedded production public-key identifier does not match its public point.")
+    return identifier, point
+
+
+def verify_embedded_signature(trust_header: Path, manifest: Path, signature: Path) -> None:
+    _, value = load_manifest(manifest)
+    identifier, point = public_key_from_trust_header(trust_header)
+    if value["key_id"] != identifier:
+        raise ValueError("The manifest signing key identifier is not the embedded production key.")
+    public_der = SPKI_P256_PREFIX + point
+    import base64
+
+    encoded = base64.encodebytes(public_der).decode("ascii")
+    public_pem = "-----BEGIN PUBLIC KEY-----\n" + encoded + "-----END PUBLIC KEY-----\n"
+    with tempfile.TemporaryDirectory(prefix="ebr-embedded-public-key-") as folder:
+        public_path = Path(folder) / "production-public.pem"
+        public_path.write_text(public_pem, encoding="ascii", newline="\n")
+        verify_signature(public_path, manifest, signature)
+
+
 def write_trust_header(public_key: Path, output: Path) -> None:
     point = point_from_public_pem(public_key)
     kid = key_id(point)
@@ -418,8 +453,8 @@ def generate_key(args: argparse.Namespace) -> None:
         except OSError:
             pass
         raise
-    print(f"Created encrypted offline P-256 key. Public key id: {key_id(point)}")
-    print("The private key contents were not displayed. Securely back it up offline and remove it from networked systems.")
+    print(f"Created encrypted P-256 key. Public key id: {key_id(point)}")
+    print("The private key contents were not displayed. Keep the encrypted key in protected storage, back it up to the owner-approved recovery location, and store its passphrase separately.")
 
 
 def sign(args: argparse.Namespace) -> None:
@@ -486,6 +521,11 @@ def main() -> int:
     verification.add_argument("--manifest", type=Path, required=True)
     verification.add_argument("--signature", type=Path, required=True)
     verification.set_defaults(func=lambda args: verify_signature(args.public_key, args.manifest, args.signature))
+    embedded = commands.add_parser("verify-embedded", help="verify a manifest against the production key embedded in update_trust.hpp")
+    embedded.add_argument("--trust-header", type=Path, default=ROOT / "src" / "update_trust.hpp")
+    embedded.add_argument("--manifest", type=Path, required=True)
+    embedded.add_argument("--signature", type=Path, required=True)
+    embedded.set_defaults(func=lambda args: verify_embedded_signature(args.trust_header, args.manifest, args.signature))
     args = parser.parse_args()
     try:
         args.func(args)

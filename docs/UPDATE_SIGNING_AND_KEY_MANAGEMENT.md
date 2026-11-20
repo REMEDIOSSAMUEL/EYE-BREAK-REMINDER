@@ -1,6 +1,6 @@
 # Update signing and key management
 
-**Status (2026-11-20):** ECDSA P-256/SHA-256 manifest verification and signing tooling are implemented. The signing tool rejects production private-key paths in the checkout, OneDrive roots, and temp directories, and verifies a new dedicated key directory's Windows DACL is limited to the current user. Its seven focused signing-tool tests pass, including a real disposable Windows ACL check. No existing Eye Break Reminder CNG production key or matching current-user publisher certificate was found. The environment has no removable volume for an offline recovery copy, so no production key was generated or embedded. The retained candidate is development-only and has no production manifest signature; Authenticode is a separate unresolved control.
+**Status (2026-11-20):** ECDSA P-256/SHA-256 manifest verification and signing tooling are implemented. The signing tool rejects production private-key paths in the checkout, OneDrive roots, and temp directories, and verifies a new dedicated key directory's Windows DACL is limited to the current user. The current focused signing and candidate-finalizer suite passes 10/10 on this Windows host, including actual disposable ACL inspection and embedded-key manifest verification. No existing Eye Break Reminder CNG production key or matching current-user publisher certificate was found. The owner approved manually backing up the encrypted PEM in a user-controlled secure file vault with the passphrase kept separate. No production key has been generated yet; the owner must enter the passphrase at the local prompt and confirm the backup is recoverable before the public key is embedded. The retained candidate is development-only and has no production manifest signature. Authenticode is optional for v1.4.0 under the owner's revised policy; the initial installer may remain unsigned if this is clearly disclosed.
 
 ## What the signature protects
 
@@ -42,41 +42,105 @@ The signing-tool hardening rejects private-key paths under the repository, the c
 
 ## Provision a production key
 
-Use an offline Windows signing machine and an encrypted NTFS removable drive that is outside the checkout and all synchronized folders. The key-directory path supplied below must not already exist; its parent volume root must already be mounted. The generator creates the dedicated directory, removes inherited access rules, grants only the current Windows user SID, and verifies the directory and private-key file ACLs. It rejects paths in the checkout, a detected OneDrive root, or the system temp directory. The key uses OpenSSL AES-256-CBC and an interactive passphrase prompt. Generate a random passphrase with at least 128 bits of entropy in a password manager. Keep that passphrase there and make a separately protected encrypted backup on offline media; never save the passphrase beside the private-key backup. The script never prints the private key and never accepts its passphrase in an argument. It refuses to overwrite existing key files, refuses identical private/public paths, and signing refuses output paths that collide with keys or payloads or already contain metadata.
+Use a protected Windows signing account and a key directory outside the checkout, OneDrive, and temp. A removable NTFS drive is preferred; the owner also approved a password-manager secure file attachment as an independently recoverable backup for the AES-256-encrypted PEM, with the passphrase stored separately. The assistant will not upload this material. The owner must run key generation locally, enter a password-manager-generated random passphrase with at least 128 bits of entropy, manually save the encrypted PEM to the approved vault, and confirm the backup is recoverable. The key-directory path supplied below must not already exist; its parent volume root must already be mounted. The generator creates the dedicated directory, removes inherited access rules, grants only the current Windows user SID, and verifies the directory and private-key file ACLs. It rejects paths in the checkout, a detected OneDrive root, or the system temp directory. The key uses OpenSSL AES-256-CBC and an interactive passphrase prompt. The script never prints the private key and never accepts its passphrase in an argument. It refuses to overwrite existing key files, refuses identical private/public paths, and signing refuses output paths that collide with keys or payloads or already contain metadata.
 
 ```powershell
+$ebrKeyDir = Join-Path $env:LOCALAPPDATA 'EyeBreakReminderSigning'
 python scripts/update_signing.py generate `
-  --private-key "E:\EyeBreakReminderSigning\production-private.pem" `
-  --public-key "E:\EyeBreakReminderSigning\production-public.pem"
+  --private-key (Join-Path $ebrKeyDir 'production-private.pem') `
+  --public-key (Join-Path $ebrKeyDir 'production-public.pem')
 
-python scripts/update_signing.py embed-public `
-  --public-key "E:\EyeBreakReminderSigning\production-public.pem"
 ```
 
-Review the generated key ID and public-key diff, then commit only `src/update_trust.hpp`. Keep both PEM files on protected offline storage; never put the private PEM in Git, OneDrive, an installer, a ZIP, a workflow artifact, a screenshot, or a log. Do not provision a key until its offline backup and recovery procedure are in place. In this session, the expected Eye Break Reminder user CNG key was absent (Windows returned `NTE_BAD_KEYSET`), no matching publisher certificate existed, and the removable-volume inventory returned no devices. Therefore no private key was generated, no public trust key was embedded, and production updates remain fail-closed. An offline NTFS recovery device and a separately managed passphrase are the minimum custody prerequisites; no identity or passphrase was invented.
+After generation, manually attach only `production-private.pem` to the approved secure vault entry; keep the random passphrase in a separate vault item. Do not send either item to this session. To verify the stored attachment is recoverable, download it back to the protected `%LOCALAPPDATA%\EyeBreakReminderSigning` directory as `recovery-check.pem`, compare its SHA-256 with the original encrypted PEM, and derive a public key interactively without exposing the passphrase:
+
+```powershell
+$recovered = Join-Path $ebrKeyDir 'recovery-check.pem'
+$derivedPublic = Join-Path $ebrKeyDir 'recovery-check-public.pem'
+Remove-Item -LiteralPath $derivedPublic -Force -ErrorAction SilentlyContinue
+if ((Get-FileHash $recovered -Algorithm SHA256).Hash -ne (Get-FileHash (Join-Path $ebrKeyDir 'production-private.pem') -Algorithm SHA256).Hash) { throw 'The recovered encrypted backup differs from the original.' }
+openssl pkey -in $recovered -pubout -out $derivedPublic
+if ($LASTEXITCODE -ne 0) { throw 'OpenSSL could not decrypt the recovered key and derive its public key.' }
+if ((Get-FileHash $derivedPublic -Algorithm SHA256).Hash -ne (Get-FileHash (Join-Path $ebrKeyDir 'production-public.pem') -Algorithm SHA256).Hash) { throw 'The recovered key does not match the provisioned public key.' }
+Remove-Item -LiteralPath $recovered, $derivedPublic
+
+# After the recovered public key matches, embed only the public key in source.
+python scripts/update_signing.py embed-public `
+  --public-key (Join-Path $ebrKeyDir 'production-public.pem')
+```
+
+Run this only after the vault attachment can be downloaded successfully. It checks both byte-for-byte recovery and that the encrypted key decrypts to the matching public key. The removal command targets only the two named temporary verification files inside the dedicated protected key directory.
+
+Review the generated key ID and public-key diff, then commit only `src/update_trust.hpp`. Never put the private PEM in Git, OneDrive, an installer, a ZIP, a workflow artifact, a screenshot, or a log. In this session, no matching publisher certificate existed; the current environment exposed no removable volume, and volume/BitLocker metadata could not be queried without host administrator access. The owner approved the secure-vault backup route but must still run the command locally, enter the passphrase, manually save the encrypted PEM attachment with the passphrase separate, and confirm that the backup is recoverable. Until that confirmation, no production key has been generated or embedded, so production updates remain fail-closed. No identity or passphrase was invented.
 
 ## Sign and verify a release
 
 Build and test final payloads first. If Authenticode signing is available, sign and verify the EXE and installer before building the portable ZIP and before hashing. Do not alter any payload after signing its manifest digest.
 
 ```powershell
+$ebrKeyDir = Join-Path $env:LOCALAPPDATA 'EyeBreakReminderSigning'
+$candidateRunId = '00000000000' # Replace with the successful ProductionCandidateOnly Windows run.
+$run = gh api "repos/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/$candidateRunId" | ConvertFrom-Json
+if ($run.name -cne 'Windows v1.4.0 updater and release-candidate acceptance' -or $run.status -cne 'completed' -or $run.conclusion -cne 'success' -or $run.head_branch -cne 'feature/v1.4.0-automatic-updater') { throw 'Candidate run is not the successful feature-branch acceptance run.' }
+$candidateSourceCommit = $run.head_sha
+$candidateRoot = Join-Path $env:TEMP "EyeBreakReminder-v1.4.0-candidate-$candidateRunId"
+gh run download $candidateRunId --repo REMEDIOSSAMUEL/EYE-BREAK-REMINDER `
+  --name "eye-break-reminder-v1.4.0-candidate-$candidateRunId" `
+  --dir $candidateRoot
+if ($LASTEXITCODE -ne 0) { throw 'Could not download the retained Windows acceptance candidate.' }
+$release = Join-Path $candidateRoot 'release'
+if ($run.status -cne 'completed' -or $run.conclusion -cne 'success' -or $run.head_branch -cne 'feature/v1.4.0-automatic-updater' -or $run.head_sha -cne $candidateSourceCommit) { throw 'Candidate run is not a successful exact-commit feature-branch run.' }
+$provenance = Get-Content (Join-Path $candidateRoot 'build/v1.4.0-updater-evidence/candidate-provenance.json') -Raw | ConvertFrom-Json
+$gate = Get-Content (Join-Path $candidateRoot 'build/v1.4.0-updater-evidence/windows-acceptance-gate.json') -Raw | ConvertFrom-Json
+if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.RunId -ne $candidateRunId -or $provenance.SourceCommit -cne $candidateSourceCommit -or $provenance.Branch -cne 'feature/v1.4.0-automatic-updater' -or $gate.Status -cne 'PASS' -or $gate.Scope -cne 'ProductionCandidateOnly') { throw 'Candidate provenance or production-candidate acceptance gate is not valid.' }
+$identities = @(Get-Content (Join-Path $candidateRoot 'build/v1.4.0-updater-evidence/release-artifact-identities.json') -Raw | ConvertFrom-Json)
+if ($identities.Count -ne 5 -or @(Get-ChildItem -LiteralPath $release -File).Count -ne 5 -or @(Get-ChildItem -LiteralPath $release -Directory).Count -ne 0) { throw 'Candidate identity record/release directory does not contain exactly five release files.' }
+foreach ($item in $identities) {
+  $file = Get-Item (Join-Path $release $item.Name)
+  if ($file.Length -ne [long]$item.Bytes -or (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $item.SHA256) { throw "Candidate bytes differ from the verified acceptance identity: $($item.Name)" }
+}
+$metadataDir = Join-Path $ebrKeyDir "v1.4.0-signed-metadata-$candidateRunId"
+$expiresAt = (Get-Date).ToUniversalTime().AddDays(60).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
+
 python scripts/update_signing.py sign `
-  --private-key "E:\EyeBreakReminderSigning\production-private.pem" `
-  --public-key "E:\EyeBreakReminderSigning\production-public.pem" `
-  --version 1.4.1 `
-  --expires-at "2027-02-17T00:00:00Z" `
-  --installer "release\EyeBreakReminder-Setup-x64.exe" `
-  --portable "release\EyeBreakReminder.exe" `
-  --manifest "release\EyeBreakReminder-UpdateManifest.json" `
-  --signature "release\EyeBreakReminder-UpdateManifest.sig"
+  --private-key (Join-Path $ebrKeyDir 'production-private.pem') `
+  --public-key (Join-Path $ebrKeyDir 'production-public.pem') `
+  --version 1.4.0 `
+  --expires-at $expiresAt `
+  --installer (Join-Path $release 'EyeBreakReminder-Setup-x64.exe') `
+  --portable (Join-Path $release 'EyeBreakReminder.exe') `
+  --manifest (Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.json') `
+  --signature (Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.sig')
 
 python scripts/update_signing.py verify `
-  --public-key "E:\EyeBreakReminderSigning\production-public.pem" `
-  --manifest "release\EyeBreakReminder-UpdateManifest.json" `
-  --signature "release\EyeBreakReminder-UpdateManifest.sig"
+  --public-key (Join-Path $ebrKeyDir 'production-public.pem') `
+  --manifest (Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.json') `
+  --signature (Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.sig')
+
+python scripts/update_signing.py verify-embedded `
+  --manifest (Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.json') `
+  --signature (Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.sig')
 ```
 
-The tool validates the canonical schema and payload names, hashes the exact EXE files, creates metadata, asks OpenSSL to sign the complete manifest bytes, converts the DER signature to the 64-byte P1363 format used by CNG, verifies the result against the public key, rehashes payloads before writing the outputs, and writes the two public metadata files. Its path-collision and no-overwrite checks protect existing payload/key/metadata files. Independently verify each release file's size and checksum after signing. The offline signer is never part of pull-request CI; only exact binaries from a reviewed, required-check-passing release commit may be brought to the protected signing process. Publish the manifest and signature as ordinary public release assets only after the protected release process approves the exact candidate.
+The tool validates the canonical schema and payload names, hashes the exact EXE files, creates metadata, asks OpenSSL to sign the complete manifest bytes, converts the DER signature to the 64-byte P1363 format used by CNG, verifies the result against both the public PEM and the public key embedded in the source header, rehashes payloads before writing outputs, and writes the two public metadata files outside the candidate directory. Its path-collision and no-overwrite checks protect existing payload/key/metadata files. The finalizer workflow downloads only the successful exact-commit Windows candidate, verifies the signature against `src/update_trust.hpp`, validates all seven files and scans the source archive, then retains a separate signed candidate artifact and independently downloads and verifies it. Run `windows-v1.4.0-updater-acceptance.yml` with `ProductionCandidateOnly` after the required PR check passes; this installs and tests the exact production candidate and performs the final resource soak once without using the obsolete unsigned production-feed test path. The offline signer is never part of pull-request CI and no workflow receives a private key.
+
+After signing, use PowerShell to dispatch finalization with the public metadata only. Replace the run ID and commit with those of the successful `ProductionCandidateOnly` candidate build. The base64 values contain only the public manifest and public signature:
+
+```powershell
+$candidateRunId = '00000000000'
+$candidateCommit = $candidateSourceCommit
+$manifestBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.json')))
+$signatureBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.sig')))
+gh workflow run windows-v1.4.0-finalize-production-candidate.yml `
+  --repo REMEDIOSSAMUEL/EYE-BREAK-REMINDER `
+  --ref feature/v1.4.0-automatic-updater `
+  -f "candidate_run_id=$candidateRunId" `
+  -f "candidate_source_commit=$candidateCommit" `
+  -f "manifest_base64=$manifestBase64" `
+  -f "signature_base64=$signatureBase64"
+```
+
+The finalization workflow has read-only repository, Actions and check-run permissions. It requires the latest **Core tests and Windows package** check to have succeeded on the exact candidate commit; it then checks the candidate run status, exact branch and commit, artifact expiry, version, embedded production key, manifest signature and all payload hashes. It records the successful required-check run identity in the candidate provenance and independently verifies it after download. It does not publish a release, create a tag, merge the PR, or receive any private signing material.
 
 ## Bootstrap, rollback, and recovery
 
@@ -102,4 +166,4 @@ Microsoft's Azure Artifact Signing is paid (the current Microsoft comparison lis
 
 ## Release policy decision
 
-The signed-manifest architecture is implemented as an alternative to relying solely on Authenticode for automatic-update authenticity. It does not change the original Authenticode acceptance requirement. The owner must explicitly approve this policy change before publication. At present neither the production manifest trust root nor an Authenticode certificate has been provisioned, so v1.4.0 is not production-ready.
+The owner approved this v1.4.0 policy on 2026-11-20: signed update manifests and production signature verification are mandatory; Authenticode is optional; SignPath approval is not a release prerequisite; and the initial installer may remain unsigned with clear disclosure. This policy does not make unsigned bootstrap binaries Authenticode-trusted or remove SmartScreen warnings. The production manifest trust root and signed production metadata are still absent, so v1.4.0 is not yet publication-ready.
