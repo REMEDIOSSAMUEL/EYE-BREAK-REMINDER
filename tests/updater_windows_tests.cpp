@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <vector>
 #include <cstring>
@@ -19,6 +20,18 @@
 namespace {
 int assertions=0;
 bool check(bool value,const char*name){++assertions;if(!value)std::cerr<<"FAIL: "<<name<<'\n';return value;}
+int verifyProductionManifestFiles(const char*manifestPath,const char*signaturePath,const char*releaseTag,const char*installedVersion){
+    if(!eye::updates::ProductionUpdateKeyProvisioned||eye::updates::ProductionUpdateKeyId.empty()){
+        std::cerr<<"FAIL: production update trust root is not provisioned.\n";return 1;
+    }
+    std::ifstream manifestInput(manifestPath,std::ios::binary),signatureInput(signaturePath,std::ios::binary);
+    if(!manifestInput||!signatureInput){std::cerr<<"FAIL: production manifest or signature file could not be read.\n";return 1;}
+    const std::string manifest((std::istreambuf_iterator<char>(manifestInput)),std::istreambuf_iterator<char>());
+    const std::string signature((std::istreambuf_iterator<char>(signatureInput)),std::istreambuf_iterator<char>());
+    const auto authorization=eye::updates::verifyProductionManifest(manifest,signature,releaseTag,installedVersion,std::time(nullptr));
+    if(!authorization.ok){std::cerr<<"FAIL: Windows CNG rejected the production update manifest: "<<authorization.error<<'\n';return 1;}
+    std::cout<<"PASS: Windows CNG authenticated production manifest v"<<authorization.manifest.version<<" with embedded key "<<authorization.manifest.keyId<<".\n";return 0;
+}
 bool writeBytes(const std::wstring&path,const std::string&value){HANDLE file=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return false;DWORD wrote=0;const bool ok=WriteFile(file,value.data(),DWORD(value.size()),&wrote,nullptr)&&wrote==value.size();CloseHandle(file);return ok;}
 struct EphemeralSigningKey {
     eye::updates::signature_detail::AlgorithmHandle algorithm;
@@ -376,6 +389,7 @@ int runHttpsInterruption(int argc,char**argv){
 }
 
 int main(int argc,char**argv){
+    if(argc==6&&std::string(argv[1])=="--verify-production-manifest")return verifyProductionManifestFiles(argv[2],argv[3],argv[4],argv[5]);
     if(argc==3&&std::string(argv[1])=="--hold-test-coordinator-mutex")return holdTestCoordinatorMutex(argv[2]);
     if(argc>1&&std::string(argv[1])=="--https-interruption")return runHttpsInterruption(argc,argv);
     if(argc==5&&std::string(argv[1])=="--create-gui-resource-metadata")return createGuiResourceMetadata(argv[2],argv[3],argv[4])?0:1;

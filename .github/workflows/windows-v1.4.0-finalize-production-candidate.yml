@@ -48,6 +48,8 @@ jobs:
           msystem: MINGW64
           update: true
           install: >-
+            make
+            mingw-w64-x86_64-gcc
             mingw-w64-x86_64-python
             mingw-w64-x86_64-openssl
 
@@ -109,6 +111,24 @@ jobs:
           [IO.File]::WriteAllBytes((Join-Path $metadata 'EyeBreakReminder-UpdateManifest.json'), $manifestBytes)
           [IO.File]::WriteAllBytes((Join-Path $metadata 'EyeBreakReminder-UpdateManifest.sig'), $signatureBytes)
 
+      - name: Verify the authentic production signature with Windows CNG
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          make build/updater-windows-tests.exe
+          ./build/updater-windows-tests.exe --verify-production-manifest \
+            build/v1.4.0-finalized-evidence/signed-input/EyeBreakReminder-UpdateManifest.json \
+            build/v1.4.0-finalized-evidence/signed-input/EyeBreakReminder-UpdateManifest.sig \
+            v1.4.0 1.3.0
+          python - <<'PY'
+          import hashlib, json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          root = Path('build/v1.4.0-finalized-evidence/signed-input')
+          report = {'Status':'PASS','Verifier':'Windows CNG ECDSA P-256/SHA-256','ProductionKeyId':os.environ['PRODUCTION_KEY_ID'],'ManifestSHA256':hashlib.sha256((root/'EyeBreakReminder-UpdateManifest.json').read_bytes()).hexdigest(),'SignatureSHA256':hashlib.sha256((root/'EyeBreakReminder-UpdateManifest.sig').read_bytes()).hexdigest(),'ExpectedReleaseTag':'v1.4.0','InstalledVersionFloor':'1.3.0','PrivateKeyAccessed':False,'VerifiedUtc':datetime.now(timezone.utc).isoformat()}
+          Path('build/v1.4.0-finalized-evidence/production-cng-signature-verification.json').write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
+          PY
+
       - name: Confirm payload versions and unsigned-bootstrap disclosure
         shell: pwsh
         env:
@@ -159,6 +179,7 @@ jobs:
           cp candidate-input/release/EyeBreakReminder-UpdateManifest.json final-candidate/
           cp candidate-input/release/EyeBreakReminder-UpdateManifest.sig final-candidate/
           cp build/v1.4.0-finalized-evidence/candidate-verification.json final-candidate-evidence/
+          cp build/v1.4.0-finalized-evidence/production-cng-signature-verification.json final-candidate-evidence/
 
       - name: Record exact candidate provenance and retain signed files
         shell: pwsh
@@ -168,8 +189,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $identity = Get-Content -LiteralPath 'final-candidate-evidence/candidate-verification.json' -Raw | ConvertFrom-Json
-          if ($identity.status -cne 'PASS' -or $identity.production_key_id -cne $env:PRODUCTION_KEY_ID) { throw 'Production signature verification did not match the source trust root.' }
-          [pscustomobject]@{Status='PASS';Application=$identity.application;Version=$identity.version;RequiredCheckName='Core tests and Windows package';RequiredCheckRunId=$env:REQUIRED_CHECK_RUN_ID;RequiredCheckUrl=$env:REQUIRED_CHECK_URL;CandidateAcceptanceRunId=$env:CANDIDATE_RUN_ID;CandidateAcceptanceRunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:CANDIDATE_RUN_ID";CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;FinalizationRunId=$env:GITHUB_RUN_ID;FinalizationSourceCommit=$env:GITHUB_SHA;ProductionKeyId=$identity.production_key_id;ManifestSignatureVerified=$true;Authenticode='NotSigned (owner-approved for v1.4.0; unsigned initial bootstrap must be disclosed)';Published=$false;Tagged=$false;Merged=$false;ReleaseFiles=$identity.release_files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'final-candidate-evidence/candidate-provenance.json' -Encoding UTF8
+          $cng = Get-Content -LiteralPath 'final-candidate-evidence/production-cng-signature-verification.json' -Raw | ConvertFrom-Json
+          $manifestHash = $identity.release_files.PSObject.Properties['EyeBreakReminder-UpdateManifest.json'].Value.sha256
+          $signatureHash = $identity.release_files.PSObject.Properties['EyeBreakReminder-UpdateManifest.sig'].Value.sha256
+          if ($identity.status -cne 'PASS' -or $identity.production_key_id -cne $env:PRODUCTION_KEY_ID -or $cng.Status -cne 'PASS' -or $cng.Verifier -cne 'Windows CNG ECDSA P-256/SHA-256' -or $cng.ProductionKeyId -cne $env:PRODUCTION_KEY_ID -or $cng.ManifestSHA256 -cne $manifestHash -or $cng.SignatureSHA256 -cne $signatureHash -or $cng.PrivateKeyAccessed) { throw 'OpenSSL or Windows CNG production signature verification did not match the embedded trust root and final metadata bytes.' }
+          [pscustomobject]@{Status='PASS';Application=$identity.application;Version=$identity.version;RequiredCheckName='Core tests and Windows package';RequiredCheckRunId=$env:REQUIRED_CHECK_RUN_ID;RequiredCheckUrl=$env:REQUIRED_CHECK_URL;CandidateAcceptanceRunId=$env:CANDIDATE_RUN_ID;CandidateAcceptanceRunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:CANDIDATE_RUN_ID";CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;FinalizationRunId=$env:GITHUB_RUN_ID;FinalizationSourceCommit=$env:GITHUB_SHA;ProductionKeyId=$identity.production_key_id;ManifestSignatureVerified=$true;WindowsCngProductionSignatureVerified=$true;Authenticode='NotSigned (owner-approved for v1.4.0; unsigned initial bootstrap must be disclosed)';Published=$false;Tagged=$false;Merged=$false;ReleaseFiles=$identity.release_files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'final-candidate-evidence/candidate-provenance.json' -Encoding UTF8
 
       - name: Upload the exact signed candidate for publication review
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -204,6 +228,8 @@ jobs:
           msystem: MINGW64
           update: true
           install: >-
+            make
+            mingw-w64-x86_64-gcc
             mingw-w64-x86_64-python
             mingw-w64-x86_64-openssl
 
@@ -225,6 +251,29 @@ jobs:
           test "$(find clean-download/final-candidate -maxdepth 1 -type f | wc -l)" -eq 7
           ! find clean-download/final-candidate -mindepth 1 -maxdepth 1 -type d | grep -q .
 
+      - name: Independently verify the production signature with Windows CNG
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          make build/updater-windows-tests.exe
+          ./build/updater-windows-tests.exe --verify-production-manifest \
+            clean-download/final-candidate/EyeBreakReminder-UpdateManifest.json \
+            clean-download/final-candidate/EyeBreakReminder-UpdateManifest.sig \
+            v1.4.0 1.3.0
+          python - <<'PY'
+          import hashlib, json, re
+          from datetime import datetime, timezone
+          from pathlib import Path
+          trust = Path('src/update_trust.hpp').read_text(encoding='ascii')
+          match = re.search(r'ProductionUpdateKeyId\s*=\s*"(p256-[0-9a-f]{16})"', trust)
+          if not match:
+              raise SystemExit('Embedded production key identifier is absent.')
+          manifest = Path('clean-download/final-candidate/EyeBreakReminder-UpdateManifest.json').read_bytes()
+          signature = Path('clean-download/final-candidate/EyeBreakReminder-UpdateManifest.sig').read_bytes()
+          report = {'Status':'PASS','Verifier':'Windows CNG ECDSA P-256/SHA-256','ProductionKeyId':match.group(1),'ManifestSHA256':hashlib.sha256(manifest).hexdigest(),'SignatureSHA256':hashlib.sha256(signature).hexdigest(),'PrivateKeyAccessed':False,'VerifiedUtc':datetime.now(timezone.utc).isoformat()}
+          Path('clean-download/final-candidate-evidence/independent-production-cng-verification.json').write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
+          PY
+
       - name: Confirm exact source and candidate provenance
         shell: pwsh
         env:
@@ -234,7 +283,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $identity = Get-Content -LiteralPath 'clean-download/final-candidate-evidence/independent-verification.json' -Raw | ConvertFrom-Json
           $provenance = Get-Content -LiteralPath 'clean-download/final-candidate-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
-          if ($identity.status -cne 'PASS' -or $identity.production_key_id -cne $provenance.ProductionKeyId -or $provenance.RequiredCheckName -cne 'Core tests and Windows package' -or -not $provenance.RequiredCheckRunId -or -not $provenance.RequiredCheckUrl -or $provenance.CandidateSourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.CandidateAcceptanceRunId -cne $env:CANDIDATE_RUN_ID -or $provenance.FinalizationSourceCommit -cne $env:GITHUB_SHA) { throw 'Independent artifact provenance or embedded-key verification did not match.' }
+          $cng = Get-Content -LiteralPath 'clean-download/final-candidate-evidence/independent-production-cng-verification.json' -Raw | ConvertFrom-Json
+          $manifestHash = $identity.release_files.PSObject.Properties['EyeBreakReminder-UpdateManifest.json'].Value.sha256
+          $signatureHash = $identity.release_files.PSObject.Properties['EyeBreakReminder-UpdateManifest.sig'].Value.sha256
+          if ($identity.status -cne 'PASS' -or $identity.production_key_id -cne $provenance.ProductionKeyId -or -not $provenance.WindowsCngProductionSignatureVerified -or $cng.Status -cne 'PASS' -or $cng.ProductionKeyId -cne $provenance.ProductionKeyId -or $cng.ManifestSHA256 -cne $manifestHash -or $cng.SignatureSHA256 -cne $signatureHash -or $cng.PrivateKeyAccessed -or $provenance.RequiredCheckName -cne 'Core tests and Windows package' -or -not $provenance.RequiredCheckRunId -or -not $provenance.RequiredCheckUrl -or $provenance.CandidateSourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.CandidateAcceptanceRunId -cne $env:CANDIDATE_RUN_ID -or $provenance.FinalizationSourceCommit -cne $env:GITHUB_SHA) { throw 'Independent artifact provenance or embedded-key verification did not match.' }
           $expectedFiles = @{}
           foreach ($entry in $provenance.ReleaseFiles.PSObject.Properties) { $expectedFiles[$entry.Name] = $entry.Value }
           foreach ($entry in $identity.release_files.PSObject.Properties) {
@@ -248,6 +300,8 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: EyeBreakReminder-v1.4.0-independent-candidate-verification-${{ github.run_id }}
-          path: clean-download/final-candidate-evidence/independent-verification.json
+          path: |
+            clean-download/final-candidate-evidence/independent-verification.json
+            clean-download/final-candidate-evidence/independent-production-cng-verification.json
           if-no-files-found: error
           retention-days: 90
