@@ -17,6 +17,11 @@ on:
           - All
           - UpdatePreferences
           - ProductionCandidateOnly
+      soak_reference_run_id:
+        description: Optional successful candidate run whose complete 110-cycle soak may be reused only if the executable SHA-256 matches exactly.
+        type: string
+        required: false
+        default: '44453271527'
 
 permissions:
   actions: read
@@ -30,6 +35,7 @@ jobs:
     timeout-minutes: 300
     env:
       ACCEPTANCE_SCOPE: ${{ github.event_name == 'push' && 'ProductionCandidateOnly' || github.event.inputs.acceptance_scope || 'All' }}
+      SOAK_REFERENCE_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.soak_reference_run_id || '44453271527' }}
     permissions:
       contents: read
       actions: read
@@ -403,10 +409,10 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: eye-break-reminder-v1.4.0-candidate-44453271527
+          name: eye-break-reminder-v1.4.0-candidate-${{ env.SOAK_REFERENCE_RUN_ID }}
           path: build/prior-v1.4.0-soak-candidate
           repository: ${{ github.repository }}
-          run-id: '44453271527'
+          run-id: ${{ env.SOAK_REFERENCE_RUN_ID }}
           github-token: ${{ github.token }}
 
       - name: Reuse soak only when candidate hash and complete hosted evidence match
@@ -418,9 +424,14 @@ jobs:
           $referenceRoot = 'build/prior-v1.4.0-soak-candidate'
           $referenceEvidence = Join-Path $referenceRoot 'build/v1.4.0-updater-evidence'
           $referenceSoak = Join-Path $referenceEvidence 'resource-soak'
+          $referenceRunId = [string]$env:SOAK_REFERENCE_RUN_ID
           $reused = $false
           $reason = ''
+          $failedReuseChecks = @()
+          $referenceAssetHash = ''
+          $referenceSummaryHash = ''
           try {
+            if ($referenceRunId -notmatch '^\d+$') { throw 'The soak reference run ID must be numeric.' }
             $provenance = Get-Content -LiteralPath (Join-Path $referenceEvidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
             $identityDocument = Get-Content -LiteralPath (Join-Path $referenceEvidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json
             $identityList = [System.Collections.Generic.List[object]]::new()
@@ -431,6 +442,7 @@ jobs:
             $identities = $identityList.ToArray()
             $referenceGate = Get-Content -LiteralPath (Join-Path $referenceEvidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
             $summary = Get-Content -LiteralPath (Join-Path $referenceSoak 'soak-summary.json') -Raw | ConvertFrom-Json
+            $referenceSummaryHash = [string]$summary.SHA256
             $candidate = Get-Item -LiteralPath 'release/EyeBreakReminder.exe'
             $candidateHash = (Get-FileHash -LiteralPath $candidate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             $referenceIdentity = @($identities | Where-Object Name -CEQ 'EyeBreakReminder.exe')
@@ -445,10 +457,10 @@ jobs:
             $eventsClean = @($summary.Events | Where-Object { $_.Status -in @('FAIL','NOT TESTED') }).Count -eq 0
             $cyclesClean = $cycles.Count -eq 110 -and @($cycles | Where-Object { [int]$_.BreakWindowsOpened -lt 1 -or [int]$_.BreakWindowsAfter -ne 0 -or $_.StatusAfter -cne 'Running' }).Count -eq 0
             $reuseChecks = [ordered]@{
-              'reference run ID' = $provenance.RunId -eq '44453271527'
+              'reference run ID' = [string]$provenance.RunId -eq $referenceRunId
               'reference application/version' = $provenance.Application -ceq 'Eye Break Reminder' -and $provenance.Version -ceq '1.4.0'
               'reference feature branch' = $provenance.Branch -ceq 'feature/v1.4.0-automatic-updater'
-              'reference PR head' = $provenance.PRHeadCommit -ceq 'dfb0145f311253383b57a922b67fd2660204aa56'
+              'reference source and optional PR head are valid commits' = [string]$provenance.SourceCommit -match '^[0-9a-f]{40}$' -and ((-not $provenance.PRHeadCommit) -or ([string]$provenance.PRHeadCommit -match '^[0-9a-f]{40}$'))
               'candidate gate succeeded' = $referenceGate.Candidate -ceq 'success'
               'resource telemetry gate succeeded' = $referenceGate.ResourceTelemetry -ceq 'success'
               'resource soak gate succeeded' = $referenceGate.ResourceSoak -ceq 'success'
@@ -480,13 +492,13 @@ jobs:
               New-Item -ItemType Directory -Force -Path $destination | Out-Null
               Copy-Item -Path (Join-Path $referenceSoak '*') -Destination $destination -Recurse -Force
               $files = @(Get-ChildItem -LiteralPath $destination -File -Recurse | ForEach-Object { [pscustomobject]@{Path=$_.FullName.Substring((Get-Location).Path.Length + 1);Bytes=$_.Length;SHA256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()} })
-              [pscustomobject]@{Status='PASS';Reused=$true;ReferenceRunId='44453271527';ReferenceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44453271527';ReferencePRHead=$provenance.PRHeadCommit;ReferenceMergeCommit=$provenance.SourceCommit;CurrentSourceCommit=$env:GITHUB_SHA;CurrentPRHeadCommit=if($env:GITHUB_EVENT_PATH){(Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw|ConvertFrom-Json).pull_request.head.sha}else{$null};CandidateSHA256=$candidateHash;Soak=$summary;CopiedEvidenceFiles=$files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse.json' -Encoding UTF8
+              [pscustomobject]@{Status='PASS';Reused=$true;ReferenceRunId=$referenceRunId;ReferenceRunUrl="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/$referenceRunId";ReferencePRHead=$provenance.PRHeadCommit;ReferenceSourceCommit=$provenance.SourceCommit;CurrentSourceCommit=$env:GITHUB_SHA;CurrentPRHeadCommit=if($env:GITHUB_EVENT_PATH){(Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw|ConvertFrom-Json).pull_request.head.sha}else{$null};CandidateSHA256=$candidateHash;Soak=$summary;CopiedEvidenceFiles=$files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse.json' -Encoding UTF8
               $reused = $true
             }
           } catch { $reason = $_.Exception.Message }
           "reused=$($reused.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           if (-not $reused) {
-            [pscustomobject]@{Status='NOT REUSED';Reused=$false;Reason=$reason;FailedChecks=$failedReuseChecks;ReferenceRunId='44453271527';CurrentCandidateSHA256=(Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant();ReferenceCandidateSHA256=$referenceAssetHash;ReferenceSoakSHA256=$summary.SHA256;Utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse-attempt.json' -Encoding UTF8
+            [pscustomobject]@{Status='NOT REUSED';Reused=$false;Reason=$reason;FailedChecks=$failedReuseChecks;ReferenceRunId=$referenceRunId;CurrentCandidateSHA256=(Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant();ReferenceCandidateSHA256=$referenceAssetHash;ReferenceSoakSHA256=$referenceSummaryHash;Utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse-attempt.json' -Encoding UTF8
             Write-Host "Prior soak will not be reused: $reason"
           } else { Write-Host 'Prior soak evidence was reused after exact-binary and full-evidence validation.' }
 

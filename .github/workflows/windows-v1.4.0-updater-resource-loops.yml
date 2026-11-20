@@ -47,6 +47,7 @@ jobs:
             make
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-python
 
       - name: Build only the isolated GUI test executable
         shell: msys2 {0}
