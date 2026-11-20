@@ -132,7 +132,7 @@ jobs:
             make -B gui-test "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-gui-test.log
             restore_production_trust
             trap - EXIT
-            cmp -s src/update_trust.hpp "$saved_trust"
+            python -c 'from pathlib import Path; import sys; sys.exit(0 if Path(sys.argv[1]).read_bytes() == Path(sys.argv[2]).read_bytes() else 1)' src/update_trust.hpp "$saved_trust"
           fi
 
       - name: Record candidate artifact identities and exact build provenance
