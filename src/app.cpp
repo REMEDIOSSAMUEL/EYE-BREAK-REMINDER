@@ -588,6 +588,7 @@ public:
     if(!updates::createStagingDirectory(directory,stage)){setUpdateLabel(UPDATE_STATUS,L"There is not enough space or permission to prepare the automatic download.");return;}
     setUpdateLabel(UPDATE_STATUS,L"Downloading the stable update…");if(!downloadUpdate(selected.asset,stage,artifact)){cleanupStage(stage);setUpdateLabel(UPDATE_STATUS,L"The update was not downloaded. Your installed application is unchanged.");return;}ready=true;
    }
+    testUpdateDiagnostic("update-choice-requested\n");
     const auto choice=showUpdateChoice(message.release,selected,ready);
     if(choice.deferred){deferredAutomaticUpdate=message;if(ready)cleanupStage(stage);setUpdateLabel(UPDATE_STATUS,L"An update is available. Installation is waiting until your active break ends.");return;}
     if(!choice.install){if(ready)cleanupStage(stage);return;}
@@ -599,6 +600,7 @@ public:
   }
   void dispatchDeferredAutomaticUpdate(){
    if(!deferredAutomaticUpdate||!engine||engine->snapshot().phase==Phase::Break)return;
+   testUpdateDiagnostic("deferred-update-dispatch\n");
    UpdateMessage deferred=std::move(*deferredAutomaticUpdate);deferredAutomaticUpdate.reset();handleAvailableUpdate(deferred);
   }
   void queueDeferredAutomaticUpdate(){

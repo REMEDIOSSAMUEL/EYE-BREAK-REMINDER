@@ -5,7 +5,7 @@ param(
   [Parameter(Mandatory=$true)][string]$UpdateExecutable,
   [Parameter(Mandatory=$true)][string]$FailingInstaller,
   [string]$EvidenceDirectory='build/v1.4.0-updater-evidence',
-  [ValidateSet('All','UpdatePreferences')][string]$Scenario='All'
+  [ValidateSet('All','UpdatePreferences','ActiveBreakDeferral')][string]$Scenario='All'
 )
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Updater installation acceptance is restricted to a disposable GitHub Actions Windows runner.'}
@@ -70,6 +70,11 @@ Add-Type -AssemblyName System.Drawing -ErrorAction Stop
 
 function Record([string]$Name,[string]$Status,$Details=$null){$script:events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')})}
 function Assert([bool]$Ok,[string]$Name,$Details=$null){if(-not$Ok){Record $Name 'FAIL' $Details;throw "Updater acceptance failed: $Name ($Details)"};$script:assertions++;Record $Name 'PASS' $Details}
+function Save-ActiveBreakDiagnostics(){
+  $source=Join-Path $installDir 'test-update-modal-diagnostic.txt'
+  if(Test-Path -LiteralPath $source -PathType Leaf){$destination=Join-Path $EvidenceDirectory 'active-break-modal-diagnostic.txt';Copy-Item -LiteralPath $source -Destination $destination -Force;return [IO.File]::ReadAllText($destination)}
+  return ''
+}
 function Get-Root([IntPtr]$Hwnd){try{[System.Windows.Automation.AutomationElement]::FromHandle($Hwnd)}catch{$null}}
 function Get-Names($Root){$names=[Collections.Generic.List[string]]::new();if(-not$Root){return @()};try{$names.Add($Root.Current.Name)}catch{};try{$items=$Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($item in $items){try{if($item.Current.ProcessId-eq$Root.Current.ProcessId-and$item.Current.Name){$names.Add($item.Current.Name)}}catch{}}}catch{};return @($names)}
 function Get-ElementDiagnostics($Dialog,[string]$Name){$rows=[Collections.Generic.List[object]]::new();$patterns=@([pscustomobject]@{Name='Invoke';Pattern=[System.Windows.Automation.InvokePattern]::Pattern},[pscustomobject]@{Name='SelectionItem';Pattern=[System.Windows.Automation.SelectionItemPattern]::Pattern},[pscustomobject]@{Name='Toggle';Pattern=[System.Windows.Automation.TogglePattern]::Pattern});foreach($element in $Dialog.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)){try{$current=$element.Current;if($current.ProcessId-ne$Dialog.ProcessId-or$current.Name-cne$Name){continue};$available=[Collections.Generic.List[string]]::new();foreach($check in $patterns){$value=$null;try{if($element.TryGetCurrentPattern($check.Pattern,[ref]$value)){$available.Add($check.Name)}}catch{}};$supported=@();try{$supported=@($element.GetSupportedPatterns()|ForEach-Object{$_.ProgrammaticName})}catch{};$rows.Add([pscustomobject]@{Name=$current.Name;ControlType=$current.ControlType.ProgrammaticName;ClassName=$current.ClassName;AutomationId=$current.AutomationId;ProcessId=$current.ProcessId;NativeWindowHandle=$current.NativeWindowHandle;Enabled=$current.IsEnabled;KeyboardFocusable=$current.IsKeyboardFocusable;HasKeyboardFocus=$current.HasKeyboardFocus;Patterns=@($available);SupportedPatterns=$supported})}catch{}};return ,@($rows)}
@@ -349,7 +354,14 @@ function Run-DialogThemes(){
 function Run-ActiveBreakDeferral(){
   Install-Baseline;Seed-Profile;$settingsPath=Join-Path $dataDir 'settings.ini';$settings=Get-Content -LiteralPath $settingsPath -Raw;# GUI-test monotonic time runs 10x; use the maximum supported break so UIA setup cannot consume the test interval.
   $settings=$settings.Replace('breakSeconds=33','breakSeconds=300');[IO.File]::WriteAllText($settingsPath,$settings,[Text.UTF8Encoding]::new($false));New-ReleaseFixture $UpdateInstaller $UpdateExecutable;$fixture=Get-Content -LiteralPath (Join-Path $installDir 'test-update-response.txt') -Raw;$fixture=$fixture.Replace('failure=none',"failure=none`r`ndelay_ms=3000");[IO.File]::WriteAllText((Join-Path $installDir 'test-update-response.txt'),$fixture,[Text.UTF8Encoding]::new($false))
-  $appProcessId=Start-TestApp;$main=Find-Dialog 'Eye Break Reminder' @($appProcessId) 15;Invoke-Element $main 'Take a break now';$break=Find-Dialog 'Taking an eye break' @($appProcessId) 10;Start-Sleep -Seconds 4;Assert (Test-ProcessDialog $appProcessId 'Taking an eye break') 'the manually started break remains active while update discovery finishes';Assert (-not(Test-ProcessDialog $appProcessId 'Eye Break Reminder Update Available')) 'automatic update prompt is deferred through an active eye break';Screenshot $break 'update-waiting-during-break.png';Invoke-Element $break "I'm back";$choice=Wait-UpdateChoice $appProcessId;$hasAvailableLabel=@($choice.Names|Where-Object{$_.Contains('Available version:')}).Count-gt0;$hasAvailableVersion=@($choice.Names|Where-Object{$_.Contains('v1.4.1')}).Count-gt0;Assert ($hasAvailableLabel-and$hasAvailableVersion) 'deferred update prompt appears after the break ends';Invoke-Element $choice 'Remind Me Later';Stop-Application;Record 'Active break update deferral' 'PASS'
+  Record 'Active-break update fixture prepared' 'INFO' ([pscustomobject]@{Scenario='ActiveBreakDeferral';BreakSeconds=300;DiscoveryDelayMs=3000;TestKeyOnly=$true})
+  $appProcessId=Start-TestApp;$main=Find-Dialog 'Eye Break Reminder' @($appProcessId) 15;Invoke-Element $main 'Take a break now';$break=Find-Dialog 'Taking an eye break' @($appProcessId) 10;Start-Sleep -Seconds 4;Assert (Test-ProcessDialog $appProcessId 'Taking an eye break') 'the manually started break remains active while update discovery finishes';Assert (-not(Test-ProcessDialog $appProcessId 'Eye Break Reminder Update Available')) 'automatic update prompt is deferred through an active eye break'
+  $diagnosticPath=Join-Path $installDir 'test-update-modal-diagnostic.txt';$watch=[Diagnostics.Stopwatch]::StartNew();$diagnostics='';while($watch.Elapsed.TotalSeconds-lt15){if(Test-Path -LiteralPath $diagnosticPath){$diagnostics=[IO.File]::ReadAllText($diagnosticPath);if($diagnostics.Contains('available-update-deferred-active-break')){break}};Start-Sleep -Milliseconds 100}
+  Assert ($diagnostics.Contains('available-update-deferred-active-break')) 'authenticated update result arrives and is deferred during the active break' $diagnostics
+  Screenshot $break 'update-waiting-during-break.png';Invoke-Element $break "I'm back";$watch.Restart();while($watch.Elapsed.TotalSeconds-lt15){if(Test-Path -LiteralPath $diagnosticPath){$diagnostics=[IO.File]::ReadAllText($diagnosticPath);if($diagnostics.Contains('deferred-update-dispatch')-and$diagnostics.Contains('update-choice-requested')){break}};Start-Sleep -Milliseconds 100}
+  Assert ($diagnostics.Contains('deferred-update-dispatch')) 'ending the break dispatches the deferred authenticated update' $diagnostics
+  Assert ($diagnostics.Contains('update-choice-requested')) 'the deferred update reaches the update-choice UI' $diagnostics
+  $choice=Wait-UpdateChoice $appProcessId;$hasAvailableLabel=@($choice.Names|Where-Object{$_.Contains('Available version:')}).Count-gt0;$hasAvailableVersion=@($choice.Names|Where-Object{$_.Contains('v1.4.1')}).Count-gt0;Assert ($hasAvailableLabel-and$hasAvailableVersion) 'deferred update prompt appears after the break ends';Invoke-Element $choice 'Remind Me Later';Stop-Application;[void](Save-ActiveBreakDiagnostics);Record 'Active break update deferral' 'PASS'
 }
 function Run-CleanUpdate([bool]$DeleteHistory){
   Install-Baseline;Seed-Profile 1;New-ReleaseFixture $UpdateInstaller $UpdateExecutable;$appProcessId=Start-TestApp;$progress=Begin-Download $appProcessId $true $DeleteHistory;Complete-DownloadAndWait $appProcessId $progress;[void](Wait-InstalledVersion '1.4.1')
@@ -584,6 +596,9 @@ try{
     Run-UpdatePreferenceRoundtrip
     Reset-Installation
     Record 'Overall updater preference roundtrip' 'PASS' ([pscustomobject]@{Assertions=$script:assertions;Scenario=$Scenario;Version='1.4.1';OnlyLocalFixtureMetadata=$true;PublicReleaseCreated=$false})
+  }elseif($Scenario-eq'ActiveBreakDeferral'){
+    Run-ActiveBreakDeferral
+    Record 'Overall updater active-break deferral' 'PASS' ([pscustomobject]@{Assertions=$script:assertions;Scenario=$Scenario;Version='1.4.1';OnlyLocalFixtureMetadata=$true;PublicReleaseCreated=$false})
   }else{
     Run-UpdatePreferenceRoundtrip
     Run-NormalUpdate
@@ -606,11 +621,11 @@ try{
     Run-InteractiveUninstall $true
     Record 'Overall updater Windows integration' 'PASS' ([pscustomobject]@{Assertions=$script:assertions;Scenario=$Scenario;Version='1.4.1';OnlyLocalFixtureMetadata=$true;PublicReleaseCreated=$false})
   }
-}catch{Record 'Overall updater Windows integration' 'FAIL' $_.Exception.ToString();throw}
+}catch{if($Scenario-eq'ActiveBreakDeferral'){ $diagnostics=Save-ActiveBreakDiagnostics;if($diagnostics){Record 'Active-break test-only application diagnostics' 'INFO' $diagnostics};$responsePath=Join-Path $installDir 'test-update-response.txt';if(Test-Path -LiteralPath $responsePath){Copy-Item -LiteralPath $responsePath -Destination (Join-Path $EvidenceDirectory 'active-break-update-response.txt') -Force} };Record 'Overall updater Windows integration' 'FAIL' $_.Exception.ToString();throw}
 finally{
   try{Stop-Application}catch{Record 'Safe process cleanup' 'FAIL' $_.Exception.Message}
   $hasFailures=@($script:events|Where-Object{$_.Status -eq 'FAIL'}).Count -gt 0
-  $completedSuccessfully=@($script:events|Where-Object{$_.Name -in @('Overall updater Windows integration','Overall updater preference roundtrip')-and$_.Status -eq 'PASS'}).Count -gt 0
+  $completedSuccessfully=@($script:events|Where-Object{$_.Name -in @('Overall updater Windows integration','Overall updater preference roundtrip','Overall updater active-break deferral')-and$_.Status -eq 'PASS'}).Count -gt 0
   if(-not$hasFailures-and(Test-Path -LiteralPath $scriptRoot)){
     $resolved=[IO.Path]::GetFullPath($scriptRoot)
     $prefix=$runnerTemp.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
