@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       acceptance_scope:
-        description: Run the full acceptance matrix, update preferences, focused active-break deferral, or production-candidate acceptance.
+        description: Run the full acceptance matrix, focused updater preferences, active-break deferral, dialog themes, or production-candidate acceptance.
         type: choice
         required: true
         default: All
@@ -17,6 +17,7 @@ on:
           - All
           - UpdatePreferences
           - ActiveBreakDeferral
+          - DialogThemes
           - ProductionCandidateOnly
       soak_reference_run_id:
         description: Optional successful candidate run whose complete 110-cycle soak may be reused only if the executable SHA-256 matches exactly.
@@ -233,7 +234,7 @@ jobs:
 
       - name: Run native GUI themes, accessibility and timer acceptance
         id: gui
-        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && env.ACCEPTANCE_SCOPE != 'DialogThemes' && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -248,7 +249,7 @@ jobs:
 
       - name: Test the real v1.3.0 to v1.4.0 per-user installer transition
         id: legacy_upgrade
-        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && env.ACCEPTANCE_SCOPE != 'DialogThemes' && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -261,7 +262,7 @@ jobs:
 
       - name: Verify interactive installation and uninstallation as a standard user
         id: standard_user
-        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && steps.candidate.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && env.ACCEPTANCE_SCOPE != 'DialogThemes' && steps.candidate.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
         timeout-minutes: 25
         shell: pwsh
         run: |
@@ -291,7 +292,7 @@ jobs:
 
       - name: Run actual update, install, settings, failure and portable transactions
         id: updater
-        if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (env.ACCEPTANCE_SCOPE == 'UpdatePreferences' || env.ACCEPTANCE_SCOPE == 'ActiveBreakDeferral' || steps.legacy_upgrade.outcome == 'success') }}
+        if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (env.ACCEPTANCE_SCOPE == 'UpdatePreferences' || env.ACCEPTANCE_SCOPE == 'ActiveBreakDeferral' || env.ACCEPTANCE_SCOPE == 'DialogThemes' || steps.legacy_upgrade.outcome == 'success') }}
         env:
           ACCEPTANCE_SCOPE: ${{ env.ACCEPTANCE_SCOPE }}
         shell: pwsh
@@ -310,7 +311,7 @@ jobs:
 
       - name: Exercise real portable replacement failures and recovery
         id: portable-recovery
-        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && env.ACCEPTANCE_SCOPE != 'DialogThemes' && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
         timeout-minutes: 5
         shell: msys2 {0}
         run: |
@@ -572,7 +573,8 @@ jobs:
           $preferenceAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'skipped' -and $env:COORDINATOR_BACKUP_FAILURE_OUTCOME -eq 'skipped' -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
           $productionCandidateAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:DOWNLOAD_BODY_TIMEOUT_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:STANDARD_USER_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PORTABLE_RECOVERY_OUTCOME -eq 'success' -and $soakPassed -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
           $focusedBreakAcceptance = $env:ACCEPTANCE_SCOPE -eq 'ActiveBreakDeferral' -and $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success'
-          $status = if (($env:ACCEPTANCE_SCOPE -eq 'UpdatePreferences' -and $preferenceAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'ActiveBreakDeferral' -and $focusedBreakAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'All' -and $fullAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'ProductionCandidateOnly' -and $productionCandidateAcceptance)) {'PASS'} else {'NOT READY'}
+          $focusedDialogThemes = $env:ACCEPTANCE_SCOPE -eq 'DialogThemes' -and $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success' -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
+          $status = if (($env:ACCEPTANCE_SCOPE -eq 'UpdatePreferences' -and $preferenceAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'ActiveBreakDeferral' -and $focusedBreakAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'DialogThemes' -and $focusedDialogThemes) -or ($env:ACCEPTANCE_SCOPE -eq 'All' -and $fullAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'ProductionCandidateOnly' -and $productionCandidateAcceptance)) {'PASS'} else {'NOT READY'}
           [pscustomobject]@{Status=$status;Scope=$env:ACCEPTANCE_SCOPE;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;ProductionUpdateFixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;DownloadBodyTimeout=$env:DOWNLOAD_BODY_TIMEOUT_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;StandardUser=$env:STANDARD_USER_OUTCOME;Updater=$env:UPDATER_OUTCOME;PortableRecovery=$env:PORTABLE_RECOVERY_OUTCOME;ProductionBinaryUpdate=$env:PRODUCTION_UPDATE_OUTCOME;CoordinatorBackupFailure=$env:COORDINATOR_BACKUP_FAILURE_OUTCOME;ResourceTelemetry=$env:RESOURCE_TELEMETRY_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;ResourceSoakReused=$env:SOAK_REUSED;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
             ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Encoding UTF8
           if ($status -ne 'PASS') {

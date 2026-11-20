@@ -5,7 +5,7 @@ param(
   [Parameter(Mandatory=$true)][string]$UpdateExecutable,
   [Parameter(Mandatory=$true)][string]$FailingInstaller,
   [string]$EvidenceDirectory='build/v1.4.0-updater-evidence',
-  [ValidateSet('All','UpdatePreferences','ActiveBreakDeferral')][string]$Scenario='All'
+  [ValidateSet('All','UpdatePreferences','ActiveBreakDeferral','DialogThemes')][string]$Scenario='All'
 )
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'){throw 'Updater installation acceptance is restricted to a disposable GitHub Actions Windows runner.'}
@@ -98,11 +98,14 @@ function Restore-RunnerTextScale($Snapshot){
   elseif($null-ne$key){try{$key.DeleteValue('TextScaleFactor',$false)}finally{$key.Dispose()}}
   if(-not$Snapshot.KeyExisted){$check=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Accessibility',$false);$empty=$false;if($check){try{$empty=$check.ValueCount-eq0-and$check.SubKeyCount-eq0}finally{$check.Dispose()}};if($empty){[Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey('Software\Microsoft\Accessibility',$false)}}
 }
-function Set-LongReleaseFixture([string]$Tag,[string]$Notes){
+function Set-LongReleaseFixture([string]$Notes){
   $path=Join-Path $installDir 'test-update-response.txt';$response=[IO.File]::ReadAllText($path);$separator=$response.IndexOf("`r`n`r`n");if($separator-lt0){throw 'The long-text fixture has no HTTP header/body separator.'}
   $headers=$response.Substring(0,$separator);$release=$response.Substring($separator+4)|ConvertFrom-Json
-  $release.tag_name=$Tag;$release.html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/$Tag";$release.body=$Notes
-  foreach($asset in $release.assets){$asset.browser_download_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/$Tag/$($asset.name)"}
+  $manifest=Get-Content -LiteralPath (Join-Path $installDir 'EyeBreakReminder-UpdateManifest.json') -Raw|ConvertFrom-Json
+  if($release.tag_name-cne("v"+$manifest.version)){throw 'Refusing a long-notes fixture whose release tag differs from its signed manifest version.'}
+  # Keep the release tag and signed manifest version unchanged and matching.
+  # Only the notes need to be long for this high-scale clipping/accessibility case.
+  $release.body=$Notes
   [IO.File]::WriteAllText($path,($headers+"`r`n`r`n"+($release|ConvertTo-Json -Compress -Depth 8)),[Text.UTF8Encoding]::new($false))
 }
 function Find-ElementByType($Dialog,[string]$ControlType){foreach($element in $Dialog.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)){try{if($element.Current.ProcessId-eq$Dialog.ProcessId-and$element.Current.ControlType.ProgrammaticName-ceq$ControlType){return $element}}catch{}};throw "Accessible UI element with role '$ControlType' was not found. Dialog names: $($Dialog.Names -join ' | ')"}
@@ -337,7 +340,7 @@ function Run-DialogThemes(){
       Set-RunnerTextScale $textScale
       foreach($theme in 0..4){
         Seed-Profile $theme;$longTextCase=($textScale-eq225-and$theme-eq4);$expectedVersion='v1.4.1'
-        if($longTextCase){$expectedVersion='v1.4.1+'+('a'*80);$notes='Long release note marker: '+(('the downloaded release notes must remain scrollable and clipped safely at high text scale. ')*45);Set-LongReleaseFixture $expectedVersion $notes}
+        if($longTextCase){$notes='Long release note marker: '+(('the downloaded release notes must remain scrollable and clipped safely at high text scale. ')*45);Set-LongReleaseFixture $notes}
         $appProcessId=Start-TestApp;$shot="update-choice-theme-$theme-text-scale-$textScale.png";$dialog=Wait-UpdateChoice $appProcessId $shot $expectedVersion
         foreach($name in @('Download & Install','Remind Me Later','View Release Notes')){[void](Assert-ControlWithinDialog $dialog $name 'ControlType.Button' "$textScale% text scale/theme $theme")}
         [void](Assert-ControlWithinDialog $dialog 'Clean install — reset previous settings' 'ControlType.RadioButton' "$textScale% text scale/theme $theme")
@@ -349,7 +352,7 @@ function Run-DialogThemes(){
     }
     foreach($theme in 0..4){$small=$script:updaterScaleMeasurements["$theme/125"];$large=$script:updaterScaleMeasurements["$theme/225"];Assert ($large.Height-gt$small.Height) "Windows text scaling changes the updater option height for theme $theme" ([pscustomobject]@{Theme=$theme;At125Percent=$small.Height;At225Percent=$large.Height})}
   }finally{try{Restore-RunnerTextScale $scaleSnapshot}finally{[void][EBR_UPD_NATIVE]::SetHighContrastState($oldHc)}}
-  Record 'Update dialog theme, Forced Colors, accessibility and text-scale screenshots' 'PASS' ([pscustomobject]@{AppThemes=@('Follow Windows','Light','Dark','High Contrast Dark','High Contrast Light');SystemForcedColors=$true;TextScaleLevels=@(125,150,200,225);ThemeScaleCombinations=20;LongReleaseNotesAndVersion=$true;TextScalePreferenceRestored=$true})
+  Record 'Update dialog theme, Forced Colors, accessibility and text-scale screenshots' 'PASS' ([pscustomobject]@{AppThemes=@('Follow Windows','Light','Dark','High Contrast Dark','High Contrast Light');SystemForcedColors=$true;TextScaleLevels=@(125,150,200,225);ThemeScaleCombinations=20;LongReleaseNotes=$true;TextScalePreferenceRestored=$true})
 }
 function Run-ActiveBreakDeferral(){
   Install-Baseline;Seed-Profile;$settingsPath=Join-Path $dataDir 'settings.ini';$settings=Get-Content -LiteralPath $settingsPath -Raw;# GUI-test monotonic time runs 10x; use the maximum supported break so UIA setup cannot consume the test interval.
@@ -599,6 +602,10 @@ try{
   }elseif($Scenario-eq'ActiveBreakDeferral'){
     Run-ActiveBreakDeferral
     Record 'Overall updater active-break deferral' 'PASS' ([pscustomobject]@{Assertions=$script:assertions;Scenario=$Scenario;Version='1.4.1';OnlyLocalFixtureMetadata=$true;PublicReleaseCreated=$false})
+  }elseif($Scenario-eq'DialogThemes'){
+    Run-DialogThemes
+    Reset-Installation
+    Record 'Overall updater dialog themes' 'PASS' ([pscustomobject]@{Assertions=$script:assertions;Scenario=$Scenario;Version='1.4.1';OnlyLocalFixtureMetadata=$true;PublicReleaseCreated=$false})
   }else{
     Run-UpdatePreferenceRoundtrip
     Run-NormalUpdate
@@ -625,7 +632,7 @@ try{
 finally{
   try{Stop-Application}catch{Record 'Safe process cleanup' 'FAIL' $_.Exception.Message}
   $hasFailures=@($script:events|Where-Object{$_.Status -eq 'FAIL'}).Count -gt 0
-  $completedSuccessfully=@($script:events|Where-Object{$_.Name -in @('Overall updater Windows integration','Overall updater preference roundtrip','Overall updater active-break deferral')-and$_.Status -eq 'PASS'}).Count -gt 0
+  $completedSuccessfully=@($script:events|Where-Object{$_.Name -in @('Overall updater Windows integration','Overall updater preference roundtrip','Overall updater active-break deferral','Overall updater dialog themes')-and$_.Status -eq 'PASS'}).Count -gt 0
   if(-not$hasFailures-and(Test-Path -LiteralPath $scriptRoot)){
     $resolved=[IO.Path]::GetFullPath($scriptRoot)
     $prefix=$runnerTemp.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
