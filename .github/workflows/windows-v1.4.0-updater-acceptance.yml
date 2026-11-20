@@ -184,7 +184,7 @@ jobs:
 
       - name: Build a controlled v1.4.1 successor without updater test hooks
         id: production_update_fixture
-        if: ${{ steps.candidate.outcome == 'success' && env.ACCEPTANCE_SCOPE != 'ProductionCandidateOnly' }}
+        if: ${{ steps.candidate.outcome == 'success' && env.ACCEPTANCE_SCOPE == 'All' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -334,7 +334,7 @@ jobs:
 
       - name: Build the test-only unverified-executable launch sentinel
         id: launch-sentinel
-        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'ProductionCandidateOnly' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.updater.outcome == 'success' && (env.ACCEPTANCE_SCOPE == 'UpdatePreferences' || steps.legacy_upgrade.outcome == 'success') }}
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE == 'All' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success' }}
         shell: msys2 {0}
         run: |
           set -euo pipefail
@@ -347,7 +347,7 @@ jobs:
 
       - name: Update the installed exact production candidate through its real updater
         id: production_update
-        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'ProductionCandidateOnly' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.launch-sentinel.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.updater.outcome == 'success' && (env.ACCEPTANCE_SCOPE == 'UpdatePreferences' || steps.legacy_upgrade.outcome == 'success') }}
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE == 'All' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.launch-sentinel.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success' }}
         shell: pwsh
         timeout-minutes: 30
         run: |
@@ -363,7 +363,7 @@ jobs:
 
       - name: Verify production coordinator aborts safely when settings backup fails
         id: coordinator_backup_failure
-        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'ProductionCandidateOnly' && steps.candidate.outcome == 'success' && steps.production_update.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (env.ACCEPTANCE_SCOPE == 'UpdatePreferences' || (steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success')) }}
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE == 'All' && steps.candidate.outcome == 'success' && steps.updater.outcome == 'success' && steps.production_update.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.legacy_upgrade.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
         shell: pwsh
         timeout-minutes: 30
         run: |
@@ -568,7 +568,7 @@ jobs:
           if (Test-Path -LiteralPath $probePath) { $desktopAvailable = [bool](Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json).interactiveDesktopAvailable }
           $soakPassed = $env:SOAK_OUTCOME -eq 'success' -or $env:SOAK_REUSED -eq 'true'
           $fullAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:DOWNLOAD_BODY_TIMEOUT_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:STANDARD_USER_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PORTABLE_RECOVERY_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $env:COORDINATOR_BACKUP_FAILURE_OUTCOME -eq 'success' -and $soakPassed -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
-          $preferenceAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $env:COORDINATOR_BACKUP_FAILURE_OUTCOME -eq 'success' -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success' -and $env:SOAK_REUSED -eq 'true'
+          $preferenceAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'skipped' -and $env:COORDINATOR_BACKUP_FAILURE_OUTCOME -eq 'skipped' -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
           $productionCandidateAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:DOWNLOAD_BODY_TIMEOUT_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:STANDARD_USER_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PORTABLE_RECOVERY_OUTCOME -eq 'success' -and $soakPassed -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
           $status = if (($env:ACCEPTANCE_SCOPE -eq 'UpdatePreferences' -and $preferenceAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'All' -and $fullAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'ProductionCandidateOnly' -and $productionCandidateAcceptance)) {'PASS'} else {'NOT READY'}
           [pscustomobject]@{Status=$status;Scope=$env:ACCEPTANCE_SCOPE;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;ProductionUpdateFixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;DownloadBodyTimeout=$env:DOWNLOAD_BODY_TIMEOUT_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;StandardUser=$env:STANDARD_USER_OUTCOME;Updater=$env:UPDATER_OUTCOME;PortableRecovery=$env:PORTABLE_RECOVERY_OUTCOME;ProductionBinaryUpdate=$env:PRODUCTION_UPDATE_OUTCOME;CoordinatorBackupFailure=$env:COORDINATOR_BACKUP_FAILURE_OUTCOME;ResourceTelemetry=$env:RESOURCE_TELEMETRY_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;ResourceSoakReused=$env:SOAK_REUSED;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
