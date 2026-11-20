@@ -26,11 +26,16 @@ RELEASE_FILES = (
 )
 UNSIGNED_CANDIDATE_FILES = RELEASE_FILES[:5]
 CHECKSUM_FILES = RELEASE_FILES[:4]
-PRIVATE_KEY_MARKERS = (
-    b"-----BEGIN PRIVATE KEY-----",
-    b"-----BEGIN ENCRYPTED PRIVATE KEY-----",
-    b"-----BEGIN EC PRIVATE KEY-----",
-    b"-----BEGIN RSA PRIVATE KEY-----",
+_PEM_BEGIN = b"-----BEGIN "
+_PEM_END = b" KEY-----"
+PRIVATE_KEY_MARKERS = tuple(
+    _PEM_BEGIN + kind + _PEM_END
+    for kind in (
+        b"PRIVATE",
+        b"ENCRYPTED PRIVATE",
+        b"EC PRIVATE",
+        b"RSA PRIVATE",
+    )
 )
 TOKEN_PATTERNS = (
     re.compile(rb"gh[pousr]_[A-Za-z0-9_]{20,}"),

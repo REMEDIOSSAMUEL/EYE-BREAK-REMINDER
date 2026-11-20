@@ -43,6 +43,22 @@ def valid_manifest(key_id: str) -> dict[str, object]:
 
 
 class SigningToolTests(unittest.TestCase):
+    def test_source_archive_scan_does_not_match_its_own_marker_detector(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ebr-source-audit-self-scan-") as folder:
+            archive_path = Path(folder) / "source.zip"
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(candidate.__file__, "EyeBreakReminder/scripts/finalize_candidate.py")
+            candidate.audit_source_archive(archive_path)
+
+    def test_source_archive_scan_still_rejects_a_private_key_marker(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ebr-source-audit-marker-") as folder:
+            archive_path = Path(folder) / "source.zip"
+            marker = b"-----BEGIN " + b"PRIVATE KEY" + b"-----"
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("EyeBreakReminder/docs/test.txt", marker)
+            with self.assertRaisesRegex(ValueError, "private-key material"):
+                candidate.audit_source_archive(archive_path)
+
     def test_key_acl_parser_requires_one_current_user_full_control_allow(self) -> None:
         identity = r"MACHINE\remed"
         self.assertTrue(signing.has_only_current_user_acl(
