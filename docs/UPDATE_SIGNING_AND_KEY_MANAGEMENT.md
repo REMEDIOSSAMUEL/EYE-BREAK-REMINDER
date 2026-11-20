@@ -1,6 +1,6 @@
 # Update signing and key management
 
-**Status (2026-11-20):** ECDSA P-256/SHA-256 manifest verification and signing tooling are implemented. The signing tool rejects production private-key paths in the checkout, OneDrive roots, and temp directories, and verifies a new dedicated key directory's Windows DACL is limited to the current user. The current focused signing and candidate-finalizer suite passes 10/10 on this Windows host, including actual disposable ACL inspection and embedded-key manifest verification. Feature head `59194c229c08c2678b6d8579a542488cedf920fa` passed required CI and the Windows CNG/DNS/SEC-028 suite in runs 44730606999 and 44730606703. No existing Eye Break Reminder CNG production key or matching current-user publisher certificate was found. The owner approved manually backing up the encrypted PEM in a user-controlled secure file vault with the passphrase kept separate. No production key has been generated yet; the owner must enter the passphrase at the local prompt and confirm the backup is recoverable before the public key is embedded. The retained candidate is development-only and has no production manifest signature. Authenticode is optional for v1.4.0 under the owner's revised policy; the initial installer may remain unsigned if this is clearly disclosed.
+**Status (2026-11-20):** ECDSA P-256/SHA-256 manifest verification and signing tooling are implemented. The signing tool rejects production private-key paths in the checkout, OneDrive roots, and temp directories, and verifies a new dedicated key directory's Windows DACL is limited to the current user. Focused signing and candidate-finalizer tests pass 10/10 on this Windows host, including actual disposable ACL inspection and embedded-key manifest verification. Feature head `57390061c21d87dd4a3bdf4cad6533107c8b439f` passed required CI and the Windows CNG/DNS/SEC-028 suite in runs 44735595650 and 44735595786; focused resource regression passed in 44735583551. The candidate/finalizer trigger workflow changes are being validated separately and do not change product binaries. No existing Eye Break Reminder CNG production key or matching current-user publisher certificate was found. The owner approved backing up the encrypted PEM in a user-controlled secure file vault with the passphrase kept separate. No production key has been generated yet; local passphrase entry and recovery-copy verification are still required before embedding the public key. The retained candidate is development-only and has no production manifest signature. Authenticode is optional for v1.4.0 under the owner's revised policy; the initial installer may remain unsigned if this is clearly disclosed.
 
 ## What the signature protects
 
@@ -124,25 +124,23 @@ python scripts/update_signing.py verify-embedded `
   --signature (Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.sig')
 ```
 
-The tool validates the canonical schema and payload names, hashes the exact EXE files, creates metadata, asks OpenSSL to sign the complete manifest bytes, converts the DER signature to the 64-byte P1363 format used by CNG, verifies the result against both the public PEM and the public key embedded in the source header, rehashes payloads before writing outputs, and writes the two public metadata files outside the candidate directory. Its path-collision and no-overwrite checks protect existing payload/key/metadata files. The finalizer workflow requires the latest required CI result and successful exact-commit Windows candidate gate, validates all seven files and scans the source archive, verifies the authentic signature with OpenSSL and a Windows CNG executable against the embedded key, then retains a separate signed candidate artifact and independently downloads and verifies it with both verifiers. Run `windows-v1.4.0-updater-acceptance.yml` with `ProductionCandidateOnly` after the required PR check passes; this installs and tests the exact production candidate and performs the final resource soak once without using the obsolete unsigned production-feed test path. The offline signer is never part of pull-request CI and no workflow receives a private key.
+The tool validates the canonical schema and payload names, hashes the exact EXE files, creates metadata, asks OpenSSL to sign the complete manifest bytes, converts the DER signature to the 64-byte P1363 format used by CNG, verifies the result against both the public PEM and the public key embedded in the source header, rehashes payloads before writing outputs, and writes the two public metadata files outside the candidate directory. Its path-collision and no-overwrite checks protect existing payload/key/metadata files. A push that changes only `src/update_trust.hpp` automatically starts the Windows acceptance workflow in `ProductionCandidateOnly` mode. It builds, installs and tests that exact production candidate and performs the single final resource soak. The finalizer requires the latest required CI result and successful candidate gate, checks that the later commit changes only the three public metadata-input files, validates all seven release assets and source archive, verifies the real signature with OpenSSL and Windows CNG against the embedded key, and retains a separate candidate artifact that a clean Windows job independently downloads and verifies. The offline signer is never part of CI and no workflow receives a private key.
 
-After signing, use PowerShell to dispatch finalization with the public metadata only. Replace the run ID and commit with those of the successful `ProductionCandidateOnly` candidate build. The base64 values contain only the public manifest and public signature:
+After the candidate run passes, use its run ID and `SourceCommit` from `candidate-provenance.json`. Sign the manifest using the protected local key as shown above. Then copy only the public manifest and signature into the feature branch's release-input directory and add a small public provenance pointer. Commit all three files together. This push triggers the finalizer; it does not publish a release:
 
 ```powershell
-$candidateRunId = '00000000000'
-$candidateCommit = $candidateSourceCommit
-$manifestBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.json')))
-$signatureBase64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.sig')))
-gh workflow run windows-v1.4.0-finalize-production-candidate.yml `
-  --repo REMEDIOSSAMUEL/EYE-BREAK-REMINDER `
-  --ref feature/v1.4.0-automatic-updater `
-  -f "candidate_run_id=$candidateRunId" `
-  -f "candidate_source_commit=$candidateCommit" `
-  -f "manifest_base64=$manifestBase64" `
-  -f "signature_base64=$signatureBase64"
+$releaseInputs = Join-Path $PWD 'release-inputs/v1.4.0'
+New-Item -ItemType Directory -Force -Path $releaseInputs | Out-Null
+Copy-Item -LiteralPath (Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.json') -Destination $releaseInputs
+Copy-Item -LiteralPath (Join-Path $metadataDir 'EyeBreakReminder-UpdateManifest.sig') -Destination $releaseInputs
+@{candidate_run_id=[string]$candidateRunId;candidate_source_commit=[string]$candidateSourceCommit} |
+  ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $releaseInputs 'candidate-provenance.json') -Encoding ascii
+git add -- release-inputs/v1.4.0/candidate-provenance.json release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig
+git commit -m 'chore: add signed v1.4.0 candidate metadata'
+git push origin feature/v1.4.0-automatic-updater
 ```
 
-The finalization workflow has read-only repository, Actions and check-run permissions. It requires the latest **Core tests and Windows package** check to have succeeded on the exact candidate commit; it then checks the candidate run status, exact branch and commit, artifact expiry, version, embedded production key, OpenSSL signature, Windows CNG signature, and all payload hashes. It records the successful required-check run identity in the candidate provenance and independently verifies the downloaded candidate with both crypto implementations. It does not publish a release, create a tag, merge the PR, or receive any private signing material.
+The pointer contains no secret; it binds the finalizer to the successful candidate run and source commit. The workflow has read-only repository, Actions and check-run permissions. It verifies candidate identity and artifact retention, the exact source-to-metadata-only commit delta, the latest **Core tests and Windows package** result, embedded production key, OpenSSL signature, Windows CNG signature, and payload hashes. It records the required-check identity in the final candidate provenance and independently verifies a clean download with both crypto implementations. No private key or passphrase enters Git or GitHub. The candidate artifact is retained for review; no tag, release, merge, or publication is created.
 
 ## Bootstrap, rollback, and recovery
 
