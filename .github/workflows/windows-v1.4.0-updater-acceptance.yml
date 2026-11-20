@@ -103,10 +103,35 @@ jobs:
             make -B test "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-test.log
             make all "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-all.log
             make package "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-package.log
-            make gui-test "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-gui-test.log
-            make updater-windows-test "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/updater-windows-test.log
+            # Build and run the production-trust native test binaries before
+            # preparing the separate GUI integration binary with an isolated
+            # fail-closed test trust header. The release executable, installer,
+            # package, and public CNG trust tests above always use the real
+            # embedded production key.
+            make build/updater-windows-tests.exe build/updater-production-policy-test.exe "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/updater-test-binaries.log
+            EBR_TEST_PREVIOUS_APP="$(cygpath -aw release/EyeBreakReminder.exe)" ./build/updater-windows-tests.exe 2>&1 | tee build/v1.4.0-updater-evidence/updater-windows-test.log
+            ./build/updater-production-policy-test.exe 2>&1 | tee build/v1.4.0-updater-evidence/updater-production-policy-test.log
             make updater-test-artifacts "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/updater-failure-fixture-build.log
             make github-updater-smoke "${common_args[@]}" UPDATER_SMOKE_ARGS=--save-v1.3.0-setup 2>&1 | tee build/v1.4.0-updater-evidence/github-updater-smoke.log
+            saved_trust=build/v1.4.0-updater-evidence/production-update-trust.hpp
+            cp src/update_trust.hpp "$saved_trust"
+            restore_production_trust() { cp "$saved_trust" src/update_trust.hpp; }
+            trap restore_production_trust EXIT
+            cat > src/update_trust.hpp <<'EOF'
+          #pragma once
+          #include <array>
+          #include <string_view>
+          namespace eye::updates {
+          // Used only by EYEBREAK_TEST_BUILD GUI integration binaries.
+          inline constexpr bool ProductionUpdateKeyProvisioned=false;
+          inline constexpr std::string_view ProductionUpdateKeyId="";
+          inline constexpr std::array<unsigned char,64> ProductionUpdatePublicKey{};
+          }
+          EOF
+            make -B gui-test "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-gui-test.log
+            restore_production_trust
+            trap - EXIT
+            cmp -s src/update_trust.hpp "$saved_trust"
           fi
 
       - name: Record candidate artifact identities and exact build provenance
@@ -264,6 +289,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $transactionScenario = if ($env:ACCEPTANCE_SCOPE -eq 'ProductionCandidateOnly') { 'All' } else { $env:ACCEPTANCE_SCOPE }
           & .\tests\windows_v1_4_updater_acceptance.ps1 `
             -BaselineInstaller '.\build\gui-test\baseline-test-setup.exe' `
             -BaselineExecutable '.\build\gui-test\baseline-test-executable.exe' `
@@ -271,7 +297,7 @@ jobs:
             -UpdateExecutable '.\build\gui-test\update-test-executable.exe' `
             -FailingInstaller '.\build\gui-test\failing-test-setup.exe' `
             -EvidenceDirectory '.\build\v1.4.0-updater-evidence' `
-            -Scenario "$env:ACCEPTANCE_SCOPE"
+            -Scenario "$transactionScenario"
           if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Exercise real portable replacement failures and recovery
@@ -295,6 +321,8 @@ jobs:
           ./build/updater-portable-recovery-tests.exe \
             "$(cygpath -aw build/gui-test/baseline-test-executable.exe)" \
             "$(cygpath -aw build/gui-test/update-test-executable.exe)" \
+            "$(cygpath -aw build/gui-test/update-test-setup.exe)" \
+            "$(cygpath -aw build/updater-windows-tests.exe)" \
             2>&1 | tee build/v1.4.0-updater-evidence/portable-recovery-tests.log
 
       - name: Build the test-only unverified-executable launch sentinel

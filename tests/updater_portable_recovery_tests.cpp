@@ -142,6 +142,30 @@ bool assertProfilePreserved(const std::wstring& dataDirectory, const std::string
     return ok;
 }
 
+bool createSignedTestManifest(const std::wstring& signer, const std::wstring& stage,
+                              const std::wstring& installer, const std::wstring& portable) {
+    if (signer.empty() || !eye::updates::safeFile(signer) ||
+        !eye::updates::safeFile(installer) || !eye::updates::safeFile(portable)) return false;
+    std::wstring command = eye::updates::quoteArgument(signer) +
+        L" --sign-update-manifest " + eye::updates::quoteArgument(stage) + L" " +
+        eye::updates::quoteArgument(installer) + L" " + eye::updates::quoteArgument(portable);
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(signer.c_str(), command.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, eye::updates::parentPath(signer).c_str(),
+                        &startup, &process)) return false;
+    CloseHandle(process.hThread);
+    const DWORD wait = WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD exitCode = 1;
+    const bool exited = wait == WAIT_OBJECT_0 && GetExitCodeProcess(process.hProcess, &exitCode);
+    CloseHandle(process.hProcess);
+    return exited && exitCode == 0 &&
+        eye::updates::safeFile(stage + L"\\EyeBreakReminder-UpdateManifest.json", 16384) &&
+        eye::updates::safeFile(stage + L"\\EyeBreakReminder-UpdateManifest.sig", 64) &&
+        eye::updates::safeFile(stage + L"\\test-update-public-key.bin", 64);
+}
+
 struct TestCase {
     const char* name;
     bool lockExecutable;
@@ -150,6 +174,7 @@ struct TestCase {
 };
 
 bool runCase(const TestCase& test, const std::wstring& baseline, const std::wstring& update,
+             const std::wstring& installer, const std::wstring& signer,
              const std::wstring& testRoot) {
     bool ok = true;
     const std::wstring data = testRoot + L"\\profile";
@@ -213,6 +238,8 @@ bool runCase(const TestCase& test, const std::wstring& baseline, const std::wstr
     ok &= check(gotArtifactInfo && transaction.expectedSize != 0 &&
                 eye::updates::writeTransaction(transaction),
                 "write a valid isolated portable transaction using actual payload identities");
+    ok &= check(createSignedTestManifest(signer, stage, installer, artifact),
+                "sign the isolated transaction metadata with an ephemeral test-only CNG key");
     if (!ok) {
         SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY", nullptr);
         deleteTree(testRoot);
@@ -367,15 +394,18 @@ int main(int argc, char** argv) {
         std::cerr << "BLOCKED: this test may run only on a disposable GitHub Actions Windows runner with RUNNER_TEMP.\n";
         return 2;
     }
-    if (argc != 3) {
-        std::cerr << "Usage: updater-portable-recovery-tests.exe <baseline-v1.4.0.exe> <update-v1.4.1.exe>\n";
+    if (argc != 5) {
+        std::cerr << "Usage: updater-portable-recovery-tests.exe <baseline-v1.4.0.exe> <update-v1.4.1.exe> <update-v1.4.1-setup.exe> <disposable-test-signer.exe>\n";
         return 2;
     }
     const std::wstring baseline = toWide(argv[1]);
     const std::wstring update = toWide(argv[2]);
+    const std::wstring installer = toWide(argv[3]);
+    const std::wstring signer = toWide(argv[4]);
     if (baseline.empty() || update.empty() || !eye::updates::safeFile(baseline) ||
-        !eye::updates::safeFile(update)) {
-        std::cerr << "FAIL: test inputs must be regular Windows executable files.\n";
+        !eye::updates::safeFile(update) || installer.empty() || !eye::updates::safeFile(installer) ||
+        signer.empty() || !eye::updates::safeFile(signer)) {
+        std::cerr << "FAIL: test inputs and the disposable test signer must be regular Windows executable files.\n";
         return 1;
     }
     if (FindWindowW(L"EyeBreakReminder.Native", nullptr)) {
@@ -409,7 +439,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         std::cout << "CASE: " << cases[i].name << '\n';
-        ok &= runCase(cases[i], baseline, update, root);
+        ok &= runCase(cases[i], baseline, update, installer, signer, root);
     }
     std::cout << (ok ? "PASS" : "FAIL") << ": " << assertions
               << " portable recovery integration assertions; cases: PORT-008, PORT-009, PORT-010."

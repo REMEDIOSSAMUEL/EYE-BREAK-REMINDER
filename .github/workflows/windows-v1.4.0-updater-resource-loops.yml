@@ -55,11 +55,33 @@ jobs:
           if ! command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
             cp "$(command -v strip)" /mingw64/bin/x86_64-w64-mingw32-strip.exe
           fi
-          make gui-test \
+          # Compile the production-root rejection test with the real embedded
+          # key, then build the isolated GUI test application with a fail-closed
+          # trust header so its per-run disposable key is usable only by this
+          # EYEBREAK_TEST_BUILD binary.
+          make build/updater-windows-tests.exe HOST_CXX=g++
+          saved_trust=build/production-update-trust.hpp
+          cp src/update_trust.hpp "$saved_trust"
+          restore_production_trust() { cp "$saved_trust" src/update_trust.hpp; }
+          trap restore_production_trust EXIT
+          cat > src/update_trust.hpp <<'EOF'
+          #pragma once
+          #include <array>
+          #include <string_view>
+          namespace eye::updates {
+          // Used only by EYEBREAK_TEST_BUILD GUI integration binaries.
+          inline constexpr bool ProductionUpdateKeyProvisioned=false;
+          inline constexpr std::string_view ProductionUpdateKeyId="";
+          inline constexpr std::array<unsigned char,64> ProductionUpdatePublicKey{};
+          }
+          EOF
+          make -B gui-test \
             CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
             WINDRES=windres \
             STRIP=strip
-          make build/updater-windows-tests.exe HOST_CXX=g++
+          restore_production_trust
+          trap - EXIT
+          cmp -s src/update_trust.hpp "$saved_trust"
 
       - name: Measure repeated updater resource paths
         shell: pwsh
