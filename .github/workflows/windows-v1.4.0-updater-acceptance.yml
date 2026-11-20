@@ -334,7 +334,7 @@ jobs:
 
       - name: Build the test-only unverified-executable launch sentinel
         id: launch-sentinel
-        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'ProductionCandidateOnly' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (env.ACCEPTANCE_SCOPE == 'UpdatePreferences' || (steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success')) }}
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'ProductionCandidateOnly' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.updater.outcome == 'success' && (env.ACCEPTANCE_SCOPE == 'UpdatePreferences' || steps.legacy_upgrade.outcome == 'success') }}
         shell: msys2 {0}
         run: |
           set -euo pipefail
@@ -347,7 +347,7 @@ jobs:
 
       - name: Update the installed exact production candidate through its real updater
         id: production_update
-        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'ProductionCandidateOnly' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.launch-sentinel.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (env.ACCEPTANCE_SCOPE == 'UpdatePreferences' || (steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success')) }}
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'ProductionCandidateOnly' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.launch-sentinel.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.updater.outcome == 'success' && (env.ACCEPTANCE_SCOPE == 'UpdatePreferences' || steps.legacy_upgrade.outcome == 'success') }}
         shell: pwsh
         timeout-minutes: 30
         run: |

@@ -45,6 +45,10 @@ try{
   [void][IO.Directory]::CreateDirectory((Join-Path $root 'build/v1.4.0-updater-evidence'))
   foreach($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe')){$source=Join-Path $release $name;if(-not(Test-Path -LiteralPath $source -PathType Leaf)){throw "Packaged candidate is missing: $source"};$destination=if($name-eq'EyeBreakReminder.exe'){$originalExe}else{$originalSetup};Copy-Item -LiteralPath $source -Destination $destination}
   Enable-TestBuildTrust
+  # The isolated acceptance scripts need this disposable CNG signer even in
+  # the focused UpdatePreferences workflow, which does not build all test tools.
+  # It is compiled against the fail-closed test trust header and is never packaged.
+  Invoke-Make 'build/updater-windows-tests.exe'
   Invoke-Make 'gui-test'
   $baselineTestExecutable=Join-Path $build 'baseline-test-executable.exe'
   Copy-Item -LiteralPath (Join-Path $build 'EyeBreakReminder.exe') -Destination $baselineTestExecutable -Force
