@@ -124,7 +124,20 @@ jobs:
             if ((Get-AuthenticodeSignature -LiteralPath $path).Status -ne [Management.Automation.SignatureStatus]::NotSigned) { throw "This candidate was expected to remain Authenticode unsigned under the approved policy: $name" }
           }
           $provenance = Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
-          if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.SourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.RunId -ne $env:CANDIDATE_RUN_ID) { throw 'Candidate artifact provenance does not match the requested source and run.' }
+          $gate = Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Raw | ConvertFrom-Json
+          if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.SourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.RunId -ne $env:CANDIDATE_RUN_ID -or $provenance.Branch -cne 'feature/v1.4.0-automatic-updater' -or $gate.Status -cne 'PASS' -or $gate.Scope -cne 'ProductionCandidateOnly') { throw 'Candidate provenance or production-candidate acceptance gate does not match the requested source and run.' }
+          $expectedNames = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $identities = @(Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/release-artifact-identities.json' -Raw | ConvertFrom-Json)
+          $actualFiles = @(Get-ChildItem -LiteralPath $release -File)
+          if ($identities.Count -ne 5 -or $actualFiles.Count -ne 5 -or @(Get-ChildItem -LiteralPath $release -Directory).Count -ne 0) { throw 'The candidate artifact identity and release directory must contain exactly five files.' }
+          if ((@($actualFiles | Sort-Object Name | Select-Object -ExpandProperty Name) -join "`n") -cne (($expectedNames | Sort-Object) -join "`n")) { throw 'The candidate release file set is unexpected.' }
+          foreach ($name in $expectedNames) {
+            $record = @($identities | Where-Object { $_.Name -ceq $name })
+            if ($record.Count -ne 1) { throw "Candidate identity is missing or duplicated: $name" }
+            $path = Join-Path $release $name
+            $file = Get-Item -LiteralPath $path
+            if ($file.Length -ne [long]$record[0].Bytes -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$record[0].SHA256) { throw "Candidate bytes differ from the tested identity: $name" }
+          }
 
       - name: Assemble seven release assets and verify signature, payloads, and source archive
         shell: msys2 {0}
@@ -222,6 +235,14 @@ jobs:
           $identity = Get-Content -LiteralPath 'clean-download/final-candidate-evidence/independent-verification.json' -Raw | ConvertFrom-Json
           $provenance = Get-Content -LiteralPath 'clean-download/final-candidate-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
           if ($identity.status -cne 'PASS' -or $identity.production_key_id -cne $provenance.ProductionKeyId -or $provenance.RequiredCheckName -cne 'Core tests and Windows package' -or -not $provenance.RequiredCheckRunId -or -not $provenance.RequiredCheckUrl -or $provenance.CandidateSourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.CandidateAcceptanceRunId -cne $env:CANDIDATE_RUN_ID -or $provenance.FinalizationSourceCommit -cne $env:GITHUB_SHA) { throw 'Independent artifact provenance or embedded-key verification did not match.' }
+          $expectedFiles = @{}
+          foreach ($entry in $provenance.ReleaseFiles.PSObject.Properties) { $expectedFiles[$entry.Name] = $entry.Value }
+          foreach ($entry in $identity.release_files.PSObject.Properties) {
+            $expected = $expectedFiles[$entry.Name]
+            if (-not $expected -or $expected.bytes -ne $entry.Value.bytes -or $expected.sha256 -cne $entry.Value.sha256) { throw "Independent artifact bytes differ from their first verified identities: $($entry.Name)" }
+            $expectedFiles.Remove($entry.Name)
+          }
+          if ($expectedFiles.Count -ne 0 -or $identity.release_files.PSObject.Properties.Count -ne 7) { throw 'Independent candidate file identities are missing or unexpected.' }
 
       - name: Retain independent verification evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
