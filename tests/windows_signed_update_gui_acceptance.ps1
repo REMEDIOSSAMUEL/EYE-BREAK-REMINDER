@@ -3,6 +3,10 @@ param(
   [Parameter(Mandatory=$true)][string]$SuccessorInstaller,
   [Parameter(Mandatory=$true)][string]$SuccessorApplication,
   [Parameter(Mandatory=$true)][string]$SignatureTool,
+  [string]$ProductionManifest,
+  [string]$ProductionSignature,
+  [ValidatePattern('^\d+\.\d+\.\d+$')][string]$BaselineVersion = '1.4.0',
+  [ValidatePattern('^\d+\.\d+\.\d+$')][string]$UpdateVersion = '1.4.1',
   [string]$EvidencePath = 'build/v1.4.0-updater-evidence/signed-gui-update.json'
 )
 
@@ -26,9 +30,16 @@ if((Test-Path -LiteralPath $appKey) -or (Test-Path -LiteralPath $uninstallKey) -
    (Get-ItemProperty -LiteralPath $runOnceKey -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue)) { throw 'Refusing to replace pre-existing Eye Break Reminder registry state on the hosted runner.' }
 $testApp=[IO.Path]::GetFullPath($TestApplication);$setup=[IO.Path]::GetFullPath($SuccessorInstaller);$portable=[IO.Path]::GetFullPath($SuccessorApplication);$signer=[IO.Path]::GetFullPath($SignatureTool)
 foreach($path in @($testApp,$setup,$portable,$signer)){if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Required signed GUI update input is missing: $path"}}
-if((Get-Item -LiteralPath $testApp).VersionInfo.ProductVersion -notmatch '^1\.4\.0(\.0)?$' -or
-   (Get-Item -LiteralPath $setup).VersionInfo.ProductVersion -notmatch '^1\.4\.1(\.0)?$' -or
-   (Get-Item -LiteralPath $portable).VersionInfo.ProductVersion -notmatch '^1\.4\.1(\.0)?$') { throw 'The GUI update requires the controlled v1.4.0 test app and matching v1.4.1 successor payloads.' }
+$productionTrustMode=(-not[string]::IsNullOrWhiteSpace($ProductionManifest))-or(-not[string]::IsNullOrWhiteSpace($ProductionSignature))
+if($productionTrustMode-and([string]::IsNullOrWhiteSpace($ProductionManifest)-or[string]::IsNullOrWhiteSpace($ProductionSignature))){throw 'Production trust mode requires both the authentic production manifest and signature.'}
+if((Get-Item -LiteralPath $testApp).VersionInfo.ProductVersion -notmatch ('^'+[regex]::Escape($BaselineVersion)+'(\.0)?$') -or
+   (Get-Item -LiteralPath $setup).VersionInfo.ProductVersion -notmatch ('^'+[regex]::Escape($UpdateVersion)+'(\.0)?$') -or
+   (Get-Item -LiteralPath $portable).VersionInfo.ProductVersion -notmatch ('^'+[regex]::Escape($UpdateVersion)+'(\.0)?$')) { throw "The GUI update requires baseline $BaselineVersion and matching $UpdateVersion payloads." }
+$productionManifestPath=$null;$productionSignaturePath=$null
+if($productionTrustMode){
+  $productionManifestPath=[IO.Path]::GetFullPath($ProductionManifest);$productionSignaturePath=[IO.Path]::GetFullPath($ProductionSignature)
+  foreach($path in @($productionManifestPath,$productionSignaturePath)){if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Required production update metadata is missing: $path"}}
+}
 $evidence=[IO.Path]::GetFullPath($EvidencePath);$evidenceRoot=[IO.Path]::GetFullPath((Join-Path (Get-Location) 'build/v1.4.0-updater-evidence'))
 if(-not $evidence.StartsWith($evidenceRoot.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Evidence must remain under build/v1.4.0-updater-evidence.'}
 
@@ -149,16 +160,37 @@ $script:assertions=0;$script:started=[DateTime]::UtcNow;$script:app=$null;$scrip
 try{
   [void][IO.Directory]::CreateDirectory($testRoot);$targetDirectory=Join-Path $testRoot 'installed';[void][IO.Directory]::CreateDirectory($targetDirectory);$target=Join-Path $targetDirectory 'EyeBreakReminder.exe';Copy-Item -LiteralPath $testApp -Destination $target
   New-Item -Path $appKey -Force | Out-Null;New-ItemProperty -LiteralPath $appKey -Name InstallDir -PropertyType String -Value $targetDirectory -Force | Out-Null
-  New-Item -Path $uninstallKey -Force | Out-Null;New-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion -PropertyType String -Value '1.4.0' -Force | Out-Null;$script:registered=$true
+  New-Item -Path $uninstallKey -Force | Out-Null;New-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion -PropertyType String -Value $BaselineVersion -Force | Out-Null;$script:registered=$true
   [void][IO.Directory]::CreateDirectory($dataRoot);$script:dataCreated=$true
   $settings="workMinutes=37`nbreakSeconds=33`nvolume=32`ntheme=2`nalarm=0`nrepeat=1`nnotifications=0`nsnooze=0`nautoStart=0`nstartup=0`nhistory=1`nautoCheckUpdates=1`nautoDownloadUpdates=1`nupdateLastCheck=0`n"
   $historyRecord="$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()-120) 1 20`n";$settingsPath=Join-Path $dataRoot 'settings.ini';$historyPath=Join-Path $dataRoot 'history.dat';$sentinelPath=Join-Path $dataRoot 'unrelated-sentinel.txt'
   [IO.File]::WriteAllText($settingsPath,$settings,[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText($historyPath,$historyRecord,[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText($sentinelPath,'signed-gui-sentinel',[Text.UTF8Encoding]::new($false))
   $historyHash=Get-Hash $historyPath;$sentinelHash=Get-Hash $sentinelPath
-  & $signer --sign-update-manifest $targetDirectory $setup $portable;if($LASTEXITCODE -ne 0){throw 'The ephemeral CNG test key could not sign the controlled successor manifest.'}
+  if($productionTrustMode){
+    Copy-Item -LiteralPath $productionManifestPath -Destination (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json')
+    Copy-Item -LiteralPath $productionSignaturePath -Destination (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.sig')
+    if(Test-Path -LiteralPath (Join-Path $targetDirectory 'test-update-public-key.bin')){throw 'Production-trust integration must not have a test public key in the application directory.'}
+    & $signer --verify-production-manifest (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json') (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.sig') ('v'+$UpdateVersion) $BaselineVersion
+    if($LASTEXITCODE -ne 0){throw 'Windows CNG did not authenticate the exact production update manifest against the embedded production key.'}
+    $manifestObject=Get-Content -LiteralPath (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json') -Raw|ConvertFrom-Json
+    if($manifestObject.version-cne$UpdateVersion-or$manifestObject.key_id-cne'p256-0aff97759ea95258'){throw 'Production update metadata has an unexpected version or key identifier.'}
+    $setupHash=Get-Hash $setup;$portableHash=Get-Hash $portable
+    if($manifestObject.assets.Count-ne2-or$manifestObject.assets[0].name-cne'EyeBreakReminder-Setup-x64.exe'-or$manifestObject.assets[0].role-cne'installer'-or$manifestObject.assets[0].installation_type-cne'installed'-or$manifestObject.assets[0].architecture-cne'x64'-or[long]$manifestObject.assets[0].size-ne(Get-Item -LiteralPath $setup).Length-or$manifestObject.assets[0].sha256-cne$setupHash-or$manifestObject.assets[1].name-cne'EyeBreakReminder.exe'-or$manifestObject.assets[1].role-cne'portable-update'-or$manifestObject.assets[1].installation_type-cne'portable'-or$manifestObject.assets[1].architecture-cne'x64'-or[long]$manifestObject.assets[1].size-ne(Get-Item -LiteralPath $portable).Length-or$manifestObject.assets[1].sha256-cne$portableHash){throw 'The signed production manifest does not bind both exact candidate payloads to their intended roles and installation types.'}
+    $testKeyDirectory=Join-Path $testRoot 'disposable-test-key-rejection';[void][IO.Directory]::CreateDirectory($testKeyDirectory)
+    & $signer --sign-update-manifest $testKeyDirectory $setup $portable $UpdateVersion;if($LASTEXITCODE-ne0){throw 'Could not create the disposable test-key rejection fixture.'}
+    $testManifestPath=Join-Path $testKeyDirectory 'EyeBreakReminder-UpdateManifest.json';$testManifest=Get-Content -LiteralPath $testManifestPath -Raw|ConvertFrom-Json
+    if($testManifest.key_id-cne'p256-0aff97759ea95258'-or-not(Test-Path -LiteralPath (Join-Path $testKeyDirectory 'test-update-public-key.bin'))){throw 'The rejection fixture did not use a separate disposable test verification key.'}
+    & $signer --verify-production-manifest $testManifestPath (Join-Path $testKeyDirectory 'EyeBreakReminder-UpdateManifest.sig') ('v'+$UpdateVersion) $BaselineVersion 2>&1 | Out-Null
+    $testKeyRejected=($LASTEXITCODE-ne0)
+    Assert-That $testKeyRejected 'the production CNG trust configuration rejects a correctly signed manifest from a disposable test key'
+    $metadataTrust='Embedded production verification key; no test public key file present'
+  }else{
+    & $signer --sign-update-manifest $targetDirectory $setup $portable $UpdateVersion;if($LASTEXITCODE -ne 0){throw 'The ephemeral CNG test key could not sign the controlled successor manifest.'}
+    $metadataTrust='Ephemeral Windows CNG ECDSA P-256 test key'
+  }
   $assetNames=@('EyeBreakReminder-Setup-x64.exe','EyeBreakReminder.exe','EyeBreakReminder-UpdateManifest.json','EyeBreakReminder-UpdateManifest.sig')
-  $releaseAssets=@(foreach($name in $assetNames){$path=switch($name){'EyeBreakReminder-Setup-x64.exe'{$setup};'EyeBreakReminder.exe'{$portable};default{Join-Path $targetDirectory $name}};$item=Get-Item -LiteralPath $path;[pscustomobject]@{name=$name;browser_download_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/$name";size=[long]$item.Length;digest=('sha256:'+ (Get-Hash $path))}})
-  $release=[ordered]@{tag_name='v1.4.1';html_url='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.4.1';draft=$false;prerelease=$false;body='Disposable signed Windows integration fixture';assets=$releaseAssets}
+  $releaseAssets=@(foreach($name in $assetNames){$path=switch($name){'EyeBreakReminder-Setup-x64.exe'{$setup};'EyeBreakReminder.exe'{$portable};default{Join-Path $targetDirectory $name}};$item=Get-Item -LiteralPath $path;[pscustomobject]@{name=$name;browser_download_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v$UpdateVersion/$name";size=[long]$item.Length;digest=('sha256:'+ (Get-Hash $path))}})
+  $release=[ordered]@{tag_name="v$UpdateVersion";html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v$UpdateVersion";draft=$false;prerelease=$false;body='Controlled signed Windows integration fixture';assets=$releaseAssets}
   [IO.File]::WriteAllText((Join-Path $targetDirectory 'test-update-response.txt'),($release|ConvertTo-Json -Depth 8 -Compress),[Text.UTF8Encoding]::new($false))
   $env:EBR_GUI_TEST_DATA_DIRECTORY=$dataRoot;$env:EBR_GUI_TEST_UPDATE_ASSET_PATH=$setup
   $process=Start-Process -FilePath $target -WorkingDirectory $targetDirectory -PassThru;$script:app=$process
@@ -183,19 +215,20 @@ try{
   $timerInitial=Get-TimerSeconds $script:updatedApp.Window
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,41) -ceq 'Paused' -and [EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,20) -ceq 'Resume') 'the relaunched application respects the preserved disabled auto-start preference'
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::Click($script:updatedApp.Window,20)) 'the relaunched signed successor can resume its timer normally'
-  Assert-That ((Get-Hash $target) -ceq (Get-Hash $portable) -and (Get-Item -LiteralPath $target).VersionInfo.ProductVersion -match '^1\.4\.1(\.0)?$') 'the installed binary exactly matches the signed portable-application digest and successor version'
+  Assert-That ((Get-Hash $target) -ceq (Get-Hash $portable) -and (Get-Item -LiteralPath $target).VersionInfo.ProductVersion -match ('^'+[regex]::Escape($UpdateVersion)+'(\.0)?$')) 'the installed binary exactly matches the signed portable-application digest and successor version'
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::Responsive($script:updatedApp.Window)) 'the relaunched signed successor application responds to the window message check'
   Assert-That (Wait-TimerProgress $script:updatedApp.Window $timerInitial) 'the relaunched signed successor timer continues to advance'
   Assert-That (([IO.File]::ReadAllText($settingsPath)).Contains('workMinutes=37') -and ([IO.File]::ReadAllText($settingsPath)).Contains('volume=32') -and ([IO.File]::ReadAllText($settingsPath)).Contains('autoStart=0')) 'the signed installed update preserves user settings, including the disabled auto-start choice'
   Assert-That ((Get-Hash $historyPath) -ceq $historyHash) 'the signed installed update preserves user history byte-for-byte'
   Assert-That ((Get-Hash $sentinelPath) -ceq $sentinelHash) 'the signed installed update preserves unrelated user data'
   $version=(Get-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion).DisplayVersion
-  Assert-That ([string]$version -ceq '1.4.1') 'Windows installed-app registration reports the successor version'
+  Assert-That ([string]$version -ceq $UpdateVersion) 'Windows installed-app registration reports the successor version'
   $updatesPath=Join-Path $dataRoot 'updates'
   Assert-That (Wait-NoStagedUpdates $updatesPath) 'the verified GUI transaction removes its completed staging directory'
   Assert-That (-not (Get-ItemProperty -LiteralPath $runOnceKey -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue)) 'the verified GUI transaction clears temporary recovery registration'
   Close-App $script:updatedApp;$script:updatedApp=$null
-  $report=[ordered]@{Application='Eye Break Reminder';Scenario='Real installed GUI update through discovery, signed metadata, payload download, coordinator, installer and relaunch';Status='PASS';Assertions=$script:assertions;TestTrust='Ephemeral Windows CNG ECDSA P-256 test key; public key confined to disposable runner; production trust unchanged';TestKeyId=(Get-Content -LiteralPath (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json') -Raw|ConvertFrom-Json).key_id;InitialApplicationSHA256=(Get-Hash $testApp);InstallerSHA256=(Get-Hash $setup);PortableSHA256=(Get-Hash $portable);InstalledApplicationSHA256=(Get-Hash $target);ManifestSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json'));SignatureSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.sig'));SettingsPreserved=$true;HistoryPreserved=$true;UnrelatedDataPreserved=$true;Relaunched=$true;TimerAdvanced=$true;HostScope='Disposable GitHub Actions Windows runner';ProductionKeyProvisioned=$false;AuthenticodeEstablished=$false;HostRebooted=$false;UtcStarted=$script:started.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')}
+  $metadata=Get-Content -LiteralPath (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json') -Raw|ConvertFrom-Json
+  $report=[ordered]@{Application='Eye Break Reminder';Scenario='Real installed GUI update through discovery, signed metadata, payload download, coordinator, installer and relaunch';Status='PASS';Assertions=$script:assertions;InitialVersion=$BaselineVersion;UpdatedVersion=$UpdateVersion;Trust=$metadataTrust;KeyId=$metadata.key_id;TestKeyRejectedByProductionTrust=if($productionTrustMode){$testKeyRejected}else{$false};InitialApplicationSHA256=(Get-Hash $testApp);InstallerSHA256=(Get-Hash $setup);PortableSHA256=(Get-Hash $portable);InstalledApplicationSHA256=(Get-Hash $target);ManifestSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json'));SignatureSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.sig'));SettingsPreserved=$true;HistoryPreserved=$true;UnrelatedDataPreserved=$true;Relaunched=$true;TimerAdvanced=$true;HostScope='Disposable GitHub Actions Windows runner';ProductionKeyProvisioned=$productionTrustMode;AuthenticodeEstablished=$false;HostRebooted=$false;UtcStarted=$script:started.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')}
   [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($evidence));$report|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $evidence -Encoding utf8;Write-Host ($report|ConvertTo-Json -Depth 7)
 }catch{
   $failure=[ordered]@{Application='Eye Break Reminder';Scenario='Real signed installed GUI update';Status='FAIL';Failure=$_.Exception.ToString();Assertions=$script:assertions;HostScope='Disposable GitHub Actions Windows runner';ProductionTrustChanged=$false;HostRebooted=$false;UtcStarted=$script:started.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')}
