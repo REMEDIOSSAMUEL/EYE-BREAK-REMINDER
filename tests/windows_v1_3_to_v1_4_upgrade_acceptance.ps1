@@ -6,12 +6,13 @@ param(
 )
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS-ne'true'){throw 'The v1.3.0 upgrade acceptance may only use the disposable hosted Windows profile.'}
-$runnerTemp=[IO.Path]::GetFullPath($env:RUNNER_TEMP);$testRoot=[IO.Path]::GetFullPath((Join-Path $runnerTemp 'EBR-v1.3-v1.4-transition'))
+$runnerTemp=[IO.Path]::GetFullPath($env:RUNNER_TEMP);$testRoot=[IO.Path]::GetFullPath((Join-Path $runnerTemp ('EBR-v1.3-v1.4-transition-'+[guid]::NewGuid().ToString('N'))))
 $installDir=Join-Path $testRoot 'install';$dataDir=[IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'))
 $EvidenceDirectory=[IO.Path]::GetFullPath($EvidenceDirectory);$expectedEvidence=[IO.Path]::GetFullPath((Join-Path (Get-Location) 'build/v1.4.0-updater-evidence'))
 if($EvidenceDirectory-ine$expectedEvidence){throw "Evidence must be in $expectedEvidence"}
 foreach($file in @($LegacyInstaller,$CandidateInstaller,$CandidateExecutable)){if(-not(Test-Path -LiteralPath $file -PathType Leaf)){throw "Upgrade artifact is missing: $file"}}
-if((Test-Path -LiteralPath $testRoot)-or(Test-Path -LiteralPath $dataDir)){throw 'Refusing to reuse an existing test install or Eye Break Reminder user profile.'}
+if(Test-Path -LiteralPath $testRoot){throw "Refusing to reuse an existing isolated upgrade test directory: $testRoot"}
+if(Test-Path -LiteralPath $dataDir){throw "Refusing to overwrite an existing Eye Break Reminder user profile in the hosted test account: $dataDir"}
 [void][IO.Directory]::CreateDirectory($EvidenceDirectory);[void][IO.Directory]::CreateDirectory($testRoot)
 $native=@'
 using System;

@@ -1116,8 +1116,8 @@ try {
       if(-not(Test-Path -LiteralPath $signingTool -PathType Leaf)){if($expectedVersion-eq'1.4.0'){throw 'The v1.4.0 GUI release fixtures require the disposable CNG manifest signer.'}}
       else{
         foreach($path in @($setupPath,$portablePath)){if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Signed GUI release payload fixture is missing: $path"}}
-        & $signingTool --sign-update-manifest $fixtureDirectory $setupPath $portablePath $Tag
-        if($LASTEXITCODE-ne0){throw "The disposable CNG key could not sign the controlled GUI release manifest for v$Tag."}
+        $signerOutput=@(& $signingTool --sign-update-manifest $fixtureDirectory $setupPath $portablePath $Tag 2>&1)
+        if($LASTEXITCODE-ne0){throw "The disposable CNG key could not sign the controlled GUI release manifest for v$Tag. $($signerOutput -join ' ')"}
         $metadataPaths=@((Join-Path $fixtureDirectory 'EyeBreakReminder-UpdateManifest.json'),(Join-Path $fixtureDirectory 'EyeBreakReminder-UpdateManifest.sig'),(Join-Path $fixtureDirectory 'test-update-public-key.bin'))
         $metadataBase64=@($metadataPaths|ForEach-Object{[Convert]::ToBase64String([IO.File]::ReadAllBytes($_))})
       }
