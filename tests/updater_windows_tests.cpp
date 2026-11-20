@@ -67,11 +67,11 @@ bool writeSignedManifest(const std::wstring&stage,EphemeralSigningKey&signer,con
     if(!manifestWritten||!signatureWritten||!publicKeyWritten)std::cerr<<"FAIL: signed test fixture write results manifest="<<manifestWritten<<" error="<<manifestError<<" signature="<<signatureWritten<<" error="<<signatureError<<" public_key="<<publicKeyWritten<<" error="<<publicKeyError<<" stage_exists="<<(GetFileAttributesW(stage.c_str())!=INVALID_FILE_ATTRIBUTES)<<" parent_exists="<<(GetFileAttributesW(eye::updates::parentPath(stage).c_str())!=INVALID_FILE_ATTRIBUTES)<<" stage="<<std::filesystem::path(stage).string()<<"\n";
     return manifestWritten&&signatureWritten&&publicKeyWritten;
 }
-eye::updates::UpdateManifest transactionManifest(const EphemeralSigningKey&signer){
+eye::updates::UpdateManifest transactionManifest(const EphemeralSigningKey&signer,const std::string&version="1.4.1"){
     const std::time_t now=std::time(nullptr);std::string issued,expires;
     eye::updates::UpdateManifest manifest;if(!manifestTimestamp(now,issued)||!manifestTimestamp(now+24*60*60,expires))return manifest;
     manifest.schemaVersion=1;manifest.application=std::string(eye::updates::OfficialApplicationIdentity);
-    manifest.repository=std::string(eye::updates::OfficialRepositoryIdentity);manifest.version="1.4.1";manifest.channel="stable";manifest.architecture="x64";
+    manifest.repository=std::string(eye::updates::OfficialRepositoryIdentity);manifest.version=version;manifest.channel="stable";manifest.architecture="x64";
     manifest.keyId=signer.trusted.keyId;manifest.issuedAt=issued;manifest.expiresAt=expires;
     manifest.assets={{"EyeBreakReminder-Setup-x64.exe","installer","installed","x64",std::string(64,'c'),3},
                      {"EyeBreakReminder.exe","portable-update","portable","x64",std::string(64,'b'),3}};
@@ -94,8 +94,9 @@ bool createGuiResourceMetadata(const char*directoryText,const char*portableDiges
     if(written)std::cout<<"Created disposable GUI resource manifest and signature; private test key remained ephemeral. key_id="<<signer.trusted.keyId<<"\n";
     return written;
 }
-bool signUpdateManifestForFiles(const char*stageText,const char*setupText,const char*portableText){
+bool signUpdateManifestForFiles(const char*stageText,const char*setupText,const char*portableText,const char*versionText=nullptr){
     if(!stageText||!setupText||!portableText)return false;
+    const std::string version=versionText?versionText:"1.4.1";if(!eye::updates::manifest_detail::stableVersion(version))return false;
     const std::wstring stage=asciiWide(stageText),setupPath=asciiWide(setupText),portablePath=asciiWide(portableText);
     auto measure=[](const std::wstring&path,std::uint64_t&size,std::string&digest){
         if(!eye::updates::safeFile(path,100ull*1024*1024)||!eye::updates::hashFile(path,digest))return false;
@@ -105,7 +106,7 @@ bool signUpdateManifestForFiles(const char*stageText,const char*setupText,const 
     std::uint64_t setupSize=0,portableSize=0;std::string setupDigest,portableDigest;
     if(!measure(setupPath,setupSize,setupDigest)||!measure(portablePath,portableSize,portableDigest))return false;
     EphemeralSigningKey signer;if(!signer.generate())return false;
-    auto manifest=transactionManifest(signer);if(manifest.assets.size()!=2)return false;
+    auto manifest=transactionManifest(signer,version);if(manifest.assets.size()!=2)return false;
     manifest.assets[0].size=setupSize;manifest.assets[0].sha256=setupDigest;
     manifest.assets[1].size=portableSize;manifest.assets[1].sha256=portableDigest;
     const bool written=writeSignedManifest(stage,signer,manifest);
@@ -398,6 +399,7 @@ int main(int argc,char**argv){
     if(argc==3&&std::string(argv[1])=="--hold-test-coordinator-mutex")return holdTestCoordinatorMutex(argv[2]);
     if(argc>1&&std::string(argv[1])=="--https-interruption")return runHttpsInterruption(argc,argv);
     if(argc==5&&std::string(argv[1])=="--create-gui-resource-metadata")return createGuiResourceMetadata(argv[2],argv[3],argv[4])?0:1;
+    if(argc==6&&std::string(argv[1])=="--sign-update-manifest")return signUpdateManifestForFiles(argv[2],argv[3],argv[4],argv[5])?0:1;
     if(argc==5&&std::string(argv[1])=="--sign-update-manifest")return signUpdateManifestForFiles(argv[2],argv[3],argv[4])?0:1;
     if(argc==2&&std::string(argv[1])=="--test-signatures"){
         const bool ok=testSignedManifestVerification();if(ok)std::cout<<"PASS: "<<assertions<<" Windows CNG signature assertions executed.\n";return ok?0:1;

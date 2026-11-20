@@ -21,6 +21,7 @@ $script:updateBarrierStartedName="Local\EyeBreakReminder.GuiTest.UpdateStarted.$
 $script:updateBarrierReleaseName="Local\EyeBreakReminder.GuiTest.UpdateRelease.$PID"
 $script:oldUpdateBarrierStarted=[Environment]::GetEnvironmentVariable('EBR_GUI_TEST_UPDATE_STARTED','Process')
 $script:oldUpdateBarrierRelease=[Environment]::GetEnvironmentVariable('EBR_GUI_TEST_UPDATE_RELEASE','Process')
+$script:oldGuiTestDataDirectory=[Environment]::GetEnvironmentVariable('EBR_GUI_TEST_DATA_DIRECTORY','Process')
 $script:updateBarrierStartedCreated=$false
 $script:updateBarrierReleaseCreated=$false
 $script:updateBarrierStarted=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,$script:updateBarrierStartedName,[ref]$script:updateBarrierStartedCreated)
@@ -614,13 +615,27 @@ function Write-UpdateFixture([int]$Status,[string]$Body,[string]$Failure='none',
   $content="status=$Status`r`nfailure=$Failure`r`ndelay_ms=$DelayMilliseconds`r`n`r`n$Body"
   [IO.File]::WriteAllText($fixturePath,$content,[Text.UTF8Encoding]::new($false))
 }
-function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Failure,[string]$Expected,[int]$Delay=0) {
+function Set-ReleaseFixtureMetadata($Fixture) {
+  $metadataNames=@('EyeBreakReminder-UpdateManifest.json','EyeBreakReminder-UpdateManifest.sig','test-update-public-key.bin')
+  $metadataPaths=@($metadataNames|ForEach-Object{Join-Path (Split-Path -Parent $exePath) $_})
+  foreach($path in $metadataPaths){Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue}
+  if($null-eq$Fixture-or-not$Fixture.PSObject.Properties['ManifestBase64']){return}
+  if([string]::IsNullOrWhiteSpace([string]$Fixture.ManifestBase64)){return}
+  $metadataValues=@($Fixture.ManifestBase64,$Fixture.SignatureBase64,$Fixture.TestPublicKeyBase64)
+  for($i=0;$i-lt$metadataNames.Count;$i++){
+    if([string]::IsNullOrWhiteSpace([string]$metadataValues[$i])){throw "Signed test release metadata is incomplete: $($metadataNames[$i])"}
+    [IO.File]::WriteAllBytes($metadataPaths[$i],[Convert]::FromBase64String([string]$metadataValues[$i]))
+  }
+}
+function Run-UpdateFixture([string]$Name,[int]$Status,$Body,[string]$Failure,[string]$Expected,[int]$Delay=0) {
   $before=0
   if($Delay -ge 2000){Switch-Timer;$before=Get-TimerSeconds}
   Switch-Settings 5
   Initialize-UpdateHandles
   $fixtureDelay=[Math]::Max($Delay,1500)
-  Write-UpdateFixture $Status $Body $Failure $fixtureDelay
+  Set-ReleaseFixtureMetadata $Body
+  $releaseBody=if($Body-and$Body.PSObject.Properties['Body']){[string]$Body.Body}else{[string]$Body}
+  Write-UpdateFixture $Status $releaseBody $Failure $fixtureDelay
   Click-Control $script:mainWindow 160 'Check for Updates'
   $button=Get-Control $script:mainWindow 160 'Check for Updates'
   Assert-That (-not $button.Enabled) "$Name busy button disabled"
@@ -654,10 +669,11 @@ function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Fai
   $latest=[EBR_GUI_NATIVE]::Text($script:updateLatestHandle)
   Add-Result "$Name latest label" 'INFO' $latest
 }
-function Run-UpdateDialogResourceCycle([int]$Cycle,[string]$ReleaseBody,[bool]$Measure) {
+function Run-UpdateDialogResourceCycle([int]$Cycle,$ReleaseFixture,[bool]$Measure) {
   # The resource loop uses native HWND controls so UI Automation client wrappers
   # do not keep the app's accessibility providers alive during process-handle sampling.
-  Write-UpdateFixture 200 $ReleaseBody 'none' 250
+  Set-ReleaseFixtureMetadata $ReleaseFixture
+  Write-UpdateFixture 200 ([string]$ReleaseFixture.Body) 'none' 250
   Click-Control $script:mainWindow 160 "Update-dialog resource cycle $Cycle"
   $dialog=Find-NativeUpdateDialog 12
   $install=[EBR_GUI_NATIVE]::GetDlgItem($dialog,12001);$later=[EBR_GUI_NATIVE]::GetDlgItem($dialog,12002)
@@ -729,6 +745,7 @@ function Close-TestProcess {
 }
 
 try {
+  [Environment]::SetEnvironmentVariable('EBR_GUI_TEST_DATA_DIRECTORY',$dataDirectory,'Process')
   $running=@(Get-Process -Name 'EyeBreakReminder' -ErrorAction SilentlyContinue)
   foreach($item in $running){$runningPath='';try{$runningPath=[IO.Path]::GetFullPath($item.Path)}catch{};if($runningPath -ieq $exePath){throw "The isolated GUI-test executable is already running (PID $($item.Id)); refusing to reuse its test data."}}
   if([IO.Path]::GetFullPath($dataDirectory) -ine [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $exePath) 'test-data'))){throw 'The isolated test data path did not match the GUI test profile.'}
@@ -1090,12 +1107,34 @@ try {
   elseif($installedVersion.Major -gt 0){$olderVersion='{0}.0.0' -f ($installedVersion.Major-1)}
   else{throw 'Cannot construct a stable version older than 0.0.0 for the comparison fixture.'}
   function Release-Fixture([string]$Tag,[bool]$Prerelease=$false){
-    $tagName="v$Tag";$downloadBase="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/$tagName/";$digest='sha256:'+('a'*64)
-    $assets=@(
-      [ordered]@{name='EyeBreakReminder-Setup-x64.exe';browser_download_url=($downloadBase+'EyeBreakReminder-Setup-x64.exe');size=2097152;digest=$digest},
-      [ordered]@{name='EyeBreakReminder.exe';browser_download_url=($downloadBase+'EyeBreakReminder.exe');size=1048576;digest=$digest}
-    )
-    return ([ordered]@{tag_name=$tagName;html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/$tagName";draft=$false;prerelease=$Prerelease;body='Controlled GUI acceptance fixture release notes.';assets=$assets}|ConvertTo-Json -Compress -Depth 6)
+    $tagName="v$Tag";$downloadBase="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/$tagName/";$fixtureDirectory=Split-Path -Parent $exePath
+    $setupPath=Join-Path $repoRoot 'build\gui-test\update-test-setup.exe';$portablePath=Join-Path $repoRoot 'build\gui-test\update-test-executable.exe'
+    $assets=@();$metadataBase64=@('','','')
+    if(-not$Prerelease){
+      foreach($path in @((Join-Path $fixtureDirectory 'EyeBreakReminder-UpdateManifest.json'),(Join-Path $fixtureDirectory 'EyeBreakReminder-UpdateManifest.sig'),(Join-Path $fixtureDirectory 'test-update-public-key.bin'))){Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue}
+      $signingTool=Join-Path $repoRoot 'build\updater-windows-tests.exe'
+      if(-not(Test-Path -LiteralPath $signingTool -PathType Leaf)){if($expectedVersion-eq'1.4.0'){throw 'The v1.4.0 GUI release fixtures require the disposable CNG manifest signer.'}}
+      else{
+        foreach($path in @($setupPath,$portablePath)){if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Signed GUI release payload fixture is missing: $path"}}
+        & $signingTool --sign-update-manifest $fixtureDirectory $setupPath $portablePath $Tag
+        if($LASTEXITCODE-ne0){throw "The disposable CNG key could not sign the controlled GUI release manifest for v$Tag."}
+        $metadataPaths=@((Join-Path $fixtureDirectory 'EyeBreakReminder-UpdateManifest.json'),(Join-Path $fixtureDirectory 'EyeBreakReminder-UpdateManifest.sig'),(Join-Path $fixtureDirectory 'test-update-public-key.bin'))
+        $metadataBase64=@($metadataPaths|ForEach-Object{[Convert]::ToBase64String([IO.File]::ReadAllBytes($_))})
+      }
+    }
+    foreach($item in @(@{Name='EyeBreakReminder-Setup-x64.exe';Path=$setupPath},@{Name='EyeBreakReminder.exe';Path=$portablePath})){
+      if(Test-Path -LiteralPath $item.Path -PathType Leaf){$file=Get-Item -LiteralPath $item.Path;$digest='sha256:'+((Get-FileHash -LiteralPath $item.Path -Algorithm SHA256).Hash.ToLowerInvariant());$size=$file.Length}
+      else{$digest='sha256:'+('a'*64);$size=if($item.Name-eq'EyeBreakReminder-Setup-x64.exe'){2097152}else{1048576}}
+      $assets+=,[ordered]@{name=$item.Name;browser_download_url=($downloadBase+$item.Name);size=$size;digest=$digest}
+    }
+    if($metadataBase64[0]){
+      foreach($item in @(@{Name='EyeBreakReminder-UpdateManifest.json';Index=0},@{Name='EyeBreakReminder-UpdateManifest.sig';Index=1})){
+        $bytes=[Convert]::FromBase64String($metadataBase64[$item.Index]);$digest='sha256:'+([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant())
+        $assets+=,[ordered]@{name=$item.Name;browser_download_url=($downloadBase+$item.Name);size=$bytes.Length;digest=$digest}
+      }
+    }
+    $body=[ordered]@{tag_name=$tagName;html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/$tagName";draft=$false;prerelease=$Prerelease;body='Controlled GUI acceptance fixture release notes.';assets=$assets}|ConvertTo-Json -Compress -Depth 6
+    return [pscustomobject]@{Body=$body;ManifestBase64=$metadataBase64[0];SignatureBase64=$metadataBase64[1];TestPublicKeyBase64=$metadataBase64[2]}
   }
   $stable=Release-Fixture $expectedVersion
   $newer=Release-Fixture $newerVersion
@@ -1203,7 +1242,9 @@ catch {
 finally {
   try{$script:updateBarrierRelease.Set()}catch{}
   Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
+  foreach($metadataName in @('EyeBreakReminder-UpdateManifest.json','EyeBreakReminder-UpdateManifest.sig','test-update-public-key.bin')){Remove-Item -LiteralPath (Join-Path (Split-Path -Parent $exePath) $metadataName) -Force -ErrorAction SilentlyContinue}
   try { Close-TestProcess } catch { Add-Result 'test-app cleanup' 'FAIL' $_.Exception.Message }
+  [Environment]::SetEnvironmentVariable('EBR_GUI_TEST_DATA_DIRECTORY',$script:oldGuiTestDataDirectory,'Process')
   [Environment]::SetEnvironmentVariable('EBR_GUI_TEST_UPDATE_STARTED',$script:oldUpdateBarrierStarted,'Process')
   [Environment]::SetEnvironmentVariable('EBR_GUI_TEST_UPDATE_RELEASE',$script:oldUpdateBarrierRelease,'Process')
   if($script:updateBarrierStarted){$script:updateBarrierStarted.Dispose()}

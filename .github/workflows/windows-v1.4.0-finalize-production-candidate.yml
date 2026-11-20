@@ -181,7 +181,7 @@ jobs:
           }
           $provenance = Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
           $gate = Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Raw | ConvertFrom-Json
-          if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.SourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.RunId -ne $env:CANDIDATE_RUN_ID -or $provenance.Branch -cne 'feature/v1.4.0-automatic-updater' -or $gate.Status -cne 'PASS' -or $gate.Scope -cne 'ProductionCandidateOnly') { throw 'Candidate provenance or production-candidate acceptance gate does not match the requested source and run.' }
+          if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.SourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.RunId -ne $env:CANDIDATE_RUN_ID -or $provenance.Branch -cne 'feature/v1.4.0-automatic-updater' -or $gate.Status -cne 'PASS' -or $gate.Scope -notin @('ProductionCandidateOnly','All')) { throw 'Candidate provenance or production-candidate acceptance gate does not match the requested source and run.' }
           $expectedNames = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
           $identities = @(Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/release-artifact-identities.json' -Raw | ConvertFrom-Json)
           $actualFiles = @(Get-ChildItem -LiteralPath $release -File)
