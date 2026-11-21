@@ -111,6 +111,8 @@ struct Settings {
     int workMinutes=20, breakSeconds=20, sound=0, volume=55, mode=0, monitor=0, theme=2;
     bool alarm=true, repeat=false, notifications=true, snooze=true, autoStart=true;
     bool startup=false, tray=true, restore=true, pauseLocked=true, history=true, trayExplained=false, breakModeColors=true;
+    bool autoCheckUpdates=false, autoDownloadUpdates=false;
+    std::int64_t updateLastCheck=0;
     bool customWorkAccent=false, customBreakAccent=false;
     theme::Color workAccentColor=theme::rgb(96,165,250), breakAccentColor=theme::rgb(45,212,191);
     std::array<theme::Color,16> pickerCustomColors{{
@@ -121,6 +123,7 @@ struct Settings {
     }};
     int width=820, height=720, x=-32000, y=-32000;
     std::string selectedMonitor;
+    std::vector<std::pair<std::string,std::string>> legacySettings;
     Schedule schedule;
     void validate() {
         workMinutes=std::clamp(workMinutes,1,180); breakSeconds=std::clamp(breakSeconds,5,300);
@@ -267,11 +270,18 @@ inline std::string encodeSettings(const Settings&s) {
     EYE_WRITE(customWorkAccent);EYE_WRITE(customBreakAccent);EYE_WRITE(workAccentColor);EYE_WRITE(breakAccentColor);
     for(std::size_t i=0;i<s.pickerCustomColors.size();++i)o<<"pickerCustomColor"<<i<<'='<<(s.pickerCustomColors[i]&0x00ffffffu)<<'\n';
     EYE_WRITE(alarm);EYE_WRITE(repeat);EYE_WRITE(notifications);EYE_WRITE(snooze);EYE_WRITE(autoStart);EYE_WRITE(startup);EYE_WRITE(tray);
-    EYE_WRITE(restore);EYE_WRITE(pauseLocked);EYE_WRITE(history);EYE_WRITE(trayExplained);EYE_WRITE(width);EYE_WRITE(height);EYE_WRITE(x);EYE_WRITE(y);EYE_WRITE(selectedMonitor);
+    EYE_WRITE(restore);EYE_WRITE(pauseLocked);EYE_WRITE(history);EYE_WRITE(trayExplained);EYE_WRITE(autoCheckUpdates);EYE_WRITE(autoDownloadUpdates);EYE_WRITE(width);EYE_WRITE(height);EYE_WRITE(x);EYE_WRITE(y);EYE_WRITE(selectedMonitor);
 #undef EYE_WRITE
+    o<<"updateLastCheck="<<s.updateLastCheck<<'\n';
     o<<"schedule="<<s.schedule.enabled<<'\n';
     for(int d=0;d<7;++d){o<<"schedule"<<scheduleDayNames[d]<<'='<<s.schedule.days[d]<<'\n';
         for(int i=0;i<s.schedule.counts[d];++i){auto&p=s.schedule.periods[d][i];o<<"schedule"<<scheduleDayNames[d]<<i+1<<'='<<clockDigits(p.start)<<clockDigits(p.end)<<'\n';}}
+    for(const auto&item:s.legacySettings){
+        if(item.first.empty()||item.first.size()>128||item.second.size()>4096)continue;
+        bool valid=true;for(unsigned char c:item.first)if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'||c=='-'||c=='.'))valid=false;
+        for(unsigned char c:item.second)if(c<0x20||c==0x7f)valid=false;
+        if(valid)o<<item.first<<'='<<item.second<<'\n';
+    }
     return o.str();
 }
 inline bool decodeSettings(const std::string& text, Settings& out) {
@@ -294,11 +304,28 @@ inline bool decodeSettings(const std::string& text, Settings& out) {
         }
         int pickerIndex=-1;for(int i=0;i<16;++i)if(key=="pickerCustomColor"+std::to_string(i)){pickerIndex=i;break;}
         if(pickerIndex>=0){int n=0;bool valid=false;try{std::size_t used=0;n=std::stoi(value,&used);valid=used==value.size();}catch(...){}if(valid&&n>=0&&n<=0x00ffffff)s.pickerCustomColors[pickerIndex]=theme::Color(n);else s.pickerCustomColors[pickerIndex]=Settings{}.pickerCustomColors[pickerIndex];continue;}
+        if(key=="updateLastCheck"){
+            try{std::size_t used=0;long long stamp=std::stoll(value,&used);if(used!=value.size()||stamp<0||stamp>4102444800ll)return false;s.updateLastCheck=stamp;}catch(...){return false;}continue;
+        }
+        if(key=="autoCheckUpdates"||key=="autoDownloadUpdates"){
+            int flag=0;try{std::size_t used=0;flag=std::stoi(value,&used);if(used!=value.size()||(flag!=0&&flag!=1))return false;}catch(...){return false;}
+            if(key=="autoCheckUpdates")s.autoCheckUpdates=flag!=0;else s.autoDownloadUpdates=flag!=0;continue;
+        }
+        bool known=key=="workMinutes"||key=="breakSeconds"||key=="sound"||key=="volume"||key=="mode"||key=="monitor"||key=="theme"||key=="width"||key=="height"||key=="x"||key=="y"||
+            key=="alarm"||key=="repeat"||key=="notifications"||key=="snooze"||key=="autoStart"||key=="startup"||key=="tray"||key=="restore"||key=="pauseLocked"||key=="history"||key=="trayExplained"||key=="breakModeColors"||key=="schedule";
+        for(int d=0;d<7;++d){const std::string base=std::string("schedule")+scheduleDayNames[d];if(key==base)known=true;else if(key.compare(0,base.size(),base)==0){const auto suffix=key.substr(base.size());if(suffix.size()==1&&suffix[0]>='1'&&suffix[0]<='0'+Schedule::maxPeriods)known=true;}}
+        if(!known){
+            bool valid=!key.empty()&&key.size()<=128&&value.size()<=4096;
+            for(unsigned char c:key)if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'||c=='-'||c=='.'))valid=false;
+            for(unsigned char c:value)if(c<0x20||c==0x7f)valid=false;
+            if(!valid||s.legacySettings.size()>=128)return false;
+            s.legacySettings.emplace_back(std::move(key),std::move(value));continue;
+        }
         int n=0;try{std::size_t used=0;n=std::stoi(value,&used);if(used!=value.size())return false;}catch(...){return false;}
 #define EYE_INT(field) if(key==#field){s.field=n;continue;}
 #define EYE_BOOL(field) if(key==#field){if(n!=0&&n!=1)return false;s.field=n!=0;continue;}
         EYE_INT(workMinutes);EYE_INT(breakSeconds);EYE_INT(sound);EYE_INT(volume);EYE_INT(mode);EYE_INT(monitor);EYE_INT(theme);EYE_INT(width);EYE_INT(height);EYE_INT(x);EYE_INT(y);
-        EYE_BOOL(alarm);EYE_BOOL(repeat);EYE_BOOL(notifications);EYE_BOOL(snooze);EYE_BOOL(autoStart);EYE_BOOL(startup);EYE_BOOL(tray);EYE_BOOL(restore);EYE_BOOL(pauseLocked);EYE_BOOL(history);EYE_BOOL(trayExplained);EYE_BOOL(breakModeColors);
+        EYE_BOOL(alarm);EYE_BOOL(repeat);EYE_BOOL(notifications);EYE_BOOL(snooze);EYE_BOOL(autoStart);EYE_BOOL(startup);EYE_BOOL(tray);EYE_BOOL(restore);EYE_BOOL(pauseLocked);EYE_BOOL(history);EYE_BOOL(trayExplained);EYE_BOOL(breakModeColors);EYE_BOOL(autoCheckUpdates);EYE_BOOL(autoDownloadUpdates);
 #undef EYE_INT
 #undef EYE_BOOL
         if(key=="schedule"){if(n!=0&&n!=1)return false;s.schedule.enabled=n!=0;continue;}

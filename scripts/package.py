@@ -9,7 +9,14 @@ with zipfile.ZipFile(release/'EyeBreakReminder-Portable-x64.zip','w',zipfile.ZIP
  archive.write(root/'README.md','README.md')
  for name in ['PRIVACY.md','VERIFICATION.md','THIRD-PARTY-LICENSES.txt']:
   archive.write(root/'docs'/name,name)
- archive.writestr('SIGNING-STATUS.txt','UNSIGNED. No signing certificate or publisher identity was supplied.\n')
+ trust=(root/'src'/'update_trust.hpp').read_text(encoding='ascii')
+ if 'inline constexpr bool ProductionUpdateKeyProvisioned=false;' in trust:
+  status='DEVELOPMENT CANDIDATE. Authenticode is unsigned and the production update-manifest trust key is not provisioned. This build refuses update offers and is not for production release.\n'
+ elif 'inline constexpr bool ProductionUpdateKeyProvisioned=true;' in trust:
+  status='The production update-manifest trust key is embedded. Authenticode status is separate and must be verified independently. Release manifest and signature must accompany this payload.\n'
+ else:
+  raise RuntimeError('Cannot determine the production update trust state; refusing to label the package.')
+ archive.writestr('SIGNING-STATUS.txt',status)
 # Build outputs, local tool folders and signing secrets never belong in the source archive (mirrors .gitignore). The test
 # binary is tests/core-tests on Linux and tests/core-tests.exe when MinGW builds it on Windows.
 EXCLUDED_DIRS={'release','build','dist','__pycache__'}
@@ -23,8 +30,9 @@ def in_source(relative):
  # reusable source distribution; the current verification report cites its
  # immutable artifact instead of copying stale run identities into the archive.
  if relative.as_posix().startswith(('docs/evidence/v1.3.0-final-pre-release/','docs/evidence/v1.3.0-exhaustive-final/')):return False
- # Verification reports record this archive's digest, so exclude them to avoid a self-referential source ZIP hash.
- if relative in {Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md'),Path('docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.3.0_EXHAUSTIVE_FINAL_TEST_REPORT.md'),Path('docs/V1.3.0_COMPLETION_PROGRESS.md'),Path('docs/V1.3.0_AUTONOMOUS_COMPLETION_PROGRESS.md'),Path('docs/V1.3.0_FINAL_COMPLETION_AUDIT.md'),Path('docs/evidence/v1.3.0-exhaustive-final/acceptance-matrix.json')}:return False
+ # Final verification reports can cite this archive's digest. Exclude them so
+ # the manifest stays reproducible and the source ZIP never becomes self-referential.
+ if relative in {Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md'),Path('docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.3.0_EXHAUSTIVE_FINAL_TEST_REPORT.md'),Path('docs/V1.3.0_COMPLETION_PROGRESS.md'),Path('docs/V1.3.0_AUTONOMOUS_COMPLETION_PROGRESS.md'),Path('docs/V1.3.0_FINAL_COMPLETION_AUDIT.md'),Path('docs/V1.4.0_FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.4.0_COMPLETION_PROGRESS.md'),Path('docs/V1.4.0_AUTONOMOUS_COMPLETION_PROGRESS.md'),Path('docs/V1.4.0_FINAL_COMPLETION_AUDIT.md'),Path('docs/V1.4.0_ACCEPTANCE_MATRIX.json'),Path('docs/evidence/v1.3.0-exhaustive-final/acceptance-matrix.json')}:return False
  return relative!=Path('tests/core-tests') and relative.suffix.lower() not in EXCLUDED_SUFFIXES
 with zipfile.ZipFile(release/'EyeBreakReminder-Source.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9) as archive:
  for path in sorted(root.rglob('*')):

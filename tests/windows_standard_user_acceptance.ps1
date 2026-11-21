@@ -18,6 +18,7 @@ if($Child){
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Text;
 public static class EBR_STD_NATIVE {
   public delegate bool EnumProc(IntPtr hwnd,IntPtr data);
@@ -32,9 +33,12 @@ public static class EBR_STD_NATIVE {
   [DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr hwnd,uint message,IntPtr wParam,IntPtr lParam);
   [DllImport("user32.dll",SetLastError=true)] public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd,uint message,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out IntPtr result);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
+  [DllImport("user32.dll")] static extern void mouse_event(uint flags,uint dx,uint dy,uint data,UIntPtr extra);
   [DllImport("user32.dll",SetLastError=true)] static extern bool GetWindowRect(IntPtr hwnd,out RECT rect);
   [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left,Top,Right,Bottom; }
   public static int[] Bounds(IntPtr hwnd){RECT r;if(!GetWindowRect(hwnd,out r))return new int[0];return new[]{r.Left,r.Top,r.Right,r.Bottom};}
+  public static bool ClickAt(int x,int y){if(!SetCursorPos(x,y))return false;Thread.Sleep(80);mouse_event(0x0002,0,0,0,UIntPtr.Zero);Thread.Sleep(80);mouse_event(0x0004,0,0,0,UIntPtr.Zero);return true;}
   public static int ProcessId(IntPtr hwnd){uint pid;GetWindowThreadProcessId(hwnd,out pid);return (int)pid;}
   public static string Text(IntPtr hwnd){var b=new StringBuilder(512);GetWindowTextW(hwnd,b,b.Capacity);return b.ToString();}
   public static string ClassName(IntPtr hwnd){var b=new StringBuilder(128);GetClassNameW(hwnd,b,b.Capacity);return b.ToString();}
@@ -82,7 +86,7 @@ public static class EBR_STD_UIA_CLIENT {
   function Get-StandardUserNativeControls([IntPtr]$Window){
     foreach($handle in [EBR_STD_NATIVE]::Children($Window)){
       if([EBR_STD_NATIVE]::ProcessId($handle)-ne[EBR_STD_NATIVE]::ProcessId($Window)){continue}
-      [pscustomobject]@{Handle=$handle;Class=[EBR_STD_NATIVE]::ClassName($handle);Text=[EBR_STD_NATIVE]::Text($handle);Id=[EBR_STD_NATIVE]::GetDlgCtrlID($handle);Visible=[EBR_STD_NATIVE]::IsWindowVisible($handle);Enabled=[EBR_STD_NATIVE]::IsWindowEnabled($handle)}
+      [pscustomobject]@{Handle=$handle;Class=[EBR_STD_NATIVE]::ClassName($handle);Text=[EBR_STD_NATIVE]::Text($handle);Id=[EBR_STD_NATIVE]::GetDlgCtrlID($handle);Visible=[EBR_STD_NATIVE]::IsWindowVisible($handle);Enabled=[EBR_STD_NATIVE]::IsWindowEnabled($handle);Bounds=[EBR_STD_NATIVE]::Bounds($handle)}
     }
   }
   function Invoke-StandardUserNativeButton([IntPtr]$Button,[string]$Name){
@@ -97,14 +101,39 @@ public static class EBR_STD_UIA_CLIENT {
   }
   function Invoke-StandardUserWizard([string]$Path,[string]$Kind,[Diagnostics.Process]$ExistingProcess=$null){
     try{$started=if($ExistingProcess){$ExistingProcess}else{Start-Process -FilePath $Path -PassThru}}catch{return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="Could not launch the interactive wizard: $($_.Exception.Message)"}}
-    $watch=[Diagnostics.Stopwatch]::StartNew();$root=$null;$lastSignature='';$pageNames=[System.Collections.Generic.List[string]]::new();$finishCheckbox=$null
+    $watch=[Diagnostics.Stopwatch]::StartNew();$root=$null;$lastSignature='';$pageNames=[System.Collections.Generic.List[string]]::new();$finishCheckbox=$null;$terminalUninstallAt=$null;$uninstallDataChoice='NOT SHOWN';$terminalScreenshot=$null;$terminalFallbackUsed=$false;$terminalButtonSignature=''
     try{Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop;Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop;Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop;Add-Type -AssemblyName System.Drawing -ErrorAction Stop}catch{Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue;return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="UI Automation or keyboard assemblies are unavailable: $($_.Exception.Message)"}}
     while($watch.Elapsed.TotalSeconds-lt180){
+      if($Kind-match'(?i)uninstall'-and$terminalUninstallAt){
+        $started.Refresh()
+        $installRoot=Split-Path -Parent $Path
+        $installedExe=Join-Path $installRoot 'EyeBreakReminder.exe'
+        $uninstallKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder'
+        $applicationKey='HKCU:\Software\EyeBreakReminder'
+        $removed=(-not(Test-Path -LiteralPath $installedExe)-and-not(Test-Path -LiteralPath $installRoot)-and-not(Test-Path -LiteralPath $uninstallKey)-and-not(Test-Path -LiteralPath $applicationKey))
+        if($started.HasExited-and$started.ExitCode-eq0-and$removed){if($uninstallDataChoice-match'(?i)^Keep my settings and history'){return [pscustomobject]@{Status='PASS';Kind=$Kind;ExitCode=$started.ExitCode;ProcessCompleted=$true;FinishPageExpected=$false;Completion='NSIS uninstall exits after its terminal Uninstall action; installed image, directory and HKCU registrations are absent';DataRetentionChoice=$uninstallDataChoice;Navigation='UI Automation with native Win32 fallback';Pages=$pageNames.ToArray();TerminalScreenshot=$terminalScreenshot;DurationSeconds=[Math]::Round($watch.Elapsed.TotalSeconds,1)}};return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason='The installation was removed but the interactive keep-data selection was not exposed for verification.';ExitCode=$started.ExitCode;DataRetentionChoice=$uninstallDataChoice;Pages=$pageNames.ToArray();TerminalScreenshot=$terminalScreenshot}}
+        if($watch.Elapsed.TotalSeconds-$terminalUninstallAt.TotalSeconds-ge75){return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason='Terminal Uninstall action did not remove the per-user installation and exit within 75 seconds.';ExitCode=$(if($started.HasExited){$started.ExitCode}else{$null});InstallationRemoved=$removed;DataRetentionChoice=$uninstallDataChoice;Pages=$pageNames.ToArray();TerminalScreenshot=$terminalScreenshot;DesktopScreenshot=(Capture-StandardUserDesktop 'standard-user-uninstall-terminal-timeout.png')}}
+      }
       $started.Refresh();$root=Find-StandardUserWizardWindow $started.Id $Kind
       if(-not$root){if($started.HasExited-and$watch.Elapsed.TotalSeconds-ge8){if($started.ExitCode-eq0){return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason='Installer exited without exposing a wizard window.';ExitCode=$started.ExitCode}};return [pscustomobject]@{Status='FAIL';Kind=$Kind;Reason='Installer exited before the wizard completed.';ExitCode=$started.ExitCode}};Start-Sleep -Milliseconds 150;continue}
       $elements=@();if($root.Element){try{$elements=@($root.Element.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))}catch{}}
       $nativeControls=@(Get-StandardUserNativeControls $root.Handle);$nativeVisible=@($nativeControls|Where-Object{$_.Visible});$named=@(foreach($element in $elements){try{$name=[string]$element.Current.Name;if($name){$name}}catch{}});$signature=$named-join'|';if(-not$signature){$signature=($nativeVisible|Where-Object{$_.Text}|ForEach-Object{$_.Text})-join'|'}
       $buttons=@($elements|Where-Object{try{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$_.Current.IsEnabled-and-not$_.Current.IsOffscreen}catch{$false}})
+      if($Kind-match'(?i)uninstall'-and$terminalUninstallAt-and-not$terminalFallbackUsed-and$signature-eq$terminalButtonSignature-and($watch.Elapsed.TotalSeconds-$terminalUninstallAt.TotalSeconds)-ge5){
+        $fallbackButton=@($nativeControls|Where-Object{$_.Class-eq'Button'-and$_.Visible-and$_.Enabled-and$_.Text-match'(?i)^\s*&?Uninstall\s*$'}|Select-Object -First 1)
+        if($fallbackButton.Count-and$fallbackButton[0].Bounds.Count-eq4){
+          $bounds=$fallbackButton[0].Bounds;[void][EBR_STD_NATIVE]::SetForegroundWindow($root.Handle)
+          if([EBR_STD_NATIVE]::ClickAt([int](($bounds[0]+$bounds[2])/2),[int](($bounds[1]+$bounds[3])/2))){$terminalFallbackUsed=$true;$pageNames.Add('Uninstall (physical-input fallback after unchanged UIA page)')}
+        }
+      }
+      if($Kind-match'(?i)uninstall'-and$uninstallDataChoice-eq'NOT SHOWN'){
+        $keepRadio=@($elements|Where-Object{try{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::RadioButton-and$_.Current.Name-match'(?i)^Keep my settings and history'}catch{$false}}|Select-Object -First 1)
+        if($keepRadio.Count){try{$selection=$keepRadio[0].GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern);if(-not$selection.Current.IsSelected){$selection.Select()};if($selection.Current.IsSelected){$uninstallDataChoice='Keep my settings and history (UI Automation)'}}catch{}}
+        if($uninstallDataChoice-eq'NOT SHOWN'){
+          $nativeKeep=@($nativeControls|Where-Object{$_.Class-eq'Button'-and$_.Text-match'(?i)^Keep my settings and history'})|Select-Object -First 1
+          if($nativeKeep.Count){$keepState=[EBR_STD_NATIVE]::SendMessageW($nativeKeep[0].Handle,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32();if($keepState-ne1){Invoke-StandardUserNativeButton $nativeKeep[0].Handle 'Keep my settings and history';$keepState=[EBR_STD_NATIVE]::SendMessageW($nativeKeep[0].Handle,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()};if($keepState-eq1){$uninstallDataChoice='Keep my settings and history (native radio verified)'}}
+        }
+      }
       $finish=@($buttons|Where-Object{try{$_.Current.Name-match'(?i)^\s*&?Finish\s*$'}catch{$false}}|Select-Object -First 1)
       $nativeButtons=@($nativeControls|Where-Object{$_.Class-eq'Button'-and$_.Visible-and$_.Enabled});$nativeFinish=@($nativeButtons|Where-Object{$_.Text-match'(?i)^\s*&?(Finish|Close)\s*$'}|Select-Object -First 1)
       if($finish.Count-or$nativeFinish.Count){
@@ -133,8 +162,8 @@ public static class EBR_STD_UIA_CLIENT {
       if($signature-ne$lastSignature){
         $next=@($buttons|Where-Object{try{$_.Current.Name-match'(?i)^\s*&?(Next|Install|Uninstall|Remove)\s*>?\s*$'}catch{$false}}|Select-Object -First 1)
         $nativeNext=@($nativeButtons|Where-Object{$_.Text-match'(?i)^\s*&?(Next|Install|Uninstall|Remove)\s*>?\s*$'}|Select-Object -First 1)
-        if($next.Count){$buttonName=[string]$next[0].Current.Name;$pageNames.Add($buttonName);try{$next[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$next[0].SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue;return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="UI Automation could not activate wizard navigation: $($_.Exception.Message)";Pages=$pageNames.ToArray()}}};$lastSignature=$signature}
-        elseif($nativeNext.Count){$buttonName=[string]$nativeNext[0].Text;$pageNames.Add($buttonName);Invoke-StandardUserNativeButton $nativeNext[0].Handle $buttonName;$lastSignature=$signature}
+        if($next.Count){$buttonName=[string]$next[0].Current.Name;$pageNames.Add($buttonName);if($Kind-match'(?i)uninstall'-and$buttonName-match'(?i)^\s*&?Uninstall\s*$'){$terminalScreenshot=Capture-StandardUserWizard $root.Handle 'standard-user-uninstall-retention-choice.png'};try{$next[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$next[0].SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{Stop-Process -Id $started.Id -Force -ErrorAction SilentlyContinue;return [pscustomobject]@{Status='NOT TESTED';Kind=$Kind;Reason="UI Automation could not activate wizard navigation: $($_.Exception.Message)";Pages=$pageNames.ToArray()}}};if($Kind-match'(?i)uninstall'-and$buttonName-match'(?i)^\s*&?Uninstall\s*$'){$terminalUninstallAt=$watch.Elapsed;$terminalButtonSignature=$signature};$lastSignature=$signature}
+        elseif($nativeNext.Count){$buttonName=[string]$nativeNext[0].Text;$pageNames.Add($buttonName);if($Kind-match'(?i)uninstall'-and$buttonName-match'(?i)^\s*&?Uninstall\s*$'){$terminalScreenshot=Capture-StandardUserWizard $root.Handle 'standard-user-uninstall-retention-choice.png'};Invoke-StandardUserNativeButton $nativeNext[0].Handle $buttonName;if($Kind-match'(?i)uninstall'-and$buttonName-match'(?i)^\s*&?Uninstall\s*$'){$terminalUninstallAt=$watch.Elapsed;$terminalButtonSignature=$signature};$lastSignature=$signature}
       }
       Start-Sleep -Milliseconds 150
     }
@@ -270,6 +299,19 @@ public static class EBR_STD_UIA_CLIENT {
     $installedHash=(Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()
     if($installedHash-cne$expectedHash){throw "Installed executable hash $installedHash differs from candidate hash $expectedHash."}
     $events.Add([pscustomobject]@{Name='Installed image matches the candidate at the standard user LocalAppData path';Status='PASS';Path=$installed;SHA256=$installedHash})
+    $startMenuShortcut=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Eye Break Reminder\Eye Break Reminder.lnk'
+    if(-not(Test-Path -LiteralPath $startMenuShortcut -PathType Leaf)){throw "The standard-user installer did not create the expected per-user Start Menu shortcut '$startMenuShortcut'."}
+    $shortcutShell=$null;$shortcut=$null
+    try{
+      $shortcutShell=New-Object -ComObject WScript.Shell;$shortcut=$shortcutShell.CreateShortcut($startMenuShortcut)
+      $shortcutTarget=[IO.Path]::GetFullPath([string]$shortcut.TargetPath);$shortcutArguments=[string]$shortcut.Arguments
+      if($shortcutTarget-ine[IO.Path]::GetFullPath($installed)){throw "The standard-user Start Menu shortcut targets '$shortcutTarget', expected '$installed'."}
+      if($shortcutArguments.Length-ne0){throw "The standard-user Start Menu shortcut has unexpected arguments '$shortcutArguments'."}
+      $events.Add([pscustomobject]@{Name='Per-user Start Menu shortcut points exactly to the installed executable without arguments';Status='PASS';ShortcutPath=$startMenuShortcut;TargetPath=$shortcutTarget;Arguments=$shortcutArguments})
+    }finally{
+      if($shortcut-and[Runtime.InteropServices.Marshal]::IsComObject($shortcut)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)}
+      if($shortcutShell-and[Runtime.InteropServices.Marshal]::IsComObject($shortcutShell)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcutShell)}
+    }
     $uninstallKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder';$appKey='HKCU:\Software\EyeBreakReminder'
     if(-not(Test-Path -LiteralPath $uninstallKey)){throw 'The standard user HKCU uninstall registration was not created.'}
     $registration=Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Stop
@@ -293,6 +335,14 @@ public static class EBR_STD_UIA_CLIENT {
       if(-not(Test-Path -LiteralPath $installed)-or(Test-Path -LiteralPath $uninstallKey)-or-not(Test-Path -LiteralPath $appKey)){throw 'The standard-user install did not recover its expected file and registrations after the Settings uninstall.'}
       $events.Add([pscustomobject]@{Name='Per-user silent reinstall succeeds after Windows Settings > Apps removal';Status='PASS';ExitCode=$settingsReinstall.ExitCode;InstalledHash=(Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()})
     }
+    $dataDir=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder';[void][IO.Directory]::CreateDirectory($dataDir)
+    $settingsFixturePath=Join-Path $dataDir 'settings.ini';$historyFixturePath=Join-Path $dataDir 'history.dat'
+    $settingsFixture="workMinutes=37`nbreakSeconds=33`ntheme=2`nvolume=32`ncustomWorkAccent=1`nworkAccentColor=3900150`ncustomBreakAccent=1`nbreakAccentColor=16746496`nstartup=0`nautoCheckUpdates=0`nautoDownloadUpdates=0`n"
+    [IO.File]::WriteAllText($settingsFixturePath,$settingsFixture,[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($historyFixturePath,"1700000000 1 20`n",[Text.UTF8Encoding]::new($false))
+    $settingsFixtureHash=(Get-FileHash -LiteralPath $settingsFixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $historyFixtureHash=(Get-FileHash -LiteralPath $historyFixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $events.Add([pscustomobject]@{Name='Disposable standard-user settings and history seeded immediately before interactive uninstall';Status='PASS';SettingsSHA256=$settingsFixtureHash;HistorySHA256=$historyFixtureHash})
     $wizardUninstall=Invoke-StandardUserWizard $uninstaller 'standard-user interactive uninstall wizard'
     $events.Add([pscustomobject]@{Name='Standard-user interactive uninstaller wizard';Status=$wizardUninstall.Status;Details=$wizardUninstall;TokenAdministrator=$false})
     if($wizardUninstall.Status-eq'PASS'){if($wizardUninstall.FinishCheckbox-eq'Off'){$events.Add([pscustomobject]@{Name='Standard-user uninstaller finish-page Run checkbox is unchecked';Status='PASS';State=$wizardUninstall.FinishCheckbox})}else{$events.Add([pscustomobject]@{Name='Standard-user uninstaller finish-page Run checkbox';Status='NOT APPLICABLE';Details='The uninstaller uses MUI_UNPAGE_FINISH; setup.nsi defines the Run checkbox only for install finish pages.'})}}
@@ -304,7 +354,13 @@ public static class EBR_STD_UIA_CLIENT {
       $events.Add([pscustomobject]@{Name='Silent uninstall removes the standard user installation and both HKCU registrations';Status='PASS';ExitCode=$uninstall.ExitCode;InstallDirectoryExists=$false;UninstallRegistrationExists=$false;ApplicationRegistrationExists=$false})
     }else{
       if((Test-Path -LiteralPath $installed)-or(Test-Path -LiteralPath $installDir)-or(Test-Path -LiteralPath $uninstallKey)-or(Test-Path -LiteralPath $appKey)){throw 'Interactive standard-user uninstall left the executable, installation directory, or HKCU registration behind.'}
-      $events.Add([pscustomobject]@{Name='Interactive uninstall removes the standard user installation and both HKCU registrations';Status='PASS';ExitCode=$wizardUninstall.ExitCode;InstallDirectoryExists=$false;UninstallRegistrationExists=$false;ApplicationRegistrationExists=$false})
+      $settingsAfterUninstall=Test-Path -LiteralPath $settingsFixturePath -PathType Leaf;$historyAfterUninstall=Test-Path -LiteralPath $historyFixturePath -PathType Leaf
+      $settingsAfterHash=if($settingsAfterUninstall){(Get-FileHash -LiteralPath $settingsFixturePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{''}
+      $historyAfterHash=if($historyAfterUninstall){(Get-FileHash -LiteralPath $historyFixturePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{''}
+      $settingsPreserved=$settingsAfterUninstall-and($settingsAfterHash-ceq$settingsFixtureHash)
+      $historyPreserved=$historyAfterUninstall-and($historyAfterHash-ceq$historyFixtureHash)
+      if(-not$settingsPreserved-or-not$historyPreserved){throw 'Interactive standard-user uninstall did not retain its disposable settings and history byte-for-byte.'}
+      $events.Add([pscustomobject]@{Name='Interactive uninstall removes the standard user installation, preserves settings/history byte-for-byte, and clears both HKCU registrations';Status='PASS';ExitCode=$wizardUninstall.ExitCode;InstallDirectoryExists=$false;UninstallRegistrationExists=$false;ApplicationRegistrationExists=$false;SettingsSHA256=$settingsFixtureHash;SettingsPreserved=$settingsPreserved;HistorySHA256=$historyFixtureHash;HistoryPreserved=$historyPreserved})
       $silentInstall=Start-Process -FilePath $installer -ArgumentList '/S' -PassThru
       if(-not$silentInstall.WaitForExit(120000)-or$silentInstall.ExitCode-ne0){throw 'Silent reinstall failed after the standard-user interactive uninstall.'}
       $silentUninstall=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru

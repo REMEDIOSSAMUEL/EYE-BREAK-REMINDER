@@ -1,0 +1,681 @@
+name: Windows v1.4.0 updater and release-candidate acceptance
+
+on:
+  push:
+    branches:
+      - feature/v1.4.0-automatic-updater
+    paths:
+      - 'src/update_trust.hpp'
+  workflow_dispatch:
+    inputs:
+      acceptance_scope:
+        description: Run the full acceptance matrix, focused updater preferences, active-break deferral, dialog themes, or production-candidate acceptance.
+        type: choice
+        required: true
+        default: All
+        options:
+          - All
+          - UpdatePreferences
+          - ActiveBreakDeferral
+          - DialogThemes
+          - ProductionCandidateOnly
+      soak_reference_run_id:
+        description: Optional successful candidate run whose complete 110-cycle soak may be reused only if the executable SHA-256 matches exactly.
+        type: string
+        required: false
+        default: '44453271527'
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+
+jobs:
+  windows-updater-acceptance:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/feature/v1.4.0-automatic-updater' || github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/v1.4.0-automatic-updater' }}
+    runs-on: windows-2025
+    timeout-minutes: 300
+    env:
+      ACCEPTANCE_SCOPE: ${{ github.event_name == 'push' && 'ProductionCandidateOnly' || github.event.inputs.acceptance_scope || 'All' }}
+      SOAK_REFERENCE_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.soak_reference_run_id || '44453271527' }}
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the requested source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install the native Windows compiler and utilities
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+
+      - name: Install upstream NSIS 3.11 with the x86 Unicode plugin set
+        uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1
+        with:
+          version: '3.11'
+
+      - name: Build and verify the v1.4.0 candidate once
+        id: candidate
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          msys_root="$(cygpath -aw /)"
+          msys_make="$(cygpath -aw "$(command -v make)")"
+          test -f "$(cygpath -u "$msys_make")"
+          printf 'MSYS2_ROOT=%s\nMSYS2_MAKE=%s\n' "$msys_root" "$msys_make" >> "$GITHUB_ENV"
+          mkdir -p build/v1.4.0-updater-evidence
+          mkdir -p "$RUNNER_TEMP/eye-break-reminder-tmp"
+          export TMP="$(cygpath -u "$RUNNER_TEMP/eye-break-reminder-tmp")"
+          export TEMP="$TMP"
+          if ! command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
+            cp "$(command -v strip)" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          fi
+          nsis_root="$(cygpath -u "$NSISDIR")"
+          makensis_path="$nsis_root/makensis.exe"
+          test -x "$makensis_path"
+          {
+            echo "SOURCE_COMMIT=$GITHUB_SHA"
+            echo '--- compiler ---'
+            x86_64-w64-mingw32-g++ --version | head -n 1
+            echo '--- linker ---'
+            ld --version | head -n 1
+            echo '--- resource compiler ---'
+            windres --version | head -n 1
+            echo '--- make ---'
+            make --version | head -n 1
+            echo '--- python ---'
+            python --version 2>&1
+            echo '--- NSIS ---'
+            "$makensis_path" -VERSION
+          } > build/v1.4.0-updater-evidence/toolchain-provenance.txt 2>&1
+          pacman -Q > build/v1.4.0-updater-evidence/msys2-packages.txt
+          common_args=(CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' WINDRES=windres "MAKENSIS=$makensis_path" PYTHON=python)
+          if [[ "${{ env.ACCEPTANCE_SCOPE }}" == 'UpdatePreferences' ]]; then
+            make release/EyeBreakReminder.exe "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-candidate-executable.log
+            make release/EyeBreakReminder-Setup-x64.exe "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-candidate-installer.log
+            python scripts/package.py 2>&1 | tee build/v1.4.0-updater-evidence/package-candidate.log
+            python scripts/verify.py 2>&1 | tee build/v1.4.0-updater-evidence/verify-candidate.log
+            make gui-test "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-gui-test.log
+            make updater-test-artifacts "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/updater-failure-fixture-build.log
+          else
+            make -B test "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-test.log
+            make all "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-all.log
+            make package "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-package.log
+            # Build and run the production-trust native test binaries before
+            # preparing the separate GUI integration binary with an isolated
+            # fail-closed test trust header. The release executable, installer,
+            # package, and public CNG trust tests above always use the real
+            # embedded production key.
+            make build/updater-windows-tests.exe build/updater-production-policy-test.exe "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/updater-test-binaries.log
+            EBR_TEST_PREVIOUS_APP="$(cygpath -aw release/EyeBreakReminder.exe)" ./build/updater-windows-tests.exe 2>&1 | tee build/v1.4.0-updater-evidence/updater-windows-test.log
+            ./build/updater-production-policy-test.exe 2>&1 | tee build/v1.4.0-updater-evidence/updater-production-policy-test.log
+            make updater-test-artifacts "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/updater-failure-fixture-build.log
+            mkdir -p build/gui-test
+            make github-updater-smoke "${common_args[@]}" UPDATER_SMOKE_ARGS=--save-v1.3.0-setup 2>&1 | tee build/v1.4.0-updater-evidence/github-updater-smoke.log
+            saved_trust=build/v1.4.0-updater-evidence/production-update-trust.hpp
+            cp src/update_trust.hpp "$saved_trust"
+            restore_production_trust() { cp "$saved_trust" src/update_trust.hpp; }
+            trap restore_production_trust EXIT
+            cat > src/update_trust.hpp <<'EOF'
+          #pragma once
+          #include <array>
+          #include <string_view>
+          namespace eye::updates {
+          // Used only by EYEBREAK_TEST_BUILD GUI integration binaries.
+          inline constexpr bool ProductionUpdateKeyProvisioned=false;
+          inline constexpr std::string_view ProductionUpdateKeyId="";
+          inline constexpr std::array<unsigned char,64> ProductionUpdatePublicKey{};
+          }
+          EOF
+            make -B gui-test "${common_args[@]}" 2>&1 | tee build/v1.4.0-updater-evidence/make-gui-test.log
+            restore_production_trust
+            trap - EXIT
+            python -c 'from pathlib import Path; import sys; sys.exit(0 if Path(sys.argv[1]).read_bytes() == Path(sys.argv[2]).read_bytes() else 1)' src/update_trust.hpp "$saved_trust"
+          fi
+
+      - name: Record candidate artifact identities and exact build provenance
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $event = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
+          $prHeadCommit = if ($event.pull_request) { [string]$event.pull_request.head.sha } else { $null }
+          $files = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $identities = foreach ($name in $files) {
+            $path = Join-Path 'release' $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate artifact is missing: $name" }
+            $file = Get-Item -LiteralPath $path
+            [pscustomobject]@{Name=$name;Bytes=$file.Length;SHA256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant();ProductVersion=if ($name.EndsWith('.exe')) {$file.VersionInfo.ProductVersion} else {$null}}
+          }
+          $identityPath = 'build/v1.4.0-updater-evidence/release-artifact-identities.json'
+          $identities | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $identityPath -Encoding UTF8
+          $manifest = Get-Content -LiteralPath 'release/EyeBreakReminder-SHA256.txt'
+          foreach ($line in $manifest) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "Malformed candidate manifest entry: $line" }
+            $item = $identities | Where-Object Name -CEQ $Matches[2]
+            if (-not $item -or $item.SHA256 -cne $Matches[1]) { throw "Candidate SHA-256 manifest mismatch: $($Matches[2])" }
+          }
+          $os = Get-CimInstance Win32_OperatingSystem
+          [pscustomobject]@{
+            Application='Eye Break Reminder';Version=(Get-Content -LiteralPath 'VERSION' -Raw).Trim()
+            SourceCommit=$env:GITHUB_SHA;PRHeadCommit=$prHeadCommit;Branch=$(if($env:GITHUB_HEAD_REF){$env:GITHUB_HEAD_REF}else{$env:GITHUB_REF_NAME});RunId=$env:GITHUB_RUN_ID
+            RunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            Runner=[pscustomobject]@{Image=$env:ImageOS;ImageVersion=$env:ImageVersion;Caption=$os.Caption;Version=$os.Version;Build=$os.BuildNumber}
+            Compiler='x86_64-w64-mingw32-g++ C++17, Win11 API target';NSIS='3.11 x86 Unicode';CandidateFiles=@($identities)
+            PackageManifest='release/EyeBreakReminder-SHA256.txt';PublicReleaseCreated=$false;TagCreated=$false
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/candidate-provenance.json' -Encoding UTF8
+
+      - name: Prepare versioned local fixtures for actual updater transactions
+        id: fixtures
+        if: steps.candidate.outcome == 'success'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\prepare-updater-test-fixtures.ps1 -NsisCompiler "$env:NSISDIR\makensis.exe"
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build a controlled v1.4.1 successor without updater test hooks
+        id: production_update_fixture
+        if: ${{ steps.candidate.outcome == 'success' && env.ACCEPTANCE_SCOPE == 'All' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\build_production_update_fixture.ps1
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Interrupt a real WinHTTP HTTPS transfer and verify retry
+        id: network-interruption
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && steps.candidate.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_updater_network_interruption.ps1 `
+            -TestExecutable '.\build\updater-windows-tests.exe' `
+            -EvidencePath '.\build\v1.4.0-updater-evidence\https-interruption.json'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Prove an HTTPS response-body stall times out safely
+        id: download-body-timeout
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && steps.candidate.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_download_stall_timeout_acceptance.ps1 `
+            -EvidencePath '.\build\v1.4.0-updater-evidence\download-stall-timeout.json'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $result = Get-Content -LiteralPath '.\build\v1.4.0-updater-evidence\download-stall-timeout.json' -Raw | ConvertFrom-Json
+          if ($result.status -ne 'PASS' -or -not $result.nativeResult.timeout_error_reported -or
+              -not $result.nativeResult.partial_and_final_download_files_removed -or
+              -not $result.nativeResult.preexisting_sentinel_preserved_byte_for_byte) {
+            throw 'Actual HTTPS response-body timeout evidence is incomplete or failed.'
+          }
+
+      - name: Probe availability of the interactive Windows desktop
+        id: desktop
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probe = & .\tests\windows_runner_probe.ps1
+          $capabilities = $probe | ConvertFrom-Json
+          "GUI_DESKTOP_AVAILABLE=$($capabilities.interactiveDesktopAvailable.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Run native GUI themes, accessibility and timer acceptance
+        id: gui
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && env.ACCEPTANCE_SCOPE != 'DialogThemes' && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\gui_acceptance.ps1 -TestSystemHighContrast
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $report = Get-Content -LiteralPath '.\build\gui-test\evidence\gui-acceptance-results.json' -Raw | ConvertFrom-Json
+          if ($report.InteractiveDesktopAvailable -ne $true -or $report.Assertions -le 0) {
+            throw 'The GUI acceptance result does not prove an interactive run with assertions.'
+          }
+          $resource = Import-Csv -LiteralPath '.\build\gui-test\evidence\update-dialog-resource-time-series.csv'
+          if ($resource.Count -ne 20) { throw "Expected 20 measured update dialogs, found $($resource.Count)." }
+
+      - name: Test the real v1.3.0 to v1.4.0 per-user installer transition
+        id: legacy_upgrade
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && env.ACCEPTANCE_SCOPE != 'DialogThemes' && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_v1_3_to_v1_4_upgrade_acceptance.ps1 `
+            -LegacyInstaller '.\build\gui-test\public-v1.3.0-setup.exe' `
+            -CandidateInstaller '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -CandidateExecutable '.\release\EyeBreakReminder.exe' `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify interactive installation and uninstallation as a standard user
+        id: standard_user
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && env.ACCEPTANCE_SCOPE != 'DialogThemes' && steps.candidate.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        timeout-minutes: 25
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_standard_user_acceptance.ps1 `
+            -InstallerPath '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -ExecutablePath '.\release\EyeBreakReminder.exe' `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence\standard-user'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $result = Get-Content -LiteralPath '.\build\v1.4.0-updater-evidence\standard-user\standard-user-results.json' -Raw | ConvertFrom-Json
+          if ($result.Status -ne 'PASS') { throw "Standard-user installer harness did not pass: $($result.Failure)" }
+          $requiredEvents = @(
+            'Child process has a standard Windows user token',
+            'Standard-user interactive installer wizard',
+            'Installed image matches the candidate at the standard user LocalAppData path',
+            'Installer registers under the standard account HKCU hive',
+            'Installed candidate launches with a visible window under the standard account',
+            'Standard-user interactive uninstaller wizard',
+            'Interactive uninstall removes the standard user installation, preserves settings/history byte-for-byte, and clears both HKCU registrations'
+          )
+          foreach ($name in $requiredEvents) {
+            $event = @($result.Events | Where-Object Name -CEQ $name)
+            if ($event.Count -ne 1 -or $event[0].Status -ne 'PASS') { throw "Required standard-user acceptance event did not pass: $name" }
+          }
+          if (-not $result.AccountRemoved -or -not $result.StageRemoved -or $result.CleanupErrors.Count -gt 0) { throw 'The disposable standard-user account, profile staging, and cleanup must all be verified.' }
+          Write-Host 'PASS: exact-candidate interactive per-user install/uninstall, standard token, installed image, registration, launch and cleanup were independently checked.'
+
+      - name: Run actual update, install, settings, failure and portable transactions
+        id: updater
+        if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && (env.ACCEPTANCE_SCOPE == 'UpdatePreferences' || env.ACCEPTANCE_SCOPE == 'ActiveBreakDeferral' || env.ACCEPTANCE_SCOPE == 'DialogThemes' || steps.legacy_upgrade.outcome == 'success') }}
+        env:
+          ACCEPTANCE_SCOPE: ${{ env.ACCEPTANCE_SCOPE }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $transactionScenario = if ($env:ACCEPTANCE_SCOPE -eq 'ProductionCandidateOnly') { 'All' } else { $env:ACCEPTANCE_SCOPE }
+          & .\tests\windows_v1_4_updater_acceptance.ps1 `
+            -BaselineInstaller '.\build\gui-test\baseline-test-setup.exe' `
+            -BaselineExecutable '.\build\gui-test\baseline-test-executable.exe' `
+            -UpdateInstaller '.\build\gui-test\update-test-setup.exe' `
+            -UpdateExecutable '.\build\gui-test\update-test-executable.exe' `
+            -FailingInstaller '.\build\gui-test\failing-test-setup.exe' `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence' `
+            -Scenario "$transactionScenario"
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Exercise real portable replacement failures and recovery
+        id: portable-recovery
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE != 'UpdatePreferences' && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' && env.ACCEPTANCE_SCOPE != 'DialogThemes' && steps.fixtures.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        timeout-minutes: 5
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          mkdir -p build/v1.4.0-updater-evidence
+          x86_64-w64-mingw32-g++ \
+            -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -static -static-libgcc -static-libstdc++ \
+            -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE \
+            tests/updater_portable_recovery_tests.cpp \
+            -o build/updater-portable-recovery-tests.exe \
+            -lcomctl32 -lcomdlg32 -ldwmapi -lwtsapi32 -lwinmm -lgdiplus \
+            -lshell32 -lole32 -loleaut32 -luuid -ladvapi32 -luxtheme \
+            -lwinhttp -lversion -lbcrypt
+          test -s build/updater-portable-recovery-tests.exe
+          ./build/updater-portable-recovery-tests.exe \
+            "$(cygpath -aw build/gui-test/baseline-test-executable.exe)" \
+            "$(cygpath -aw build/gui-test/update-test-executable.exe)" \
+            "$(cygpath -aw build/gui-test/update-test-setup.exe)" \
+            "$(cygpath -aw build/updater-windows-tests.exe)" \
+            2>&1 | tee build/v1.4.0-updater-evidence/portable-recovery-tests.log
+
+      - name: Build the test-only unverified-executable launch sentinel
+        id: launch-sentinel
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE == 'All' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success' }}
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          source='tests/update_launch_sentinel.c'
+          sentinel="$(cygpath -u "$RUNNER_TEMP")/EyeBreakReminder-Unverified-Launch-Sentinel.exe"
+          test -f "$source"
+          gcc -Wall -Wextra -Werror -Os -s "$source" -o "$sentinel"
+          test -s "$sentinel"
+          printf 'UPDATE_LAUNCH_SENTINEL_PATH=%s\n' "$(cygpath -aw "$sentinel")" >> "$GITHUB_ENV"
+
+      - name: Update the installed exact production candidate through its real updater
+        id: production_update
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE == 'All' && steps.candidate.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.launch-sentinel.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' && steps.updater.outcome == 'success' && steps.legacy_upgrade.outcome == 'success' }}
+        shell: pwsh
+        timeout-minutes: 30
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_production_update_acceptance.ps1 `
+            -CandidateInstaller '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -CandidateExecutable '.\release\EyeBreakReminder.exe' `
+            -ControlledInstaller "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder-Setup-x64.exe" `
+            -ControlledExecutable "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder.exe" `
+            -LaunchSentinelExecutable "$env:UPDATE_LAUNCH_SENTINEL_PATH" `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify production coordinator aborts safely when settings backup fails
+        id: coordinator_backup_failure
+        if: ${{ !cancelled() && env.ACCEPTANCE_SCOPE == 'All' && steps.candidate.outcome == 'success' && steps.updater.outcome == 'success' && steps.production_update.outcome == 'success' && steps.production_update_fixture.outcome == 'success' && steps.legacy_upgrade.outcome == 'success' && env.GUI_DESKTOP_AVAILABLE == 'true' }}
+        shell: pwsh
+        timeout-minutes: 30
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = '.\build\v1.4.0-updater-evidence'
+          $resultPath = Join-Path $evidence 'production-update-acceptance-results.json'
+          $logPath = Join-Path $evidence 'production-update-acceptance.log'
+          if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf) -or -not (Test-Path -LiteralPath $logPath -PathType Leaf)) {
+            throw 'The primary exact-candidate update acceptance report is missing; refusing to replace it with the backup-failure report.'
+          }
+          Copy-Item -LiteralPath $resultPath -Destination (Join-Path $evidence 'production-update-acceptance-successful-update-results.json')
+          Copy-Item -LiteralPath $logPath -Destination (Join-Path $evidence 'production-update-acceptance-successful-update.log')
+          $failureInstaller = '.\build\updater-failing-installer.exe'
+          if (-not (Test-Path -LiteralPath $failureInstaller -PathType Leaf)) { throw 'The controlled failing-installer fixture is missing.' }
+          & .\tests\windows_production_update_acceptance.ps1 `
+            -CandidateInstaller '.\release\EyeBreakReminder-Setup-x64.exe' `
+            -CandidateExecutable '.\release\EyeBreakReminder.exe' `
+            -ControlledInstaller "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder-Setup-x64.exe" `
+            -ControlledExecutable "$env:RUNNER_TEMP\EyeBreakReminder-Production-Update-Fixture\release\EyeBreakReminder.exe" `
+            -CoordinatorFailureInstaller $failureInstaller `
+            -LaunchSentinelExecutable "$env:UPDATE_LAUNCH_SENTINEL_PATH" `
+            -EvidenceDirectory $evidence `
+            -Scenario CoordinatorBackupFailure
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $report = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+          $event = @($report.Events | Where-Object Name -CEQ 'Exact production coordinator backup failure and recovery')
+          if ($report.Status -ne 'PASS' -or $report.Scenario -ne 'CoordinatorBackupFailure' -or $event.Count -ne 1 -or $event[0].Status -ne 'PASS') {
+            throw 'The real coordinator backup-failure scenario did not produce its required exact-candidate recovery evidence.'
+          }
+
+      - name: Verify Windows resource telemetry zero-session handling
+        id: resource_telemetry
+        if: ${{ always() && env.ACCEPTANCE_SCOPE != 'ActiveBreakDeferral' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_resource_telemetry_tests.ps1 -EvidencePath '.\build\v1.4.0-updater-evidence\resource-telemetry-unit-tests.json' -ProbeLiveCmdlet
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Download the prior exact-candidate hosted 110-cycle soak evidence for exact-hash reuse
+        id: soak_reference_download
+        if: ${{ !cancelled() && steps.resource_telemetry.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.4.0-candidate-${{ env.SOAK_REFERENCE_RUN_ID }}
+          path: build/prior-v1.4.0-soak-candidate
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOAK_REFERENCE_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Reuse soak only when candidate hash and complete hosted evidence match
+        id: soak_reuse
+        if: ${{ !cancelled() && steps.soak_reference_download.outcome == 'success' && steps.resource_telemetry.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $referenceRoot = 'build/prior-v1.4.0-soak-candidate'
+          $referenceEvidence = Join-Path $referenceRoot 'build/v1.4.0-updater-evidence'
+          $referenceSoak = Join-Path $referenceEvidence 'resource-soak'
+          $referenceRunId = [string]$env:SOAK_REFERENCE_RUN_ID
+          $reused = $false
+          $reason = ''
+          $failedReuseChecks = @()
+          $referenceAssetHash = ''
+          $referenceSummaryHash = ''
+          try {
+            if ($referenceRunId -notmatch '^\d+$') { throw 'The soak reference run ID must be numeric.' }
+            $provenance = Get-Content -LiteralPath (Join-Path $referenceEvidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+            $identityDocument = Get-Content -LiteralPath (Join-Path $referenceEvidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json
+            $identityList = [System.Collections.Generic.List[object]]::new()
+            foreach ($entry in $identityDocument) {
+              if ($entry -is [array]) { foreach ($asset in $entry) { $identityList.Add($asset) } }
+              else { $identityList.Add($entry) }
+            }
+            $identities = $identityList.ToArray()
+            $referenceGate = Get-Content -LiteralPath (Join-Path $referenceEvidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
+            $summary = Get-Content -LiteralPath (Join-Path $referenceSoak 'soak-summary.json') -Raw | ConvertFrom-Json
+            $referenceSummaryHash = [string]$summary.SHA256
+            $candidate = Get-Item -LiteralPath 'release/EyeBreakReminder.exe'
+            $candidateHash = (Get-FileHash -LiteralPath $candidate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            $referenceIdentity = @($identities | Where-Object Name -CEQ 'EyeBreakReminder.exe')
+            $referenceAssetHash = if ($referenceIdentity.Count -eq 1) { [string]$referenceIdentity[0].SHA256 } else { '' }
+            $timeseriesPath = Join-Path $referenceSoak 'resource-time-series.csv'
+            $cyclesPath = Join-Path $referenceSoak 'cycle-results.csv'
+            $trendPath = Join-Path $referenceSoak 'resource-trends.svg'
+            $timeseries = @(Import-Csv -LiteralPath $timeseriesPath)
+            $cycles = @(Import-Csv -LiteralPath $cyclesPath)
+            $screenshotNames = @($summary.Screenshots | ForEach-Object { [IO.Path]::GetFileName([string]$_) })
+            $screenshotsPresent = $screenshotNames.Count -ge 3 -and @($screenshotNames | ForEach-Object { Test-Path -LiteralPath (Join-Path $referenceSoak $_) -PathType Leaf } | Where-Object { -not $_ }).Count -eq 0
+            $eventsClean = @($summary.Events | Where-Object { $_.Status -in @('FAIL','NOT TESTED') }).Count -eq 0
+            $cyclesClean = $cycles.Count -eq 110 -and @($cycles | Where-Object { [int]$_.BreakWindowsOpened -lt 1 -or [int]$_.BreakWindowsAfter -ne 0 -or $_.StatusAfter -cne 'Running' }).Count -eq 0
+            $reuseChecks = [ordered]@{
+              'reference run ID' = [string]$provenance.RunId -eq $referenceRunId
+              'reference application/version' = $provenance.Application -ceq 'Eye Break Reminder' -and $provenance.Version -ceq '1.4.0'
+              'reference feature branch' = $provenance.Branch -ceq 'feature/v1.4.0-automatic-updater'
+              'reference source and optional PR head are valid commits' = [string]$provenance.SourceCommit -match '^[0-9a-f]{40}$' -and ((-not $provenance.PRHeadCommit) -or ([string]$provenance.PRHeadCommit -match '^[0-9a-f]{40}$'))
+              'candidate gate succeeded' = $referenceGate.Candidate -ceq 'success'
+              'resource telemetry gate succeeded' = $referenceGate.ResourceTelemetry -ceq 'success'
+              'resource soak gate succeeded' = $referenceGate.ResourceSoak -ceq 'success'
+              'exactly one reference executable identity' = $referenceIdentity.Count -eq 1
+              'current candidate is version 1.4.0' = $candidate.VersionInfo.ProductVersion -match '^1\.4\.0(?:\.0)?$'
+              'current candidate SHA-256 matches reference artifact identity' = $candidateHash -ceq $referenceAssetHash
+              'current candidate SHA-256 matches soak executable SHA-256' = $candidateHash -ceq [string]$summary.SHA256
+              'soak application/version/no-growth behavior' = $summary.Application -ceq 'Eye Break Reminder' -and $summary.Version -ceq '1.4.0' -and $summary.ExpectedBehavior -ceq 'NoGrowth'
+              'soak completed all 110 requested cycles' = [int]$summary.RequestedCycles -eq 110 -and [int]$summary.CompletedCycles -eq 110
+              'soak result counts have no failures or untested rows' = [int]$summary.Pass -ge 250 -and [int]$summary.Fail -eq 0 -and [int]$summary.NotTested -eq 0
+              'diagnostic telemetry and sample count are complete' = [bool]$summary.DiagnosticTelemetryComplete -and [int]$summary.MetricSamples -eq $timeseries.Count
+              'all cycle rows are clean' = $cyclesClean
+              'resource time series has at least 2000 samples' = $timeseries.Count -ge 2000
+              'soak events contain no failures or untested rows' = $eventsClean
+              'three soak screenshots are present' = $screenshotsPresent
+              'resource trend artifact is present' = Test-Path -LiteralPath $trendPath -PathType Leaf
+              'environment is Windows Server 2025 x64' = $summary.Environment.OS -like '*Windows Server 2025*' -and $summary.Environment.OSArchitecture -ceq 'X64'
+              'USER object growth limits pass' = [double]$summary.UserObjects.SlopePerCycle -le 0.5 -and ([double]$summary.UserObjects.EndMedian - [double]$summary.UserObjects.StartMedian) -le ([double]$summary.IdleUserRange + 1)
+              'GDI object growth limits pass' = ([double]$summary.GdiObjects.EndMedian - [double]$summary.GdiObjects.StartMedian) -le 2 -and [double]$summary.GdiObjects.SlopePerCycle -le 0.10
+              'handle growth limits pass' = ([double]$summary.Handles.EndMedian - [double]$summary.Handles.StartMedian) -le 5 -and [double]$summary.Handles.SlopePerCycle -le 0.15
+              'private-byte growth limits pass' = ([double]$summary.PrivateBytes.EndMedian - [double]$summary.PrivateBytes.StartMedian) -le 4194304 -and [double]$summary.PrivateBytes.SlopePerCycle -le 65536
+              'working-set growth limits pass' = ([double]$summary.WorkingSet.EndMedian - [double]$summary.WorkingSet.StartMedian) -le 20971520 -and [double]$summary.WorkingSet.SlopePerCycle -le 262144
+            }
+            $failedReuseChecks = @($reuseChecks.GetEnumerator() | Where-Object { -not [bool]$_.Value } | ForEach-Object { $_.Key })
+            $valid = $failedReuseChecks.Count -eq 0
+            if (-not $valid) { $reason = 'Evidence reuse rejected; failed checks: ' + ($failedReuseChecks -join '; ') }
+            else {
+              $destination = 'build/v1.4.0-updater-evidence/resource-soak'
+              New-Item -ItemType Directory -Force -Path $destination | Out-Null
+              Copy-Item -Path (Join-Path $referenceSoak '*') -Destination $destination -Recurse -Force
+              $files = @(Get-ChildItem -LiteralPath $destination -File -Recurse | ForEach-Object { [pscustomobject]@{Path=$_.FullName.Substring((Get-Location).Path.Length + 1);Bytes=$_.Length;SHA256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()} })
+              [pscustomobject]@{Status='PASS';Reused=$true;ReferenceRunId=$referenceRunId;ReferenceRunUrl="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/$referenceRunId";ReferencePRHead=$provenance.PRHeadCommit;ReferenceSourceCommit=$provenance.SourceCommit;CurrentSourceCommit=$env:GITHUB_SHA;CurrentPRHeadCommit=if($env:GITHUB_EVENT_PATH){(Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw|ConvertFrom-Json).pull_request.head.sha}else{$null};CandidateSHA256=$candidateHash;Soak=$summary;CopiedEvidenceFiles=$files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse.json' -Encoding UTF8
+              $reused = $true
+            }
+          } catch { $reason = $_.Exception.Message }
+          "reused=$($reused.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if (-not $reused) {
+            [pscustomobject]@{Status='NOT REUSED';Reused=$false;Reason=$reason;FailedChecks=$failedReuseChecks;ReferenceRunId=$referenceRunId;CurrentCandidateSHA256=(Get-FileHash -LiteralPath 'release/EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant();ReferenceCandidateSHA256=$referenceAssetHash;ReferenceSoakSHA256=$referenceSummaryHash;Utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/resource-soak-reuse-attempt.json' -Encoding UTF8
+            Write-Host "Prior soak will not be reused: $reason"
+          } else { Write-Host 'Prior soak evidence was reused after exact-binary and full-evidence validation.' }
+
+      - name: Run the established 110-cycle native resource soak
+        id: soak
+        if: ${{ !cancelled() && steps.network-interruption.outcome == 'success' && steps.download-body-timeout.outcome == 'success' && steps.updater.outcome == 'success' && steps.portable-recovery.outcome == 'success' && steps.resource_telemetry.outcome == 'success' && steps.soak_reuse.outputs.reused != 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_break_user_resource_soak.ps1 `
+            -ExecutablePath '.\release\EyeBreakReminder.exe' `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence\resource-soak' `
+            -Cycles 110 -ExpectedProductVersion '1.4.0' -ExpectedResourceBehavior NoGrowth
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate and calculate thread-count resource trend
+        if: ${{ !cancelled() && (steps.soak.outcome == 'success' || steps.soak_reuse.outputs.reused == 'true') }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_resource_soak_summary_tests.ps1 `
+            -EvidenceDirectory '.\build\v1.4.0-updater-evidence\resource-soak' `
+            -ExecutablePath '.\release\EyeBreakReminder.exe'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify the exact candidate package stayed byte-identical after runtime acceptance
+        id: verify-candidate
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = Get-Content -LiteralPath 'build/v1.4.0-updater-evidence/release-artifact-identities.json' -Raw | ConvertFrom-Json
+          foreach ($item in $identity) {
+            $path = Join-Path 'release' $item.Name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate file disappeared: $($item.Name)" }
+            $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -cne $item.SHA256) { throw "Candidate changed during acceptance: $($item.Name) expected $($item.SHA256), got $actual" }
+          }
+          [pscustomobject]@{Status='PASS';Files=$identity;ExactCandidateRetained=$true;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/candidate-unchanged.json' -Encoding UTF8
+
+      - name: Require every feasible Windows acceptance prerequisite to pass
+        if: always()
+        shell: pwsh
+        env:
+          ACCEPTANCE_SCOPE: ${{ env.ACCEPTANCE_SCOPE }}
+          CANDIDATE_OUTCOME: ${{ steps.candidate.outcome }}
+          FIXTURE_OUTCOME: ${{ steps.fixtures.outcome }}
+          PRODUCTION_UPDATE_FIXTURE_OUTCOME: ${{ steps.production_update_fixture.outcome }}
+          NETWORK_INTERRUPTION_OUTCOME: ${{ steps.network-interruption.outcome }}
+          DOWNLOAD_BODY_TIMEOUT_OUTCOME: ${{ steps.download-body-timeout.outcome }}
+          LEGACY_UPGRADE_OUTCOME: ${{ steps.legacy_upgrade.outcome }}
+          DESKTOP_OUTCOME: ${{ steps.desktop.outcome }}
+          GUI_OUTCOME: ${{ steps.gui.outcome }}
+          UPDATER_OUTCOME: ${{ steps.updater.outcome }}
+          PORTABLE_RECOVERY_OUTCOME: ${{ steps.portable-recovery.outcome }}
+          STANDARD_USER_OUTCOME: ${{ steps.standard_user.outcome }}
+          PRODUCTION_UPDATE_OUTCOME: ${{ steps.production_update.outcome }}
+          COORDINATOR_BACKUP_FAILURE_OUTCOME: ${{ steps.coordinator_backup_failure.outcome }}
+          RESOURCE_TELEMETRY_OUTCOME: ${{ steps.resource_telemetry.outcome }}
+          SOAK_OUTCOME: ${{ steps.soak.outcome }}
+          SOAK_REUSED: ${{ steps.soak_reuse.outputs.reused }}
+          IDENTITY_OUTCOME: ${{ steps.verify-candidate.outcome }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probePath = 'build/pre-release-evidence/runner-capabilities.json'
+          $desktopAvailable = $false
+          if (Test-Path -LiteralPath $probePath) { $desktopAvailable = [bool](Get-Content -LiteralPath $probePath -Raw | ConvertFrom-Json).interactiveDesktopAvailable }
+          $soakPassed = $env:SOAK_OUTCOME -eq 'success' -or $env:SOAK_REUSED -eq 'true'
+          $fullAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:DOWNLOAD_BODY_TIMEOUT_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:STANDARD_USER_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PORTABLE_RECOVERY_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'success' -and $env:COORDINATOR_BACKUP_FAILURE_OUTCOME -eq 'success' -and $soakPassed -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
+          $preferenceAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PRODUCTION_UPDATE_OUTCOME -eq 'skipped' -and $env:COORDINATOR_BACKUP_FAILURE_OUTCOME -eq 'skipped' -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
+          $productionCandidateAcceptance = $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:NETWORK_INTERRUPTION_OUTCOME -eq 'success' -and $env:DOWNLOAD_BODY_TIMEOUT_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:GUI_OUTCOME -eq 'success' -and $env:LEGACY_UPGRADE_OUTCOME -eq 'success' -and $env:STANDARD_USER_OUTCOME -eq 'success' -and $env:UPDATER_OUTCOME -eq 'success' -and $env:PORTABLE_RECOVERY_OUTCOME -eq 'success' -and $soakPassed -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
+          $focusedBreakAcceptance = $env:ACCEPTANCE_SCOPE -eq 'ActiveBreakDeferral' -and $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success'
+          $focusedDialogThemes = $env:ACCEPTANCE_SCOPE -eq 'DialogThemes' -and $env:CANDIDATE_OUTCOME -eq 'success' -and $env:FIXTURE_OUTCOME -eq 'success' -and $env:IDENTITY_OUTCOME -eq 'success' -and $desktopAvailable -and $env:UPDATER_OUTCOME -eq 'success' -and $env:RESOURCE_TELEMETRY_OUTCOME -eq 'success'
+          $status = if (($env:ACCEPTANCE_SCOPE -eq 'UpdatePreferences' -and $preferenceAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'ActiveBreakDeferral' -and $focusedBreakAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'DialogThemes' -and $focusedDialogThemes) -or ($env:ACCEPTANCE_SCOPE -eq 'All' -and $fullAcceptance) -or ($env:ACCEPTANCE_SCOPE -eq 'ProductionCandidateOnly' -and $productionCandidateAcceptance)) {'PASS'} else {'NOT READY'}
+          [pscustomobject]@{Status=$status;Scope=$env:ACCEPTANCE_SCOPE;Candidate=$env:CANDIDATE_OUTCOME;Fixtures=$env:FIXTURE_OUTCOME;ProductionUpdateFixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME;NetworkInterruption=$env:NETWORK_INTERRUPTION_OUTCOME;DownloadBodyTimeout=$env:DOWNLOAD_BODY_TIMEOUT_OUTCOME;LegacyV130Upgrade=$env:LEGACY_UPGRADE_OUTCOME;DesktopAvailable=$desktopAvailable;Gui=$env:GUI_OUTCOME;StandardUser=$env:STANDARD_USER_OUTCOME;Updater=$env:UPDATER_OUTCOME;PortableRecovery=$env:PORTABLE_RECOVERY_OUTCOME;ProductionBinaryUpdate=$env:PRODUCTION_UPDATE_OUTCOME;CoordinatorBackupFailure=$env:COORDINATOR_BACKUP_FAILURE_OUTCOME;ResourceTelemetry=$env:RESOURCE_TELEMETRY_OUTCOME;ResourceSoak=$env:SOAK_OUTCOME;ResourceSoakReused=$env:SOAK_REUSED;CandidateIdentity=$env:IDENTITY_OUTCOME;Utc=[DateTime]::UtcNow.ToString('o')} |
+            ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Encoding UTF8
+          if ($status -ne 'PASS') {
+            if (-not $desktopAvailable) { throw 'Windows updater release acceptance is NOT TESTED: this runner exposed no interactive Explorer desktop. The exact development candidate is retained as evidence but is not release-ready.' }
+            throw "Windows updater release acceptance did not pass. Candidate=$env:CANDIDATE_OUTCOME; fixtures=$env:FIXTURE_OUTCOME; production update fixture=$env:PRODUCTION_UPDATE_FIXTURE_OUTCOME; network interruption=$env:NETWORK_INTERRUPTION_OUTCOME; stalled body timeout=$env:DOWNLOAD_BODY_TIMEOUT_OUTCOME; v1.3.0 upgrade=$env:LEGACY_UPGRADE_OUTCOME; GUI=$env:GUI_OUTCOME; standard user=$env:STANDARD_USER_OUTCOME; updater=$env:UPDATER_OUTCOME; portable recovery=$env:PORTABLE_RECOVERY_OUTCOME; production binary update=$env:PRODUCTION_UPDATE_OUTCOME; coordinator backup failure=$env:COORDINATOR_BACKUP_FAILURE_OUTCOME; resource telemetry=$env:RESOURCE_TELEMETRY_OUTCOME; soak=$env:SOAK_OUTCOME; soak reused=$env:SOAK_REUSED; identity=$env:IDENTITY_OUTCOME."
+          }
+
+      - name: Upload the exact candidate and all Windows evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-candidate-${{ github.run_id }}
+          path: |
+            release/EyeBreakReminder.exe
+            release/EyeBreakReminder-Setup-x64.exe
+            release/EyeBreakReminder-Portable-x64.zip
+            release/EyeBreakReminder-Source.zip
+            release/EyeBreakReminder-SHA256.txt
+            build/v1.4.0-updater-evidence/**
+            build/pre-release-evidence/runner-capabilities.json
+            build/gui-test/evidence/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  windows-11-arm64-x64-emulation:
+    name: Exact candidate under Windows 11 ARM64 x64 emulation
+    if: github.event_name == 'pull_request'
+    needs: windows-updater-acceptance
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the acceptance harness from the tested PR merge commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the exact candidate retained by the successful x64 acceptance job
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.4.0-candidate-${{ github.run_id }}
+          path: candidate-artifact
+
+      - name: Verify candidate provenance and recover the exact tested files
+        shell: pwsh
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'candidate-artifact'
+          $releaseSource = Join-Path $root 'release'
+          $evidence = Join-Path $root 'build/v1.4.0-updater-evidence'
+          $expectedNames = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $files = @(Get-ChildItem -LiteralPath $releaseSource -Force)
+          if ($files.Count -ne $expectedNames.Count -or @($files | Where-Object PSIsContainer).Count -ne 0) { throw 'The retained candidate must contain exactly the five expected release files.' }
+          if ((@($files | Sort-Object Name | Select-Object -ExpandProperty Name) -join "`n") -cne (($expectedNames | Sort-Object) -join "`n")) { throw 'The retained candidate file set is unexpected.' }
+          $provenance = Get-Content -LiteralPath (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          $gate = Get-Content -LiteralPath (Join-Path $evidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
+          $identities = Get-Content -LiteralPath (Join-Path $evidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json
+          if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.RunId -ne $env:GITHUB_RUN_ID -or $provenance.SourceCommit -cne $env:GITHUB_SHA -or $provenance.PRHeadCommit -cne $env:PR_HEAD_SHA) { throw 'The retained candidate provenance does not identify this successful PR acceptance run, PR head and merge commit.' }
+          if ($gate.Status -cne 'PASS') { throw "The x64 hosted acceptance gate is not PASS: $($gate.Status)." }
+          if ($identities.Count -ne 5 -or $provenance.CandidateFiles.Count -ne 5) { throw 'Candidate provenance does not contain exactly five release identities.' }
+          New-Item -ItemType Directory -Force -Path 'release' | Out-Null
+          foreach ($name in $expectedNames) {
+            $source = Join-Path $releaseSource $name
+            $identity = @($identities | Where-Object Name -CEQ $name)
+            if ($identity.Count -ne 1) { throw "Candidate identity is missing or duplicated: $name" }
+            $file = Get-Item -LiteralPath $source
+            $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($file.Length -ne [long]$identity[0].Bytes -or $hash -cne $identity[0].SHA256) { throw "Retained candidate bytes do not match the accepted run identity: $name" }
+            Copy-Item -LiteralPath $source -Destination (Join-Path 'release' $name)
+          }
+          foreach ($item in $identities) {
+            $manifestEntry = Select-String -LiteralPath 'release/EyeBreakReminder-SHA256.txt' -Pattern ('^' + [regex]::Escape($item.SHA256) + '  ' + [regex]::Escape($item.Name) + '$')
+            if ($item.Name -ne 'EyeBreakReminder-SHA256.txt' -and @($manifestEntry).Count -ne 1) { throw "Release SHA-256 manifest mismatch: $($item.Name)" }
+          }
+          [pscustomobject]@{RunId=$provenance.RunId;CandidateSourceCommit=$provenance.SourceCommit;PRHeadCommit=$env:PR_HEAD_SHA;AcceptanceMergeCommit=$env:GITHUB_SHA;RunnerOS=(Get-CimInstance Win32_OperatingSystem).Caption;RunnerArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();CandidateFiles=$identities} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'candidate-identity.json' -Encoding UTF8
+
+      - name: Exercise the exact x64 installer guard and application under Windows 11 ARM64 emulation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = Get-Content -LiteralPath 'candidate-identity.json' -Raw | ConvertFrom-Json
+          & .\tests\windows_arm64_emulation_acceptance.ps1 `
+            -InstallerPath (Join-Path (Get-Location) 'release/EyeBreakReminder-Setup-x64.exe') `
+            -StandaloneExecutable (Join-Path (Get-Location) 'release/EyeBreakReminder.exe') `
+            -PortableArchive (Join-Path (Get-Location) 'release/EyeBreakReminder-Portable-x64.zip') `
+            -EvidenceDirectory (Join-Path (Get-Location) 'build/arm64-emulation-evidence') `
+            -CandidateSourceCommit $identity.CandidateSourceCommit `
+            -ExpectedVersion '1.4.0'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows 11 ARM64 x64-emulation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-arm64-emulation-${{ github.run_id }}
+          path: |
+            candidate-identity.json
+            build/arm64-emulation-evidence/**
+          if-no-files-found: warn
+          retention-days: 90

@@ -1,0 +1,50 @@
+name: Windows v1.4.0 low-space and staging ACL tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/v1.4.0-automatic-updater
+    paths:
+      - '.github/workflows/windows-v1.4.0-disk-acl-focus.yml'
+      - 'tests/updater_disk_acl_tests.cpp'
+
+permissions:
+  contents: read
+
+jobs:
+  disk-acl-focus:
+    name: Low-space rejection and private staging ACL
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Check out test source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install MinGW compiler
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+
+      - name: Compile and run the focused Windows test
+        shell: msys2 {0}
+        run: |
+          set -o pipefail
+          mkdir -p build/v1.4.0-disk-acl
+          g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static \
+            tests/updater_disk_acl_tests.cpp -o build/v1.4.0-disk-acl/updater-disk-acl-tests.exe \
+            -lwinhttp -lbcrypt -lole32
+          ./build/v1.4.0-disk-acl/updater-disk-acl-tests.exe 2>&1 | tee build/v1.4.0-disk-acl/focused-test.log
+
+      - name: Retain focused test log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.4.0-disk-acl-focus-${{ github.run_id }}
+          path: build/v1.4.0-disk-acl/focused-test.log
+          if-no-files-found: warn
+          retention-days: 90

@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.4.0 (development; not published)
+
+Added
+
+- Integrated stable-release discovery, in-app download progress, cancellation, SHA-256 validation and installer launch for supported installed and portable Windows x64 copies.
+- A themed native update dialog with release notes, current/available versions, Preserve Settings by default, and an explicitly confirmed Clean Install option. History/statistics deletion is a separate unchecked choice.
+- Optional daily update checks and background downloads. Both preferences default off, and installation always waits for user confirmation.
+- An external per-user update coordinator, durable recovery journal, previous-application/data backups, startup confirmation, and a next-sign-in rollback hook for interrupted future updates.
+- SHA-256-verified settings/history and installer-owned-file backups; recovery validates the complete backup set before applying changes, so a corrupted backup is rejected without partially restoring user data.
+- Interactive uninstall data retention choices. Silent uninstall keeps settings and history and removes only the transient timer checkpoint.
+- Version/asset validation tests, a Windows-only real GitHub release-download smoke tool, and updater architecture/security/acceptance documentation.
+- Production automatic updates require a detached ECDSA P-256/SHA-256 signed manifest and reject unsigned or invalid metadata. Test signing roots are isolated from production trust.
+
+Security and initial installation
+
+- The owner-approved v1.4.0 policy makes signed update manifests and production verification mandatory. Authenticode and SignPath are optional for this release; the initial installer may remain unsigned if clearly disclosed.
+- The first installer is a manual bootstrap and is not authenticated by the later update manifest. GitHub HTTPS and checksums do not independently authenticate the publisher if the same release channel is compromised. Windows may show unsigned-publisher or SmartScreen warnings.
+- Production update key `p256-0aff97759ea95258` is provisioned and embedded. The exact signed candidate is retained and awaits separate owner publication approval; v1.4.0 is still unpublished.
+
+Changed
+
+- Unknown valid legacy settings are retained when settings are saved, and update preferences are stored with the existing settings schema.
+- The v1.3.0 to v1.4.0 transition remains a one-time installer upgrade because v1.3.0 contains no integrated installer.
+- Asset downloading now fails closed if WinHTTP cannot establish bounded timeouts or disable automatic redirects; failed policy setup leaves no staged payload.
+
+## Verification status
+
+- The production-authenticated seven-file candidate is retained by finalizer run [44875679345](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44875679345), artifact [14695418078](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44875679345/artifacts/14695418078). Its source and source archive match commit `491bd2ed29f84f4d434b884fc723144db2d6f294`; the manifest signature was independently verified with Windows CNG and its payload hashes match the exact binaries.
+- The real production-key installed update passed 20 assertions in run [44875679345](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44875679345). The real production-key portable update passed 20 assertions in run [44880169391](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44880169391), artifact [14697029252](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44880169391/artifacts/14697029252); both reject test-key metadata and preserve settings/history while relaunching the application.
+- Tested code/test head `2ee7935f80f198929fa7ac3be175f1df0160b63f` passed required **Core tests and Windows package** in run [44880169400](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44880169400). Windows security run [44880169391](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44880169391) passed 11 CNG assertions, 14 genuine DNS assertions, 10 GUI retry assertions, 25/25 SEC-028 rejection paths and 169 updater assertions, in addition to the production-key portable transaction.
+- The final candidate executable completed 110/110 real reminder cycles (264 PASS, 0 FAIL, 0 NOT TESTED) in resource-soak run [44800093361](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44800093361), artifact [14671214276](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44800093361/artifacts/14671214276). The acceptance matrix contains 232 rows: 219 PASS, 0 FAIL, 1 NOT TESTED, 10 BLOCKED, 2 NOT APPLICABLE. UN-009 remains NOT TESTED because the hosted Windows Settings interface was unavailable.
+- Authenticode is NotSigned and optional under the approved policy; SignPath is optional. The owner confirms encrypted production-key backup; independent backup restoration was not performed. No private key was used in CI.
+
 ## 1.3.0 (feature branch; prepared, not published)
 
 Added

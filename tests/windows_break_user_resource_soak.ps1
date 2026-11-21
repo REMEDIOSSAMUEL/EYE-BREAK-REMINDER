@@ -2,10 +2,11 @@ param(
   [Parameter(Mandatory=$true)][string]$ExecutablePath,
   [string]$EvidenceDirectory='build/hotfix-user-object-evidence/soak',
   [ValidateRange(10,200)][int]$Cycles=120,
-  [ValidateSet('1.2.0','1.2.1','1.3.0')][string]$ExpectedProductVersion='1.2.1',
+  [ValidateSet('1.2.0','1.2.1','1.3.0','1.4.0')][string]$ExpectedProductVersion='1.2.1',
   [ValidateSet('Growth','NoGrowth')][string]$ExpectedResourceBehavior='NoGrowth'
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'windows_resource_telemetry.ps1')
 [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
@@ -64,9 +65,19 @@ function BreakWindow(){[EBR_SOAK_NATIVE]::FindWindow($script:process.Id,'EyeBrea
 function Sample([int]$Cycle,[string]$Stage){
  $script:process.Refresh();if($script:process.HasExited){throw 'Application exited during soak.'}
  $proc=$script:process
+ $diagnosticSample=($Cycle -eq 0 -or $Cycle -eq 1 -or $Cycle % 10 -eq 0)
+ $childProcesses=@();$tcpConnectionCount=$null;$updateStagingFileCount=$null
+ if($diagnosticSample){
+  try{$childProcesses=@(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($proc.Id)" -ErrorAction Stop)}catch{Add-Event 'Child-process telemetry unavailable' 'NOT TESTED' $_.Exception.Message}
+  $tcpSample=Get-ProcessTcpConnectionCount -ProcessId $proc.Id
+  $tcpConnectionCount=$tcpSample.Count
+  if(-not $tcpSample.Available){Add-Event 'TCP-connection telemetry unavailable' 'NOT TESTED' $tcpSample.Error}
+  try{$updatesRoot=Join-Path $script:dataPath 'updates';$updateStagingFileCount=if(Test-Path -LiteralPath $updatesRoot -PathType Container){@(Get-ChildItem -LiteralPath $updatesRoot -Force -File -Recurse -ErrorAction Stop).Count}else{0}}catch{Add-Event 'Update-staging telemetry unavailable' 'NOT TESTED' $_.Exception.Message}
+ }
  $row=[pscustomobject]@{
   Utc=[DateTime]::UtcNow.ToString('o');ElapsedSeconds=[math]::Round($script:started.Elapsed.TotalSeconds,1);Cycle=$Cycle;Stage=$Stage;ProcessId=$proc.Id
   UserObjects=[EBR_SOAK_NATIVE]::User($proc.Handle);GdiObjects=[EBR_SOAK_NATIVE]::Gdi($proc.Handle);HandleCount=$proc.HandleCount
+  ThreadCount=$proc.Threads.Count;DiagnosticSample=$diagnosticSample;ChildProcessCount=if($diagnosticSample){$childProcesses.Count}else{$null};ChildProcessNames=if($diagnosticSample){(@($childProcesses|ForEach-Object{$_.Name})-join ';')}else{$null};TcpConnectionCount=$tcpConnectionCount;UpdateStagingFileCount=$updateStagingFileCount
   WorkingSetBytes=$proc.WorkingSet64;PrivateBytes=$proc.PrivateMemorySize64;CpuTotalMilliseconds=$proc.TotalProcessorTime.TotalMilliseconds
   TopLevelWindows=[EBR_SOAK_NATIVE]::CountWindows($proc.Id,$null);BreakWindowCount=[EBR_SOAK_NATIVE]::CountWindows($proc.Id,'EyeBreakReminder.Break')
   TimerStatus=(Status);TimerCountdown=(CountdownText);NotificationSetting='disabled in isolated soak fixture'
@@ -181,6 +192,11 @@ function Snooze-Window([IntPtr]$Window,[int]$Cycle){
 function Median([double[]]$Values){$s=@($Values|Sort-Object);if($s.Count%2){return [double]$s[[int][math]::Floor($s.Count/2)]};return ([double]$s[$s.Count/2-1]+[double]$s[$s.Count/2])/2}
 function Slope([double[]]$Values){$n=$Values.Count;if($n-lt 2){return 0.0};$sx=$n*($n+1)/2.0;$sy=($Values|Measure-Object -Sum).Sum;$sxx=$n*($n+1)*(2*$n+1)/6.0;$sxy=0.0;for($i=0;$i-lt $n;$i++){$sxy+=($i+1)*$Values[$i]};return ($n*$sxy-$sx*$sy)/($n*$sxx-$sx*$sx)}
 function Summary([string]$Name,[string]$Property){$v=[double[]]@($script:cycleRecords|ForEach-Object{[double]$_.$Property});[pscustomobject]@{Resource=$Name;StartMedian=(Median ([double[]]@($v|Select-Object -First 5)));EndMedian=(Median ([double[]]@($v|Select-Object -Last 5)));SlopePerCycle=[math]::Round((Slope $v),5);Minimum=($v|Measure-Object -Minimum).Minimum;Maximum=($v|Measure-Object -Maximum).Maximum}}
+function SummaryFromMetrics([string]$Name,[string]$Property){
+ $byCycle=@($script:metrics|Group-Object Cycle|Sort-Object{[int]$_.Name})
+ $v=[double[]]@($byCycle|ForEach-Object{$samples=[double[]]@($_.Group|ForEach-Object{[double]$_.$Property});[double](Median $samples)})
+ [pscustomobject]@{Resource=$Name;StartMedian=(Median ([double[]]@($v|Select-Object -First 5)));EndMedian=(Median ([double[]]@($v|Select-Object -Last 5)));SlopePerCycle=[math]::Round((Slope $v),5);Minimum=($v|Measure-Object -Minimum).Minimum;Maximum=($v|Measure-Object -Maximum).Maximum;CycleGroups=$v.Count;Aggregation='median of every process sample grouped by cycle'}
+}
 $script:result=$null
 try{
  if($env:GITHUB_ACTIONS-ne'true' -or $env:RUNNER_ENVIRONMENT-ne'github-hosted' -or $env:RUNNER_OS-ne'Windows'){throw 'Refusing a long soak outside a disposable GitHub-hosted Windows runner.'}
@@ -246,6 +262,8 @@ try{
  $pickerOk=@($script:events|Where-Object{$_.Name-match'picker OK' -and $_.Status-eq'PASS'}).Count;$pickerCancel=@($script:events|Where-Object{$_.Name-match'picker Cancel' -and $_.Status-eq'PASS'}).Count
  Check ($Cycles-ge110-and$pickerOk-ge50-and$pickerCancel-ge50) 'Combined soak completed at least 110 reminder cycles and 100 native picker operations with both OK and Cancel' ([pscustomobject]@{ReminderCycles=$script:cycleRecords.Count;PickerOk=$pickerOk;PickerCancel=$pickerCancel;PickerTotal=$pickerOk+$pickerCancel})
  $user=Summary 'USER objects' 'UserAfter';$gdi=Summary 'GDI objects' 'GdiAfter';$handles=Summary 'process handles' 'HandlesAfter';$private=Summary 'private bytes' 'PrivateBytesAfter';$working=Summary 'working set bytes' 'WorkingSetAfter'
+ $diagnosticRows=@($script:metrics|Where-Object{$_.DiagnosticSample});$incompleteDiagnosticRows=@($diagnosticRows|Where-Object{$null-eq$_.ChildProcessCount-or$null-eq$_.TcpConnectionCount-or$null-eq$_.UpdateStagingFileCount})
+ Check ($diagnosticRows.Count-ge12-and$incompleteDiagnosticRows.Count-eq0) 'Periodic child-process, TCP-connection and updater-staging-file telemetry collected' ([pscustomobject]@{DiagnosticSamples=$diagnosticRows.Count;IncompleteSamples=$incompleteDiagnosticRows.Count;ChildProcessCounts=@($diagnosticRows|ForEach-Object{$_.ChildProcessCount});TcpConnectionCounts=@($diagnosticRows|ForEach-Object{$_.TcpConnectionCount});UpdateStagingFileCounts=@($diagnosticRows|ForEach-Object{$_.UpdateStagingFileCount});Sampling='cycle 0, cycle 1 and every tenth cycle'})
  $drift=$user.EndMedian-$user.StartMedian
  if($ExpectedResourceBehavior-eq'Growth'){$minimum=[math]::Max(4,[math]::Floor($Cycles*0.5));Check ($user.SlopePerCycle-ge 0.5 -and $drift-ge$minimum) 'Published v1.2.0 reproduces sustained USER-object growth' ([pscustomobject]@{SlopePerCycle=$user.SlopePerCycle;StartMedian=$user.StartMedian;EndMedian=$user.EndMedian;Drift=$drift;MinimumExpectedDrift=$minimum;Basis='Half the observed approximately +2 USER objects per break window.'})}
  else{$limit=$idleRange+1;Check ($user.SlopePerCycle-le($limit/[math]::Max(1,$Cycles)) -and $drift-le$limit) 'Candidate USER-object trend remains within measured idle noise' ([pscustomobject]@{SlopePerCycle=$user.SlopePerCycle;StartMedian=$user.StartMedian;EndMedian=$user.EndMedian;Drift=$drift;IdleRange=$idleRange;AllowedDrift=$limit;Basis='Idle range plus one USER object; sustained positive trend is rejected.'})}
@@ -264,7 +282,7 @@ try{
  $restored=$opened -and (Wait-Until {(Status)-match'Running' -and (BreakWindow)-eq[IntPtr]::Zero} 10 'restart-fresh-work' ($Cycles+1))
  $settingsPreserved=(Get-FileHash -LiteralPath (Join-Path $script:dataPath 'settings.ini') -Algorithm SHA256).Hash -ceq $settingsHashBeforeRestart
  Check ($restored -and $settingsPreserved) 'Restart during an active break restores work state and preserves settings without replaying a break' ([pscustomobject]@{OldPid=$oldPid;NewPid=$script:process.Id;Status=if($script:main-ne[IntPtr]::Zero){Status}else{''};BreakWindowCount=[EBR_SOAK_NATIVE]::CountWindows($script:process.Id,'EyeBreakReminder.Break');SettingsPreserved=$settingsPreserved;SettingsSHA256=$settingsHashBeforeRestart})
- $script:result=[pscustomobject]@{Application='Eye Break Reminder';Test='Comparative scheduled break-window soak';Version=$ExpectedProductVersion;SHA256=$hash;ExpectedBehavior=$ExpectedResourceBehavior;Mode='Scheduled real timer';RequestedCycles=$Cycles;CompletedCycles=$script:cycleRecords.Count;BreakWindowsCreated=($script:cycleRecords|Measure-Object BreakWindowsOpened -Sum).Sum;DurationSeconds=[math]::Round($script:started.Elapsed.TotalSeconds,1);Environment=[pscustomobject]@{OS=(Get-CimInstance Win32_OperatingSystem).Caption;OSVersion=[Environment]::OSVersion.VersionString;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();Interactive=[Environment]::UserInteractive;Runner=$env:RUNNER_ENVIRONMENT};IdleUserRange=$idleRange;UserObjects=$user;GdiObjects=$gdi;Handles=$handles;PrivateBytes=$private;WorkingSet=$working;Screenshots=$script:screenshots.ToArray();MetricSamples=$script:metrics.Count;Events=$script:events.ToArray();Cycles=$script:cycleRecords.ToArray();Pass=(@($script:events|Where-Object{$_.Status -eq 'PASS'}).Count);Fail=(@($script:events|Where-Object{$_.Status -eq 'FAIL'}).Count);NotTested=(@($script:events|Where-Object{$_.Status -eq 'NOT TESTED'}).Count);CompletedUtc=[DateTime]::UtcNow.ToString('o')}
+ $script:result=[pscustomobject]@{Application='Eye Break Reminder';Test='Comparative scheduled break-window soak';Version=$ExpectedProductVersion;SHA256=$hash;ExpectedBehavior=$ExpectedResourceBehavior;Mode='Scheduled real timer';RequestedCycles=$Cycles;CompletedCycles=$script:cycleRecords.Count;BreakWindowsCreated=($script:cycleRecords|Measure-Object BreakWindowsOpened -Sum).Sum;DurationSeconds=[math]::Round($script:started.Elapsed.TotalSeconds,1);Environment=[pscustomobject]@{OS=(Get-CimInstance Win32_OperatingSystem).Caption;OSVersion=[Environment]::OSVersion.VersionString;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();Interactive=[Environment]::UserInteractive;Runner=$env:RUNNER_ENVIRONMENT};IdleUserRange=$idleRange;UserObjects=$user;GdiObjects=$gdi;Handles=$handles;PrivateBytes=$private;WorkingSet=$working;ThreadCountSummary=(SummaryFromMetrics 'threads' 'ThreadCount');DiagnosticSamples=$diagnosticRows.Count;DiagnosticTelemetryComplete=($incompleteDiagnosticRows.Count-eq0);Screenshots=$script:screenshots.ToArray();MetricSamples=$script:metrics.Count;Events=$script:events.ToArray();Cycles=$script:cycleRecords.ToArray();Pass=(@($script:events|Where-Object{$_.Status -eq 'PASS'}).Count);Fail=(@($script:events|Where-Object{$_.Status -eq 'FAIL'}).Count);NotTested=(@($script:events|Where-Object{$_.Status -eq 'NOT TESTED'}).Count);CompletedUtc=[DateTime]::UtcNow.ToString('o')}
 }catch{Add-Event 'Resource soak runner' 'FAIL' $_.Exception.ToString()}
 finally{
 $script:processStopped=$true
@@ -274,7 +292,7 @@ $script:processStopped=$true
  if($script:cycleRecords.Count){$script:cycleRecords|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'cycle-results.csv') -NoTypeInformation -Encoding utf8}
  if($script:metrics.Count){
   $script:metrics|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'resource-time-series.csv') -NoTypeInformation -Encoding utf8
-  $width=1200;$chartHeight=1050;$panelHeight=190;$left=115;$right=1160;$plotWidth=$right-$left
+  $width=1200;$chartHeight=1260;$panelHeight=190;$left=115;$right=1160;$plotWidth=$right-$left
   $svg=[Text.StringBuilder]::new()
   [void]$svg.AppendLine('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="'+$chartHeight+'" viewBox="0 0 1200 '+$chartHeight+'">')
   [void]$svg.AppendLine('<rect width="1200" height="'+$chartHeight+'" fill="white"/>')
@@ -284,7 +302,8 @@ $script:processStopped=$true
    @{Name='GDI objects';Property='GdiObjects';Color='#16855b';Scale=1.0},
    @{Name='Process handles';Property='HandleCount';Color='#a05016';Scale=1.0},
    @{Name='Private bytes (MiB)';Property='PrivateBytes';Color='#7446a3';Scale=1048576.0},
-   @{Name='Working set (MiB)';Property='WorkingSetBytes';Color='#296f84';Scale=1048576.0}
+   @{Name='Working set (MiB)';Property='WorkingSetBytes';Color='#296f84';Scale=1048576.0},
+   @{Name='Threads';Property='ThreadCount';Color='#9a3b61';Scale=1.0}
   )
   for($panelIndex=0;$panelIndex-lt$panels.Count;$panelIndex++){
    $panel=$panels[$panelIndex];$top=55+$panelIndex*($panelHeight+10);$bottom=$top+$panelHeight

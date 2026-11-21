@@ -2,6 +2,7 @@ Unicode true
 Target x86-unicode
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "nsDialogs.nsh"
 !include "x64.nsh"
 !include "WinVer.nsh"
 !define EB_PROJECT_ROOT "${__FILEDIR__}\.."
@@ -14,11 +15,11 @@ ManifestSupportedOS Win10
 ManifestDPIAwareness PerMonitorV2
 SetCompressor /SOLID lzma
 BrandingText "Eye Break Reminder"
-VIProductVersion "1.3.0.0"
+VIProductVersion "1.4.0.0"
 VIAddVersionKey /LANG=1033 "ProductName" "Eye Break Reminder"
 VIAddVersionKey /LANG=1033 "FileDescription" "Eye Break Reminder Setup"
-VIAddVersionKey /LANG=1033 "FileVersion" "1.3.0.0"
-VIAddVersionKey /LANG=1033 "ProductVersion" "1.3.0"
+VIAddVersionKey /LANG=1033 "FileVersion" "1.4.0.0"
+VIAddVersionKey /LANG=1033 "ProductVersion" "1.4.0"
 !define MUI_ICON "${EB_PROJECT_ROOT}\assets\App.ico"
 !define MUI_UNICON "${EB_PROJECT_ROOT}\assets\App.ico"
 !define MUI_ABORTWARNING
@@ -30,9 +31,13 @@ VIAddVersionKey /LANG=1033 "ProductVersion" "1.3.0"
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
+UninstPage custom un.UserDataPageCreate un.UserDataPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_UNPAGE_FINISH
 !insertmacro MUI_LANGUAGE "English"
+Var UnKeepDataRadio
+Var UnRemoveDataRadio
+Var UnRemoveUserData
 Function .onInit
   SetRegView 64
   ${IfNot} ${IsNativeAMD64}
@@ -49,6 +54,37 @@ Function .onInit
     MessageBox MB_OK|MB_ICONINFORMATION "Eye Break Reminder requires Windows 11 (build 22000 or newer)."
     Abort
   valid:
+FunctionEnd
+Function un.onInit
+  ; Silent uninstall has a stable, conservative policy: keep settings/history.
+  StrCpy $UnRemoveUserData 0
+FunctionEnd
+Function un.UserDataPageCreate
+  ${If} ${Silent}
+    Abort
+  ${EndIf}
+  !insertmacro MUI_HEADER_TEXT "Application data" "Choose whether to keep or remove your Eye Break Reminder settings and history."
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+  ${NSD_CreateRadioButton} 0 0 100% 14u "Keep my settings and history (Recommended)"
+  Pop $UnKeepDataRadio
+  ${NSD_Check} $UnKeepDataRadio
+  ${NSD_CreateRadioButton} 0 24u 100% 14u "Remove my settings and history"
+  Pop $UnRemoveDataRadio
+  ${NSD_CreateLabel} 0 50u 100% 40u "Keeping your data lets you restore it if you reinstall later. The active timer checkpoint is removed during uninstall. Silent uninstall keeps settings and history."
+  Pop $0
+  nsDialogs::Show
+FunctionEnd
+Function un.UserDataPageLeave
+  ${NSD_GetState} $UnRemoveDataRadio $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $UnRemoveUserData 1
+  ${Else}
+    StrCpy $UnRemoveUserData 0
+  ${EndIf}
 FunctionEnd
 !macro CloseRunningApp
   FindWindow $0 "EyeBreakReminder.Native"
@@ -84,7 +120,7 @@ Section "Eye Break Reminder (required)" MainSection
   CreateShortcut "$SMPROGRAMS\Eye Break Reminder\Eye Break Reminder.lnk" "$INSTDIR\EyeBreakReminder.exe" "" "$INSTDIR\EyeBreakReminder.exe" 0
   WriteRegStr HKCU "Software\EyeBreakReminder" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayName" "Eye Break Reminder"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayVersion" "1.3.0"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayVersion" "1.4.0"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "DisplayIcon" "$INSTDIR\EyeBreakReminder.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "InstallLocation" "$INSTDIR"
@@ -101,6 +137,12 @@ Section "Uninstall"
   !insertmacro CloseRunningApp
   ; Keep preferences/history, but an uninstall ends the active timer session.
   Delete "$LOCALAPPDATA\EyeBreakReminder\timer.dat"
+  ${If} $UnRemoveUserData == 1
+    ; Delete only the application's known files in its exact per-user data folder.
+    Delete "$LOCALAPPDATA\EyeBreakReminder\settings.ini"
+    Delete "$LOCALAPPDATA\EyeBreakReminder\history.dat"
+    RMDir "$LOCALAPPDATA\EyeBreakReminder"
+  ${EndIf}
   ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "EyeBreakReminder"
   StrCmp $0 '$\"$INSTDIR\EyeBreakReminder.exe$\" --startup' 0 +2
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "EyeBreakReminder"

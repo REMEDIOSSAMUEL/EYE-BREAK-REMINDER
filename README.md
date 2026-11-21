@@ -1,14 +1,16 @@
-# Eye Break Reminder 1.3.0 — Windows 11 x64
+# Eye Break Reminder 1.4.0 — Windows 11 x64
 
 A native Windows desktop eye-break utility, compiled from Linux with C++17 and MinGW-w64. It uses Win32 system controls, Windows common dialogs, native title bars, native tray integration, and a custom timer dial. It has no browser, console, .NET dependency or external assets at runtime.
 
 ## Install or run
 
-**Installer:** double-click `EyeBreakReminder-Setup-x64.exe`. It installs for your current Windows account, creates a Start Menu entry, offers a desktop shortcut and registers in Installed Apps. No administrator permission is requested. Uninstall through Windows Settings → Apps → Installed apps. Direct upgrades preserve the current countdown, preferences and history. Uninstall ends the countdown and removes startup registration owned by this installation, while keeping preferences and history. A fresh reinstall starts a full work interval, including when an older uninstaller left a timer checkpoint behind.
+**Installer:** double-click `EyeBreakReminder-Setup-x64.exe`. It installs for your current Windows account, creates a Start Menu entry, offers a desktop shortcut and registers in Installed Apps. No administrator permission is requested. Uninstall through Windows Settings → Apps → Installed apps. Normal upgrades preserve settings and history. Interactive uninstall asks whether to keep or remove them; silent uninstall keeps both. Uninstall ends the countdown and removes startup registration owned by this installation. A fresh reinstall starts a full work interval.
 
 **Portable:** extract `EyeBreakReminder-Portable-x64.zip` and double-click `EyeBreakReminder.exe`. You can also use the separately supplied `EyeBreakReminder.exe` directly: its icon and five sounds are embedded. No compiler or SDK is needed to run it. Only Windows 11 on a native x64 operating system is supported.
 
-**Signing:** this build is unsigned. No trusted signing certificate or publisher identity was supplied. Windows may show its normal warnings for unsigned downloads; this project does not change or bypass Windows security.
+**Windows signing:** the v1.4.0 installer and executable may be Authenticode unsigned under the owner's approved release policy. Windows can show publisher or SmartScreen warnings; this project does not change or bypass Windows security. The initial installer is a manual bootstrap and is not authenticated by the updater manifest. GitHub HTTPS and a checksum do not independently authenticate the publisher if the repository or release channel is compromised.
+
+**Automatic update trust:** after a trusted initial installation, v1.4.0 production updates must include an ECDSA P-256/SHA-256 signed manifest verified by the public key embedded in the application. The manifest binds each supported update payload to its identity, version, architecture, size and SHA-256 digest. Missing or invalid signatures are rejected with no unsigned-update fallback. This signature does not Authenticode-sign the initial installer or remove Windows warnings. The exact production-authenticated candidate passed installed and portable update acceptance; v1.4.0 remains unpublished and awaits separate owner publication approval.
 
 ## Controls
 
@@ -28,7 +30,11 @@ Appearance now also has independent **Work Mode colour** and **Break Mode colour
 
 During work the timer uses the familiar blue accent and says **Running**. During an eye break, the status reads **Taking an eye break** and the progress ring and primary action use the selected break accent. Settings → General can turn off the distinct break accent in normal themes; work colour is then used for both states. High contrast themes and Windows Forced Colors take priority over custom colours without deleting saved preferences. Pause, snooze and scheduled hold have separate status labels. The timer information below the controls keeps the 20-20-20 reminder and a dynamic schedule summary.
 
-Settings → About shows the installed version and includes **Check for Updates**. It queries the public GitHub Releases endpoint for `REMEDIOSSAMUEL/EYE-BREAK-REMINDER` over HTTPS, compares semantic versions and ignores prereleases. It does not send credentials, download files or install updates. When a newer stable release exists, **Open Official Release** opens that GitHub release page. Offline, timeout, rate-limit and invalid-response errors are reported as errors rather than as “up to date.”
+Settings → About includes **Check for Updates**, **Automatically check for updates**, and **Automatically download updates**. The optional automatic checks run at most daily; downloads and installation are always explained to and confirmed by the user. An available stable release opens a native themed dialog with release notes, versions, size, Preserve Settings (selected by default), and Clean Install. Downloads stream over HTTPS with Windows certificate validation, progress, cancellation, strict GitHub asset URL checks and SHA-256 verification. A separate per-user coordinator waits for the app to close before invoking the existing NSIS installer; portable copies replace only their executable. Recovery backups and a next-sign-in recovery entry protect interrupted installs. See the [updater architecture](docs/V1.4.0_UPDATER_ARCHITECTURE.md), [security model](docs/V1.4.0_UPDATE_SECURITY.md), [update guide](docs/UPDATES.md), and [installer behavior](docs/INSTALLER.md).
+
+**v1.4.0 has not been published or merged.** Production update authentication is provisioned with the embedded ECDSA P-256/SHA-256 public key and a signed manifest. The exact candidate passed production-key installed and portable update transactions and is ready for separate owner publication approval. See the [security model](docs/V1.4.0_UPDATE_SECURITY.md) for evidence and the remaining test limitations.
+
+The currently published v1.3.0 build only links to the release page, so its one-time upgrade to v1.4.0 still requires downloading and running the v1.4.0 setup file. After v1.4.0 is installed, future supported releases can be installed in the app.
 
 ## Operating schedule
 
@@ -94,6 +100,8 @@ make package  # build graphical installer, portable/source archives and SHA-256 
 make gui-test # optional isolated Windows UI test build (10x clock; separate test-data folder)
 ```
 
+On Windows/MSYS2 MINGW64, also use `make updater-windows-test` for isolated SHA/cancel/transaction checks and `make github-updater-smoke` to check and download the current official public assets. The latter does not execute downloads. Hosted disposable Windows acceptance is still required for installer/update transactions.
+
 The output is under `release/`. Flags statically link GCC/C++ runtimes, set the Windows GUI subsystem, and enable ASLR/NX/high-entropy VA. Windows DLLs used are built-in system components. Assets are embedded through `resources.rc`; no asset generation is required. `scripts/generate-assets.py` can recreate the icon/sounds with Pillow.
 
 Produced files: `EyeBreakReminder.exe`, `EyeBreakReminder-Setup-x64.exe`, `EyeBreakReminder-Portable-x64.zip`, `EyeBreakReminder-Source.zip`, `EyeBreakReminder-SHA256.txt`.
@@ -106,7 +114,7 @@ For a legitimate signing certificate, sign the app before installer packaging, t
 
 The executable and installer are compiled with MinGW-w64 and NSIS, with native core tests and binary/resource checks. Windows GUI, custom-colour and package results are recorded in `docs/VERIFICATION.md`; repeatable manual and automated checks are listed in `docs/WINDOWS-TESTING.md`. Settings and contrast behavior are described in [Settings](docs/SETTINGS.md) and [Accessibility](docs/ACCESSIBILITY.md). The optional `make gui-test` build uses a separate `test-data` directory beside the test executable and a 10x monotonic clock; it does not use the installed app's data folder. A test-only response file can supply deterministic release-check results. Successful compilation alone does not establish runtime correctness; see the verification record for what was actually run.
 
-The v1.3.0 feature branch also defines `.github/workflows/windows-pre-release-validation.yml`. Pushing to the feature branch or manually dispatching it rebuilds packages and verifies them on an isolated `windows-2025` runner. It probes whether Explorer exposes an interactive desktop and records installer, upgrade, update, appearance and application-lifecycle evidence, including a 110-cycle resource soak when an interactive desktop is available. It never uploads release binaries. If the runner has no interactive desktop, GUI-only checks are recorded as **NOT TESTED**. Run `tests/windows_pre_release_acceptance.ps1` only through that disposable runner workflow; it deliberately installs and uninstalls the just-built application in the runner's per-user profile. The final results are recorded in `docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md`.
+The v1.4.0 feature branch adds a Windows updater acceptance workflow and a real GitHub API/download smoke check. Installer and data-deletion tests run only in the hosted disposable Windows profile. If a hosted runner does not expose an interactive desktop, GUI-only checks are recorded as **NOT TESTED**. The final v1.4 results belong in `docs/V1.4.0_FINAL_PRE_RELEASE_VERIFICATION.md`; compilation and fixture tests do not substitute for real updater transactions.
 
 ## Publishing releases
 

@@ -28,7 +28,7 @@ inline std::string utf8(const std::wstring&s){if(s.empty())return{};int n=WideCh
 inline std::wstring executable(){std::wstring path(32768,L' ');DWORD n=GetModuleFileNameW(nullptr,path.data(),DWORD(path.size()));if(!n||n==path.size())throw std::runtime_error("Executable path unavailable");path.resize(n);return path;}
 #ifdef EYEBREAK_TEST_BUILD
 inline constexpr double monotonicScale=10.0;
-inline std::wstring dataDirectory(){std::wstring path=executable();const auto slash=path.find_last_of(L"\\/");if(slash==std::wstring::npos)throw std::runtime_error("Test executable folder unavailable");path.resize(slash+1);path+=L"test-data";std::filesystem::create_directories(path);return path;}
+inline std::wstring dataDirectory(){wchar_t overridePath[32768]{};DWORD length=GetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",overridePath,DWORD(std::size(overridePath)));if(length&&length<std::size(overridePath)){std::wstring path(overridePath,length);std::filesystem::create_directories(path);return path;}std::wstring path=executable();const auto slash=path.find_last_of(L"\\/");if(slash==std::wstring::npos)throw std::runtime_error("Test executable folder unavailable");path.resize(slash+1);path+=L"test-data";std::filesystem::create_directories(path);return path;}
 #else
 inline std::wstring dataDirectory(){PWSTR raw=nullptr;if(FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,0,nullptr,&raw)))throw std::runtime_error("Local data folder unavailable");std::wstring dir=raw;CoTaskMemFree(raw);dir+=L"\\EyeBreakReminder";std::filesystem::create_directories(dir);return dir;}
 #endif
@@ -82,7 +82,9 @@ inline int calendarDay(std::int64_t stamp){std::time_t t=std::time_t(stamp);std:
 inline std::wstring formatDate(std::int64_t stamp){std::time_t t=std::time_t(stamp);std::tm tm{};localtime_s(&tm,&t);wchar_t text[100]{};std::wcsftime(text,100,L"%x %H:%M",&tm);return text;}
 inline std::wstring timeText(double remaining){int n=int(std::ceil(remaining));wchar_t text[32]{};swprintf(text,32,L"%02d:%02d",n/60,n%60);return text;}
 inline HRESULT CALLBACK taskDialogAppearance(HWND dialog,UINT notification,WPARAM,LPARAM,LONG_PTR appearance){
- if(notification==TDN_CREATED&&(appearance&2)==0){BOOL dark=(appearance&1)!=0;DwmSetWindowAttribute(dialog,20,&dark,sizeof(dark));SetWindowTheme(dialog,dark?L"DarkMode_Explorer":nullptr,nullptr);}
+ // Common Controls' TaskDialog ignores child contrast colors and UIA role annotations on supported Windows builds.
+ // Keep simple error/confirmation dialogs in the system's high-contrast or light palette for reliable readability.
+ if(notification==TDN_CREATED&&(appearance&2)==0){BOOL dark=FALSE;DwmSetWindowAttribute(dialog,20,&dark,sizeof(dark));SetWindowTheme(dialog,nullptr,nullptr);}
  return S_OK;
 }
 inline bool confirm(HWND parent,const wchar_t*title,const wchar_t*message,bool dark=false,bool forcedColors=false){TASKDIALOGCONFIG cfg{};cfg.cbSize=sizeof(cfg);cfg.hwndParent=parent;cfg.dwFlags=TDF_ALLOW_DIALOG_CANCELLATION|TDF_SIZE_TO_CONTENT;cfg.pszWindowTitle=L"Eye Break Reminder";cfg.pszMainInstruction=title;cfg.pszContent=message;cfg.dwCommonButtons=TDCBF_YES_BUTTON|TDCBF_CANCEL_BUTTON;cfg.nDefaultButton=IDCANCEL;cfg.pfCallback=taskDialogAppearance;cfg.lpCallbackData=(dark?1:0)|(forcedColors?2:0);int result=0;return SUCCEEDED(TaskDialogIndirect(&cfg,&result,nullptr,nullptr))&&result==IDYES;}

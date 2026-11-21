@@ -14,6 +14,10 @@ High Contrast Dark and High Contrast Light use their own accessible palettes ins
 
 The optional distinct-break-colour setting affects normal themes. High contrast always keeps work and break accents distinct for state recognition. The existing reduced-motion behavior remains active.
 
+## Update and confirmation dialogs
+
+Update availability, download progress, clean-install confirmation, and update-coordinator status use standard native Win32 controls. Their buttons and radio choices have accessible names, follow keyboard focus order, and expose progress text as well as a bar. Dark/light appearance follows Windows; forced high contrast is left to the system. Progress includes byte counts and a phase label so it is not conveyed by colour alone. Update prompts are deferred until an active break ends; a user-approved download continues in the background if a break starts, while its progress window is hidden until the break ends.
+
 ## Verification
 
-The core suite checks the R/G/B conversion and text contrast choices for very dark and very light colours. The isolated Windows GUI suite exercises both high-contrast themes while custom colours are saved, verifies that rendered timer-ring pixels use the high-contrast palette, and checks keyboard focus and native picker activation. The final v1.3.0 pre-release workflow runs the system High Contrast/Forced Colors toggle only in its disposable hosted Windows environment, verifies saved preferences and actual ring pixels through the toggle, and records the result in `docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md`. Local testing does not change the user's Windows accessibility settings.
+The core suite checks the R/G/B conversion and text contrast choices for very dark and very light colours. The isolated Windows GUI suite exercises both high-contrast themes while custom colours are saved, verifies that rendered timer-ring pixels use the high-contrast palette, and checks keyboard focus and native picker activation. The v1.4.0 updater acceptance should exercise update dialogs in every theme and Windows Forced Colors only inside the disposable hosted Windows runner. Local testing does not change the user's Windows accessibility settings.
