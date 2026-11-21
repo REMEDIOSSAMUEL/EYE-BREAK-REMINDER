@@ -12,10 +12,10 @@ $candidateSourceCommit = '491bd2ed29f84f4d434b884fc723144db2d6f294'
 # This probe is deliberately restricted to the fresh, disposable GitHub-hosted
 # Windows 11 ARM64 runner. It never installs the candidate and never edits a
 # pre-existing EyeBreakReminder profile.
-if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'ARM64') {
+if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'ARM64' -or $env:GITHUB_SERVER_URL -cne 'https://github.com' -or $env:GITHUB_REPOSITORY -ine 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER' -or -not $env:RUNNER_NAME) {
   throw 'BLOCKED: this Narrator probe may run only on a GitHub-hosted Windows 11 ARM64 runner.'
 }
-if (-not $env:GITHUB_WORKSPACE -or -not $env:RUNNER_TEMP) {
+if (-not $env:GITHUB_WORKSPACE -or -not $env:RUNNER_TEMP -or -not [Environment]::UserInteractive) {
   throw 'BLOCKED: GitHub workspace and runner temporary roots are required.'
 }
 
@@ -53,9 +53,11 @@ $assertions = [System.Collections.Generic.List[object]]::new()
 $focusTrace = [System.Collections.Generic.List[object]]::new()
 $speechCaptures = [System.Collections.Generic.List[object]]::new()
 $screenshots = [System.Collections.Generic.List[string]]::new()
+$oobeActions = [System.Collections.Generic.List[object]]::new()
 $events = [System.Collections.Generic.List[object]]::new()
 $status = 'BLOCKED'
 $reason = 'Preflight did not complete.'
+$speechAcceptanceAssertionRecorded = $false
 $osRecord = $null
 $nativeCpuArchitecture = $null
 $sessionId = $null
@@ -67,16 +69,17 @@ function Add-Event([string]$Name, [string]$Status, $Details=$null) {
   $events.Add([pscustomobject]@{ Name=$Name; Status=$Status; Details=$Details; Utc=[DateTime]::UtcNow.ToString('o') })
 }
 
-function Add-Assertion([string]$Name, [bool]$Passed, $Details=$null) {
-  $assertions.Add([pscustomobject]@{ Name=$Name; Passed=$Passed; Details=$Details; Utc=[DateTime]::UtcNow.ToString('o') })
-  Add-Event $Name $(if ($Passed) { 'PASS' } else { 'NOT TESTED' }) $Details
+function Add-Assertion([string]$Name, [bool]$Passed, $Details=$null, [string]$FailureStatus='NOT TESTED') {
+  $assertionStatus = if ($Passed) { 'PASS' } else { $FailureStatus }
+  $assertions.Add([pscustomobject]@{ Name=$Name; Passed=$Passed; Status=$assertionStatus; Details=$Details; Utc=[DateTime]::UtcNow.ToString('o') })
+  Add-Event $Name $assertionStatus $Details
 }
 
 function Get-FocusSnapshot([int]$CandidateProcessId, [string]$Phase) {
   $snapshot = [pscustomobject]@{
     Phase=$Phase; Utc=[DateTime]::UtcNow.ToString('o'); ProcessId=$null; IsCandidateProcess=$false
     Name=''; AutomationId=''; ControlType=''; ClassName=''; HasKeyboardFocus=$false
-    IsKeyboardFocusable=$false; NativeWindowHandle=0; Bounds=$null; Error=$null
+    IsKeyboardFocusable=$false; NativeWindowHandle=[long]0; Bounds=$null; Error=$null
   }
   try {
     $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
@@ -91,7 +94,7 @@ function Get-FocusSnapshot([int]$CandidateProcessId, [string]$Phase) {
     $snapshot.ClassName = [string]$current.ClassName
     $snapshot.HasKeyboardFocus = [bool]$current.HasKeyboardFocus
     $snapshot.IsKeyboardFocusable = [bool]$current.IsKeyboardFocusable
-    $snapshot.NativeWindowHandle = [int]$current.NativeWindowHandle
+    $snapshot.NativeWindowHandle = [long]$current.NativeWindowHandle
     $snapshot.Bounds = @([double]$bounds.Left, [double]$bounds.Top, [double]$bounds.Width, [double]$bounds.Height)
   } catch { $snapshot.Error = $_.Exception.Message }
   $focusTrace.Add($snapshot)
@@ -100,31 +103,108 @@ function Get-FocusSnapshot([int]$CandidateProcessId, [string]$Phase) {
 
 function Get-ControlElement([IntPtr]$MainWindow, [int]$ControlId, [string]$Description) {
   $handle = [EBR_NARRATOR_NATIVE]::FindVisibleChildById($MainWindow, $ControlId)
-  if ($handle -eq [IntPtr]::Zero) { throw "The candidate did not expose visible control ID $ControlId ($Description)." }
+  if ($handle -eq [IntPtr]::Zero) { throw "NOT TESTED: the candidate does not currently expose visible enabled control ID $ControlId ($Description)." }
   $element = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
   if ($null -eq $element) { throw "UI Automation could not attach to candidate control ID $ControlId ($Description)." }
   $current = $element.Current
   if ($current.ProcessId -ne $candidatePid) { throw "Control ID $ControlId is owned by PID $($current.ProcessId), not candidate PID $candidatePid." }
-  [pscustomobject]@{ Handle=$handle; Element=$element; Name=[string]$current.Name; AutomationId=[string]$current.AutomationId; ControlType=[string]$current.ControlType.ProgrammaticName; ClassName=[string]$current.ClassName; Enabled=[bool]$current.IsEnabled; Offscreen=[bool]$current.IsOffscreen; Bounds=@([double]$current.BoundingRectangle.Left,[double]$current.BoundingRectangle.Top,[double]$current.BoundingRectangle.Width,[double]$current.BoundingRectangle.Height) }
+  $control = [pscustomobject]@{ Handle=$handle; Element=$element; ProcessId=[int]$current.ProcessId; Name=[string]$current.Name; AutomationId=[string]$current.AutomationId; ControlType=[string]$current.ControlType.ProgrammaticName; ClassName=[string]$current.ClassName; Enabled=[bool]$current.IsEnabled; Offscreen=[bool]$current.IsOffscreen; KeyboardFocusable=[bool]$current.IsKeyboardFocusable; NativeWindowHandle=[int]$current.NativeWindowHandle; Bounds=@([double]$current.BoundingRectangle.Left,[double]$current.BoundingRectangle.Top,[double]$current.BoundingRectangle.Width,[double]$current.BoundingRectangle.Height) }
+  if ([string]::IsNullOrWhiteSpace($control.Name)) { throw "PRODUCT DEFECT: visible candidate control ID $ControlId ($Description) has no accessible name." }
+  if (-not $control.KeyboardFocusable) { throw "PRODUCT DEFECT: visible candidate control ID $ControlId ($Description) is not keyboard-focusable in UI Automation." }
+  if (-not $control.Enabled -or $control.Offscreen) { throw "NOT TESTED: candidate control ID $ControlId ($Description) is disabled or offscreen." }
+  if ($control.NativeWindowHandle -ne [int]$handle.ToInt64()) { throw "NOT TESTED: UI Automation native identity for control ID $ControlId ($Description) does not match its native HWND." }
+  return $control
 }
 
-function Capture-CandidateWindow([IntPtr]$Window, [string]$FileName) {
+function Capture-WindowScreenshot([IntPtr]$Window, [string]$FileName, [string]$Description) {
   $bounds = [EBR_NARRATOR_NATIVE]::Bounds($Window)
-  if ($bounds.Count -ne 4) { throw 'Could not obtain the candidate window rectangle for a target-window screenshot.' }
+  if ($bounds.Count -ne 4) { throw "Could not obtain the $Description window rectangle for a target-window screenshot." }
   $width = $bounds[2] - $bounds[0]
   $height = $bounds[3] - $bounds[1]
-  if ($width -lt 100 -or $height -lt 100 -or $width -gt 5000 -or $height -gt 4000) { throw "Candidate window rectangle is not usable for a target-window screenshot: ${width}x${height}." }
+  if ($width -lt 100 -or $height -lt 100 -or $width -gt 5000 -or $height -gt 4000) { throw "$Description window rectangle is not usable for a target-window screenshot: ${width}x${height}." }
   Add-Type -AssemblyName System.Drawing -ErrorAction Stop
   $bitmap = [Drawing.Bitmap]::new($width, $height)
   $graphics = [Drawing.Graphics]::FromImage($bitmap)
   $path = Join-Path $EvidenceDirectory $FileName
   try {
-    # Crop to the candidate's HWND rectangle; do not capture the full desktop.
+    # Crop to the verified target HWND; do not capture the full desktop.
     $graphics.CopyFromScreen($bounds[0], $bounds[1], 0, 0, $bitmap.Size)
     $bitmap.Save($path, [Drawing.Imaging.ImageFormat]::Png)
   } finally { $graphics.Dispose(); $bitmap.Dispose() }
   $screenshots.Add($path)
-  return [pscustomobject]@{ Path=$path; Width=$width; Height=$height; WindowBounds=$bounds; Capture='candidate window bounds only' }
+  return [pscustomobject]@{ Path=$path; Width=$width; Height=$height; WindowBounds=$bounds; Capture="$Description HWND bounds only" }
+}
+
+function Capture-CandidateWindow([IntPtr]$Window, [string]$FileName) {
+  return Capture-WindowScreenshot $Window $FileName 'candidate'
+}
+
+function Find-PrivacyOobeWindow {
+  $root = [System.Windows.Automation.AutomationElement]::RootElement
+  $elements = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+  $privacyWindows = [System.Collections.Generic.List[object]]::new()
+  foreach ($element in $elements) {
+    try {
+      if ([string]$element.Current.Name -cne 'Choose privacy settings for your device') { continue }
+      $ancestor = $element
+      for ($depth = 0; $depth -lt 20 -and $null -ne $ancestor; $depth++) {
+        if ($ancestor.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window) {
+          $windowHandle = [IntPtr]$ancestor.Current.NativeWindowHandle
+          if ($windowHandle -eq [IntPtr]::Zero -or -not [EBR_NARRATOR_NATIVE]::IsWindowVisible($windowHandle) -or $ancestor.Current.IsOffscreen) { break }
+          $foreground = [EBR_NARRATOR_NATIVE]::ForegroundWindow()
+          if ($foreground -ne $windowHandle -or [EBR_NARRATOR_NATIVE]::OwnerProcessId($foreground) -le 0) { break }
+          if (@($privacyWindows | Where-Object { $_.Handle -eq $windowHandle }).Count -eq 0) {
+            $privacyWindows.Add([pscustomobject]@{ Page=$element; Window=$ancestor; Handle=$windowHandle; PageName=[string]$element.Current.Name; WindowName=[string]$ancestor.Current.Name; OwnerProcessId=[EBR_NARRATOR_NATIVE]::OwnerProcessId($windowHandle) })
+          }
+          break
+        }
+        $ancestor = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($ancestor)
+      }
+    } catch {}
+  }
+  if ($privacyWindows.Count -gt 1) { throw "NOT TESTED: found $($privacyWindows.Count) visible foreground top-level windows containing the exact privacy page; no OOBE action was taken." }
+  if ($privacyWindows.Count -eq 1) { return $privacyWindows[0] }
+  return $null
+}
+
+function Resolve-PrivacyOobeIfPresent {
+  $oobeWindow = Find-PrivacyOobeWindow
+  if ($null -eq $oobeWindow) {
+    $oobeActions.Add([pscustomobject]@{Detected=$false;Action='None';Reason='No unique visible foreground top-level window exposed the exact Windows privacy OOBE page.';Utc=[DateTime]::UtcNow.ToString('o')})
+    return
+  }
+  $windowHandle = [IntPtr]$oobeWindow.Handle
+  $title = [string]$oobeWindow.WindowName
+  $buttons = @($oobeWindow.Window.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
+    try { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $_.Current.IsEnabled -and -not $_.Current.IsOffscreen -and $_.Current.Name -ceq 'Next' -and $_.Current.NativeWindowHandle -ne 0 -and [EBR_NARRATOR_NATIVE]::IsWindowVisible([IntPtr]$_.Current.NativeWindowHandle) } catch { $false }
+  })
+  if ($buttons.Count -ne 1) { throw "NOT TESTED: the exact privacy OOBE page was visible but did not expose one enabled Next button; no unknown screen was clicked. Title='$title'; NextButtons=$($buttons.Count)." }
+  $nextButton = $buttons[0]
+  $buttonRecord = [pscustomobject]@{Name=[string]$nextButton.Current.Name;ControlType=[string]$nextButton.Current.ControlType.ProgrammaticName;AutomationId=[string]$nextButton.Current.AutomationId;Bounds=@([double]$nextButton.Current.BoundingRectangle.Left,[double]$nextButton.Current.BoundingRectangle.Top,[double]$nextButton.Current.BoundingRectangle.Width,[double]$nextButton.Current.BoundingRectangle.Height)}
+  $privacyToggles = @(
+    foreach ($node in $oobeWindow.Window.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)) {
+      try {
+        if ($node.Current.IsOffscreen -or -not $node.Current.IsEnabled) { continue }
+        $toggle = [System.Windows.Automation.TogglePattern]$node.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+        [pscustomobject]@{Name=[string]$node.Current.Name;AutomationId=[string]$node.Current.AutomationId;ControlType=[string]$node.Current.ControlType.ProgrammaticName;ToggleState=[string]$toggle.Current.ToggleState;Bounds=@([double]$node.Current.BoundingRectangle.Left,[double]$node.Current.BoundingRectangle.Top,[double]$node.Current.BoundingRectangle.Width,[double]$node.Current.BoundingRectangle.Height)}
+      } catch {}
+    }
+  )
+  if ($privacyToggles.Count -eq 0 -or @($privacyToggles | Where-Object { [string]::IsNullOrWhiteSpace($_.Name) }).Count -gt 0) { throw 'NOT TESTED: the visible privacy OOBE page did not expose named toggle states; no OOBE action was taken.' }
+  $oobeShot = Capture-WindowScreenshot $windowHandle 'gui-016-windows-privacy-oobe-before-next.png' 'Windows privacy OOBE'
+  $oobeActions.Add([pscustomobject]@{Detected=$true;PageName=$oobeWindow.PageName;WindowTitle=$title;WindowHandle=('0x{0:X}' -f $windowHandle.ToInt64());OwnerProcessId=$oobeWindow.OwnerProcessId;Screenshot=$oobeShot.Path;PrivacyToggleValues=$privacyToggles;Action='Invoke the exact visible privacy page Next button through UI Automation; leave every displayed toggle unchanged';Button=$buttonRecord;AgreementAccepted=$false;SettingsEffect='Not measured; advancing may apply the displayed privacy choices.';Utc=[DateTime]::UtcNow.ToString('o')})
+  try { $invoke = [System.Windows.Automation.InvokePattern]$nextButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern); $invoke.Invoke() }
+  catch { throw "NOT TESTED: could not advance only the detected Windows privacy page through its Next control: $($_.Exception.Message)" }
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  while ($watch.Elapsed.TotalSeconds -lt 12) {
+    Start-Sleep -Milliseconds 150
+    if ($null -eq (Find-PrivacyOobeWindow)) {
+      $oobeActions.Add([pscustomobject]@{Detected=$true;Action='Verify the exact privacy page closed after Next';Status='PASS';Utc=[DateTime]::UtcNow.ToString('o')})
+      Add-Event 'Advance only the Windows first-run privacy page; do not accept license/consent screens' 'PASS' ([pscustomobject]@{PageName=$oobeWindow.PageName;WindowTitle=$title;Button=$buttonRecord;PrivacyToggleValues=$privacyToggles;Screenshot=$oobeShot.Path;AgreementAccepted=$false;SettingsEffect='Not measured; advancing may apply the displayed privacy choices.'})
+      return
+    }
+  }
+  throw 'NOT TESTED: the privacy OOBE page remained after invoking its Next button; no other setup page was touched.'
 }
 
 function Wait-CandidateFocus([string]$Phase, [int]$TimeoutSeconds=5) {
@@ -138,21 +218,72 @@ function Wait-CandidateFocus([string]$Phase, [int]$TimeoutSeconds=5) {
   return $snapshot
 }
 
-function Copy-NarratorLastPhrase([string]$ControlName, [string]$Phase) {
+function Test-SameFocusIdentity($Left, $Right) {
+  return ($Left.ProcessId -eq $Right.ProcessId -and $Left.NativeWindowHandle -eq $Right.NativeWindowHandle -and $Left.Name -ceq $Right.Name -and $Left.AutomationId -ceq $Right.AutomationId -and $Left.ControlType -ceq $Right.ControlType -and $Left.ClassName -ceq $Right.ClassName)
+}
+
+function Assert-ExactCandidateFocus($Control, [string]$Phase, $ExpectedIdentity=$null) {
+  $foreground = [EBR_NARRATOR_NATIVE]::ForegroundWindow()
+  $foregroundPid = [EBR_NARRATOR_NATIVE]::OwnerProcessId($foreground)
+  if ($foreground -ne $mainWindow -or $foregroundPid -ne $candidatePid) { throw "NOT TESTED: candidate lost the foreground before or during $Phase; no Narrator command was sent." }
+  $snapshot = Get-FocusSnapshot $candidatePid $Phase
+  if (-not $snapshot.IsCandidateProcess) { throw "NOT TESTED: UI Automation focus left the candidate during $Phase." }
+  if ($snapshot.NativeWindowHandle -ne [long]$Control.Handle.ToInt64()) { throw "NOT TESTED: the focused candidate HWND does not match the intended control during $Phase." }
+  if ([string]::IsNullOrWhiteSpace($snapshot.Name)) { throw "PRODUCT DEFECT: focused candidate control $($Control.ControlType) has no accessible name during $Phase." }
+  if ($snapshot.Name -cne $Control.Name -or $snapshot.AutomationId -cne $Control.AutomationId -or $snapshot.ControlType -cne $Control.ControlType -or $snapshot.ClassName -cne $Control.ClassName) {
+    throw "PRODUCT DEFECT: UI Automation identity for the focused candidate control changed during $Phase. Expected $($Control | Select-Object Name,AutomationId,ControlType,ClassName,NativeWindowHandle | ConvertTo-Json -Compress); observed $($snapshot | Select-Object Name,AutomationId,ControlType,ClassName,NativeWindowHandle | ConvertTo-Json -Compress)."
+  }
+  if (-not $snapshot.IsKeyboardFocusable -or -not $snapshot.HasKeyboardFocus) { throw "PRODUCT DEFECT: UI Automation did not report the exact candidate control as keyboard-focusable and keyboard-focused during $Phase." }
+  if ($snapshot.Name.Trim().Length -lt 3) { throw "PRODUCT DEFECT: focused candidate control accessible name is shorter than three characters during $Phase." }
+  if ($null -ne $ExpectedIdentity -and -not (Test-SameFocusIdentity $ExpectedIdentity $snapshot)) { throw "NOT TESTED: the exact candidate control identity changed during $Phase." }
+  return $snapshot
+}
+
+function Get-ControlFromFocusSnapshot($Snapshot, [string]$Description) {
+  if (-not $Snapshot.IsCandidateProcess -or $Snapshot.NativeWindowHandle -eq 0) { throw "NOT TESTED: UI Automation did not expose a native candidate control identity after $Description." }
+  $handle = [IntPtr]::new([long]$Snapshot.NativeWindowHandle)
+  $element = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+  if ($null -eq $element) { throw "NOT TESTED: UI Automation could not resolve the focused control after $Description." }
+  $current = $element.Current
+  if ($current.ProcessId -ne $candidatePid -or [long]$current.NativeWindowHandle -ne [long]$handle.ToInt64()) { throw "NOT TESTED: focused-control identity did not resolve back to the candidate HWND after $Description." }
+  $control = [pscustomobject]@{ Handle=$handle; Element=$element; ProcessId=[int]$current.ProcessId; Name=[string]$current.Name; AutomationId=[string]$current.AutomationId; ControlType=[string]$current.ControlType.ProgrammaticName; ClassName=[string]$current.ClassName; Enabled=[bool]$current.IsEnabled; Offscreen=[bool]$current.IsOffscreen; KeyboardFocusable=[bool]$current.IsKeyboardFocusable; NativeWindowHandle=[long]$current.NativeWindowHandle; Bounds=@([double]$current.BoundingRectangle.Left,[double]$current.BoundingRectangle.Top,[double]$current.BoundingRectangle.Width,[double]$current.BoundingRectangle.Height) }
+  if ([string]::IsNullOrWhiteSpace($control.Name)) { throw "PRODUCT DEFECT: the candidate control receiving keyboard focus after $Description has no accessible name." }
+  if (-not $control.KeyboardFocusable -or -not $control.Enabled -or $control.Offscreen) { throw "PRODUCT DEFECT: the candidate control receiving keyboard focus after $Description is not an enabled, visible keyboard-focusable control." }
+  if ($control.Name.Trim().Length -lt 3) { throw "PRODUCT DEFECT: focused candidate control accessible name is shorter than three characters after $Description." }
+  $semanticControlTypes = @('ControlType.Button','ControlType.Slider','ControlType.CheckBox','ControlType.ComboBox','ControlType.Edit','ControlType.RadioButton','ControlType.TabItem','ControlType.Hyperlink','ControlType.Spinner')
+  if ($control.ControlType -notin $semanticControlTypes) { throw "PRODUCT DEFECT: candidate keyboard focus landed on an element with non-interactive UI Automation role '$($control.ControlType)' after $Description." }
+  return $control
+}
+
+function Send-NarratorChord([byte]$Key, [byte]$ModifierKey, [string]$Description) {
+  # The native helper checks SendInput's returned event count and marks Insert
+  # with KEYEVENTF_EXTENDEDKEY. A successful return proves delivery to the
+  # foreground input stream; the captured exact-name phrase proves Narrator
+  # processed the command.
+  $eventsSent = [EBR_NARRATOR_NATIVE]::SendChord([byte]0x2D, $Key, $ModifierKey)
+  $expectedEvents = if ($ModifierKey -eq 0) { 4 } else { 6 }
+  if ($eventsSent -ne $expectedEvents) { throw "NOT TESTED: SendInput did not deliver the complete $Description chord ($eventsSent/$expectedEvents events)." }
+  $chordName = if ($Key -eq 0x09 -and $ModifierKey -eq 0) { 'Insert+Tab (Read Item)' } elseif ($Key -eq 0x58 -and $ModifierKey -eq 0x11) { 'Insert+Ctrl+X (Copy Last Phrase)' } else { "Insert+0x$('{0:X2}' -f $ModifierKey)+0x$('{0:X2}' -f $Key)" }
+  return [pscustomobject]@{Chord=$chordName;Key=$Key;ModifierKey=$ModifierKey;NarratorKey='Insert';InputEventsSent=$eventsSent;ExtendedInsertKey=$true;DeliveryVerified=$true}
+}
+
+function Send-KeyboardKey([byte]$Key, [string]$Description) {
+  $eventsSent = [EBR_NARRATOR_NATIVE]::SendKey($Key)
+  if ($eventsSent -ne 2) { throw "NOT TESTED: SendInput did not deliver the complete $Description key ($eventsSent/2 events)." }
+  return [pscustomobject]@{Key=$Key;InputEventsSent=$eventsSent;DeliveryVerified=$true}
+}
+
+function Copy-NarratorLastPhrase($Control, [string]$Phase) {
+  if ([string]::IsNullOrWhiteSpace($Control.Name) -or $Control.Name.Trim().Length -lt 3) { throw 'PRODUCT DEFECT: refusing to accept Narrator speech for a candidate control without a full accessible name of at least three characters.' }
+  $beforeRead = Assert-ExactCandidateFocus $Control "$Phase before Read Item"
   $sentinel = '__EBR_NARRATOR_RECAP_' + [guid]::NewGuid().ToString('N')
   Set-Clipboard -Value $sentinel -ErrorAction Stop
-  Start-Sleep -Milliseconds 150
-  # Insert is Narrator's default modifier. Ctrl+X is Microsoft's documented
-  # “Copy Last Phrase” command, which must replace this sentinel with fresh text.
-  [EBR_NARRATOR_NATIVE]::KeyDown(0x2D) # VK_INSERT
-  Start-Sleep -Milliseconds 40
-  [EBR_NARRATOR_NATIVE]::KeyDown(0x11) # VK_CONTROL
-  Start-Sleep -Milliseconds 40
-  [EBR_NARRATOR_NATIVE]::KeyDown(0x58) # VK_X
-  Start-Sleep -Milliseconds 40
-  [EBR_NARRATOR_NATIVE]::KeyUp(0x58)
-  [EBR_NARRATOR_NATIVE]::KeyUp(0x11)
-  [EBR_NARRATOR_NATIVE]::KeyUp(0x2D)
+  Start-Sleep -Milliseconds 100
+  $afterSentinel = Assert-ExactCandidateFocus $Control "$Phase after clipboard sentinel" $beforeRead
+  $readItemChord = Send-NarratorChord 0x09 0 'Read Item'
+  Start-Sleep -Milliseconds 500
+  $afterRead = Assert-ExactCandidateFocus $Control "$Phase after Read Item" $afterSentinel
+  $copyChord = Send-NarratorChord 0x58 0x11 'Copy Last Phrase'
   $watch = [Diagnostics.Stopwatch]::StartNew()
   $phrase = ''
   while ($watch.Elapsed.TotalSeconds -lt 5) {
@@ -160,11 +291,17 @@ function Copy-NarratorLastPhrase([string]$ControlName, [string]$Phase) {
     try { $phrase = [string](Get-Clipboard -Raw -ErrorAction Stop) } catch { $phrase = '' }
     if (-not [string]::IsNullOrWhiteSpace($phrase) -and $phrase -cne $sentinel) { break }
   }
+  $afterCopy = Assert-ExactCandidateFocus $Control "$Phase after Copy Last Phrase" $afterRead
   $phrase = ($phrase -replace '[\r\n\t]+', ' ').Trim()
+  $accessibleName = ($Control.Name -replace '[\r\n\t]+', ' ').Trim()
+  $nameIncluded = ($phrase.Length -gt 0 -and $phrase.IndexOf($accessibleName, [StringComparison]::OrdinalIgnoreCase) -ge 0)
+  $freshText = (-not [string]::IsNullOrWhiteSpace($phrase) -and $phrase -cne $sentinel)
   $capture = [pscustomobject]@{
-    Phase=$Phase; TargetControl=$ControlName; Method='Narrator (Insert)+Ctrl+X Copy Last Phrase'
-    Text=$phrase; SentinelReplaced=($phrase -and $phrase -cne $sentinel)
-    FreshText=($phrase -and $phrase -cne $sentinel); CapturedUtc=[DateTime]::UtcNow.ToString('o')
+    Phase=$Phase; TargetControl=$Control.Name; TargetIdentity=[pscustomobject]@{ProcessId=$Control.ProcessId;NativeWindowHandle=$Control.NativeWindowHandle;Name=$Control.Name;AutomationId=$Control.AutomationId;ControlType=$Control.ControlType;ClassName=$Control.ClassName}
+    Method='Narrator Insert+Tab Read Item followed by Insert+Ctrl+X Copy Last Phrase'
+    ReadItemChord=$readItemChord;CopyChord=$copyChord;FocusBeforeRead=$beforeRead;FocusAfterClipboardSentinel=$afterSentinel;FocusAfterRead=$afterRead;FocusAfterCopy=$afterCopy
+    Text=$phrase;SentinelReplaced=$freshText;FreshText=$freshText;PhraseIncludesFullAccessibleName=$nameIncluded;ValidatedFreshPhrase=($freshText -and $nameIncluded)
+    CapturedUtc=[DateTime]::UtcNow.ToString('o')
   }
   $speechCaptures.Add($capture)
   return $capture
@@ -182,8 +319,8 @@ function Save-Result([string]$FinalStatus, [string]$FinalReason) {
     Environment=[pscustomobject]@{ Provider='GitHub-hosted Actions runner'; ImageOS=$env:ImageOS; ImageVersion=$env:ImageVersion; RunnerOS=$env:RUNNER_OS; RunnerArchitecture=$env:RUNNER_ARCH; ProcessSessionId=$sessionId; UserInteractive=[Environment]::UserInteractive }
     Profile=[pscustomobject]@{ LocalAppData=$env:LOCALAPPDATA; AppDataPath=$dataDirectory; AppDataAbsentBeforeTest=(-not $dataExistedBefore); TestDataCreatedByHarness=$dataCreatedByHarness; TestDataRemoved=$dataRemoved }
     Narrator=[pscustomobject]@{ ProcessId=$narratorPid; StartedByHarness=$narratorOwned; Version=if($narratorRecord){$narratorRecord.Version}else{$null}; SessionId=if($narratorRecord){$narratorRecord.SessionId}else{$null}; RecapMethod='Insert+Ctrl+X Copy Last Phrase'; Captures=@($speechCaptures); PhysicalAudioVerified=$physicalAudioVerified }
-    FocusTrace=@($focusTrace); Assertions=@($assertions); Events=@($events)
-    AssertionCounts=[pscustomobject]@{Total=$assertions.Count;Passed=@($assertions|Where-Object{$_.Passed}).Count;NotTested=@($assertions|Where-Object{-not$_.Passed}).Count}
+    OOBEActions=@($oobeActions); FocusTrace=@($focusTrace); Assertions=@($assertions); Events=@($events)
+     AssertionCounts=[pscustomobject]@{Total=$assertions.Count;Passed=@($assertions|Where-Object{$_.Status -eq 'PASS'}).Count;Fail=@($assertions|Where-Object{$_.Status -eq 'FAIL'}).Count;NotTested=@($assertions|Where-Object{$_.Status -eq 'NOT TESTED'}).Count}
     Screenshots=@($screenshots); TranscriptFile=$transcriptPath; LogFile=$logPath
     Cleanup=[pscustomobject]@{CandidateProcessStopped=$candidateStoppedByHarness;NarratorProcessStopped=$narratorStoppedByHarness;AppDataRemoved=$dataRemoved;Errors=@($cleanupErrors)}
     Limitations=@('Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.','Speech Recap text verifies Narrator speech content only; physical audio rendering and audibility were not tested.','The standalone candidate was launched; no installer or updater was run.')
@@ -221,7 +358,12 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
   public ushort ProcessorRevision;
 }
 
-public static class EBR_NARRATOR_NATIVE {
+ [StructLayout(LayoutKind.Sequential)] public struct EBR_NARRATOR_KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
+ [StructLayout(LayoutKind.Sequential)] public struct EBR_NARRATOR_MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
+ [StructLayout(LayoutKind.Explicit)] public struct EBR_NARRATOR_INPUTUNION { [FieldOffset(0)] public EBR_NARRATOR_MOUSEINPUT mi; [FieldOffset(0)] public EBR_NARRATOR_KEYBDINPUT ki; }
+ [StructLayout(LayoutKind.Sequential)] public struct EBR_NARRATOR_INPUT { public uint type; public EBR_NARRATOR_INPUTUNION u; }
+
+ public static class EBR_NARRATOR_NATIVE {
   private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr data);
   [DllImport("kernel32.dll")] private static extern void GetNativeSystemInfo(out EBR_NARRATOR_SYSTEM_INFO info);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr data);
@@ -233,10 +375,46 @@ public static class EBR_NARRATOR_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] private static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool IsWindowEnabled(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool GetWindowRect(IntPtr hwnd, out EBR_NARRATOR_RECT rect);
+  [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", SetLastError=true)] private static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
-  [DllImport("user32.dll")] private static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extraInfo);
+  [DllImport("user32.dll", SetLastError=true)] private static extern uint SendInput(uint count, [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex=0)] EBR_NARRATOR_INPUT[] inputs, int inputSize);
   [StructLayout(LayoutKind.Sequential)] private struct EBR_NARRATOR_RECT { public int Left, Top, Right, Bottom; }
+  private static EBR_NARRATOR_INPUT KeyboardInput(byte key, bool keyUp) {
+    uint flags = key == 0x2D ? 0x0001u : 0u; // VK_INSERT is an E0-prefixed extended key.
+    if (keyUp) flags |= 0x0002u;
+    return new EBR_NARRATOR_INPUT { type=1u, u=new EBR_NARRATOR_INPUTUNION { ki=new EBR_NARRATOR_KEYBDINPUT { wVk=key, wScan=0, dwFlags=flags, time=0, dwExtraInfo=UIntPtr.Zero } } };
+  }
+  private static void ReleaseKeys(byte[] keys) {
+    var release = new EBR_NARRATOR_INPUT[keys.Length];
+    for (int i=0; i<keys.Length; i++) release[i]=KeyboardInput(keys[keys.Length-1-i], true);
+    if (release.Length > 0) SendInput((uint)release.Length, release, Marshal.SizeOf(typeof(EBR_NARRATOR_INPUT)));
+  }
+  public static int SendChord(byte narratorKey, byte key, byte modifierKey) {
+    byte[] keys = modifierKey == 0 ? new byte[] { narratorKey, key } : new byte[] { narratorKey, modifierKey, key };
+    var inputs = new EBR_NARRATOR_INPUT[keys.Length * 2];
+    int at=0;
+    for (int i=0; i<keys.Length; i++) inputs[at++]=KeyboardInput(keys[i], false);
+    for (int i=keys.Length-1; i>=0; i--) inputs[at++]=KeyboardInput(keys[i], true);
+    uint sent=SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(EBR_NARRATOR_INPUT)));
+    if (sent != (uint)inputs.Length) {
+      int error=Marshal.GetLastWin32Error();
+      ReleaseKeys(keys);
+      throw new System.ComponentModel.Win32Exception(error, "SendInput delivered " + sent + " of " + inputs.Length + " Narrator chord events.");
+    }
+    return (int)sent;
+  }
+  public static int SendKey(byte key) {
+    var inputs = new EBR_NARRATOR_INPUT[] { KeyboardInput(key, false), KeyboardInput(key, true) };
+    uint sent=SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(EBR_NARRATOR_INPUT)));
+    if (sent != (uint)inputs.Length) {
+      int error=Marshal.GetLastWin32Error();
+      ReleaseKeys(new byte[] { key });
+      throw new System.ComponentModel.Win32Exception(error, "SendInput delivered " + sent + " of 2 keyboard events.");
+    }
+    return (int)sent;
+  }
   public static ushort NativeArchitecture() { EBR_NARRATOR_SYSTEM_INFO i; GetNativeSystemInfo(out i); return i.ProcessorArchitecture; }
   public static string[] WindowsForProcess(int expectedPid) {
     var found = new List<IntPtr>();
@@ -255,9 +433,9 @@ public static class EBR_NARRATOR_NATIVE {
   public static string WindowText(IntPtr hwnd) { var b = new StringBuilder(512); GetWindowTextNative(hwnd, b, b.Capacity); return b.ToString(); }
   public static string WindowClass(IntPtr hwnd) { var b = new StringBuilder(256); GetClassNameNative(hwnd, b, b.Capacity); return b.ToString(); }
   public static int OwnerProcessId(IntPtr hwnd) { uint pid; GetWindowThreadProcessId(hwnd, out pid); return (int)pid; }
+  public static IntPtr ForegroundWindow() { return GetForegroundWindow(); }
+  public static bool FocusWindow(IntPtr hwnd) { return SetForegroundWindow(hwnd); }
   public static bool ClickAt(int x, int y) { if (!SetCursorPos(x, y)) return false; System.Threading.Thread.Sleep(80); mouse_event(0x0002,0,0,0,UIntPtr.Zero); System.Threading.Thread.Sleep(80); mouse_event(0x0004,0,0,0,UIntPtr.Zero); return true; }
-  public static void KeyDown(byte key) { keybd_event(key, 0, 0, UIntPtr.Zero); }
-  public static void KeyUp(byte key) { keybd_event(key, 0, 2, UIntPtr.Zero); }
 }
 '@ -ErrorAction Stop
   Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
@@ -332,7 +510,16 @@ public static class EBR_NARRATOR_NATIVE {
     if ($mainWindow -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 150 }
   }
   if ($mainWindow -eq [IntPtr]::Zero) { throw 'NOT TESTED: exact candidate did not expose its visible main window within 20 seconds.' }
-  Add-Assertion 'Exact production candidate created its visible main window in the interactive test session' $true ([pscustomobject]@{Pid=$candidatePid;WindowHandle=('0x{0:X}' -f $mainWindow.ToInt64());WindowTitle=[EBR_NARRATOR_NATIVE]::WindowText($mainWindow);SessionId=$candidateProcess.SessionId;Path=$candidateProcess.Path;SHA256=$actualSha256})
+  Add-Assertion 'Exact production candidate created its main-window handle in the interactive test session' $true ([pscustomobject]@{Pid=$candidatePid;WindowHandle=('0x{0:X}' -f $mainWindow.ToInt64());WindowTitle=[EBR_NARRATOR_NATIVE]::WindowText($mainWindow);SessionId=$candidateProcess.SessionId;WindowVisible=[EBR_NARRATOR_NATIVE]::IsWindowVisible($mainWindow);Path=$candidateProcess.Path;SHA256=$actualSha256})
+  Resolve-PrivacyOobeIfPresent
+  try { ([System.Windows.Automation.AutomationElement]::FromHandle($mainWindow)).SetFocus() } catch {}
+  [void][EBR_NARRATOR_NATIVE]::FocusWindow($mainWindow)
+  Start-Sleep -Milliseconds 400
+  $foreground = [EBR_NARRATOR_NATIVE]::ForegroundWindow()
+  $foregroundProcessId = [EBR_NARRATOR_NATIVE]::OwnerProcessId($foreground)
+  $candidateWindowUnobscured = ($foreground -eq $mainWindow -and $foregroundProcessId -eq $candidatePid -and [EBR_NARRATOR_NATIVE]::IsWindowVisible($mainWindow))
+  Add-Assertion 'Candidate main window is foreground and unobscured before accessibility interaction' $candidateWindowUnobscured ([pscustomobject]@{ForegroundWindow=('0x{0:X}' -f $foreground.ToInt64());ForegroundProcessId=$foregroundProcessId;CandidateWindow=('0x{0:X}' -f $mainWindow.ToInt64());CandidatePid=$candidatePid;OOBEActions=@($oobeActions)})
+  if (-not $candidateWindowUnobscured) { throw 'NOT TESTED: the candidate window is obscured by another foreground window; accessibility interaction stopped.' }
   $firstShot = Capture-CandidateWindow $mainWindow 'gui-016-candidate-timer-window.png'
   Add-Event 'Capture target-window screenshot of the exact candidate' 'PASS' $firstShot
 
@@ -355,60 +542,78 @@ public static class EBR_NARRATOR_NATIVE {
   Start-Sleep -Seconds 2
 
   $settingsButton = Get-ControlElement $mainWindow 12 'Settings navigation button'
-  if ($settingsButton.Name -notmatch '(?i)settings') { throw "NOT TESTED: candidate navigation control ID 12 has unexpected accessible name '$($settingsButton.Name)'." }
+  if ($settingsButton.Name -notmatch '(?i)settings') { throw "PRODUCT DEFECT: candidate Settings navigation control has accessible name '$($settingsButton.Name)', which does not identify the Settings action." }
+  if ($settingsButton.ControlType -ne 'ControlType.Button') { throw "PRODUCT DEFECT: candidate Settings navigation control exposes role '$($settingsButton.ControlType)', not Button." }
   $navClick = $settingsButton.Bounds
   if ($navClick.Count -ne 4 -or $navClick[2] -le 0 -or $navClick[3] -le 0) { throw 'NOT TESTED: Settings navigation control has no usable visible UIA bounds.' }
   if (-not [EBR_NARRATOR_NATIVE]::ClickAt([int]($navClick[0] + $navClick[2]/2), [int]($navClick[1] + $navClick[3]/2))) { throw 'NOT TESTED: real pointer input could not focus Settings navigation.' }
   Start-Sleep -Milliseconds 350
+  $alarmSection = Get-ControlElement $mainWindow 132 'Alarm Settings section navigation'
+  if ($alarmSection.Name -notmatch '(?i)alarm') { throw "PRODUCT DEFECT: candidate Alarm section navigation has accessible name '$($alarmSection.Name)', which does not identify the Alarm section." }
+  $alarmBounds = $alarmSection.Bounds
+  if ($alarmBounds.Count -ne 4 -or $alarmBounds[2] -le 0 -or $alarmBounds[3] -le 0) { throw 'NOT TESTED: Alarm section navigation control has no usable visible UIA bounds.' }
+  if (-not [EBR_NARRATOR_NATIVE]::ClickAt([int]($alarmBounds[0] + $alarmBounds[2]/2), [int]($alarmBounds[1] + $alarmBounds[3]/2))) { throw 'NOT TESTED: real pointer input could not select the candidate Alarm settings section.' }
+  Start-Sleep -Milliseconds 350
   $settingsWait = [Diagnostics.Stopwatch]::StartNew()
   $volumeControl = $null
   while ($settingsWait.Elapsed.TotalSeconds -lt 8 -and $null -eq $volumeControl) {
-    try { $volumeControl = Get-ControlElement $mainWindow 103 'Alarm volume slider' } catch { Start-Sleep -Milliseconds 100 }
+    try { $volumeControl = Get-ControlElement $mainWindow 103 'Alarm volume slider' }
+    catch { if ($_.Exception.Message -match '^PRODUCT DEFECT:') { throw }; Start-Sleep -Milliseconds 100 }
   }
   if ($null -eq $volumeControl) { throw 'NOT TESTED: the real candidate Settings page did not expose its Alarm volume control.' }
+  if ($volumeControl.ControlType -ne 'ControlType.Slider') { throw "PRODUCT DEFECT: candidate Alarm volume control exposes role '$($volumeControl.ControlType)', not Slider." }
   $settingsShot = Capture-CandidateWindow $mainWindow 'gui-016-candidate-settings-window.png'
-  Add-Assertion 'Real Settings navigation opens the candidate settings surface through pointer input' $true ([pscustomobject]@{NavigationControl=$settingsButton;VolumeControl=$volumeControl;Screenshot=$settingsShot.Path})
+  Add-Assertion 'Real Settings > Alarm navigation opens the candidate alarm controls through pointer input' $true ([pscustomobject]@{NavigationControl=$settingsButton;AlarmSection=$alarmSection;VolumeControl=$volumeControl;Screenshot=$settingsShot.Path})
 
   $volumeBounds = $volumeControl.Bounds
   if ($volumeBounds.Count -ne 4 -or $volumeBounds[2] -le 0 -or $volumeBounds[3] -le 0) { throw 'NOT TESTED: Alarm volume control has no usable visible UIA bounds.' }
   if (-not [EBR_NARRATOR_NATIVE]::ClickAt([int]($volumeBounds[0] + $volumeBounds[2]/2), [int]($volumeBounds[1] + $volumeBounds[3]/2))) { throw 'NOT TESTED: real pointer input could not focus Alarm volume.' }
   Start-Sleep -Milliseconds 400
-  $focusedVolume = Wait-CandidateFocus 'After pointer focus on candidate Alarm volume slider' 5
-  if (-not $focusedVolume.IsCandidateProcess) { $volumeControl.Element.SetFocus(); Start-Sleep -Milliseconds 250; $focusedVolume = Wait-CandidateFocus 'After UI Automation SetFocus on Alarm volume slider' 3 }
-  if (-not $focusedVolume.IsCandidateProcess -or $focusedVolume.Name -notmatch '(?i)volume') { throw 'NOT TESTED: UI Automation focus did not land on the candidate Alarm volume control.' }
-  $firstSpeech = Copy-NarratorLastPhrase $focusedVolume.Name 'Alarm volume pointer focus'
-  $firstPhraseValid = ($firstSpeech.FreshText -and $firstSpeech.Text -match '(?i)volume')
-  Add-Assertion 'Narrator Copy Last Phrase returns fresh speech content for the candidate Alarm volume control' $firstPhraseValid ([pscustomobject]@{Focus=$focusedVolume;Capture=$firstSpeech;PhysicalAudioVerified=$false})
+  $focusedVolume = Assert-ExactCandidateFocus $volumeControl 'After pointer focus on candidate Alarm volume slider'
+  if ($focusedVolume.Name -notmatch '(?i)volume') { throw "PRODUCT DEFECT: candidate volume control accessible name '$($focusedVolume.Name)' does not identify the Alarm volume slider." }
+  $firstSpeech = Copy-NarratorLastPhrase $volumeControl 'Exact focus on Alarm volume control'
+  $firstPhraseValid = $firstSpeech.ValidatedFreshPhrase
+  Add-Assertion 'Narrator Read Item and Copy Last Phrase capture the full accessible name of the focused Alarm volume control' $firstPhraseValid ([pscustomobject]@{Focus=$focusedVolume;Capture=$firstSpeech;PhysicalAudioVerified=$false})
 
-  [EBR_NARRATOR_NATIVE]::KeyDown(0x09) # Tab: real keyboard navigation from the focused slider.
-  [EBR_NARRATOR_NATIVE]::KeyUp(0x09)
+  [void](Assert-ExactCandidateFocus $volumeControl 'Immediately before real Tab navigation' $focusedVolume)
+  $tabInput = Send-KeyboardKey 0x09 'Tab navigation from the focused Alarm volume slider'
   Start-Sleep -Milliseconds 400
   $focusedAfterTab = Get-FocusSnapshot $candidatePid 'After real Tab navigation from Alarm volume'
-  $tabChangedCandidateFocus = ($focusedAfterTab.IsCandidateProcess -and (($focusedAfterTab.AutomationId -ne $focusedVolume.AutomationId) -or ($focusedAfterTab.Name -ne $focusedVolume.Name) -or ($focusedAfterTab.NativeWindowHandle -ne $focusedVolume.NativeWindowHandle)))
-  Add-Assertion 'Real Tab input moves keyboard focus to another named candidate control' $tabChangedCandidateFocus ([pscustomobject]@{Before=$focusedVolume;After=$focusedAfterTab;Key='Tab'})
-  if (-not $tabChangedCandidateFocus) { throw 'NOT TESTED: Tab did not move focus to another named control in the candidate window.' }
+  if (-not $focusedAfterTab.IsCandidateProcess) { throw 'NOT TESTED: real Tab input moved focus outside the candidate process.' }
+  if (-not $focusedAfterTab.HasKeyboardFocus -or -not $focusedAfterTab.IsKeyboardFocusable) { throw 'PRODUCT DEFECT: the candidate element receiving real Tab input is not reported as keyboard-focused and keyboard-focusable by UI Automation.' }
+  $secondControl = Get-ControlFromFocusSnapshot $focusedAfterTab 'real Tab navigation from Alarm volume'
+  $tabChangedCandidateFocus = -not (Test-SameFocusIdentity $focusedVolume $focusedAfterTab)
+  if (-not $tabChangedCandidateFocus) {
+    $candidateRoot = [System.Windows.Automation.AutomationElement]::FromHandle($mainWindow)
+    $focusableControls = @($candidateRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object { try { $_.Current.ProcessId -eq $candidatePid -and $_.Current.IsEnabled -and -not $_.Current.IsOffscreen -and $_.Current.IsKeyboardFocusable } catch { $false } })
+    if ($focusableControls.Count -gt 1) { throw 'PRODUCT DEFECT: delivered Tab input did not move focus from Alarm volume despite multiple visible enabled keyboard-focusable candidate controls.' }
+    throw 'NOT TESTED: Tab did not move to a distinct UI Automation control identity.'
+  }
+  Add-Assertion 'Real Tab input moves keyboard focus to a distinct named candidate control' $true ([pscustomobject]@{Before=$focusedVolume;After=$focusedAfterTab;Key='Tab';Input=$tabInput;ExactIdentityChanged=$true})
   $secondShot = Capture-CandidateWindow $mainWindow 'gui-016-candidate-keyboard-focus-window.png'
-  $secondSpeech = Copy-NarratorLastPhrase $focusedAfterTab.Name 'Keyboard Tab focus to candidate control'
-  $expectedName = [regex]::Escape(($focusedAfterTab.Name -replace '&','').Trim())
-  $secondPhraseValid = ($secondSpeech.FreshText -and $secondSpeech.Text -match '(?i)volume|preview|stop|alarm|slider|button')
-  if ($focusedAfterTab.Name -and $focusedAfterTab.Name.Length -ge 3) { $secondPhraseValid = $secondPhraseValid -and ($secondSpeech.Text -match "(?i)$expectedName") }
-  Add-Assertion 'Narrator Copy Last Phrase returns fresh speech content after keyboard focus changes' $secondPhraseValid ([pscustomobject]@{Focus=$focusedAfterTab;Capture=$secondSpeech;Screenshot=$secondShot.Path;PhysicalAudioVerified=$false})
+  $secondSpeech = Copy-NarratorLastPhrase $secondControl 'Keyboard Tab focus to candidate control'
+  $secondPhraseValid = $secondSpeech.ValidatedFreshPhrase
+  Add-Assertion 'Narrator Read Item and Copy Last Phrase capture the full accessible name after real keyboard focus changes' $secondPhraseValid ([pscustomobject]@{Focus=$focusedAfterTab;Control=$secondControl;Capture=$secondSpeech;Screenshot=$secondShot.Path;PhysicalAudioVerified=$false})
 
-  $goodCaptures = @($speechCaptures | Where-Object { $_.FreshText -and -not [string]::IsNullOrWhiteSpace($_.Text) })
+  $goodCaptures = @($speechCaptures | Where-Object { $_.ValidatedFreshPhrase -eq $true -and $_.FreshText -eq $true -and $_.PhraseIncludesFullAccessibleName -eq $true })
   $evidenceReady = ($goodCaptures.Count -ge 2 -and $firstPhraseValid -and $tabChangedCandidateFocus -and $secondPhraseValid -and $screenshots.Count -ge 3)
   if ($evidenceReady) {
     $status = 'PASS'
-    $reason = 'Two fresh Narrator Copy Last Phrase captures were associated with real candidate controls after pointer and keyboard navigation; target-window screenshots and focus trace were retained. Physical audio remains unverified.'
+    $reason = 'Two fresh Narrator Read Item plus Copy Last Phrase captures included each exact current candidate control accessible name after verified focus; target-window screenshots and focus trace were retained. Physical audio remains unverified.'
   } else {
     $status = 'NOT TESTED'
     $reason = 'The harness did not capture sufficient fresh Narrator Recap text associated with candidate controls; UI Automation observations alone are not accepted as speech evidence.'
   }
   Add-Event 'GUI-016 documented Speech Recap alternative result' $status ([pscustomobject]@{FreshSpeechCaptureCount=$goodCaptures.Count;PhysicalAudioVerified=$false;CandidateArchitecture='x64 emulation on Windows 11 ARM64'})
+  Add-Assertion 'GUI-016 Narrator speech content follows real candidate keyboard focus' ($status -eq 'PASS') ([pscustomobject]@{Status=$status;Reason=$reason;FreshSpeechCaptureCount=$goodCaptures.Count;PhysicalAudioVerified=$false})
+  $speechAcceptanceAssertionRecorded = $true
 } catch {
   $errorMessage = $_.Exception.Message
-  if ($errorMessage -match '^(BLOCKED|NOT TESTED):') { $status = if($errorMessage.StartsWith('BLOCKED:')){'BLOCKED'}else{'NOT TESTED'}; $reason = $errorMessage }
+  if ($errorMessage -match '^PRODUCT DEFECT:') { $status = 'FAIL'; $reason = $errorMessage }
+  elseif ($errorMessage -match '^(BLOCKED|NOT TESTED):') { $status = if($errorMessage.StartsWith('BLOCKED:')){'BLOCKED'}else{'NOT TESTED'}; $reason = $errorMessage }
   else { $status = 'NOT TESTED'; $reason = "Narrator speech content was not established: $errorMessage" }
   Add-Event 'GUI-016 harness attempt' $status ([pscustomobject]@{Message=$errorMessage;StackTrace=$_.ScriptStackTrace})
+  if (-not $speechAcceptanceAssertionRecorded) { Add-Assertion 'GUI-016 Narrator speech content follows real candidate keyboard focus' $false ([pscustomobject]@{Status=$status;Reason=$reason;Message=$errorMessage;PhysicalAudioVerified=$false}) $(if($status -eq 'FAIL'){'FAIL'}else{'NOT TESTED'}) }
 } finally {
   if ($candidateOwned -and $candidatePid -gt 0) {
     try {

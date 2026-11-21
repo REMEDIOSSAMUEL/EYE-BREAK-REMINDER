@@ -98,7 +98,8 @@ jobs:
           & .\tests\windows_narrator_speech_recap_acceptance.ps1 -ExecutablePath $exe -EvidenceDirectory $evidence
           if (-not (Test-Path -LiteralPath (Join-Path $evidence 'gui-016-narrator-speech-recap.json'))) { throw 'Narrator harness produced no result report.' }
           $report = Get-Content (Join-Path $evidence 'gui-016-narrator-speech-recap.json') -Raw | ConvertFrom-Json
-          $summary = "Requirement: GUI-016`nCandidate: artifact $($report.Candidate.ArtifactId), SHA-256 $($report.Candidate.SHA256)`nOS: $($report.OperatingSystem.Caption) $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nOS/native CPU: $($report.OperatingSystem.OSArchitecture) / $($report.OperatingSystem.NativeProcessorArchitecture)`nEnvironment: GitHub-hosted interactive Windows 11 ARM64; candidate x64 emulation`nStatus: $($report.Status)`nReason: $($report.Reason)`nFresh speech captures: $($report.Narrator.Captures.Count)`nPhysical audio verified: $($report.Narrator.PhysicalAudioVerified)`n"
+          $freshCaptures = @($report.Narrator.Captures | Where-Object { $_.ValidatedFreshPhrase -eq $true -and $_.FreshText -eq $true -and $_.PhraseIncludesFullAccessibleName -eq $true })
+          $summary = "Requirement: GUI-016`nCandidate: artifact $($report.Candidate.ArtifactId), SHA-256 $($report.Candidate.SHA256)`nOS: $($report.OperatingSystem.Caption) $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nOS/native CPU: $($report.OperatingSystem.OSArchitecture) / $($report.OperatingSystem.NativeProcessorArchitecture)`nEnvironment: GitHub-hosted interactive Windows 11 ARM64; candidate x64 emulation`nStatus: $($report.Status)`nReason: $($report.Reason)`nValidated fresh speech captures: $($freshCaptures.Count)`nPhysical audio verified: $($report.Narrator.PhysicalAudioVerified)`n"
           $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           Write-Host $summary
           if ($report.Status -eq 'FAIL') { throw "Narrator acceptance harness found a product failure: $($report.Reason)" }
@@ -109,6 +110,100 @@ jobs:
         with:
           name: v1.4.0-gui-016-narrator-speech-${{ github.run_id }}
           path: remaining-coverage-evidence/narrator/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  candidate-audio-controls-windows-11-arm64:
+    name: Exact candidate alarm controls and Windows WASAPI loopback attempt
+    runs-on: windows-11-arm
+    timeout-minutes: 25
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Exercise real alarm settings and capture Windows render samples when an endpoint exists
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "Audio acceptance candidate hash mismatch: $actual" }
+          $evidence = Join-Path $PWD 'remaining-coverage-evidence/audio-controls'
+          & .\tests\windows_candidate_audio_loopback_acceptance.ps1 -ExecutablePath $exe -EvidenceDirectory $evidence
+          $reportPath = Join-Path $evidence 'reg-008-audio-loopback-results.json'
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'REG-008 audio harness produced no result report.' }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          $summary = "Requirement: REG-008`nCandidate: artifact $($report.ArtifactId), SHA-256 $($report.CandidateExecutableSHA256)`nOS: $($report.OperatingSystem.Caption) version $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nOS/process architecture: $($report.OperatingSystem.OSArchitecture) / $($report.OperatingSystem.ProcessArchitecture)`nEnvironment: fresh GitHub-hosted interactive Windows 11 ARM64; exact x64 candidate under emulation`nActive render endpoint: $($report.AudioEndpoint.ActiveRenderEndpointCount); loopback: $($report.WasapiLoopbackStatus)`nPhysical audible output: $($report.PhysicalAudibility)`nResult: $($report.Status) — $($report.Reason)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($report.Status -eq 'FAIL') { throw "Exact-candidate REG-008 harness found a product failure: $($report.Reason)" }
+
+      - name: Preserve audio controls, WASAPI capture and result evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-reg-008-audio-controls-${{ github.run_id }}
+          path: remaining-coverage-evidence/audio-controls/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  shell-notification-windows-11-arm64:
+    name: Exact candidate Windows Shell notification display and activation probe
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Run a natural one-minute reminder and inspect the real Windows Shell surface
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "Shell notification candidate hash mismatch: $actual" }
+          $evidence = Join-Path $PWD 'remaining-coverage-evidence/shell-notification'
+          & .\tests\windows_shell_notification_acceptance.ps1 -ExecutablePath $exe -EvidenceDirectory $evidence
+          $reportPath = Join-Path $evidence 'env-009-shell-notification-results.json'
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'Shell notification harness produced no result report.' }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          $summary = "Requirement: ENV-009`nCandidate: artifact $($report.Candidate.ArtifactId), SHA-256 $($report.Candidate.SHA256)`nOS: $($report.OperatingSystem.Caption) $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nEnvironment: GitHub-hosted interactive Windows 11 ARM64; candidate x64 emulation`nShell visibility subtest: $($report.ShellNotificationVisibilityStatus) — $($report.ShellNotificationVisibilityReason)`nNotification audio: $($report.Audio.Status); physical output verified: $($report.Audio.PhysicalAudioVerified)`nOverall ENV-009: $($report.Status) — $($report.Reason)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($report.Status -eq 'FAIL') { throw "Exact-candidate Shell acceptance harness found a failure: $($report.Reason)" }
+
+      - name: Preserve Windows Shell UIA evidence and screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-env-009-shell-notification-${{ github.run_id }}
+          path: remaining-coverage-evidence/shell-notification/**
           if-no-files-found: warn
           retention-days: 90
 
@@ -169,6 +264,32 @@ jobs:
           $record | ConvertTo-Json -Depth 7 | Set-Content 'remaining-coverage-evidence/settings-uninstall/candidate-identity.json' -Encoding UTF8
           $record | ConvertTo-Json -Depth 7
 
+      - name: Inspect genuine sleep and display capabilities on the disposable Windows guest (read-only)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $os = Get-CimInstance Win32_OperatingSystem
+          $osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          $processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+          if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or $os.Caption -notmatch 'Windows Server 2025' -or $osArchitecture -cne 'X64' -or $processArchitecture -cne 'X64') { throw 'This capability probe is restricted to the GitHub-hosted disposable Windows Server 2025 x64 runner.' }
+          $powerStates = (& powercfg.exe /a 2>&1 | Out-String).Trim()
+          $wakeTimers = (& powercfg.exe /waketimers 2>&1 | Out-String).Trim()
+          $wakeArmedDevices = (& powercfg.exe /devicequery wake_armed 2>&1 | Out-String).Trim()
+          $activeScheme = (& powercfg.exe /getactivescheme 2>&1 | Out-String).Trim()
+          $wakeTimerSettings = (& powercfg.exe /query SCHEME_CURRENT SUB_SLEEP RTCWAKE 2>&1 | Out-String).Trim()
+          $computer = Get-CimInstance Win32_ComputerSystem
+          $screens = @()
+          try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+            $screens = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { [pscustomobject]@{DeviceName=$_.DeviceName;Primary=$_.Primary;Bounds=@($_.Bounds.X,$_.Bounds.Y,$_.Bounds.Width,$_.Bounds.Height);WorkingArea=@($_.WorkingArea.X,$_.WorkingArea.Y,$_.WorkingArea.Width,$_.WorkingArea.Height)} })
+          } catch { $screenError = $_.Exception.Message }
+          $process = Get-Process -Id $PID
+          $report = [pscustomobject]@{Purpose='Capability evidence only; no sleep, wake, display, or power setting was changed.';Environment='Fresh GitHub-hosted disposable Windows Server 2025 x64 runner';OperatingSystem=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;OSArchitecture=$osArchitecture;ProcessArchitecture=$processArchitecture;HypervisorPresent=$computer.HypervisorPresent;SessionId=$process.SessionId;SessionName=$env:SESSIONNAME;UserInteractive=[Environment]::UserInteractive;ActivePowerScheme=$activeScheme;WakeTimerSettings=$wakeTimerSettings;WakeArmedDevices=$wakeArmedDevices;SleepStates=$powerStates;WakeTimers=$wakeTimers;VisibleDisplayCount=$screens.Count;Displays=$screens;DisplayQueryError=$screenError;ObservedUtc=[DateTime]::UtcNow.ToString('o')}
+          New-Item -ItemType Directory -Force -Path 'remaining-coverage-evidence/guest-capabilities' | Out-Null
+          $report | ConvertTo-Json -Depth 8 | Set-Content 'remaining-coverage-evidence/guest-capabilities/power-and-display-capabilities.json' -Encoding UTF8
+          @("**Disposable guest capability probe (not an acceptance PASS)**","","Environment: $($report.Environment)","OS: $($report.OperatingSystem) $($report.Version) build $($report.Build); OS/process architecture $($report.OSArchitecture)/$($report.ProcessArchitecture); hypervisor present: $($report.HypervisorPresent)","Interactive: $($report.UserInteractive); session $($report.SessionId); session name $($report.SessionName); visible displays reported: $($report.VisibleDisplayCount)","Read-only powercfg queries only; no sleep/wake, display, or power setting was invoked.","Active scheme: $activeScheme","Allow-wake-timer settings:",'```text',$wakeTimerSettings,'```',"",'Wake-armed devices:',$wakeArmedDevices,"",'```text',$powerStates,'```',"",'Active wake timers:','```text',$wakeTimers,'```') | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          Write-Host 'Disposable guest power/display capability report written; no power-state action was attempted.'
+
       - name: Create a loopback-only interactive RDP session and use Windows Settings > Apps > Installed Apps
         id: settings-uninstall
         shell: pwsh
@@ -189,10 +310,11 @@ jobs:
             exit 0
           }
           $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
-          $summary = "Requirement: UN-009`nCandidate: artifact 14695418078, EXE SHA-256 $($result.CandidateExecutableSHA256)`nOS: $($result.OS) build $($result.OSBuild), OS architecture $($result.OSArchitecture), candidate native x64`nEnvironment: $($result.Environment)`nResult: $($result.Status)`nRDP session ID: $($result.RdpSessionId)`nReason: $($result.Reason)`n"
+          $summary = "Requirement: UN-009`nCandidate: artifact 14695418078, EXE SHA-256 $($result.CandidateExecutableSHA256)`nOS: $($result.OS) build $($result.OSBuild), OS architecture $($result.OSArchitecture), candidate native x64`nEnvironment: $($result.Environment)`nUN-009 result: $($result.Status)`nRDP session ID: $($result.RdpSessionId)`nUN-009 reason: $($result.Reason)`nREG-008 RDP audio attempt: $($result.AudioAttemptStatus) — $($result.AudioAttemptReason)`n"
           $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           Write-Host $summary
           if ($result.Status -eq 'FAIL') { throw "Exact-candidate Settings uninstall harness found a real failure: $($result.Reason)" }
+          if ($result.AudioAttemptStatus -eq 'FAIL') { throw "Exact-candidate REG-008 audio harness found a real failure: $($result.AudioAttemptReason)" }
           if ($result.Status -ne 'PASS') { Write-Warning 'UN-009 remains unresolved; raw RDP/UIA logs and screenshots are retained.'; exit 0 }
           Write-Host 'PASS: exact production candidate removed through Windows Settings Installed Apps with retained user data verified.'
 
@@ -212,6 +334,59 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: v1.4.0-un-009-settings-uninstall-${{ github.run_id }}
-          path: remaining-coverage-evidence/settings-uninstall/**
+          path: |
+            remaining-coverage-evidence/settings-uninstall/**
+            remaining-coverage-evidence/guest-capabilities/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  isolated-lock-unlock-windows-server-x64:
+    name: Exact candidate lock/unlock in a separate disposable Windows Server x64 guest
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Run exact-candidate lock/unlock in a loopback-only temporary RDP session
+        shell: pwsh
+        env:
+          EBR_RUNNER_ENVIRONMENT_CONTEXT: ${{ runner.environment }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:EBR_RUNNER_ENVIRONMENT_CONTEXT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64') { throw 'ENV-006 harness requires a fresh GitHub-hosted Windows x64 runner.' }
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "ENV-006 candidate hash mismatch: $actual" }
+          $evidence = Join-Path $env:RUNNER_TEMP 'env006-lock-unlock-evidence'
+          & .\tests\windows_server_rdp_lock_unlock_acceptance.ps1 -CandidateExecutable $exe -EvidenceDirectory $evidence
+          $reportPath = Join-Path $evidence 'env006-lock-unlock-results.json'
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'ENV-006 harness produced no evidence report.' }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          $summary = "Requirement: ENV-006`nCandidate: artifact $($report.CandidateArtifactId), SHA-256 $($report.CandidateSHA256)`nOS: $($report.OS) version $($report.OSVersion) build $($report.OSBuild)`nOS/native CPU: $($report.OSArchitecture) / $($report.ProcessArchitecture)`nEnvironment: $($report.Environment)`nRDP session: $($report.RdpSessionId); temporary user SID: $($report.TemporaryUserSid)`nStatus: $($report.Status)`nReason: $($report.Reason)`nCleanup errors: $(@($report.CleanupErrors).Count)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($report.Status -eq 'FAIL') { throw "Exact-candidate ENV-006 harness found a product failure: $($report.Reason)" }
+          if ($report.Status -ne 'PASS') { Write-Warning 'ENV-006 remains blocked; actual session-lock evidence and cleanup results are retained.' }
+
+      - name: Preserve lock/unlock screenshots, session evidence, and cleanup records
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-env-006-lock-unlock-${{ github.run_id }}
+          path: ${{ runner.temp }}/env006-lock-unlock-evidence/**
           if-no-files-found: warn
           retention-days: 90

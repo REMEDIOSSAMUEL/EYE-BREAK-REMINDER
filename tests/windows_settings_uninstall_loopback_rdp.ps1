@@ -16,23 +16,24 @@ $firewallName="EbrSettingsRdpLoopback$suffix"
 $credentialTarget='TERMSRV/127.0.0.1'
 $events=[System.Collections.Generic.List[object]]::new()
 $cleanupErrors=[System.Collections.Generic.List[string]]::new()
-$status='BLOCKED';$reason='';$userCreated=$false;$credentialWritten=$false;$firewallCreated=$false;$rdpEnabled=$false;$serviceStarted=$false;$taskRegistered=$false;$testStarted=$false;$sessionId=-1;$mstscProcess=$null;$securePassword=$null;$password=$null
+$status='BLOCKED';$reason='';$audioReport=$null;$userCreated=$false;$credentialWritten=$false;$firewallCreated=$false;$firewallProfilesConfigured=$false;$disabledInboundRules=[System.Collections.Generic.List[object]]::new();$oldFirewallProfiles=@();$rdpEnabled=$false;$serviceStarted=$false;$taskRegistered=$false;$testStarted=$false;$sessionId=-1;$mstscProcess=$null;$securePassword=$null;$password=$null
 $oldDeny=$null;$oldServiceStartType=$null;$oldServiceState=$null;$oldNla=$null
 $expectedExe='07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
 $expectedInstaller='a15fc525557603dbed1ef0dccb8d128e500dfee91c6416b478513de790dd5c9b'
 $taskContextPath=Join-Path $stageRoot 'rdp-task-context.json'
+$audioControllerResultPath=Join-Path $stageRoot 'audio-controller-result.json'
 $childResultPath=Join-Path $stageRoot 'standard-user-child-results.json'
 
 function Add-Event([string]$Name,[string]$State,$Details=$null){$events.Add([pscustomobject]@{Name=$Name;Status=$State;Details=$Details})}
 function Read-Value([string]$Path,[string]$Name){try{(Get-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop).$Name}catch{$null}}
 function Save-Status([string]$Value,[string]$Why){
   $os=Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
-  $record=[pscustomobject]@{Requirement='UN-009';Status=$Value;Reason=$Why;ArtifactId='14695418078';FinalizerRunId='44875679345';CandidateExecutableSHA256=$expectedExe;OS=$os.Caption;OSVersion=$os.Version;OSBuild=$os.BuildNumber;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();CandidateExecution='native x64';Environment='GitHub-hosted disposable Windows Server 2025 x64 runner with temporary localhost RDP session';RdpSessionId=$sessionId;Events=@($events);CleanupErrors=@($cleanupErrors);ObservedUtc=[DateTime]::UtcNow.ToString('o')}
+  $record=[pscustomobject]@{Requirement='UN-009';Status=$Value;Reason=$Why;ArtifactId='14695418078';FinalizerRunId='44875679345';CandidateExecutableSHA256=$expectedExe;OS=$os.Caption;OSVersion=$os.Version;OSBuild=$os.BuildNumber;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();CandidateExecution='native x64';Environment='GitHub-hosted disposable Windows Server 2025 x64 runner with temporary localhost RDP session';RdpSessionId=$sessionId;AudioAttemptStatus=if($audioReport){[string]$audioReport.Status}else{'NOT TESTED'};AudioAttemptReason=if($audioReport){[string]$audioReport.Reason}else{$null};AudioReport=$audioReport;FirewallProfilesBefore=@($oldFirewallProfiles);InboundAllowRulesTemporarilyDisabled=$disabledInboundRules.Count;Events=@($events);CleanupErrors=@($cleanupErrors);ObservedUtc=[DateTime]::UtcNow.ToString('o')}
   $record|ConvertTo-Json -Depth 9|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'settings-uninstall-rdp-results.json') -Encoding UTF8
 }
 
 try{
-  if($env:GITHUB_ACTIONS-cne'true'-or-not$env:RUNNER_TEMP){throw 'BLOCKED: this runner-only RDP harness may execute only inside GitHub Actions.'}
+  if($env:GITHUB_ACTIONS-cne'true'-or$env:RUNNER_ENVIRONMENT-cne'github-hosted'-or$env:RUNNER_OS-cne'Windows'-or$env:RUNNER_ARCH-cne'X64'-or-not$env:RUNNER_TEMP){throw 'BLOCKED: this runner-only RDP harness may execute only on a GitHub-hosted Windows x64 runner.'}
   if(-not(Test-Path -LiteralPath $InstallerPath -PathType Leaf)-or-not(Test-Path -LiteralPath $ExecutablePath -PathType Leaf)){throw 'BLOCKED: exact candidate installer or executable is missing.'}
   if((Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()-cne$expectedExe){throw 'BLOCKED: executable is not the authoritative production candidate.'}
   if((Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()-cne$expectedInstaller){throw 'BLOCKED: installer is not the authoritative production candidate.'}
@@ -42,7 +43,8 @@ try{
   $identity=[Security.Principal.WindowsIdentity]::GetCurrent();$admin=[Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
   if(-not$admin){throw 'BLOCKED: the hosted runner account cannot provision a standard RDP test user.'}
   $profiles=@(Get-NetFirewallProfile -ErrorAction Stop)
-  if(@($profiles|Where-Object{$_.Enabled-ne'True'-or$_.DefaultInboundAction-ne'Block'}).Count){throw 'BLOCKED: firewall profiles are not enabled with default inbound block; refusing to start RDP.'}
+  if($profiles.Count-ne3){throw "BLOCKED: expected three Windows Firewall profiles; found $($profiles.Count)."}
+  $oldFirewallProfiles=@($profiles|ForEach-Object{[pscustomobject]@{Name=[string]$_.Name;Enabled=[bool]$_.Enabled;DefaultInboundAction=[string]$_.DefaultInboundAction}})
   $rdpKey='HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server';$rdpTcpKey='HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
   $oldDeny=Read-Value $rdpKey 'fDenyTSConnections';$oldNla=Read-Value $rdpTcpKey 'UserAuthentication'
   if($null-eq$oldDeny-or$null-eq$oldNla-or[int]$oldNla-ne1){throw 'BLOCKED: RDP listener state or Network Level Authentication could not be verified; refusing to weaken authentication.'}
@@ -70,6 +72,18 @@ public static class EBR_CREDMAN {
 }
 '@
   Add-Type -TypeDefinition $credSource -ErrorAction Stop
+  $existingInboundAllows=@(Get-NetFirewallRule -Direction Inbound -Enabled True -Action Allow -ErrorAction Stop)
+  $policyManagedAllows=@($existingInboundAllows|Where-Object{$_.PolicyStoreSourceType-eq'GroupPolicy'})
+  if($policyManagedAllows.Count){throw "BLOCKED: $($policyManagedAllows.Count) enabled inbound allow rules are controlled by Group Policy; refusing to alter managed firewall policy."}
+  foreach($rule in $existingInboundAllows){
+    Disable-NetFirewallRule -InputObject $rule -ErrorAction Stop
+    $disabledInboundRules.Add($rule)
+  }
+  $firewallProfilesConfigured=$true
+  foreach($profile in $oldFirewallProfiles){Set-NetFirewallProfile -Profile $profile.Name -Enabled True -DefaultInboundAction Block -ErrorAction Stop}
+  $securedFirewallProfiles=@(Get-NetFirewallProfile -ErrorAction Stop)
+  if(@($securedFirewallProfiles|Where-Object{[string]$_.Enabled-ne'True'-or[string]$_.DefaultInboundAction-ne'Block'}).Count){throw 'BLOCKED: could not verify all firewall profiles enabled with default inbound block.'}
+  Add-Event 'Temporarily secure the disposable hosted runner firewall for loopback-only RDP' 'PASS' ([pscustomobject]@{OriginalProfiles=$oldFirewallProfiles;TestProfiles=@($securedFirewallProfiles|ForEach-Object{[pscustomobject]@{Name=$_.Name;Enabled=$_.Enabled;DefaultInboundAction=$_.DefaultInboundAction}});ExistingInboundAllowRulesTemporarilyDisabled=$disabledInboundRules.Count;OutboundRulesOrDefaultUnchanged=$true;RestoreAttemptedInFinally=$true})
   $firewallProfiles=@(Get-NetFirewallProfile -ErrorAction Stop|ForEach-Object{[pscustomobject]@{Name=$_.Name;Enabled=$_.Enabled;DefaultInboundAction=$_.DefaultInboundAction}})
   $unsafeRdpRules=[System.Collections.Generic.List[string]]::new()
   foreach($rule in @(Get-NetFirewallRule -Direction Inbound -Enabled True -Action Allow -ErrorAction SilentlyContinue)){
@@ -130,7 +144,7 @@ public static class EBR_CREDMAN {
     'redirectclipboard:i:0'
     'redirectprinters:i:0'
     'drivestoredirect:s:'
-    'audiomode:i:2'
+    'audiomode:i:0'
   )|Set-Content -LiteralPath $rdpFile -Encoding Unicode
   $mstscPath=Join-Path $env:WINDIR 'System32\mstsc.exe'
   if(-not(Test-Path -LiteralPath $mstscPath -PathType Leaf)){throw 'BLOCKED: built-in Remote Desktop client is unavailable.'}
@@ -154,12 +168,13 @@ public static class EBR_CREDMAN {
   $sessionId=$sessionRow.SessionId
   Add-Event 'Create active localhost RDP user session' 'PASS' ([pscustomobject]@{User=$principal;SessionName=$sessionRow.SessionName;SessionId=$sessionId;NLAEnabled=([int]$oldNla-eq1);FirewallScope=@('127.0.0.1','::1');NoDriveOrClipboardRedirection=$true})
   $stageEvidence=Join-Path $stageRoot 'evidence';[void][IO.Directory]::CreateDirectory($stageEvidence)
-  $candidateInstaller=Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe';$candidateExecutable=Join-Path $stageRoot 'EyeBreakReminder.exe';$childScript=Join-Path $stageRoot 'windows_standard_user_acceptance.ps1'
-  Copy-Item -LiteralPath $InstallerPath -Destination $candidateInstaller -Force;Copy-Item -LiteralPath $ExecutablePath -Destination $candidateExecutable -Force;Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'windows_standard_user_acceptance.ps1') -Destination $childScript -Force
+  $stageAudioEvidence=Join-Path $stageRoot 'audio-evidence';[void][IO.Directory]::CreateDirectory($stageAudioEvidence)
+  $candidateInstaller=Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe';$candidateExecutable=Join-Path $stageRoot 'EyeBreakReminder.exe';$childScript=Join-Path $stageRoot 'windows_standard_user_acceptance.ps1';$audioScript=Join-Path $stageRoot 'windows_candidate_audio_loopback_acceptance.ps1'
+  Copy-Item -LiteralPath $InstallerPath -Destination $candidateInstaller -Force;Copy-Item -LiteralPath $ExecutablePath -Destination $candidateExecutable -Force;Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'windows_standard_user_acceptance.ps1') -Destination $childScript -Force;Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'windows_candidate_audio_loopback_acceptance.ps1') -Destination $audioScript -Force
   $stageGrant="${principal}:(OI)(CI)M";& icacls.exe $stageRoot /grant $stageGrant /T /C|Out-Null
   if($LASTEXITCODE-ne0){throw 'BLOCKED: failed to grant the isolated RDP user access to its candidate/test staging folder.'}
   $payloadPath=Join-Path $stageRoot 'task-payload.json'
-  [pscustomobject]@{ChildScript=$childScript;InstallerPath=$candidateInstaller;ExecutablePath=$candidateExecutable;EvidenceDirectory=$stageEvidence;ChildResultPath=$childResultPath;ExpectedSessionId=$sessionId;ExpectedUser=$principal;TaskContextPath=$taskContextPath}|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $payloadPath -Encoding UTF8
+  [pscustomobject]@{ChildScript=$childScript;AudioScript=$audioScript;InstallerPath=$candidateInstaller;ExecutablePath=$candidateExecutable;EvidenceDirectory=$stageEvidence;AudioEvidenceDirectory=$stageAudioEvidence;AudioControllerResultPath=$audioControllerResultPath;ChildResultPath=$childResultPath;ExpectedSessionId=$sessionId;ExpectedSessionName=$sessionRow.SessionName;ExpectedUser=$principal;TaskContextPath=$taskContextPath;RunnerName=$env:RUNNER_NAME;RunnerTemp=$env:RUNNER_TEMP;GitHubWorkspace=$env:GITHUB_WORKSPACE;GitHubRunId=$env:GITHUB_RUN_ID}|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $payloadPath -Encoding UTF8
   $runnerScript=Join-Path $stageRoot 'run-standard-user-child.ps1'
   $runnerBody=@'
 param([Parameter(Mandatory)][string]$PayloadPath)
@@ -170,6 +185,12 @@ $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $context=[pscustomobject]@{User=$identity.Name;Sid=$identity.User.Value;SessionId=$session;ExpectedSessionId=[int]$p.ExpectedSessionId;EnvironmentUserInteractive=[Environment]::UserInteractive;ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ObservedUtc=[DateTime]::UtcNow.ToString('o')}
 $context|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $p.TaskContextPath -Encoding UTF8
 if($identity.Name -ine [string]$p.ExpectedUser -or $session -ne [int]$p.ExpectedSessionId -or -not[Environment]::UserInteractive){exit 3}
+$env:GITHUB_ACTIONS='true';$env:RUNNER_ENVIRONMENT='github-hosted';$env:RUNNER_OS='Windows';$env:RUNNER_ARCH='X64';$env:GITHUB_SERVER_URL='https://github.com';$env:GITHUB_REPOSITORY='REMEDIOSSAMUEL/EYE-BREAK-REMINDER';$env:RUNNER_NAME=[string]$p.RunnerName;$env:RUNNER_TEMP=[string]$p.RunnerTemp;$env:GITHUB_WORKSPACE=[string]$p.GitHubWorkspace;$env:GITHUB_RUN_ID=[string]$p.GitHubRunId;$env:SESSIONNAME=[string]$p.ExpectedSessionName
+try { & $p.AudioScript -ExecutablePath $p.ExecutablePath -EvidenceDirectory $p.AudioEvidenceDirectory } catch { $audioHarnessError=$_.Exception.Message }
+$audioReportPath=Join-Path $p.AudioEvidenceDirectory 'reg-008-audio-loopback-results.json';$audioReport=$null
+if(Test-Path -LiteralPath $audioReportPath -PathType Leaf){try{$audioReport=Get-Content -LiteralPath $audioReportPath -Raw|ConvertFrom-Json}catch{}}
+[pscustomobject]@{Status=if($audioReport){[string]$audioReport.Status}else{'NOT TESTED'};Reason=if($audioReport){[string]$audioReport.Reason}else{[string]$audioHarnessError};RunnerContextSource='Outer PowerShell controller validated the GitHub-hosted runner; values copied into the same verified RDP session task';RdpSessionName=$p.ExpectedSessionName;RdpSessionId=$session;User=$identity.Name;AudioReportPresent=[bool]$audioReport;CompletedUtc=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath $p.AudioControllerResultPath -Encoding UTF8
+if(Test-Path -LiteralPath $p.AudioEvidenceDirectory){$audioDestination=Join-Path $p.EvidenceDirectory 'audio';[void][IO.Directory]::CreateDirectory($audioDestination);Get-ChildItem -LiteralPath $p.AudioEvidenceDirectory -File -Recurse|ForEach-Object{$target=Join-Path $audioDestination $_.Name;Copy-Item -LiteralPath $_.FullName -Destination $target -Force}}
 & $p.ChildScript -Child -InstallerPath $p.InstallerPath -ExecutablePath $p.ExecutablePath -EvidenceDirectory $p.EvidenceDirectory -ChildResultPath $p.ChildResultPath
 exit $LASTEXITCODE
 '@
@@ -177,14 +198,14 @@ exit $LASTEXITCODE
   $pwshPath=Join-Path $PSHOME 'pwsh.exe';$actionArgs="-NoProfile -ExecutionPolicy Bypass -File `"$runnerScript`" -PayloadPath `"$payloadPath`""
   $action=New-ScheduledTaskAction -Execute $pwshPath -Argument $actionArgs -WorkingDirectory $stageRoot
   $taskPrincipal=New-ScheduledTaskPrincipal -UserId $principal -LogonType Interactive -RunLevel Limited
-  $taskSettings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 20) -StartWhenAvailable -MultipleInstances IgnoreNew
+  $taskSettings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 35) -StartWhenAvailable -MultipleInstances IgnoreNew
   Register-ScheduledTask -TaskName $taskName -Action $action -Principal $taskPrincipal -Settings $taskSettings -Force -ErrorAction Stop|Out-Null
   $taskRegistered=$true
   $taskStartUtc=[DateTime]::UtcNow
   Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
   $testStarted=$true
   $testWatch=[Diagnostics.Stopwatch]::StartNew()
-  while($testWatch.Elapsed.TotalMinutes-lt20-and-not(Test-Path -LiteralPath $childResultPath -PathType Leaf)){
+  while($testWatch.Elapsed.TotalMinutes-lt35-and-not(Test-Path -LiteralPath $childResultPath -PathType Leaf)){
     Start-Sleep -Milliseconds 500
     $taskInfo=Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction SilentlyContinue
     $task=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -206,9 +227,10 @@ exit $LASTEXITCODE
   }elseif(Test-Path -LiteralPath $taskContextPath){
     $context=Get-Content -LiteralPath $taskContextPath -Raw|ConvertFrom-Json
     if(-not$context.EnvironmentUserInteractive-or$context.SessionId-ne$sessionId){$status='BLOCKED';$reason='The scheduled child did not run as an interactive process in the active RDP session.'}
-    else{$status='BLOCKED';$reason='The isolated RDP-session child did not produce its UIA result within 20 minutes.'}
+    else{$status='BLOCKED';$reason='The isolated RDP-session child did not produce its UIA result within 35 minutes.'}
     Copy-Item -LiteralPath $taskContextPath -Destination (Join-Path $EvidenceDirectory 'rdp-task-context.json') -Force
   }else{$status='BLOCKED';$reason='The interactive-token task did not start in the active RDP session.'}
+  if(Test-Path -LiteralPath $audioControllerResultPath -PathType Leaf){$audioControllerResult=Get-Content -LiteralPath $audioControllerResultPath -Raw|ConvertFrom-Json;Copy-Item -LiteralPath $audioControllerResultPath -Destination (Join-Path $EvidenceDirectory 'audio-controller-result.json') -Force;$audioReportPath=Join-Path (Join-Path $stageRoot 'audio-evidence') 'reg-008-audio-loopback-results.json';if(Test-Path -LiteralPath $audioReportPath -PathType Leaf){$audioReport=Get-Content -LiteralPath $audioReportPath -Raw|ConvertFrom-Json;Add-Event 'REG-008 exact candidate preview and Windows render-loopback attempt in the same isolated RDP session' ([string]$audioReport.Status) ([pscustomobject]@{Reason=$audioReport.Reason;AudioController=$audioControllerResult;PhysicalAudibility=$audioReport.PhysicalAudibility;Endpoint=$audioReport.AudioEndpoint;WasapiLoopbackStatus=$audioReport.WasapiLoopbackStatus})}else{Add-Event 'REG-008 exact candidate preview and Windows render-loopback attempt in the same isolated RDP session' 'NOT TESTED' $audioControllerResult}}
   if($status-eq'BLOCKED'){Add-Event 'Run exact-candidate Settings UIA in the active RDP user session' 'BLOCKED' $reason}
 }catch{
   $message=$_.Exception.Message
@@ -242,6 +264,17 @@ exit $LASTEXITCODE
   if($firewallCreated){try{Remove-NetFirewallRule -Name $firewallName -ErrorAction Stop}catch{$cleanupErrors.Add("Loopback firewall rule cleanup: $($_.Exception.Message)")}}
   if($rdpEnabled-and$null-ne$oldDeny){try{Set-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value ([int]$oldDeny) -ErrorAction Stop}catch{$cleanupErrors.Add("Restore RDP listener setting: $($_.Exception.Message)")}}
   try{if($oldServiceStartType){Set-Service -Name TermService -StartupType $oldServiceStartType -ErrorAction Stop};if($oldServiceState-eq'Stopped'){Stop-Service -Name TermService -Force -ErrorAction Stop}}catch{$cleanupErrors.Add("Restore Remote Desktop Services state: $($_.Exception.Message)")}
+  foreach($rule in $disabledInboundRules){try{Enable-NetFirewallRule -InputObject $rule -ErrorAction Stop}catch{$cleanupErrors.Add("Restore inbound firewall rule '$($rule.Name)': $($_.Exception.Message)")}}
+  if($firewallProfilesConfigured){
+    foreach($profile in $oldFirewallProfiles){try{Set-NetFirewallProfile -Profile $profile.Name -Enabled $profile.Enabled -DefaultInboundAction $profile.DefaultInboundAction -ErrorAction Stop}catch{$cleanupErrors.Add("Restore $($profile.Name) firewall profile: $($_.Exception.Message)")}}
+    try{
+      $restoredProfiles=@(Get-NetFirewallProfile -ErrorAction Stop)
+      $profileMismatches=@(foreach($expectedProfile in $oldFirewallProfiles){$actualProfile=@($restoredProfiles|Where-Object{$_.Name-ceq$expectedProfile.Name}|Select-Object -First 1);if(-not$actualProfile.Count-or[bool]$actualProfile[0].Enabled-ne$expectedProfile.Enabled-or[string]$actualProfile[0].DefaultInboundAction-cne$expectedProfile.DefaultInboundAction){$expectedProfile.Name}})
+      if($profileMismatches.Count){$cleanupErrors.Add("Windows Firewall profile restoration did not match its original state: $($profileMismatches-join', ')")}else{Add-Event 'Restore original Windows Firewall profile settings after the isolated RDP attempt' 'PASS' ([pscustomobject]@{Profiles=$restoredProfiles|ForEach-Object{[pscustomobject]@{Name=$_.Name;Enabled=$_.Enabled;DefaultInboundAction=$_.DefaultInboundAction}}})}
+      $missingRules=@(foreach($disabledRule in $disabledInboundRules){$restoredRule=@(Get-NetFirewallRule -Name $disabledRule.Name -ErrorAction SilentlyContinue|Where-Object{$_.Enabled-eq'True'});if(-not$restoredRule.Count){$disabledRule.Name}})
+      if($missingRules.Count){$cleanupErrors.Add("Some original enabled inbound firewall rules were not restored: $($missingRules-join', ')")}else{Add-Event 'Restore all previously enabled inbound allow rules' 'PASS' ([pscustomobject]@{Count=$disabledInboundRules.Count})}
+    }catch{$cleanupErrors.Add("Verify original firewall restoration: $($_.Exception.Message)")}
+  }
   try{if(Test-Path -LiteralPath $stageRoot){$resolved=[IO.Path]::GetFullPath($stageRoot);$runnerTemp=[IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')+'\';if(-not$resolved.StartsWith($runnerTemp,[StringComparison]::OrdinalIgnoreCase)-or([IO.File]::GetAttributes($resolved)-band[IO.FileAttributes]::ReparsePoint)){throw 'Refusing cleanup outside the non-reparse RUNNER_TEMP test folder.'};Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop}}catch{$cleanupErrors.Add("Temporary staging cleanup: $($_.Exception.Message)")}
   if($cleanupErrors.Count-and$status-ne'FAIL'){$status='BLOCKED';$reason="The UI result could not be accepted because isolated-runner cleanup was incomplete: $($cleanupErrors-join'; ')"}
   try{Save-Status $status $reason}catch{Write-Error "Could not write final Settings RDP evidence: $($_.Exception.Message)"}
