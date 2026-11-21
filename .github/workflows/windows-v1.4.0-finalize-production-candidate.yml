@@ -389,6 +389,15 @@ jobs:
             mingw-w64-x86_64-python
             mingw-w64-x86_64-openssl
 
+      - name: Expose MinGW strip under the cross-tool alias expected by the baseline script
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          strip_tool="$(command -v strip)"
+          test -x "$strip_tool"
+          cp "$strip_tool" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          test -x /mingw64/bin/x86_64-w64-mingw32-strip.exe
+
       - name: Install pinned NSIS 3.11.7461.309 x86 Unicode build
         uses: negrutiu/nsis-install@9c575d44c2938a43e38a305caeb403de90303c60 # v3
         with:
