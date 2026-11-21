@@ -98,7 +98,7 @@ jobs:
               if ($changedPathText -cne $expectedPathText) { throw 'Dispatched finalization allows only the three public metadata files, the reviewed finalizer gate, and the two pinned Windows test-harness files after the candidate source.' }
               $updaterTestBlob = (git rev-parse "$($env:GITHUB_SHA):tests/updater_windows_tests.cpp").Trim()
               $signedGuiTestBlob = (git rev-parse "$($env:GITHUB_SHA):tests/windows_signed_update_gui_acceptance.ps1").Trim()
-              if ($updaterTestBlob -cne 'f1692dc619d7455e744f14d258d8371133fafacc' -or $signedGuiTestBlob -cne '1ec911248660dfce82592e5f5b3707ecfe7a6ba7') { throw 'The post-candidate Windows test harnesses must match the exact reviewed bounded-warm-up and production-key-guard corrections.' }
+              if ($updaterTestBlob -cne '62628414956e77242d89f61f4c9db908ada0389f' -or $signedGuiTestBlob -cne '1ec911248660dfce82592e5f5b3707ecfe7a6ba7') { throw 'The post-candidate Windows test harnesses must match the exact reviewed 16-sample bounded warm-up and production-key-guard corrections.' }
             }
           }
           if ($env:CANDIDATE_RUN_ID -notmatch '^\d{5,}$') { throw 'Candidate run ID must be a decimal GitHub Actions run ID.' }
