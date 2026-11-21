@@ -4,7 +4,7 @@
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
   "branch_head": "3b5e307473c37fd484ea0be02cf8536385e1407a",
-  "branch_head_scope": "Latest implementation and security test head validated before this documentation-only refresh. Product candidate binaries are source-bound to 491bd2ed29f84f4d434b884fc723144db2d6f294; required CI, security checks, and finalizer passed on 3b5e307473c37fd484ea0be02cf8536385e1407a. This matrix/report refresh changes documentation only; the required PR check is to be verified on the resulting documentation commit.",
+  "branch_head_scope": "Latest product/security implementation and test head: 3b5e307473c37fd484ea0be02cf8536385e1407a; candidate binary source 491bd2ed29f84f4d434b884fc723144db2d6f294. The first documentation refresh commit ba26eb0aa60934115c6e69c575a0887a7d3031b2 passed required Core/Windows CI (44877373086) and Windows security (44877373084). This follow-up changes only the acceptance-matrix validation record; current-head PR checks are recorded in the final handoff.",
   "current_release_candidate": {
     "status": "A seven-file production candidate with an authentic ECDSA P-256/SHA-256 signed update manifest is retained and independently verified. The application and installer are Authenticode NotSigned; this is allowed by the owner's approved v1.4.0 policy. Candidate is ready for separate owner publication approval; it has not been published or merged.",
     "candidate_class": "PRODUCTION-AUTHENTICATED UPDATE CANDIDATE (Authenticode unsigned)",
@@ -3719,7 +3719,7 @@
       "description": "Required Core tests and Windows package check passes",
       "implementation_status": "REPOSITORY/CI STATE REQUIREMENT; verified remote evidence is tracked separately.",
       "required_tests": "Check on final PR head",
-      "actual_verification_evidence": "PASS: required Core tests and Windows package check completed SUCCESS on implementation/test head 3b5e307473c37fd484ea0be02cf8536385e1407a in run 44875651061. A docs-only commit is being pushed; its check will be monitored to terminal status.",
+      "actual_verification_evidence": "PASS: required Core tests and Windows package check completed SUCCESS on implementation/test head 3b5e307473c37fd484ea0be02cf8536385e1407a in run 44875651061 and on report commit ba26eb0aa60934115c6e69c575a0887a7d3031b2 in run 44877373086. The subsequent change is matrix validation metadata only.",
       "environment": "GitHub Actions run 44415319765",
       "tested_source_commit": "75697af6f75fbb6c37ee68144f43c4458e4c30a1",
       "tested_binary_sha256": null,
@@ -4058,7 +4058,7 @@
     "BLOCKED": 10,
     "NOT APPLICABLE": 2
   },
-  "generated_at_utc": "2026-11-21T06:47:45Z",
+  "generated_at_utc": "2026-11-21T06:53:46Z",
   "latest_validation": {
     "latest_implementation_test_head": "3b5e307473c37fd484ea0be02cf8536385e1407a",
     "candidate_source_commit": "491bd2ed29f84f4d434b884fc723144db2d6f294",
@@ -4084,10 +4084,20 @@
     "resource_soak_status": "PASS: exact production EXE hash 07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720; 110 cycles, 264 PASS, 0 FAIL, 0 NOT TESTED, 7,560.8 seconds.",
     "focused_resource_regression_run_id": 44875374493,
     "focused_resource_regression_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44875374493",
-    "required_check_on_documentation_commit": "Pending push of this documentation-only update; no production payload rebuild or long soak is required for documentation changes.",
+    "required_check_on_documentation_commit": "PASS on documentation report commit ba26eb0aa60934115c6e69c575a0887a7d3031b2: Core tests and Windows package run 44877373086; Windows security run 44877373084. This later matrix-only validation-note commit does not alter product inputs; its current-head check is recorded in the final handoff.",
     "main_ruleset": "Ruleset 27397921 is active, protects main with required Core tests and Windows package check, strict status checks, and no bypass actors.",
     "pull_request": "PR #7 is OPEN and DRAFT; it is not merged.",
-    "working_directory_policy": "No Exercise Break Reminder access; no host restart, shutdown, lock, suspend, or hibernate; no release/tag publication."
+    "working_directory_policy": "No Exercise Break Reminder access; no host restart, shutdown, lock, suspend, or hibernate; no release/tag publication.",
+    "report_commit_checks": {
+      "tested_report_commit": "ba26eb0aa60934115c6e69c575a0887a7d3031b2",
+      "required_ci_run_id": 44877373086,
+      "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44877373086",
+      "required_ci_status": "PASS: Core tests and Windows package completed successfully.",
+      "security_run_id": 44877373084,
+      "security_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44877373084",
+      "security_status": "PASS: CNG signature suite, genuine DNS failure/retry, and SEC-028 completed successfully.",
+      "scope": "The final follow-up after this report commit changes only matrix validation metadata; no application source or candidate payload changed."
+    }
   },
   "latest_pr_head_sha": "3b5e307473c37fd484ea0be02cf8536385e1407a",
   "latest_pr_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7",
