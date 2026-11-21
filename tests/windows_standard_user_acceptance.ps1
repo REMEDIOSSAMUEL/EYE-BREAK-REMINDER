@@ -3,7 +3,8 @@ param(
   [Parameter(Mandatory)][string]$ExecutablePath,
   [Parameter(Mandatory)][string]$EvidenceDirectory,
   [switch]$Child,
-  [string]$ChildResultPath
+  [string]$ChildResultPath,
+  [switch]$DisableWholeDesktopCaptures
 )
 $ErrorActionPreference='Stop'
 
@@ -97,6 +98,7 @@ public static class EBR_STD_UIA_CLIENT {
     try{$bounds=[EBR_STD_NATIVE]::Bounds($Window);if($bounds.Count-ne4-or$bounds[2]-le$bounds[0]-or$bounds[3]-le$bounds[1]){return $null};$bitmap=[Drawing.Bitmap]::new($bounds[2]-$bounds[0],$bounds[3]-$bounds[1]);$graphics=[Drawing.Graphics]::FromImage($bitmap);$path=Join-Path $EvidenceDirectory $Name;try{$graphics.CopyFromScreen($bounds[0],$bounds[1],0,0,$bitmap.Size);$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()};return $path}catch{return $null}
   }
   function Capture-StandardUserDesktop([string]$Name){
+    if($DisableWholeDesktopCaptures){return $null}
     try{$bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen;if($bounds.Width-le0-or$bounds.Height-le0){return $null};$bitmap=[Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[Drawing.Graphics]::FromImage($bitmap);$path=Join-Path $EvidenceDirectory $Name;try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$bitmap.Save($path,[Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()};return $path}catch{return $null}
   }
   function Invoke-StandardUserWizard([string]$Path,[string]$Kind,[Diagnostics.Process]$ExistingProcess=$null){
@@ -213,10 +215,7 @@ public static class EBR_STD_UIA_CLIENT {
       $visibleWindows=@(foreach($process in $settingsProcesses){foreach($handle in [EBR_STD_NATIVE]::TopWindowsForProcess($process.Id)){if([EBR_STD_NATIVE]::IsWindowVisible($handle)){[pscustomobject]@{ProcessId=$process.Id;ProcessName=$process.Name;Handle=('0x{0:X}' -f $handle.ToInt64());Title=[EBR_STD_NATIVE]::Text($handle);Class=[EBR_STD_NATIVE]::ClassName($handle);Bounds=[EBR_STD_NATIVE]::Bounds($handle)}}}})
       return [pscustomobject]@{Status='NOT TESTED';Reason='The disposable Windows session did not expose the Installed apps page through UI Automation, including direct SystemSettings.exe activation.';SettingsProcessId=$(if($settingsProcess){$settingsProcess.Id}else{$null});SettingsProcesses=$settingsProcesses;VisibleWindows=$visibleWindows;Screenshot=$screenshot;LaunchMethods=$settingsLaunchMethods.ToArray();LaunchErrors=$settingsLaunchErrors.ToArray()}
     }
-    try{
-      $bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen
-      if($bounds.Width-gt0-and$bounds.Height-gt0){$bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[System.Drawing.Graphics]::FromImage($bitmap);try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$screenshot=Join-Path $EvidenceDirectory 'standard-user-settings-apps-before-uninstall.png';$bitmap.Save($screenshot,[System.Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()}}
-    }catch{}
+      $screenshot=Capture-StandardUserDesktop 'standard-user-settings-apps-before-uninstall.png'
     $search=$null
     foreach($element in @($settingsRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))){try{if($element.Current.ControlType-eq[System.Windows.Automation.ControlType]::Edit-and$element.Current.Name-match'(?i)search apps|search this list'){$search=$element;break}}catch{}}
     if(-not$search){return [pscustomobject]@{Status='NOT TESTED';Reason='Installed apps page has no accessible app-search field.';VisibleNames=@($names|Select-Object -Unique|Select-Object -First 80);Screenshot=$screenshot}}
@@ -228,7 +227,7 @@ public static class EBR_STD_UIA_CLIENT {
     }
     if(-not$appEntry){return [pscustomobject]@{Status='NOT TESTED';Reason='The standard-user installation did not appear in the Settings > Installed apps search results.';VisibleNames=@($names|Select-Object -Unique|Select-Object -First 80);Screenshot=$screenshot}}
     $entryScreenshot=$null
-    try{$bounds=[System.Windows.Forms.SystemInformation]::VirtualScreen;$bitmap=[System.Drawing.Bitmap]::new($bounds.Width,$bounds.Height);$graphics=[System.Drawing.Graphics]::FromImage($bitmap);try{$graphics.CopyFromScreen($bounds.Left,$bounds.Top,0,0,$bitmap.Size);$entryScreenshot=Join-Path $EvidenceDirectory 'standard-user-settings-apps-eye-break-reminder-found.png';$bitmap.Save($entryScreenshot,[System.Drawing.Imaging.ImageFormat]::Png)}finally{$graphics.Dispose();$bitmap.Dispose()}}catch{}
+    try{$entryHandle=[IntPtr]$settingsRoot.Current.NativeWindowHandle;$entryScreenshot=Capture-StandardUserWizard $entryHandle 'standard-user-settings-apps-eye-break-reminder-found.png'}catch{}
     $menuButton=$null;$scope=$appEntry
     for($depth=0;$depth-lt7-and-not$menuButton;$depth++){
       try{$controls=@($scope.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition));$menuButton=@($controls|Where-Object{try{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$_.Current.IsEnabled-and$_.Current.Name-match'(?i)more options|more actions|options for'}catch{$false}}|Select-Object -First 1|ForEach-Object{$_})|Select-Object -First 1}catch{}
@@ -325,8 +324,22 @@ public static class EBR_STD_UIA_CLIENT {
     if(-not$appProcess-or$appProcess.HasExited-or$appProcess.MainWindowHandle-eq[IntPtr]::Zero){throw 'The standard user could not launch a visible application window.'}
     $events.Add([pscustomobject]@{Name='Installed candidate launches with a visible window under the standard account';Status='PASS';Pid=$appProcess.Id;Title=$windowTitle;MainWindowHandle=('0x{0:X}'-f$appProcess.MainWindowHandle.ToInt64())})
     Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue;$appProcess=$null
+    $settingsUninstallData=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder';[void][IO.Directory]::CreateDirectory($settingsUninstallData)
+    $settingsUninstallSettings=Join-Path $settingsUninstallData 'settings.ini';$settingsUninstallHistory=Join-Path $settingsUninstallData 'history.dat';$settingsUninstallUnrelated=Join-Path $settingsUninstallData 'user-not-owned.txt'
+    $settingsUninstallSettingsText="workMinutes=37`nbreakSeconds=33`ntheme=2`nvolume=32`ncustomWorkAccent=1`nworkAccentColor=3900150`ncustomBreakAccent=1`nbreakAccentColor=16746496`nstartup=0`nautoCheckUpdates=0`nautoDownloadUpdates=0`n"
+    $settingsUninstallHistoryText="1700000000 1 20`n";$settingsUninstallUnrelatedText='unrelated disposable test document'
+    [IO.File]::WriteAllText($settingsUninstallSettings,$settingsUninstallSettingsText,[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText($settingsUninstallHistory,$settingsUninstallHistoryText,[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText($settingsUninstallUnrelated,$settingsUninstallUnrelatedText,[Text.UTF8Encoding]::new($false))
+    $settingsUninstallDataHashes=[pscustomobject]@{Settings=(Get-FileHash -LiteralPath $settingsUninstallSettings -Algorithm SHA256).Hash.ToLowerInvariant();History=(Get-FileHash -LiteralPath $settingsUninstallHistory -Algorithm SHA256).Hash.ToLowerInvariant();Unrelated=(Get-FileHash -LiteralPath $settingsUninstallUnrelated -Algorithm SHA256).Hash.ToLowerInvariant()}
+    $events.Add([pscustomobject]@{Name='Seed disposable settings, history, and unrelated file before Settings uninstall';Status='PASS';Hashes=$settingsUninstallDataHashes})
     $settingsUninstall=Invoke-SettingsAppsUninstall $uninstaller
     $events.Add([pscustomobject]@{Name='Windows Settings > Apps uninstalls the standard-user candidate';Status=$settingsUninstall.Status;Details=$settingsUninstall;TokenAdministrator=$false})
+    if($settingsUninstall.Status-eq'PASS'){
+      $settingsAfter=Test-Path -LiteralPath $settingsUninstallSettings -PathType Leaf;$historyAfter=Test-Path -LiteralPath $settingsUninstallHistory -PathType Leaf;$unrelatedAfter=Test-Path -LiteralPath $settingsUninstallUnrelated -PathType Leaf
+      $settingsAfterHash=if($settingsAfter){(Get-FileHash -LiteralPath $settingsUninstallSettings -Algorithm SHA256).Hash.ToLowerInvariant()}else{''};$historyAfterHash=if($historyAfter){(Get-FileHash -LiteralPath $settingsUninstallHistory -Algorithm SHA256).Hash.ToLowerInvariant()}else{''};$unrelatedAfterHash=if($unrelatedAfter){(Get-FileHash -LiteralPath $settingsUninstallUnrelated -Algorithm SHA256).Hash.ToLowerInvariant()}else{''}
+      $retained=$settingsAfter-and$historyAfter-and$unrelatedAfter-and$settingsAfterHash-ceq$settingsUninstallDataHashes.Settings-and$historyAfterHash-ceq$settingsUninstallDataHashes.History-and$unrelatedAfterHash-ceq$settingsUninstallDataHashes.Unrelated
+      if(-not$retained){$events.Add([pscustomobject]@{Name='Windows Settings uninstall preserves settings/history and unrelated file byte-for-byte';Status='FAIL';SettingsExists=$settingsAfter;HistoryExists=$historyAfter;UnrelatedExists=$unrelatedAfter;SettingsSHA256=$settingsAfterHash;HistorySHA256=$historyAfterHash;UnrelatedSHA256=$unrelatedAfterHash;ExpectedHashes=$settingsUninstallDataHashes;DataRetentionChoice=$settingsUninstall.Wizard.DataRetentionChoice});throw 'Settings > Apps uninstall did not retain the explicit Keep choice data and unrelated file byte-for-byte.'}
+      $events.Add([pscustomobject]@{Name='Windows Settings uninstall preserves settings/history and unrelated file byte-for-byte';Status='PASS';SettingsSHA256=$settingsAfterHash;HistorySHA256=$historyAfterHash;UnrelatedSHA256=$unrelatedAfterHash;DataRetentionChoice=$settingsUninstall.Wizard.DataRetentionChoice})
+    }
     Get-Process -Name SystemSettings -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId}|ForEach-Object{[void]$_.CloseMainWindow()}
     if($settingsUninstall.Status-eq'FAIL'){throw $settingsUninstall.Reason}
     if($settingsUninstall.Status-eq'PASS'){
@@ -404,7 +417,8 @@ try{
     & icacls.exe $stageRoot /grant "${principal}:(OI)(CI)M" /T /C|Out-Null
     if($LASTEXITCODE-ne0){throw "Could not grant the disposable standard user access to its isolated staging folder (icacls $LASTEXITCODE)."}
     $pwsh=Join-Path $PSHOME 'pwsh.exe';$childScript=Join-Path $stageRoot 'windows_standard_user_acceptance.ps1'
-    $arguments="-NoProfile -ExecutionPolicy Bypass -File `"$childScript`" -Child -InstallerPath `"$(Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe')`" -ExecutablePath `"$(Join-Path $stageRoot 'EyeBreakReminder.exe')`" -EvidenceDirectory `"$stageEvidence`" -ChildResultPath `"$childResult`""
+    $safeCaptureArgument=if($DisableWholeDesktopCaptures){' -DisableWholeDesktopCaptures'}else{''}
+    $arguments="-NoProfile -ExecutionPolicy Bypass -File `"$childScript`" -Child -InstallerPath `"$(Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe')`" -ExecutablePath `"$(Join-Path $stageRoot 'EyeBreakReminder.exe')`" -EvidenceDirectory `"$stageEvidence`" -ChildResultPath `"$childResult`"$safeCaptureArgument"
     $credential=[pscredential]::new($principal,$securePassword)
     $childStdout=Join-Path $stageRoot 'standard-user-child.stdout.log';$childStderr=Join-Path $stageRoot 'standard-user-child.stderr.log'
     $childProcess=Start-Process -FilePath $pwsh -Credential $credential -LoadUserProfile -ArgumentList $arguments -RedirectStandardOutput $childStdout -RedirectStandardError $childStderr -PassThru
@@ -463,7 +477,7 @@ $accountRemoved=(-not[bool](Get-LocalUser -Name $userName -ErrorAction SilentlyC
 if(-not$accountRemoved){$cleanupErrors.Add('Disposable standard-user account still exists after cleanup.')};if(-not$stageRemoved){$cleanupErrors.Add('Temporary candidate staging directory still exists after cleanup.')}
 $settingsEvent=if($result){@($result.Events|Where-Object{$_.Name-eq'Windows Settings > Apps uninstalls the standard-user candidate'}|Select-Object -First 1)}else{@()}
 $settingsScreenshotDirectory=Join-Path $evidenceRoot 'standard-user-screenshots'
-$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;ChildExitCode=$childExitCode;ChildResultCaptured=[bool]$result;CleanupActions=$cleanupActions.ToArray();CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};SettingsAppsUninstall=if($settingsEvent.Count){$settingsEvent[0].Status}else{'NOT TESTED'};SettingsAppsUninstallReason=if($settingsEvent.Count){$settingsEvent[0].Details.Reason}else{'The Settings Apps probe did not produce a result.'};SettingsScreenshots=@(Get-ChildItem -LiteralPath $settingsScreenshotDirectory -Filter '*.png' -File -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Name);CompletedUtc=[DateTime]::UtcNow.ToString('o')}
+$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;ChildExitCode=$childExitCode;ChildResultCaptured=[bool]$result;CleanupActions=$cleanupActions.ToArray();CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;WholeDesktopCapturesDisabled=[bool]$DisableWholeDesktopCaptures;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};SettingsAppsUninstall=if($settingsEvent.Count){$settingsEvent[0].Status}else{'NOT TESTED'};SettingsAppsUninstallReason=if($settingsEvent.Count){$settingsEvent[0].Details.Reason}else{'The Settings Apps probe did not produce a result.'};SettingsScreenshots=@(Get-ChildItem -LiteralPath $settingsScreenshotDirectory -Filter '*.png' -File -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Name);CompletedUtc=[DateTime]::UtcNow.ToString('o')}
 if($cleanupErrors.Count-gt0){$resultObject.Status='FAIL';$failureParts=@($reason)+@($cleanupErrors.ToArray())|Where-Object{$_};$resultObject.Failure=$failureParts -join '; '}
 Save-StandardUserResult $finalResult $resultObject
 $resultObject|ConvertTo-Json -Depth 8

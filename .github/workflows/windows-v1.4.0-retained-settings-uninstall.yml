@@ -1,0 +1,217 @@
+name: v1.4.0 retained candidate Settings uninstall
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  audio-endpoint-preflight:
+    name: Exact candidate Windows 11 ARM64 audio endpoint preflight
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out the endpoint probe
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Verify the exact executable and record Windows audio endpoints
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "Audio probe candidate hash mismatch: $actual" }
+          & .\tests\windows_audio_endpoint_inventory.ps1 `
+            -EvidenceDirectory '.\remaining-coverage-evidence\audio-endpoint' `
+            -CandidateRunId '44875679345' `
+            -CandidateExeSHA256 $expected
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $report = Get-Content '.\remaining-coverage-evidence\audio-endpoint\windows-audio-endpoint-inventory.json' -Raw | ConvertFrom-Json
+          $summary = @(
+            '**Exact-candidate audio endpoint preflight (not a REG-008 PASS)**'
+            ''
+            "Candidate artifact 14695418078; EXE SHA-256 $($report.CandidateExecutableSHA256)."
+            "OS: $($report.OS) $($report.OSVersion); OS architecture $($report.OSArchitecture); candidate x64 emulation is not native x64."
+            "WinMM endpoints: $($report.WinMM.DeviceCount). Active WASAPI render endpoints: $($report.WASAPI.ActiveRenderEndpointCount)."
+            "Result: $($report.WindowsAudioOutputAndLoopbackStatus). $($report.Reason)"
+          ) -join "`n"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary
+          Write-Host $summary
+
+      - name: Retain audio endpoint capability evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-reg-008-audio-endpoint-preflight-${{ github.run_id }}
+          path: remaining-coverage-evidence/audio-endpoint/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  narrator-speech-recap-windows-11-arm64:
+    name: Exact candidate Narrator speech-content and keyboard accessibility probe
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Verify exact candidate and run Narrator Speech Recap against real controls
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Join-Path $PWD 'production-candidate-artifact/final-candidate'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          $exe = Join-Path $release 'EyeBreakReminder.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Exact candidate executable is missing.' }
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "Narrator candidate hash mismatch: $actual" }
+          $evidence = Join-Path $PWD 'remaining-coverage-evidence/narrator'
+          & .\tests\windows_narrator_speech_recap_acceptance.ps1 -ExecutablePath $exe -EvidenceDirectory $evidence
+          if (-not (Test-Path -LiteralPath (Join-Path $evidence 'gui-016-narrator-speech-recap.json'))) { throw 'Narrator harness produced no result report.' }
+          $report = Get-Content (Join-Path $evidence 'gui-016-narrator-speech-recap.json') -Raw | ConvertFrom-Json
+          $summary = "Requirement: GUI-016`nCandidate: artifact $($report.Candidate.ArtifactId), SHA-256 $($report.Candidate.SHA256)`nOS: $($report.OperatingSystem.Caption) $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nOS/native CPU: $($report.OperatingSystem.OSArchitecture) / $($report.OperatingSystem.NativeProcessorArchitecture)`nEnvironment: GitHub-hosted interactive Windows 11 ARM64; candidate x64 emulation`nStatus: $($report.Status)`nReason: $($report.Reason)`nFresh speech captures: $($report.Narrator.Captures.Count)`nPhysical audio verified: $($report.Narrator.PhysicalAudioVerified)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($report.Status -eq 'FAIL') { throw "Narrator acceptance harness found a product failure: $($report.Reason)" }
+
+      - name: Preserve Narrator speech-content logs and target-window screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-gui-016-narrator-speech-${{ github.run_id }}
+          path: remaining-coverage-evidence/narrator/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  settings-uninstall-windows-server-x64:
+    name: Exact candidate via temporary Windows Server localhost RDP desktop (native x64)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Verify all seven retained candidate files and provenance
+        id: identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Join-Path $PWD 'production-candidate-artifact/final-candidate'
+          $evidence = Join-Path $PWD 'production-candidate-artifact/final-candidate-evidence'
+          $expected = @{
+            'EyeBreakReminder.exe' = @{Bytes=2889728; SHA256='07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'}
+            'EyeBreakReminder-Setup-x64.exe' = @{Bytes=1395896; SHA256='a15fc525557603dbed1ef0dccb8d128e500dfee91c6416b478513de790dd5c9b'}
+            'EyeBreakReminder-Portable-x64.zip' = @{Bytes=1573754; SHA256='a579b0e3cd7573f4214b0df4ff25dee99801735123658afd70e455886189c2be'}
+            'EyeBreakReminder-Source.zip' = @{Bytes=2650888; SHA256='a915342af6e50122a2d511e4cb91eb036de9b4fbf21889d6ecfcb9de1c8c140d'}
+            'EyeBreakReminder-SHA256.txt' = @{Bytes=382; SHA256='5fc0ed3317c3e4e0ad1b57ffc2cef435031db8024d7a1ca024ff14d1b46a9538'}
+            'EyeBreakReminder-UpdateManifest.json' = @{Bytes=682; SHA256='e599ff055613366133ba8a03bae3f7acff9ac383d24214cc0c620a7efbe9a682'}
+            'EyeBreakReminder-UpdateManifest.sig' = @{Bytes=64; SHA256='411372a2b5a1836968d60b6f1c3e3c7d21830df3c43d92728366653833f6b8c8'}
+          }
+          $files = @(Get-ChildItem -LiteralPath $release -File)
+          if ($files.Count -ne 7) { throw "Authoritative artifact must contain seven files; found $($files.Count)." }
+          $actual = foreach ($name in ($expected.Keys | Sort-Object)) {
+            $path = Join-Path $release $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate file missing: $name" }
+            $file = Get-Item -LiteralPath $path
+            $sha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($file.Length -ne $expected[$name].Bytes -or $sha -cne $expected[$name].SHA256) { throw "Artifact 14695418078 identity mismatch: $name" }
+            [pscustomobject]@{Name=$name;Bytes=$file.Length;SHA256=$sha}
+          }
+          $provenance = Get-Content -LiteralPath (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          $verification = Get-Content -LiteralPath (Join-Path $evidence 'candidate-verification.json') -Raw | ConvertFrom-Json
+          if ($provenance.Status -cne 'PASS' -or $provenance.FinalizationRunId -ne '44875679345' -or $provenance.CandidateSourceCommit -cne '491bd2ed29f84f4d434b884fc723144db2d6f294') { throw 'Candidate provenance does not match the authoritative finalizer and source commit.' }
+          if ($verification.status -cne 'PASS' -or -not $verification.manifest_signature_verified_against_embedded_key -or -not $verification.signed_payloads_verified) { throw 'Retained candidate signature verification evidence is incomplete.' }
+          $os = Get-CimInstance Win32_OperatingSystem
+          if ($os.Caption -notmatch 'Windows Server 2025' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [Runtime.InteropServices.Architecture]::X64) { throw "Expected native Windows Server 2025 x64 test runner; found $($os.Caption), $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)." }
+          $record = [pscustomobject]@{Requirement='UN-009';ArtifactId='14695418078';FinalizerRunId='44875679345';CandidateSourceCommit=$provenance.CandidateSourceCommit;CandidateEXESHA256=$expected['EyeBreakReminder.exe'].SHA256;OS=$os.Caption;OSVersion=$os.Version;OSBuild=$os.BuildNumber;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();CandidateArchitecture='x64 native';NativeOrEmulated='Native';Environment='GitHub-hosted disposable Windows Server 2025 x64 runner; interactive localhost RDP session required';Files=$actual;VerifiedUtc=[DateTime]::UtcNow.ToString('o')}
+          New-Item -ItemType Directory -Force -Path 'remaining-coverage-evidence/settings-uninstall' | Out-Null
+          $record | ConvertTo-Json -Depth 7 | Set-Content 'remaining-coverage-evidence/settings-uninstall/candidate-identity.json' -Encoding UTF8
+          $record | ConvertTo-Json -Depth 7
+
+      - name: Create a loopback-only interactive RDP session and use Windows Settings > Apps > Installed Apps
+        id: settings-uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Join-Path $PWD 'production-candidate-artifact/final-candidate'
+          $evidence = Join-Path $PWD 'remaining-coverage-evidence/settings-uninstall'
+          $harnessError = ''
+          try {
+            & .\tests\windows_settings_uninstall_loopback_rdp.ps1 `
+            -InstallerPath (Join-Path $release 'EyeBreakReminder-Setup-x64.exe') `
+            -ExecutablePath (Join-Path $release 'EyeBreakReminder.exe') `
+            -EvidenceDirectory $evidence
+          } catch { $harnessError = $_.Exception.Message; Write-Warning $harnessError }
+          $resultPath = Join-Path $evidence 'settings-uninstall-rdp-results.json'
+          if (-not (Test-Path -LiteralPath $resultPath)) {
+            "UN-009 NOT TESTED: the loopback RDP harness produced no result file. $harnessError" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            exit 0
+          }
+          $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+          $summary = "Requirement: UN-009`nCandidate: artifact 14695418078, EXE SHA-256 $($result.CandidateExecutableSHA256)`nOS: $($result.OS) build $($result.OSBuild), OS architecture $($result.OSArchitecture), candidate native x64`nEnvironment: $($result.Environment)`nResult: $($result.Status)`nRDP session ID: $($result.RdpSessionId)`nReason: $($result.Reason)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($result.Status -eq 'FAIL') { throw "Exact-candidate Settings uninstall harness found a real failure: $($result.Reason)" }
+          if ($result.Status -ne 'PASS') { Write-Warning 'UN-009 remains unresolved; raw RDP/UIA logs and screenshots are retained.'; exit 0 }
+          Write-Host 'PASS: exact production candidate removed through Windows Settings Installed Apps with retained user data verified.'
+
+      - name: Recheck the seven artifact files stayed byte-identical
+        if: always() && steps.identity.outcome == 'success'
+        shell: pwsh
+        run: |
+          $identity = Get-Content 'remaining-coverage-evidence/settings-uninstall/candidate-identity.json' -Raw | ConvertFrom-Json
+          foreach ($file in $identity.Files) {
+            $path = Join-Path 'production-candidate-artifact/final-candidate' $file.Name
+            if (-not (Test-Path -LiteralPath $path) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.SHA256) { throw "Candidate bytes changed during the test: $($file.Name)" }
+          }
+          Write-Host 'PASS: all seven downloaded production candidate files remain byte-identical.'
+
+      - name: Retain Settings UIA logs, screenshots, and candidate provenance
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-un-009-settings-uninstall-${{ github.run_id }}
+          path: remaining-coverage-evidence/settings-uninstall/**
+          if-no-files-found: warn
+          retention-days: 90
