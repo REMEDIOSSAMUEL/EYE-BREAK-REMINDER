@@ -221,7 +221,7 @@ bool testDnsResolutionFailure(const std::wstring&stage){
     eye::updates::HttpResponse response;if(configured)for(unsigned i=0;i<8;++i)response=eye::updates::latestStableReleaseResponse();
     Sleep(5000);std::vector<DWORD>dnsHandleSamples;DWORD stableHandleBaseline=0,previousHandles=0;unsigned stableSamples=0,warmupSamples=0;bool stableBaselineObserved=false;
     for(unsigned i=0;i<100&&configured;++i){response=eye::updates::latestStableReleaseResponse();Sleep(250);DWORD handles=0;if(!GetProcessHandleCount(GetCurrentProcess(),&handles))break;dnsHandleSamples.push_back(handles);++warmupSamples;if(i&&handles==previousHandles)++stableSamples;else stableSamples=0;previousHandles=handles;if(i>=63&&stableSamples>=16)break;}
-    stableHandleBaseline=previousHandles;stableBaselineObserved=warmupSamples>=64&&stableSamples>=8;bool repeatedHandleCountsStable=stableBaselineObserved;
+    stableHandleBaseline=previousHandles;stableBaselineObserved=warmupSamples>=64&&stableSamples>=16;bool repeatedHandleCountsStable=stableBaselineObserved;
     for(unsigned i=0;i<20&&configured;++i){response=eye::updates::latestStableReleaseResponse();Sleep(250);DWORD handles=0;const bool observed=GetProcessHandleCount(GetCurrentProcess(),&handles)!=FALSE;dnsHandleSamples.push_back(handles);repeatedHandleCountsStable&=observed&&handles==stableHandleBaseline;}
     const bool restoredEnvironment=previousLength?SetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",std::wstring(previous,previousLength).c_str())!=FALSE:SetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",nullptr)!=FALSE;
     Sleep(5000);DWORD finalHandles=0;const bool handlesObserved=GetProcessHandleCount(GetCurrentProcess(),&finalHandles)!=FALSE;
