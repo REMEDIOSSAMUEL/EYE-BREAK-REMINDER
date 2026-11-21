@@ -607,8 +607,12 @@ function Get-RuleRemoteAddresses($Rule) {
   $filter=Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $Rule -ErrorAction Stop
   @($filter.RemoteAddress | ForEach-Object {[string]$_})
 }
+function Get-RuleLocalAddresses($Rule) {
+  $filter=Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $Rule -ErrorAction Stop
+  @($filter.LocalAddress | ForEach-Object {[string]$_})
+}
 function Get-ActiveFirewallRules {
-  @(Get-NetFirewallRule -PolicyStore ActiveStore -TracePolicyStoreSource -ErrorAction Stop)
+  @(Get-NetFirewallRule -PolicyStore ActiveStore -TracePolicyStore -ErrorAction Stop)
 }
 function Get-GroupPolicyAllowSignatures {
   $rows=[System.Collections.Generic.List[string]]::new()
@@ -619,7 +623,15 @@ function Get-GroupPolicyAllowSignatures {
   @($rows.ToArray() | Sort-Object)
 }
 function Initialize-DisposableRunnerFirewall {
-  $script:FirewallProfilesSnapshot=@(Get-NetFirewallProfile -ErrorAction Stop | ForEach-Object {[pscustomobject]@{Name=[string]$_.Name;Enabled=[bool]$_.Enabled;DefaultInboundAction=[string]$_.DefaultInboundAction}})
+  $enabledParameterType=(Get-Command Set-NetFirewallProfile -ErrorAction Stop).Parameters['Enabled'].ParameterType
+  if (-not $enabledParameterType.IsEnum) { throw "BLOCKED: Set-NetFirewallProfile -Enabled is not an enum on this runner ($($enabledParameterType.FullName))." }
+  $script:FirewallEnabledParameterType=$enabledParameterType
+  $script:FirewallProfilesSnapshot=@(Get-NetFirewallProfile -ErrorAction Stop | ForEach-Object {
+    $enabledName=[string]$_.Enabled
+    if ($enabledName -notin @('True','False','NotConfigured')) { throw "BLOCKED: unsupported firewall Enabled value '$enabledName' for profile '$($_.Name)' before isolation." }
+    [void][Enum]::Parse($enabledParameterType,$enabledName,$true)
+    [pscustomobject]@{Name=[string]$_.Name;Enabled=$enabledName;DefaultInboundAction=[string]$_.DefaultInboundAction}
+  })
   if (-not $script:FirewallProfilesSnapshot.Count) { throw 'BLOCKED: no firewall profile state could be snapshotted.' }
   $rules=Get-ActiveFirewallRules
   $activeAllows=@($rules | Where-Object {$_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and $_.Enabled -eq 'True'})
@@ -669,14 +681,16 @@ function Restore-DisposableRunnerFirewall {
   }
   if ($script:FirewallProfilesModified) {
     foreach($profile in $script:FirewallProfilesSnapshot) {
-      Set-NetFirewallProfile -Profile $profile.Name -Enabled ([bool]$profile.Enabled) -DefaultInboundAction $profile.DefaultInboundAction -ErrorAction Stop | Out-Null
+      $enabledValue=[Enum]::Parse($script:FirewallEnabledParameterType,[string]$profile.Enabled,$true)
+      Set-NetFirewallProfile -Profile $profile.Name -Enabled $enabledValue -DefaultInboundAction $profile.DefaultInboundAction -ErrorAction Stop | Out-Null
     }
   }
   if ($script:FirewallSnapshotComplete) {
     $restoredProfiles=@(Get-NetFirewallProfile -ErrorAction Stop)
     foreach($saved in $script:FirewallProfilesSnapshot) {
       $current=@($restoredProfiles | Where-Object {$_.Name -ceq $saved.Name})
-      if ($current.Count -ne 1 -or [bool]$current[0].Enabled -ne $saved.Enabled -or [string]$current[0].DefaultInboundAction -ne $saved.DefaultInboundAction) { throw "Firewall profile '$($saved.Name)' did not restore to its snapshotted values." }
+      $restoredEnabled=if($current.Count){([string]$current[0].Enabled).Trim()}else{''}
+      if ($current.Count -ne 1 -or $restoredEnabled -ine [string]$saved.Enabled -or [string]$current[0].DefaultInboundAction -ne $saved.DefaultInboundAction) { throw "Firewall profile '$($saved.Name)' did not restore to its snapshotted values." }
     }
     foreach($entry in $script:FirewallLocalAllowsSnapshot) {
       $current=@(Get-ActiveFirewallRules | Where-Object {$_.Name -ceq $entry.Name -and $_.PolicyStoreSourceType -eq 'Local'})
@@ -811,6 +825,7 @@ $script:WorkerStatePath='';$script:WorkerConfigPath='';$script:WorkerScriptPath=
 $script:EvidencePath='';$script:TempRoot='';$script:TaskName='';$script:FirewallName=''
 $script:Password=$null;$script:CredentialWritten=$false;$script:UserCreated=$false
 $script:FirewallCreated=$false;$script:FirewallSnapshotComplete=$false;$script:FirewallProfilesModified=$false
+$script:FirewallEnabledParameterType=$null
 $script:FirewallProfilesSnapshot=@();$script:FirewallLocalAllowsSnapshot=[System.Collections.Generic.List[object]]::new()
 $script:FirewallLocalAllowsChanged=[System.Collections.Generic.List[object]]::new();$script:FirewallGroupPolicySnapshot=@()
 $script:RdpSettingChanged=$false;$script:TermServiceStarted=$false
@@ -902,7 +917,20 @@ try {
   $script:FirewallName='EbrEnv006LockLoopback'+$suffix.Substring(0,8)
   Initialize-DisposableRunnerFirewall
   $script:FirewallCreated=$true
-  New-NetFirewallRule -Name $script:FirewallName -DisplayName $script:FirewallName -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -RemoteAddress @('127.0.0.1','::1') -Profile Any -ErrorAction Stop | Out-Null
+  # Windows Firewall rejects loopback addresses in RemoteAddress. Restrict the
+  # destination address to 127.0.0.1 and the rule to TermService/TCP 3389.
+  New-NetFirewallRule -Name $script:FirewallName -DisplayName $script:FirewallName -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -LocalAddress '127.0.0.1' -RemoteAddress Any -Service TermService -Profile Any -ErrorAction Stop | Out-Null
+  $loopbackRules=@(Get-NetFirewallRule -Name $script:FirewallName -ErrorAction Stop)
+  if ($loopbackRules.Count -ne 1) { throw 'BLOCKED: the temporary loopback RDP firewall rule is not uniquely identifiable.' }
+  $loopbackRule=$loopbackRules[0]
+  $loopbackLocalAddresses=@(Get-RuleLocalAddresses $loopbackRule)
+  $loopbackRemoteAddresses=@(Get-RuleRemoteAddresses $loopbackRule)
+  $loopbackPorts=@(Get-NetFirewallPortFilter -AssociatedNetFirewallRule $loopbackRule -ErrorAction Stop)
+  $loopbackServices=@(Get-NetFirewallServiceFilter -AssociatedNetFirewallRule $loopbackRule -ErrorAction Stop)
+  $protocols=@($loopbackPorts | ForEach-Object {[string]$_.Protocol})
+  $localPorts=@($loopbackPorts | ForEach-Object { @($_.LocalPort | ForEach-Object {[string]$_}) })
+  if ($loopbackLocalAddresses.Count -ne 1 -or $loopbackLocalAddresses[0] -cne '127.0.0.1' -or $loopbackRemoteAddresses.Count -ne 1 -or $loopbackRemoteAddresses[0] -cne 'Any' -or $loopbackRule.Direction -ne 'Inbound' -or $loopbackRule.Action -ne 'Allow' -or $loopbackRule.Enabled -ne 'True' -or $protocols.Count -ne 1 -or $protocols[0] -notin @('TCP','6') -or $localPorts.Count -ne 1 -or $localPorts[0] -cne '3389' -or $loopbackServices.Count -ne 1 -or [string]$loopbackServices[0].Service -cne 'TermService') { throw 'BLOCKED: temporary RDP firewall rule did not resolve to enabled inbound TCP/3389 for TermService at local loopback 127.0.0.1 only.' }
+  Add-Event 'Verify exact IPv4 loopback-destination-only temporary RDP firewall rule' 'PASS' ([pscustomobject]@{RuleName=$script:FirewallName;Direction=$loopbackRule.Direction;Action=$loopbackRule.Action;Enabled=$loopbackRule.Enabled;Protocols=$protocols;LocalPorts=$localPorts;Service=$loopbackServices[0].Service;LocalAddresses=$loopbackLocalAddresses;RemoteAddresses=$loopbackRemoteAddresses;NoExternalInterfaceDestination=$true})
   if ([int]$script:OldRdpDeny -ne 0) { Set-ItemProperty -LiteralPath $rdpKey -Name fDenyTSConnections -Value 0 -ErrorAction Stop;$script:RdpSettingChanged=$true }
   if ($service.Status -ne 'Running') { Start-Service -Name TermService -ErrorAction Stop;$script:TermServiceStarted=$true }
   $listenWatch=[Diagnostics.Stopwatch]::StartNew();$listening=$false

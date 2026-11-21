@@ -227,6 +227,24 @@ function Resolve-FirstRunOobeAndVerifyCandidate([IntPtr]$CandidateWindow, [int]$
     throw "BLOCKED: $($record.Reason)"
   }
   if ($evidenceSurfaces.Count -gt $privacyPages.Count) {
+    $blockedScreenshots=[System.Collections.Generic.List[string]]::new()
+    $blockedSurfaceDetails=[System.Collections.Generic.List[object]]::new()
+    $surfaceIndex=0
+    foreach($surface in @($evidenceSurfaces | Where-Object { -not $_.ExactPrivacyPage })){
+      $surfaceIndex++
+      $surfaceShot=$null
+      try{
+        $handleText=[string]$surface.Snapshot.Window.Handle
+        if($handleText -match '^0x[0-9A-Fa-f]+$'){
+          $handle=[IntPtr]::new([long][Convert]::ToInt64($handleText.Substring(2),16))
+          $surfaceShot=Capture-WindowScreenshot $handle "env-009-unknown-oobe-$surfaceIndex.png"
+          if($surfaceShot){$blockedScreenshots.Add($surfaceShot.Path)}
+        }
+      }catch{}
+      $blockedSurfaceDetails.Add([pscustomobject]@{Window=$surface.Snapshot.Window;Names=@($surface.Snapshot.Names);Screenshot=if($surfaceShot){$surfaceShot.Path}else{$null}})
+    }
+    $record.Surfaces=@($blockedSurfaceDetails.ToArray())
+    $record.Screenshots=@($blockedScreenshots.ToArray())
     $record.Reason='An unknown Windows setup/OOBE surface is visible; only the exact privacy page may be advanced, so no control was invoked.'
     $script:oobeRecord=[pscustomobject]$record
     Add-Event 'Detect unknown first-run OOBE surface and fail closed' 'BLOCKED' $script:oobeRecord

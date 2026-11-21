@@ -72,10 +72,49 @@ public static class EBR_STD_UIA_CLIENT {
   if($uiaProviderBootstrap-cne'ControlType.Button'){throw "UI Automation provider bootstrap returned '$uiaProviderBootstrap', expected ControlType.Button."}
   $events=[System.Collections.Generic.List[object]]::new();$appProcess=$null;$status='FAIL';$failure=''
   $events.Add([pscustomobject]@{Name='UI Automation client initializes the standard native Button provider';Status='PASS';Details=$uiaProviderBootstrap})
+  function Test-StandardUserNsisTemporaryProcess($ProcessRow){
+    try{
+      if([IO.Path]::GetFileName([string]$ProcessRow.ExecutablePath)-cne'Un.exe'){return $false}
+      $tempRoot=[IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')+'\'
+      $fullPath=[IO.Path]::GetFullPath([string]$ProcessRow.ExecutablePath)
+      if(-not$fullPath.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase)){return $false}
+      $relative=$fullPath.Substring($tempRoot.Length);$parts=@($relative -split '[\\/]+')
+      return ($parts.Count-eq2-and$parts[0]-match'(?i)^~nsu[^\\/]*\.tmp$'-and$parts[1]-ceq'Un.exe')
+    }catch{return $false}
+  }
+  function Get-SettingsLaunchedUninstallerProcess([string]$ExpectedPath,[int]$SessionId,[Collections.Generic.HashSet[int]]$KnownRootIds){
+    $expected=[IO.Path]::GetFullPath($ExpectedPath)
+    $rows=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{[int]$_.SessionId-eq$SessionId})
+    $roots=@($rows|Where-Object{[IO.Path]::GetFileName([string]$_.Name)-ieq'Uninstall.exe'-and$_.ExecutablePath-and[IO.Path]::GetFullPath([string]$_.ExecutablePath)-ieq$expected})
+    foreach($root in $roots){[void]$KnownRootIds.Add([int]$root.ProcessId)}
+    $trusted=[Collections.Generic.HashSet[int]]::new()
+    foreach($id in $KnownRootIds){[void]$trusted.Add($id)}
+    $children=[Collections.Generic.List[object]]::new();$expanded=$true
+    while($expanded){
+      $expanded=$false
+      foreach($row in $rows){
+        $childProcessId=[int]$row.ProcessId
+        if($trusted.Contains($childProcessId)-or-not$trusted.Contains([int]$row.ParentProcessId)){continue}
+        if(Test-StandardUserNsisTemporaryProcess $row){[void]$trusted.Add($childProcessId);$children.Add($row);$expanded=$true}
+      }
+    }
+    $candidate=if($children.Count){$children[$children.Count-1]}elseif($roots.Count){$roots[0]}else{$null}
+    if(-not$candidate){return $null}
+    try{[Diagnostics.Process]::GetProcessById([int]$candidate.ProcessId)}catch{$null}
+  }
   function Find-StandardUserWizardWindow([int]$ProcessId,[string]$Kind){
     $processIds=[System.Collections.Generic.List[int]]::new();$processIds.Add($ProcessId)
     if($Kind-match'(?i)uninstall'){
-      foreach($process in Get-Process -Name 'Un','Uninstall' -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId}){if(-not$processIds.Contains($process.Id)){$processIds.Add($process.Id)}}
+      $rows=@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue|Where-Object{[int]$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId})
+      $trusted=[Collections.Generic.HashSet[int]]::new();[void]$trusted.Add($ProcessId);$expanded=$true
+      while($expanded){
+        $expanded=$false
+        foreach($row in $rows){
+          $childId=[int]$row.ProcessId
+          if($trusted.Contains($childId)-or-not$trusted.Contains([int]$row.ParentProcessId)){continue}
+          if(Test-StandardUserNsisTemporaryProcess $row){[void]$trusted.Add($childId);$processIds.Add($childId);$expanded=$true}
+        }
+      }
     }
     foreach($candidateId in $processIds){foreach($handle in [EBR_STD_NATIVE]::TopWindowsForProcess($candidateId)){
       if(-not[EBR_STD_NATIVE]::IsWindowVisible($handle)){continue}
@@ -243,10 +282,10 @@ public static class EBR_STD_UIA_CLIENT {
     if(-not$uninstallChoice){return [pscustomobject]@{Status='NOT TESTED';Reason='The app row menu exposed no Uninstall action.';Screenshots=@($screenshot,$entryScreenshot)}}
     $menuChoiceRuntime='';try{$menuChoiceRuntime=$uninstallChoice.GetRuntimeId()-join'.'}catch{}
     try{$uninstallChoice.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$uninstallChoice.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not activate Settings > Apps > Uninstall: $($_.Exception.Message)";Screenshots=@($screenshot,$entryScreenshot)}}}
-    $uninstallProcess=$null;$confirmClicks=0;$watch=[Diagnostics.Stopwatch]::StartNew()
+    $uninstallProcess=$null;$confirmClicks=0;$watch=[Diagnostics.Stopwatch]::StartNew();$settingsUninstallerRootIds=[Collections.Generic.HashSet[int]]::new();$settingsSessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId
     while($watch.Elapsed.TotalSeconds-lt35-and-not$uninstallProcess){
-      $uninstallProcess=@(Get-Process -Name Uninstall -ErrorAction SilentlyContinue|Where-Object{try{[IO.Path]::GetFullPath($_.Path)-ieq[IO.Path]::GetFullPath($UninstallerPath)}catch{$false}}|Select-Object -First 1)
-      if($uninstallProcess.Count){$uninstallProcess=$uninstallProcess[0];break}
+      $uninstallProcess=Get-SettingsLaunchedUninstallerProcess $UninstallerPath $settingsSessionId $settingsUninstallerRootIds
+      if($uninstallProcess){break}
       if($confirmClicks-eq0-and$watch.Elapsed.TotalSeconds-ge2-and$menuChoiceRuntime){
         $uiNames=[System.Collections.Generic.List[string]]::new();$confirm=$null
         foreach($element in [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)){

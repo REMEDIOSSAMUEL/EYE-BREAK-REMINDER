@@ -44,7 +44,12 @@ try{
   if(-not$admin){throw 'BLOCKED: the hosted runner account cannot provision a standard RDP test user.'}
   $profiles=@(Get-NetFirewallProfile -ErrorAction Stop)
   if($profiles.Count-ne3){throw "BLOCKED: expected three Windows Firewall profiles; found $($profiles.Count)."}
-  $oldFirewallProfiles=@($profiles|ForEach-Object{[pscustomobject]@{Name=[string]$_.Name;Enabled=[bool]$_.Enabled;DefaultInboundAction=[string]$_.DefaultInboundAction}})
+  # Get-NetFirewallProfile exposes Enabled as Boolean on this runner, while
+  # Set-NetFirewallProfile requires its GpoBoolean enum. Snapshot the named
+  # value, then parse it to the setter's declared type during restoration.
+  $enabledParameterType=(Get-Command Set-NetFirewallProfile -ErrorAction Stop).Parameters['Enabled'].ParameterType
+  if(-not$enabledParameterType.IsEnum){throw "BLOCKED: Set-NetFirewallProfile -Enabled is not an enum on this runner ($($enabledParameterType.FullName))."}
+  $oldFirewallProfiles=@($profiles|ForEach-Object{$enabledName=[string]$_.Enabled;if($enabledName-notin@('True','False','NotConfigured')){throw "BLOCKED: unsupported firewall Enabled value '$enabledName' for profile '$($_.Name)'."};[void][Enum]::Parse($enabledParameterType,$enabledName,$true);[pscustomobject]@{Name=[string]$_.Name;Enabled=$enabledName;DefaultInboundAction=[string]$_.DefaultInboundAction}})
   $rdpKey='HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server';$rdpTcpKey='HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
   $oldDeny=Read-Value $rdpKey 'fDenyTSConnections';$oldNla=Read-Value $rdpTcpKey 'UserAuthentication'
   if($null-eq$oldDeny-or$null-eq$oldNla-or[int]$oldNla-ne1){throw 'BLOCKED: RDP listener state or Network Level Authentication could not be verified; refusing to weaken authentication.'}
@@ -102,12 +107,26 @@ public static class EBR_CREDMAN {
       if(-not$allows3389){continue}
       $address=Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $rule -ErrorAction Stop
       $remote=@($address.RemoteAddress|ForEach-Object{[string]$_})
-      if(-not$remote.Count-or@($remote|Where-Object{$_-notin@('127.0.0.1','::1','127.0.0.0/8','::1/128')}).Count){$unsafeRdpRules.Add("$($rule.Name) [remote=$($remote-join',')]")}
+      if(-not$remote.Count-or@($remote|Where-Object{$_-notin@('127.0.0.1','127.0.0.0/8')}).Count){$unsafeRdpRules.Add("$($rule.Name) [remote=$($remote-join',')]")}
     }catch{$unsafeRdpRules.Add("$($rule.Name) [scope could not be verified: $($_.Exception.Message)]")}
   }
   if($unsafeRdpRules.Count){throw "BLOCKED: existing enabled inbound TCP allow rules could expose RDP beyond loopback: $($unsafeRdpRules-join'; '). No rules were disabled or changed."}
-  New-NetFirewallRule -Name $firewallName -DisplayName $firewallName -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -RemoteAddress @('127.0.0.1','::1') -Profile Any -ErrorAction Stop|Out-Null
+  # Windows Firewall rejects loopback addresses in RemoteAddress. Scope the
+  # rule to the destination loopback address instead; remote addresses remain
+  # Any, but a packet arriving on a network interface cannot have LocalAddress
+  # 127.0.0.1. Restrict the service and port as well.
   $firewallCreated=$true
+  New-NetFirewallRule -Name $firewallName -DisplayName $firewallName -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -LocalAddress '127.0.0.1' -RemoteAddress Any -Service TermService -Profile Any -ErrorAction Stop|Out-Null
+  $temporaryRules=@(Get-NetFirewallRule -Name $firewallName -ErrorAction Stop)
+  if($temporaryRules.Count-ne1){throw 'BLOCKED: the temporary loopback RDP firewall rule is not uniquely identifiable.'}
+  $temporaryRule=$temporaryRules[0]
+  $temporaryAddress=Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $temporaryRule -ErrorAction Stop
+  $temporaryPort=Get-NetFirewallPortFilter -AssociatedNetFirewallRule $temporaryRule -ErrorAction Stop
+  $temporaryService=Get-NetFirewallServiceFilter -AssociatedNetFirewallRule $temporaryRule -ErrorAction Stop
+  $localAddresses=@($temporaryAddress.LocalAddress|ForEach-Object{[string]$_});$remoteAddresses=@($temporaryAddress.RemoteAddress|ForEach-Object{[string]$_})
+  $temporaryPorts=@($temporaryPort.LocalPort|ForEach-Object{[string]$_})
+  if($temporaryRule.Direction-ne'Inbound'-or$temporaryRule.Action-ne'Allow'-or$temporaryRule.Enabled-ne'True'-or$localAddresses.Count-ne1-or$localAddresses[0]-cne'127.0.0.1'-or$remoteAddresses.Count-ne1-or$remoteAddresses[0]-cne'Any'-or[string]$temporaryPort.Protocol-notin@('TCP','6')-or$temporaryPorts.Count-ne1-or$temporaryPorts[0]-cne'3389'-or[string]$temporaryService.Service-cne'TermService'){throw 'BLOCKED: the temporary RDP firewall rule did not resolve to inbound TCP/3389 for TermService at local loopback 127.0.0.1 only.'}
+  Add-Event 'Verify temporary inbound RDP rule is restricted to the loopback destination' 'PASS' ([pscustomobject]@{Direction=$temporaryRule.Direction;Action=$temporaryRule.Action;Enabled=$temporaryRule.Enabled;Protocol=$temporaryPort.Protocol;LocalPort=$temporaryPorts;Service=$temporaryService.Service;LocalAddress=$localAddresses;RemoteAddress=$remoteAddresses;NoExternalInterfaceDestination=$true})
   Set-ItemProperty -LiteralPath $rdpKey -Name fDenyTSConnections -Value 0 -ErrorAction Stop
   $rdpEnabled=$true
   if($service.StartType-eq'Manual'-or$service.StartType-eq'Automatic'){if($service.Status-ne'Running'){Start-Service -Name TermService -ErrorAction Stop;$serviceStarted=$true}}else{Set-Service -Name TermService -StartupType Manual -ErrorAction Stop;if($service.Status-ne'Running'){Start-Service -Name TermService -ErrorAction Stop;$serviceStarted=$true}}
@@ -166,7 +185,7 @@ public static class EBR_CREDMAN {
   }
   if($sessionRow.SessionName-notmatch'^rdp-tcp#'){throw "BLOCKED: the active test account is not in a genuine RDP session (session name '$($sessionRow.SessionName)')."}
   $sessionId=$sessionRow.SessionId
-  Add-Event 'Create active localhost RDP user session' 'PASS' ([pscustomobject]@{User=$principal;SessionName=$sessionRow.SessionName;SessionId=$sessionId;NLAEnabled=([int]$oldNla-eq1);FirewallScope=@('127.0.0.1','::1');NoDriveOrClipboardRedirection=$true})
+  Add-Event 'Create active localhost RDP user session' 'PASS' ([pscustomobject]@{User=$principal;SessionName=$sessionRow.SessionName;SessionId=$sessionId;NLAEnabled=([int]$oldNla-eq1);FirewallLocalAddress=@('127.0.0.1');FirewallRemoteAddress=@('Any');FirewallService='TermService';RemoteHost='127.0.0.1';IPv6RemoteAddressConfigured=$false;NoDriveOrClipboardRedirection=$true})
   $stageEvidence=Join-Path $stageRoot 'evidence';[void][IO.Directory]::CreateDirectory($stageEvidence)
   $stageAudioEvidence=Join-Path $stageRoot 'audio-evidence';[void][IO.Directory]::CreateDirectory($stageAudioEvidence)
   $candidateInstaller=Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe';$candidateExecutable=Join-Path $stageRoot 'EyeBreakReminder.exe';$childScript=Join-Path $stageRoot 'windows_standard_user_acceptance.ps1';$audioScript=Join-Path $stageRoot 'windows_candidate_audio_loopback_acceptance.ps1'
@@ -266,10 +285,10 @@ exit $LASTEXITCODE
   try{if($oldServiceStartType){Set-Service -Name TermService -StartupType $oldServiceStartType -ErrorAction Stop};if($oldServiceState-eq'Stopped'){Stop-Service -Name TermService -Force -ErrorAction Stop}}catch{$cleanupErrors.Add("Restore Remote Desktop Services state: $($_.Exception.Message)")}
   foreach($rule in $disabledInboundRules){try{Enable-NetFirewallRule -InputObject $rule -ErrorAction Stop}catch{$cleanupErrors.Add("Restore inbound firewall rule '$($rule.Name)': $($_.Exception.Message)")}}
   if($firewallProfilesConfigured){
-    foreach($profile in $oldFirewallProfiles){try{Set-NetFirewallProfile -Profile $profile.Name -Enabled $profile.Enabled -DefaultInboundAction $profile.DefaultInboundAction -ErrorAction Stop}catch{$cleanupErrors.Add("Restore $($profile.Name) firewall profile: $($_.Exception.Message)")}}
+    foreach($profile in $oldFirewallProfiles){try{$enabledValue=[Enum]::Parse($enabledParameterType,[string]$profile.Enabled,$true);Set-NetFirewallProfile -Profile $profile.Name -Enabled $enabledValue -DefaultInboundAction $profile.DefaultInboundAction -ErrorAction Stop}catch{$cleanupErrors.Add("Restore $($profile.Name) firewall profile: $($_.Exception.Message)")}}
     try{
       $restoredProfiles=@(Get-NetFirewallProfile -ErrorAction Stop)
-      $profileMismatches=@(foreach($expectedProfile in $oldFirewallProfiles){$actualProfile=@($restoredProfiles|Where-Object{$_.Name-ceq$expectedProfile.Name}|Select-Object -First 1);if(-not$actualProfile.Count-or[bool]$actualProfile[0].Enabled-ne$expectedProfile.Enabled-or[string]$actualProfile[0].DefaultInboundAction-cne$expectedProfile.DefaultInboundAction){$expectedProfile.Name}})
+      $profileMismatches=@(foreach($expectedProfile in $oldFirewallProfiles){$actualProfile=@($restoredProfiles|Where-Object{$_.Name-ceq$expectedProfile.Name}|Select-Object -First 1);if(-not$actualProfile.Count-or[string]$actualProfile[0].Enabled-cne[string]$expectedProfile.Enabled-or[string]$actualProfile[0].DefaultInboundAction-cne$expectedProfile.DefaultInboundAction){$expectedProfile.Name}})
       if($profileMismatches.Count){$cleanupErrors.Add("Windows Firewall profile restoration did not match its original state: $($profileMismatches-join', ')")}else{Add-Event 'Restore original Windows Firewall profile settings after the isolated RDP attempt' 'PASS' ([pscustomobject]@{Profiles=$restoredProfiles|ForEach-Object{[pscustomobject]@{Name=$_.Name;Enabled=$_.Enabled;DefaultInboundAction=$_.DefaultInboundAction}}})}
       $missingRules=@(foreach($disabledRule in $disabledInboundRules){$restoredRule=@(Get-NetFirewallRule -Name $disabledRule.Name -ErrorAction SilentlyContinue|Where-Object{$_.Enabled-eq'True'});if(-not$restoredRule.Count){$disabledRule.Name}})
       if($missingRules.Count){$cleanupErrors.Add("Some original enabled inbound firewall rules were not restored: $($missingRules-join', ')")}else{Add-Event 'Restore all previously enabled inbound allow rules' 'PASS' ([pscustomobject]@{Count=$disabledInboundRules.Count})}
