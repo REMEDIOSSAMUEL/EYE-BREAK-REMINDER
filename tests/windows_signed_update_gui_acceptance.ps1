@@ -251,11 +251,11 @@ try{
   Assert-That ((Get-Hash $target) -ceq (Get-Hash $portable) -and (Get-Item -LiteralPath $target).VersionInfo.ProductVersion -match ('^'+[regex]::Escape($UpdateVersion)+'(\.0)?$')) 'the updated application exactly matches the signed portable-application digest and successor version'
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::Responsive($script:updatedApp.Window)) 'the relaunched signed successor application responds to the window message check'
   Assert-That (Wait-TimerProgress $script:updatedApp.Window $timerInitial) 'the relaunched signed successor timer continues to advance'
-  $settingsAfter=[IO.File]::ReadAllText($settingsPath)
+  $settingsAfter=if(Test-Path -LiteralPath $settingsPath){[IO.File]::ReadAllText($settingsPath)}else{$null}
   if($cleanMode){
-    Assert-That (-not $settingsAfter.Contains('workMinutes=37') -and -not $settingsAfter.Contains('volume=32') -and -not $settingsAfter.Contains('autoStart=0')) 'the production-signed clean install resets the deliberately seeded settings'
+    Assert-That ([string]::IsNullOrEmpty($settingsAfter) -or (-not $settingsAfter.Contains('workMinutes=37') -and -not $settingsAfter.Contains('volume=32') -and -not $settingsAfter.Contains('autoStart=0'))) 'the production-signed clean install resets the deliberately seeded settings'
   }else{
-    Assert-That ($settingsAfter.Contains('workMinutes=37') -and $settingsAfter.Contains('volume=32') -and $settingsAfter.Contains('autoStart=0')) 'the signed installed update preserves user settings, including the disabled auto-start choice'
+    Assert-That ($null -ne $settingsAfter -and $settingsAfter.Contains('workMinutes=37') -and $settingsAfter.Contains('volume=32') -and $settingsAfter.Contains('autoStart=0')) 'the signed installed update preserves user settings, including the disabled auto-start choice'
   }
   if($deleteHistoryMode){
     $historyStillContainsSeed=Test-Path -LiteralPath $historyPath
