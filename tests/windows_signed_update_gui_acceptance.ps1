@@ -5,6 +5,7 @@ param(
   [Parameter(Mandatory=$true)][string]$SignatureTool,
   [string]$ProductionManifest,
   [string]$ProductionSignature,
+  [ValidateSet('installed','portable')][string]$PackageKind = 'installed',
   [ValidatePattern('^\d+\.\d+\.\d+$')][string]$BaselineVersion = '1.4.0',
   [ValidatePattern('^\d+\.\d+\.\d+$')][string]$UpdateVersion = '1.4.1',
   [string]$EvidencePath = 'build/v1.4.0-updater-evidence/signed-gui-update.json'
@@ -15,7 +16,8 @@ if($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows' -or $env:RUNN
 if([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [Runtime.InteropServices.Architecture]::X64) { throw 'Signed GUI update acceptance requires an x64 Windows runner.' }
 if([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP) -or [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { throw 'The hosted runner test and user-profile paths are unavailable.' }
 
-$testRoot=[IO.Path]::GetFullPath((Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-v140-signed-gui-update'))
+$portableMode=$PackageKind -ceq 'portable'
+$testRoot=[IO.Path]::GetFullPath((Join-Path $env:RUNNER_TEMP "EyeBreakReminder-v140-signed-gui-update-$PackageKind"))
 $runnerPrefix=[IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')+'\'
 if(-not $testRoot.StartsWith($runnerPrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Resolved GUI test directory escaped RUNNER_TEMP.'}
 if(Test-Path -LiteralPath $testRoot){throw "Refusing to reuse an existing signed GUI test directory: $testRoot"}
@@ -158,9 +160,13 @@ function Close-App($app){if($null -eq $app -or $app.Process.HasExited){return};[
 
 $script:assertions=0;$script:started=[DateTime]::UtcNow;$script:app=$null;$script:coordinator=$null;$script:updatedApp=$null;$script:dataCreated=$false;$script:registered=$false
 try{
-  [void][IO.Directory]::CreateDirectory($testRoot);$targetDirectory=Join-Path $testRoot 'installed';[void][IO.Directory]::CreateDirectory($targetDirectory);$target=Join-Path $targetDirectory 'EyeBreakReminder.exe';Copy-Item -LiteralPath $testApp -Destination $target
-  New-Item -Path $appKey -Force | Out-Null;New-ItemProperty -LiteralPath $appKey -Name InstallDir -PropertyType String -Value $targetDirectory -Force | Out-Null
-  New-Item -Path $uninstallKey -Force | Out-Null;New-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion -PropertyType String -Value $BaselineVersion -Force | Out-Null;$script:registered=$true
+  [void][IO.Directory]::CreateDirectory($testRoot);$targetDirectory=Join-Path $testRoot $PackageKind;[void][IO.Directory]::CreateDirectory($targetDirectory);$target=Join-Path $targetDirectory 'EyeBreakReminder.exe';Copy-Item -LiteralPath $testApp -Destination $target
+  if(-not $portableMode){
+    New-Item -Path $appKey -Force | Out-Null;New-ItemProperty -LiteralPath $appKey -Name InstallDir -PropertyType String -Value $targetDirectory -Force | Out-Null
+    New-Item -Path $uninstallKey -Force | Out-Null;New-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion -PropertyType String -Value $BaselineVersion -Force | Out-Null;$script:registered=$true
+  }elseif((Test-Path -LiteralPath $appKey) -or (Test-Path -LiteralPath $uninstallKey)){
+    throw 'Portable production-trust transaction unexpectedly found installed-app registration.'
+  }
   [void][IO.Directory]::CreateDirectory($dataRoot);$script:dataCreated=$true
   $settings="workMinutes=37`nbreakSeconds=33`nvolume=32`ntheme=2`nalarm=0`nrepeat=1`nnotifications=0`nsnooze=0`nautoStart=0`nstartup=0`nhistory=1`nautoCheckUpdates=1`nautoDownloadUpdates=1`nupdateLastCheck=0`n"
   $historyRecord="$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()-120) 1 20`n";$settingsPath=Join-Path $dataRoot 'settings.ini';$historyPath=Join-Path $dataRoot 'history.dat';$sentinelPath=Join-Path $dataRoot 'unrelated-sentinel.txt'
@@ -193,7 +199,7 @@ try{
   $releaseAssets=@(foreach($name in $assetNames){$path=switch($name){'EyeBreakReminder-Setup-x64.exe'{$setup};'EyeBreakReminder.exe'{$portable};default{Join-Path $targetDirectory $name}};$item=Get-Item -LiteralPath $path;[pscustomobject]@{name=$name;browser_download_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v$UpdateVersion/$name";size=[long]$item.Length;digest=('sha256:'+ (Get-Hash $path))}})
   $release=[ordered]@{tag_name="v$UpdateVersion";html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v$UpdateVersion";draft=$false;prerelease=$false;body='Controlled signed Windows integration fixture';assets=$releaseAssets}
   [IO.File]::WriteAllText((Join-Path $targetDirectory 'test-update-response.txt'),($release|ConvertTo-Json -Depth 8 -Compress),[Text.UTF8Encoding]::new($false))
-  $env:EBR_GUI_TEST_DATA_DIRECTORY=$dataRoot;$env:EBR_GUI_TEST_UPDATE_ASSET_PATH=$setup
+  $env:EBR_GUI_TEST_DATA_DIRECTORY=$dataRoot;$env:EBR_GUI_TEST_UPDATE_ASSET_PATH=if($portableMode){$portable}else{$setup}
   $process=Start-Process -FilePath $target -WorkingDirectory $targetDirectory -PassThru;$script:app=$process
   $download=Wait-ReadyDownloadModal $process
   Assert-That ($download.Body.Contains('Downloaded:') -and $download.Body.Contains('(100%)')) 'automatic signed update download completes and verifies its payload before presenting install choices'
@@ -216,31 +222,37 @@ try{
   $timerInitial=Get-TimerSeconds $script:updatedApp.Window
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,41) -ceq 'Paused' -and [EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,20) -ceq 'Resume') 'the relaunched application respects the preserved disabled auto-start preference'
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::Click($script:updatedApp.Window,20)) 'the relaunched signed successor can resume its timer normally'
-  Assert-That ((Get-Hash $target) -ceq (Get-Hash $portable) -and (Get-Item -LiteralPath $target).VersionInfo.ProductVersion -match ('^'+[regex]::Escape($UpdateVersion)+'(\.0)?$')) 'the installed binary exactly matches the signed portable-application digest and successor version'
+  Assert-That ((Get-Hash $target) -ceq (Get-Hash $portable) -and (Get-Item -LiteralPath $target).VersionInfo.ProductVersion -match ('^'+[regex]::Escape($UpdateVersion)+'(\.0)?$')) 'the updated application exactly matches the signed portable-application digest and successor version'
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::Responsive($script:updatedApp.Window)) 'the relaunched signed successor application responds to the window message check'
   Assert-That (Wait-TimerProgress $script:updatedApp.Window $timerInitial) 'the relaunched signed successor timer continues to advance'
   Assert-That (([IO.File]::ReadAllText($settingsPath)).Contains('workMinutes=37') -and ([IO.File]::ReadAllText($settingsPath)).Contains('volume=32') -and ([IO.File]::ReadAllText($settingsPath)).Contains('autoStart=0')) 'the signed installed update preserves user settings, including the disabled auto-start choice'
   Assert-That ((Get-Hash $historyPath) -ceq $historyHash) 'the signed installed update preserves user history byte-for-byte'
   Assert-That ((Get-Hash $sentinelPath) -ceq $sentinelHash) 'the signed installed update preserves unrelated user data'
-  $version=(Get-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion).DisplayVersion
-  Assert-That ([string]$version -ceq $UpdateVersion) 'Windows installed-app registration reports the successor version'
+  if($portableMode){
+    Assert-That (-not(Test-Path -LiteralPath $appKey) -and -not(Test-Path -LiteralPath $uninstallKey)) 'the production-key portable update leaves Windows installed-app registration absent'
+  }else{
+    $version=(Get-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion).DisplayVersion
+    Assert-That ([string]$version -ceq $UpdateVersion) 'Windows installed-app registration reports the successor version'
+  }
   $updatesPath=Join-Path $dataRoot 'updates'
   Assert-That (Wait-NoStagedUpdates $updatesPath) 'the verified GUI transaction removes its completed staging directory'
   Assert-That (-not (Get-ItemProperty -LiteralPath $runOnceKey -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue)) 'the verified GUI transaction clears temporary recovery registration'
   Close-App $script:updatedApp;$script:updatedApp=$null
   $metadata=Get-Content -LiteralPath (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json') -Raw|ConvertFrom-Json
-  $report=[ordered]@{Application='Eye Break Reminder';Scenario='Real installed GUI update through discovery, signed metadata, payload download, coordinator, installer and relaunch';Status='PASS';Assertions=$script:assertions;InitialVersion=$BaselineVersion;UpdatedVersion=$UpdateVersion;Trust=$metadataTrust;KeyId=$metadata.key_id;TestKeyRejectedByProductionTrust=if($productionTrustMode){$testKeyRejected}else{$false};InitialApplicationSHA256=(Get-Hash $testApp);InstallerSHA256=(Get-Hash $setup);PortableSHA256=(Get-Hash $portable);InstalledApplicationSHA256=(Get-Hash $target);ManifestSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json'));SignatureSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.sig'));SettingsPreserved=$true;HistoryPreserved=$true;UnrelatedDataPreserved=$true;Relaunched=$true;TimerAdvanced=$true;HostScope='Disposable GitHub Actions Windows runner';ProductionKeyProvisioned=$productionTrustMode;AuthenticodeEstablished=$false;HostRebooted=$false;UtcStarted=$script:started.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')}
+  $report=[ordered]@{Application='Eye Break Reminder';Scenario="Real $PackageKind GUI update through discovery, signed metadata, payload download, coordinator, and relaunch";InstallationType=$PackageKind;Status='PASS';Assertions=$script:assertions;InitialVersion=$BaselineVersion;UpdatedVersion=$UpdateVersion;Trust=$metadataTrust;KeyId=$metadata.key_id;TestKeyRejectedByProductionTrust=if($productionTrustMode){$testKeyRejected}else{$false};InitialApplicationSHA256=(Get-Hash $testApp);InstallerSHA256=(Get-Hash $setup);PortableSHA256=(Get-Hash $portable);UpdatedApplicationSHA256=(Get-Hash $target);ManifestSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json'));SignatureSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.sig'));SettingsPreserved=$true;HistoryPreserved=$true;UnrelatedDataPreserved=$true;Relaunched=$true;TimerAdvanced=$true;HostScope='Disposable GitHub Actions Windows runner';ProductionKeyProvisioned=$productionTrustMode;AuthenticodeEstablished=$false;HostRebooted=$false;UtcStarted=$script:started.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')}
   [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($evidence));$report|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $evidence -Encoding utf8;Write-Host ($report|ConvertTo-Json -Depth 7)
 }catch{
-  $failure=[ordered]@{Application='Eye Break Reminder';Scenario='Real signed installed GUI update';Status='FAIL';Failure=$_.Exception.ToString();Assertions=$script:assertions;HostScope='Disposable GitHub Actions Windows runner';ProductionTrustChanged=$false;HostRebooted=$false;UtcStarted=$script:started.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')}
+  $failure=[ordered]@{Application='Eye Break Reminder';Scenario="Real signed $PackageKind GUI update";InstallationType=$PackageKind;Status='FAIL';Failure=$_.Exception.ToString();Assertions=$script:assertions;HostScope='Disposable GitHub Actions Windows runner';ProductionTrustChanged=$false;HostRebooted=$false;UtcStarted=$script:started.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')}
   [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($evidence));$failure|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $evidence -Encoding utf8;throw
 }finally{
   if($null -ne $script:app){try{$script:app.Refresh();if(-not $script:app.HasExited){$window=[EBR_SIGNED_GUI_NATIVE]::FindWindowByClassAndPid('EyeBreakReminder.Native',$script:app.Id);if($window -ne [IntPtr]::Zero){[EBR_SIGNED_GUI_NATIVE]::ExitApp($window)};if(-not $script:app.WaitForExit(5000)){Stop-Process -Id $script:app.Id -Force -ErrorAction SilentlyContinue}}}catch{}finally{$script:app.Dispose()}}
   if($null -ne $script:updatedApp){try{if(-not $script:updatedApp.Process.HasExited){[EBR_SIGNED_GUI_NATIVE]::ExitApp($script:updatedApp.Window);if(-not $script:updatedApp.Process.WaitForExit(5000)){Stop-Process -Id $script:updatedApp.Process.Id -Force -ErrorAction SilentlyContinue}}}catch{}finally{$script:updatedApp.Process.Dispose()}}
   foreach($processName in @('EyeBreakReminder','coordinator')){foreach($process in [Diagnostics.Process]::GetProcessesByName($processName)){try{$process.Refresh();if(-not $process.HasExited){$path=[IO.Path]::GetFullPath($process.Path);if($path.StartsWith($testRoot,[StringComparison]::OrdinalIgnoreCase)){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue}}}catch{}finally{$process.Dispose()}}}
   if($script:registered -and (Test-Path -LiteralPath (Join-Path $targetDirectory 'Uninstall.exe'))){try{$uninstall=Start-Process -FilePath (Join-Path $targetDirectory 'Uninstall.exe') -ArgumentList '/S' -PassThru -Wait;if($uninstall.ExitCode -ne 0){Write-Warning "Isolated GUI test uninstall returned $($uninstall.ExitCode)."}}catch{Write-Warning "Isolated GUI test uninstall cleanup failed: $_"}}
-  if(Test-Path -LiteralPath $appKey){Remove-Item -LiteralPath $appKey -Recurse -Force -ErrorAction SilentlyContinue}
-  if(Test-Path -LiteralPath $uninstallKey){Remove-Item -LiteralPath $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue}
+  if($script:registered){
+    if(Test-Path -LiteralPath $appKey){Remove-Item -LiteralPath $appKey -Recurse -Force -ErrorAction SilentlyContinue}
+    if(Test-Path -LiteralPath $uninstallKey){Remove-Item -LiteralPath $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue}
+  }
   if(Test-Path -LiteralPath $runOnceKey -PathType Container){Remove-ItemProperty -LiteralPath $runOnceKey -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue}
   if($script:dataCreated -and (Test-Path -LiteralPath $dataRoot)){Remove-Item -LiteralPath $dataRoot -Recurse -Force -ErrorAction SilentlyContinue}
   if(Test-Path -LiteralPath $testRoot){Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue}
