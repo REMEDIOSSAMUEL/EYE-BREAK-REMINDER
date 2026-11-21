@@ -92,10 +92,12 @@ jobs:
               $pointer = Get-Content -LiteralPath 'release-inputs/v1.4.0/candidate-provenance.json' -Raw | ConvertFrom-Json
               if ([string]$pointer.candidate_run_id -cne $env:CANDIDATE_RUN_ID -or [string]$pointer.candidate_source_commit -cne $env:CANDIDATE_SOURCE_COMMIT) { throw 'Dispatched candidate inputs must match the committed candidate pointer.' }
               $changedPaths = @(git diff --name-only $env:CANDIDATE_SOURCE_COMMIT $env:GITHUB_SHA)
-              $expectedPaths = @('release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json','release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig','release-inputs/v1.4.0/candidate-provenance.json','.github/workflows/windows-v1.4.0-finalize-production-candidate.yml')
+              $expectedPaths = @('release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json','release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig','release-inputs/v1.4.0/candidate-provenance.json','.github/workflows/windows-v1.4.0-finalize-production-candidate.yml','tests/updater_windows_tests.cpp')
               $changedPathText = ($changedPaths | Sort-Object) -join "`n"
               $expectedPathText = ($expectedPaths | Sort-Object) -join "`n"
-              if ($changedPathText -cne $expectedPathText) { throw 'Dispatched finalization allows only the three public metadata files and this reviewed finalizer-gate correction after the candidate source.' }
+              if ($changedPathText -cne $expectedPathText) { throw 'Dispatched finalization allows only the three public metadata files, the reviewed finalizer gate, and the fixed Windows test-harness file after the candidate source.' }
+              $testHarnessBlob = (git rev-parse "$($env:GITHUB_SHA):tests/updater_windows_tests.cpp").Trim()
+              if ($testHarnessBlob -cne 'f1692dc619d7455e744f14d258d8371133fafacc') { throw 'The post-candidate Windows test harness must match the exact reviewed bounded-warm-up correction.' }
             }
           }
           if ($env:CANDIDATE_RUN_ID -notmatch '^\d{5,}$') { throw 'Candidate run ID must be a decimal GitHub Actions run ID.' }
