@@ -388,10 +388,10 @@ jobs:
             mingw-w64-x86_64-python
             mingw-w64-x86_64-openssl
 
-      - name: Install upstream NSIS 3.11 with the x86 Unicode plugin set
-        uses: negrutiu/nsis-install@8b4d26c16a5d41578a708316fdb3ebdfbe73b2d5 # v1.3.0
+      - name: Install pinned NSIS 3.11.7461.309 x86 Unicode build
+        uses: negrutiu/nsis-install@9c575d44c2938a43e38a305caeb403de90303c60 # v3
         with:
-          version: 3.11
+          version: v3.11.7461.309
 
       - name: Record the MSYS2 tool directory
         shell: msys2 {0}
