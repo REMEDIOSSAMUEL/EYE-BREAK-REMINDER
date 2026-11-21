@@ -6,6 +6,7 @@ param(
   [string]$ProductionManifest,
   [string]$ProductionSignature,
   [ValidateSet('installed','portable')][string]$PackageKind = 'installed',
+  [ValidateSet('preserve','clean-preserve-history','clean-delete-history')][string]$UpdateChoice = 'preserve',
   [ValidatePattern('^\d+\.\d+\.\d+$')][string]$BaselineVersion = '1.4.0',
   [ValidatePattern('^\d+\.\d+\.\d+$')][string]$UpdateVersion = '1.4.1',
   [string]$EvidencePath = 'build/v1.4.0-updater-evidence/signed-gui-update.json'
@@ -17,7 +18,9 @@ if([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [Runtime.Int
 if([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP) -or [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { throw 'The hosted runner test and user-profile paths are unavailable.' }
 
 $portableMode=$PackageKind -ceq 'portable'
-$testRoot=[IO.Path]::GetFullPath((Join-Path $env:RUNNER_TEMP "EyeBreakReminder-v140-signed-gui-update-$PackageKind"))
+$cleanMode=$UpdateChoice -cne 'preserve';$deleteHistoryMode=$UpdateChoice -ceq 'clean-delete-history'
+if($portableMode -and $cleanMode){throw 'Clean installation choices apply only to the installed package transaction.'}
+$testRoot=[IO.Path]::GetFullPath((Join-Path $env:RUNNER_TEMP "EyeBreakReminder-v140-signed-gui-update-$PackageKind-$UpdateChoice"))
 $runnerPrefix=[IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\')+'\'
 if(-not $testRoot.StartsWith($runnerPrefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Resolved GUI test directory escaped RUNNER_TEMP.'}
 if(Test-Path -LiteralPath $testRoot){throw "Refusing to reuse an existing signed GUI test directory: $testRoot"}
@@ -79,6 +82,7 @@ public static class EBR_SIGNED_GUI_NATIVE {
   public static bool Responsive(IntPtr hwnd) { IntPtr ignored; return SendMessageTimeoutW(hwnd,0,IntPtr.Zero,IntPtr.Zero,2|32,1500,out ignored)!=IntPtr.Zero; }
   public static bool Click(IntPtr hwnd,int id) { IntPtr child=GetDlgItem(hwnd,id); if(child==IntPtr.Zero||!IsWindowEnabled(child))return false; SendMessageW(child,0x00F5,IntPtr.Zero,IntPtr.Zero); return true; }
   public static bool SetChecked(IntPtr hwnd,int id,bool value) { IntPtr child=GetDlgItem(hwnd,id); if(child==IntPtr.Zero||!IsWindowEnabled(child))return false; SendMessageW(child,0x00F1,(IntPtr)(value?1:0),IntPtr.Zero); return true; }
+  public static bool IsChecked(IntPtr hwnd,int id) { IntPtr child=GetDlgItem(hwnd,id); return child!=IntPtr.Zero&&SendMessageW(child,0x00F0,IntPtr.Zero,IntPtr.Zero).ToInt64()==1; }
   public static void CloseCoordinator(IntPtr hwnd) { Click(hwnd,3); }
   public static void ExitApp(IntPtr hwnd) { uint quit=RegisterWindowMessageW("EyeBreakReminder.Exit.Native.1"); PostMessageW(hwnd,quit,IntPtr.Zero,IntPtr.Zero); }
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern uint RegisterWindowMessageW(string name);
@@ -207,7 +211,25 @@ try{
   $choice=Wait-Modal $process 'Eye Break Reminder Update Available'
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::ChildText($choice,12320) -ceq 'Eye Break Reminder Update Available') 'the app discovers the newer stable release and presents the authenticated update choice'
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::ChildText($choice,12321).Contains('already been downloaded and verified')) 'automatic download completes and is authenticated before the user install prompt'
+  if($cleanMode){
+    Assert-That ([EBR_SIGNED_GUI_NATIVE]::Click($choice,12102)) 'the clean-install radio option can be selected for the production-signed update'
+    Assert-That ([EBR_SIGNED_GUI_NATIVE]::IsChecked($choice,12102)) 'the clean-install option is selected before continuing'
+  }else{
+    Assert-That (-not [EBR_SIGNED_GUI_NATIVE]::IsChecked($choice,12102)) 'the default production update choice preserves settings'
+  }
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::Click($choice,12001)) 'the update choice starts the real verified download flow'
+  if($cleanMode){
+    $cleanConfirmation=Wait-Modal $process 'Clean Installation'
+    $cleanBody=[EBR_SIGNED_GUI_NATIVE]::ChildText($cleanConfirmation,12321)
+    Assert-That ($cleanBody.Contains('history and statistics will be preserved unless you select their removal')) 'clean-install confirmation explains the history-preservation default'
+    if($deleteHistoryMode){
+      Assert-That ([EBR_SIGNED_GUI_NATIVE]::Click($cleanConfirmation,12325)) 'the explicit history-deletion option can be selected'
+      Assert-That ([EBR_SIGNED_GUI_NATIVE]::IsChecked($cleanConfirmation,12325)) 'history deletion is checked only after the explicit user choice'
+    }else{
+      Assert-That (-not [EBR_SIGNED_GUI_NATIVE]::IsChecked($cleanConfirmation,12325)) 'clean installation preserves history by default'
+    }
+    Assert-That ([EBR_SIGNED_GUI_NATIVE]::Click($cleanConfirmation,12326)) 'the clean-install choice is confirmed through the application dialog'
+  }
   $script:coordinator=Wait-UpdateCoordinator
   Assert-That ($script:coordinator.Message.Contains('Update complete.')) 'the actual app-launched update coordinator reports success'
   $coordinatorHandle=$script:coordinator.Process.Handle
@@ -220,13 +242,28 @@ try{
   $script:coordinator.Process.Dispose();$script:coordinator=$null
   $script:updatedApp=Wait-UpdatedApplication $target
   $timerInitial=Get-TimerSeconds $script:updatedApp.Window
-  Assert-That ([EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,41) -ceq 'Paused' -and [EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,20) -ceq 'Resume') 'the relaunched application respects the preserved disabled auto-start preference'
-  Assert-That ([EBR_SIGNED_GUI_NATIVE]::Click($script:updatedApp.Window,20)) 'the relaunched signed successor can resume its timer normally'
+  if($cleanMode){
+    Assert-That ([EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,41).StartsWith('Running') -and [EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,20) -ceq 'Pause') 'the clean install resets the seeded paused timer preference and starts with defaults'
+  }else{
+    Assert-That ([EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,41) -ceq 'Paused' -and [EBR_SIGNED_GUI_NATIVE]::ChildText($script:updatedApp.Window,20) -ceq 'Resume') 'the relaunched application respects the preserved disabled auto-start preference'
+    Assert-That ([EBR_SIGNED_GUI_NATIVE]::Click($script:updatedApp.Window,20)) 'the relaunched signed successor can resume its timer normally'
+  }
   Assert-That ((Get-Hash $target) -ceq (Get-Hash $portable) -and (Get-Item -LiteralPath $target).VersionInfo.ProductVersion -match ('^'+[regex]::Escape($UpdateVersion)+'(\.0)?$')) 'the updated application exactly matches the signed portable-application digest and successor version'
   Assert-That ([EBR_SIGNED_GUI_NATIVE]::Responsive($script:updatedApp.Window)) 'the relaunched signed successor application responds to the window message check'
   Assert-That (Wait-TimerProgress $script:updatedApp.Window $timerInitial) 'the relaunched signed successor timer continues to advance'
-  Assert-That (([IO.File]::ReadAllText($settingsPath)).Contains('workMinutes=37') -and ([IO.File]::ReadAllText($settingsPath)).Contains('volume=32') -and ([IO.File]::ReadAllText($settingsPath)).Contains('autoStart=0')) 'the signed installed update preserves user settings, including the disabled auto-start choice'
-  Assert-That ((Get-Hash $historyPath) -ceq $historyHash) 'the signed installed update preserves user history byte-for-byte'
+  $settingsAfter=[IO.File]::ReadAllText($settingsPath)
+  if($cleanMode){
+    Assert-That (-not $settingsAfter.Contains('workMinutes=37') -and -not $settingsAfter.Contains('volume=32') -and -not $settingsAfter.Contains('autoStart=0')) 'the production-signed clean install resets the deliberately seeded settings'
+  }else{
+    Assert-That ($settingsAfter.Contains('workMinutes=37') -and $settingsAfter.Contains('volume=32') -and $settingsAfter.Contains('autoStart=0')) 'the signed installed update preserves user settings, including the disabled auto-start choice'
+  }
+  if($deleteHistoryMode){
+    $historyStillContainsSeed=Test-Path -LiteralPath $historyPath
+    if($historyStillContainsSeed){$historyStillContainsSeed=([IO.File]::ReadAllText($historyPath)).Contains($historyRecord.Trim())}
+    Assert-That (-not $historyStillContainsSeed) 'the production-signed clean install deletes seeded history only after explicit confirmation'
+  }else{
+    Assert-That ((Get-Hash $historyPath) -ceq $historyHash) 'the signed update preserves user history byte-for-byte under the selected policy'
+  }
   Assert-That ((Get-Hash $sentinelPath) -ceq $sentinelHash) 'the signed installed update preserves unrelated user data'
   if($portableMode){
     Assert-That (-not(Test-Path -LiteralPath $appKey) -and -not(Test-Path -LiteralPath $uninstallKey)) 'the production-key portable update leaves Windows installed-app registration absent'
@@ -239,10 +276,10 @@ try{
   Assert-That (-not (Get-ItemProperty -LiteralPath $runOnceKey -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue)) 'the verified GUI transaction clears temporary recovery registration'
   Close-App $script:updatedApp;$script:updatedApp=$null
   $metadata=Get-Content -LiteralPath (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json') -Raw|ConvertFrom-Json
-  $report=[ordered]@{Application='Eye Break Reminder';Scenario="Real $PackageKind GUI update through discovery, signed metadata, payload download, coordinator, and relaunch";InstallationType=$PackageKind;Status='PASS';Assertions=$script:assertions;InitialVersion=$BaselineVersion;UpdatedVersion=$UpdateVersion;Trust=$metadataTrust;KeyId=$metadata.key_id;TestKeyRejectedByProductionTrust=if($productionTrustMode){$testKeyRejected}else{$false};InitialApplicationSHA256=(Get-Hash $testApp);InstallerSHA256=(Get-Hash $setup);PortableSHA256=(Get-Hash $portable);UpdatedApplicationSHA256=(Get-Hash $target);ManifestSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json'));SignatureSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.sig'));SettingsPreserved=$true;HistoryPreserved=$true;UnrelatedDataPreserved=$true;Relaunched=$true;TimerAdvanced=$true;HostScope='Disposable GitHub Actions Windows runner';ProductionKeyProvisioned=$productionTrustMode;AuthenticodeEstablished=$false;HostRebooted=$false;UtcStarted=$script:started.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')}
+  $report=[ordered]@{Application='Eye Break Reminder';Scenario="Real $PackageKind GUI update ($UpdateChoice) through discovery, signed metadata, payload download, coordinator, and relaunch";InstallationType=$PackageKind;UpdateChoice=$UpdateChoice;CleanInstall=$cleanMode;DeleteHistory=$deleteHistoryMode;Status='PASS';Assertions=$script:assertions;InitialVersion=$BaselineVersion;UpdatedVersion=$UpdateVersion;Trust=$metadataTrust;KeyId=$metadata.key_id;TestKeyRejectedByProductionTrust=if($productionTrustMode){$testKeyRejected}else{$false};InitialApplicationSHA256=(Get-Hash $testApp);InstallerSHA256=(Get-Hash $setup);PortableSHA256=(Get-Hash $portable);UpdatedApplicationSHA256=(Get-Hash $target);ManifestSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.json'));SignatureSHA256=(Get-Hash (Join-Path $targetDirectory 'EyeBreakReminder-UpdateManifest.sig'));SettingsPreserved=(-not $cleanMode);HistoryPreserved=(-not $deleteHistoryMode);UnrelatedDataPreserved=$true;Relaunched=$true;TimerAdvanced=$true;HostScope='Disposable GitHub Actions Windows runner';ProductionKeyProvisioned=$productionTrustMode;AuthenticodeEstablished=$false;HostRebooted=$false;UtcStarted=$script:started.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')}
   [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($evidence));$report|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $evidence -Encoding utf8;Write-Host ($report|ConvertTo-Json -Depth 7)
 }catch{
-  $failure=[ordered]@{Application='Eye Break Reminder';Scenario="Real signed $PackageKind GUI update";InstallationType=$PackageKind;Status='FAIL';Failure=$_.Exception.ToString();Assertions=$script:assertions;HostScope='Disposable GitHub Actions Windows runner';ProductionTrustChanged=$false;HostRebooted=$false;UtcStarted=$script:started.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')}
+  $failure=[ordered]@{Application='Eye Break Reminder';Scenario="Real signed $PackageKind GUI update ($UpdateChoice)";InstallationType=$PackageKind;UpdateChoice=$UpdateChoice;Status='FAIL';Failure=$_.Exception.ToString();Assertions=$script:assertions;HostScope='Disposable GitHub Actions Windows runner';ProductionTrustChanged=$false;HostRebooted=$false;UtcStarted=$script:started.ToString('o');UtcCompleted=[DateTime]::UtcNow.ToString('o')}
   [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($evidence));$failure|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $evidence -Encoding utf8;throw
 }finally{
   if($null -ne $script:app){try{$script:app.Refresh();if(-not $script:app.HasExited){$window=[EBR_SIGNED_GUI_NATIVE]::FindWindowByClassAndPid('EyeBreakReminder.Native',$script:app.Id);if($window -ne [IntPtr]::Zero){[EBR_SIGNED_GUI_NATIVE]::ExitApp($window)};if(-not $script:app.WaitForExit(5000)){Stop-Process -Id $script:app.Id -Force -ErrorAction SilentlyContinue}}}catch{}finally{$script:app.Dispose()}}
