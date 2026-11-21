@@ -8,7 +8,6 @@ on:
       - 'release-inputs/v1.4.0/candidate-provenance.json'
       - 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json'
       - 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig'
-      - '.github/workflows/windows-v1.4.0-finalize-production-candidate.yml'
   workflow_dispatch:
     inputs:
       candidate_run_id:
@@ -35,7 +34,7 @@ permissions:
 
 jobs:
   finalize:
-    if: ${{ github.ref == 'refs/heads/feature/v1.4.0-automatic-updater' && (github.event_name == 'workflow_dispatch' || (contains(toJSON(github.event.commits), 'release-inputs/v1.4.0/candidate-provenance.json') && contains(toJSON(github.event.commits), 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json') && contains(toJSON(github.event.commits), 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig'))) }}
+    if: ${{ github.ref == 'refs/heads/feature/v1.4.0-automatic-updater' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push') }}
     name: Assemble and authenticate the exact signed candidate
     runs-on: windows-2025
     timeout-minutes: 25
@@ -86,7 +85,19 @@ jobs:
             $changedPathText = ($changedPaths | Sort-Object) -join "`n"
             $expectedPathText = ($expectedPaths | Sort-Object) -join "`n"
             if ($changedPathText -cne $expectedPathText) { throw 'The candidate source may only be followed by the three public signed-metadata input files.' }
-          } elseif ($env:CANDIDATE_SOURCE_COMMIT -cne $env:GITHUB_SHA) { throw 'Workflow-dispatch finalization requires the exact candidate source commit.' }
+          } else {
+            if ($env:CANDIDATE_SOURCE_COMMIT -cne $env:GITHUB_SHA) {
+              git merge-base --is-ancestor $env:CANDIDATE_SOURCE_COMMIT $env:GITHUB_SHA
+              if ($LASTEXITCODE -ne 0) { throw 'The dispatched candidate source commit must be an ancestor of the finalization commit.' }
+              $pointer = Get-Content -LiteralPath 'release-inputs/v1.4.0/candidate-provenance.json' -Raw | ConvertFrom-Json
+              if ([string]$pointer.candidate_run_id -cne $env:CANDIDATE_RUN_ID -or [string]$pointer.candidate_source_commit -cne $env:CANDIDATE_SOURCE_COMMIT) { throw 'Dispatched candidate inputs must match the committed candidate pointer.' }
+              $changedPaths = @(git diff --name-only $env:CANDIDATE_SOURCE_COMMIT $env:GITHUB_SHA)
+              $expectedPaths = @('release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json','release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig','release-inputs/v1.4.0/candidate-provenance.json','.github/workflows/windows-v1.4.0-finalize-production-candidate.yml')
+              $changedPathText = ($changedPaths | Sort-Object) -join "`n"
+              $expectedPathText = ($expectedPaths | Sort-Object) -join "`n"
+              if ($changedPathText -cne $expectedPathText) { throw 'Dispatched finalization allows only the three public metadata files and this reviewed finalizer-gate correction after the candidate source.' }
+            }
+          }
           if ($env:CANDIDATE_RUN_ID -notmatch '^\d{5,}$') { throw 'Candidate run ID must be a decimal GitHub Actions run ID.' }
           if ($env:CANDIDATE_SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$') { throw 'Candidate source commit must be a full Git SHA.' }
           $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
@@ -140,6 +151,9 @@ jobs:
             if ($env:SIGNATURE_BASE64 -notmatch '^[A-Za-z0-9+/]+={0,2}$' -or ($env:SIGNATURE_BASE64.Length % 4) -ne 0) { throw 'Signature input is not canonical base64.' }
             $manifestBytes = [Convert]::FromBase64String($env:MANIFEST_BASE64)
             $signatureBytes = [Convert]::FromBase64String($env:SIGNATURE_BASE64)
+            $committedManifest = [IO.File]::ReadAllBytes((Join-Path $PWD 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json'))
+            $committedSignature = [IO.File]::ReadAllBytes((Join-Path $PWD 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig'))
+            if ([Convert]::ToBase64String($manifestBytes) -cne [Convert]::ToBase64String($committedManifest) -or [Convert]::ToBase64String($signatureBytes) -cne [Convert]::ToBase64String($committedSignature)) { throw 'Dispatched public metadata must exactly match the committed production manifest and signature.' }
           }
           if ($manifestBytes.Length -lt 1 -or $manifestBytes.Length -gt 16384 -or $signatureBytes.Length -ne 64) { throw 'Manifest or raw ECDSA signature length is invalid.' }
           $metadata = Join-Path $PWD 'build/v1.4.0-finalized-evidence/signed-input'
