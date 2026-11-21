@@ -117,6 +117,8 @@ The authoritative finalizer run is [44875679345](https://github.com/REMEDIOSSAMU
 
 The final 110-cycle resource evidence is [run 44800093361](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44800093361), artifact [14671214276](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44800093361/artifacts/14671214276). Its application SHA-256 exactly matches the candidate EyeBreakReminder.exe: 07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720.
 
+After a test-only DNS warm-up timing defect was diagnosed from run 44877708026, the harness was changed to sample the full bounded 100-request window. The focused security workflow then passed in run [44878066198](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44878066198): 14 real DNS assertions, 25/25 SEC-028 paths, and 169 Windows updater assertions. Required CI passed in [run 44878066187](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44878066187), and focused resource regression passed in [run 44878062963](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44878062963). These changes did not alter product binaries or the signed candidate.
+
 The retained candidate has seven files: application EXE, x64 setup, portable ZIP, source ZIP, SHA-256 list, manifest JSON and detached signature. Their exact hashes are recorded in V1.4.0_ACCEPTANCE_MATRIX.json. The EXE and setup are Authenticode NotSigned; the owner approved Authenticode as optional for v1.4.0 and SignPath is not a prerequisite. The initial installer remains a bootstrap trust boundary and must be obtained through a trusted manual process with clear unsigned-status disclosure. No merge or public release occurred.
 
 ## Recovery and rotation
