@@ -179,7 +179,8 @@ try{
     $testKeyDirectory=Join-Path $testRoot 'disposable-test-key-rejection';[void][IO.Directory]::CreateDirectory($testKeyDirectory)
     & $signer --sign-update-manifest $testKeyDirectory $setup $portable $UpdateVersion;if($LASTEXITCODE-ne0){throw 'Could not create the disposable test-key rejection fixture.'}
     $testManifestPath=Join-Path $testKeyDirectory 'EyeBreakReminder-UpdateManifest.json';$testManifest=Get-Content -LiteralPath $testManifestPath -Raw|ConvertFrom-Json
-    if($testManifest.key_id-cne'p256-0aff97759ea95258'-or-not(Test-Path -LiteralPath (Join-Path $testKeyDirectory 'test-update-public-key.bin'))){throw 'The rejection fixture did not use a separate disposable test verification key.'}
+    $testPublicKeyPath=Join-Path $testKeyDirectory 'test-update-public-key.bin'
+    if($testManifest.key_id-ceq'p256-0aff97759ea95258'-or-not(Test-Path -LiteralPath $testPublicKeyPath -PathType Leaf)){throw 'The rejection fixture did not use a separate disposable test verification key.'}
     & $signer --verify-production-manifest $testManifestPath (Join-Path $testKeyDirectory 'EyeBreakReminder-UpdateManifest.sig') ('v'+$UpdateVersion) $BaselineVersion 2>&1 | Out-Null
     $testKeyRejected=($LASTEXITCODE-ne0)
     Assert-That $testKeyRejected 'the production CNG trust configuration rejects a correctly signed manifest from a disposable test key'
