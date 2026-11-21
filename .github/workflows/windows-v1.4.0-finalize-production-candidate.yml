@@ -339,12 +339,13 @@ jobs:
           if ($identity.status -cne 'PASS' -or $identity.production_key_id -cne $provenance.ProductionKeyId -or -not $provenance.WindowsCngProductionSignatureVerified -or $cng.Status -cne 'PASS' -or $cng.ProductionKeyId -cne $provenance.ProductionKeyId -or $cng.ManifestSHA256 -cne $manifestHash -or $cng.SignatureSHA256 -cne $signatureHash -or $cng.PrivateKeyAccessed -or $provenance.RequiredCheckName -cne 'Core tests and Windows package' -or -not $provenance.RequiredCheckRunId -or -not $provenance.RequiredCheckUrl -or $provenance.CandidateSourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.CandidateAcceptanceRunId -cne $env:CANDIDATE_RUN_ID -or $provenance.FinalizationSourceCommit -cne $env:GITHUB_SHA) { throw 'Independent artifact provenance or embedded-key verification did not match.' }
           $expectedFiles = @{}
           foreach ($entry in $provenance.ReleaseFiles.PSObject.Properties) { $expectedFiles[$entry.Name] = $entry.Value }
-          foreach ($entry in $identity.release_files.PSObject.Properties) {
+          $identityFiles = @($identity.release_files.PSObject.Properties)
+          foreach ($entry in $identityFiles) {
             $expected = $expectedFiles[$entry.Name]
             if (-not $expected -or $expected.bytes -ne $entry.Value.bytes -or $expected.sha256 -cne $entry.Value.sha256) { throw "Independent artifact bytes differ from their first verified identities: $($entry.Name)" }
             $expectedFiles.Remove($entry.Name)
           }
-          if ($expectedFiles.Count -ne 0 -or $identity.release_files.PSObject.Properties.Count -ne 7) { throw 'Independent candidate file identities are missing or unexpected.' }
+          if ($expectedFiles.Count -ne 0 -or $identityFiles.Length -ne 7) { throw 'Independent candidate file identities are missing or unexpected.' }
 
       - name: Retain independent verification evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
