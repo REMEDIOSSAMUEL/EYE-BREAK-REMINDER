@@ -446,6 +446,8 @@ jobs:
             -BaselineVersion '1.3.0' `
             -UpdateVersion '1.4.0' `
             -EvidencePath '.\build\v1.4.0-updater-evidence\production-signed-gui-update.json'
+          # A successful harness consumes the expected rejected-test-key exit code internally.
+          $global:LASTEXITCODE = 0
 
       - name: Retain production-trust signed-transaction evidence
         if: always()
