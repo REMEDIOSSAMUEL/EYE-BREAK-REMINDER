@@ -120,6 +120,8 @@ jobs:
           $artifactName = "eye-break-reminder-v1.4.0-candidate-$env:CANDIDATE_RUN_ID"
           $artifact = @($artifacts.artifacts | Where-Object { $_.name -ceq $artifactName -and -not $_.expired })
           if ($artifact.Count -ne 1) { throw 'The exact successful Windows acceptance artifact is missing, expired, or ambiguous.' }
+          $candidatePointer = Get-Content -LiteralPath 'release-inputs/v1.4.0/candidate-provenance.json' -Raw | ConvertFrom-Json
+          if ([string]$candidatePointer.candidate_artifact_id -cne [string]$artifact[0].id) { throw 'The public candidate pointer must identify the exact retained GitHub artifact ID.' }
           $trust = Get-Content -LiteralPath 'src/update_trust.hpp' -Raw
           if ($trust -notmatch 'ProductionUpdateKeyProvisioned\s*=\s*true\s*;' -or $trust -notmatch 'ProductionUpdateKeyId\s*=\s*"p256-[0-9a-f]{16}"') { throw 'The feature source does not embed a provisioned production P-256 trust key.' }
           if ($trust -match 'TestUpdateKey|TestPublicKey|EYBREAK_TEST_BUILD') { throw 'Production trust configuration contains a test-root marker.' }
