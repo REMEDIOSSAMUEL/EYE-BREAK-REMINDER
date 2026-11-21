@@ -4,6 +4,7 @@ param(
   [Parameter(Mandatory)][string]$EvidenceDirectory
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'windows_rdp_file_trust_prompt.ps1')
 $EvidenceDirectory=[IO.Path]::GetFullPath($EvidenceDirectory)
 [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
 $runId=if($env:GITHUB_RUN_ID){$env:GITHUB_RUN_ID}else{[guid]::NewGuid().ToString('N')}
@@ -163,11 +164,23 @@ public static class EBR_CREDMAN {
     'redirectclipboard:i:0'
     'redirectprinters:i:0'
     'drivestoredirect:s:'
+    'redirectsmartcards:i:0'
+    'redirectcomports:i:0'
+    'redirectlocation:i:0'
+    'redirectposdevices:i:0'
+    'redirectwebauthn:i:0'
+    'devicestoredirect:s:'
+    'usbdevicestoredirect:s:'
+    'camerastoredirect:s:'
+    'audiocapturemode:i:0'
     'audiomode:i:0'
   )|Set-Content -LiteralPath $rdpFile -Encoding Unicode
   $mstscPath=Join-Path $env:WINDIR 'System32\mstsc.exe'
   if(-not(Test-Path -LiteralPath $mstscPath -PathType Leaf)){throw 'BLOCKED: built-in Remote Desktop client is unavailable.'}
   $mstscProcess=Start-Process -FilePath $mstscPath -ArgumentList "`"$rdpFile`"" -PassThru
+  $trustPrompt=Resolve-EBRTestRdpFileTrustPrompt -MstscProcessId $mstscProcess.Id -RdpFilePath $rdpFile -EvidenceDirectory $EvidenceDirectory -AllowAudioPlayback -TimeoutSeconds 20
+  if($trustPrompt.Status-eq'ACKNOWLEDGED'){Add-Event 'Acknowledge only the exact generated localhost RDP-file prompts; allow only the explicitly requested audio playback resource' 'PASS' $trustPrompt}
+  else{Add-Event 'No first-run RDP-file prompt was present for the generated localhost connection' 'INFO' $trustPrompt}
   $sessionWatch=[Diagnostics.Stopwatch]::StartNew();$sessionRow=$null;$sessionTable=''
   while($sessionWatch.Elapsed.TotalSeconds-lt60-and-not$sessionRow){
     $sessionTable=& (Join-Path $env:WINDIR 'System32\query.exe') user 2>$null|Out-String

@@ -809,13 +809,14 @@ function Save-FinalEvidence([string]$Status,[string]$Reason) {
     ControllerSessionId=$script:ControllerSessionId;RdpSessionId=$script:RdpSessionId
     TemporaryUser=$script:TestUser;TemporaryUserSid=$script:TestSid
     MstscProcessIds=@($script:MstscProcessIds)
+    FailureDiagnostics=$script:FailureDiagnostics
     Assertions=@($script:Events);CleanupErrors=@($script:CleanupErrors)
     ObservedUtc=[DateTime]::UtcNow.ToString('o')
   }
   Write-AtomicJson (Join-Path $script:EvidencePath 'env006-lock-unlock-results.json') $record
 }
 
-$script:Status='BLOCKED';$script:Reason='Harness did not complete.'
+$script:Status='BLOCKED';$script:Reason='Harness did not complete.';$script:FailureDiagnostics=$null
 $script:Events=[System.Collections.Generic.List[object]]::new()
 $script:CleanupErrors=[System.Collections.Generic.List[string]]::new()
 $script:ControllerSessionId=-1;$script:RdpSessionId=-1
@@ -837,6 +838,8 @@ if ($Worker) {
   Run-Worker
   exit 1
 }
+
+. (Join-Path $PSScriptRoot 'windows_rdp_file_trust_prompt.ps1')
 
 try {
   Initialize-NativeTypes
@@ -958,7 +961,10 @@ try {
     'prompt for credentials:i:0','promptcredentialonce:i:0','enablecredsspsupport:i:1',
     'authentication level:i:2','screen mode id:i:1','desktopwidth:i:1600','desktopheight:i:900',
     'session bpp:i:32','keyboardhook:i:1','autoreconnection enabled:i:0','use multimon:i:0',
-    'redirectclipboard:i:0','redirectprinters:i:0','drivestoredirect:s:','redirectsmartcards:i:0','audiomode:i:2'
+    'redirectclipboard:i:0','redirectprinters:i:0','drivestoredirect:s:','redirectsmartcards:i:0',
+    'redirectcomports:i:0','redirectlocation:i:0','redirectposdevices:i:0','redirectwebauthn:i:0',
+    'devicestoredirect:s:','usbdevicestoredirect:s:','camerastoredirect:s:',
+    'audiocapturemode:i:0','audiomode:i:2'
   ) | Set-Content -LiteralPath $script:RdpFile -Encoding Unicode
   $pwsh=Get-Command pwsh.exe -ErrorAction Stop
   $taskArgs='-NoProfile -Sta -ExecutionPolicy Bypass -File '+[char]34+$script:WorkerScriptPath+[char]34+' -Worker -WorkerConfigPath '+[char]34+$script:WorkerConfigPath+[char]34
@@ -970,6 +976,9 @@ try {
   if (-not (Test-Path -LiteralPath $mstsc -PathType Leaf)) { throw 'BLOCKED: mstsc is unavailable.' }
   $script:OwnedMstscStartedUtc=[DateTime]::UtcNow
   $script:OwnedMstsc=Start-Process -FilePath $mstsc -ArgumentList ([char]34+$script:RdpFile+[char]34) -PassThru -ErrorAction Stop
+  $trustPrompt=Resolve-EBRTestRdpFileTrustPrompt -MstscProcessId $script:OwnedMstsc.Id -RdpFilePath $script:RdpFile -EvidenceDirectory $script:EvidencePath -TimeoutSeconds 20
+  if($trustPrompt.Status-eq'ACKNOWLEDGED'){Add-Event 'Acknowledge only exact localhost RDP-file prompts; keep all resource redirections disabled' 'PASS' $trustPrompt}
+  else{Add-Event 'No first-run RDP-file prompt was present for the generated localhost connection' 'INFO' $trustPrompt}
   $openWatch=[Diagnostics.Stopwatch]::StartNew();$session=$null;$window=$null
   while ($openWatch.Elapsed.TotalSeconds -lt 70 -and (-not $session -or -not $window)) {
     $owned=@(Get-Process -Name mstsc -ErrorAction SilentlyContinue | Where-Object {$_.SessionId -eq $script:ControllerSessionId -and $_.StartTime.ToUniversalTime() -ge $script:OwnedMstscStartedUtc.AddSeconds(-2)})
@@ -1074,10 +1083,22 @@ try {
   $script:Status='PASS'
   $script:Reason='The exact production candidate paused on a verified Winlogon lock, the same RDP session was reauthenticated to Default, its timer resumed and advanced, handle/thread samples were captured, and its one-minute timer produced the visible reminder window plus a UIA-correlated natural Windows Shell notification.'
 } catch {
-  $failure=$_.Exception.Message
+  $errorRecord=$_
+  $failure=$errorRecord.Exception.Message
   if ($failure -like 'FAIL:*') { $script:Status='FAIL';$script:Reason=$failure }
   else { $script:Status='BLOCKED';$script:Reason=$failure }
-  Add-Event 'ENV-006 isolated lock/unlock attempt' $script:Status $script:Reason
+  $script:FailureDiagnostics=[ordered]@{
+    ExceptionType=$errorRecord.Exception.GetType().FullName
+    HResult=('0x{0:X8}' -f $errorRecord.Exception.HResult)
+    FullyQualifiedErrorId=$errorRecord.FullyQualifiedErrorId
+    CategoryInfo=[string]$errorRecord.CategoryInfo
+    Message=$failure
+    PositionMessage=[string]$errorRecord.InvocationInfo.PositionMessage
+    Line=[string]$errorRecord.InvocationInfo.Line
+    ScriptStackTrace=[string]$errorRecord.ScriptStackTrace
+    InnerException=if($errorRecord.Exception.InnerException){$errorRecord.Exception.InnerException.ToString()}else{$null}
+  }
+  Add-Event 'ENV-006 isolated lock/unlock attempt' $script:Status $script:FailureDiagnostics
 } finally {
   $script:Password=$null
   if ($script:SecurePassword) { try {$script:SecurePassword.Dispose()} catch {}; $script:SecurePassword=$null }

@@ -12,7 +12,7 @@ permissions:
 jobs:
   audio-endpoint-preflight:
     name: Exact candidate Windows 11 ARM64 audio endpoint preflight
-    runs-on: windows-11-arm
+    runs-on: windows-11-vs2026-arm
     timeout-minutes: 20
     steps:
       - name: Check out the endpoint probe
@@ -66,7 +66,7 @@ jobs:
 
   narrator-speech-recap-windows-11-arm64:
     name: Exact candidate Narrator speech-content and keyboard accessibility probe
-    runs-on: windows-11-arm
+    runs-on: windows-11-vs2026-arm
     timeout-minutes: 20
     steps:
       - name: Check out the PR test harness
@@ -115,7 +115,7 @@ jobs:
 
   candidate-audio-controls-windows-11-arm64:
     name: Exact candidate alarm controls and Windows WASAPI loopback attempt
-    runs-on: windows-11-arm
+    runs-on: windows-11-vs2026-arm
     timeout-minutes: 25
     steps:
       - name: Check out the PR test harness
@@ -162,7 +162,7 @@ jobs:
 
   shell-notification-windows-11-arm64:
     name: Exact candidate Windows Shell notification display and activation probe
-    runs-on: windows-11-arm
+    runs-on: windows-11-vs2026-arm
     timeout-minutes: 20
     steps:
       - name: Check out the PR test harness
