@@ -131,7 +131,32 @@ function Get-NarratorProcessIdentity([Diagnostics.Process]$Process) {
   if ($null -eq $Process) { throw 'Narrator process identity was not available.' }
   $Process.Refresh()
   if ($Process.HasExited) { throw 'Narrator exited before its process identity could be recorded.' }
-  $imagePath = [IO.Path]::GetFullPath([string]$Process.Path)
+  # Start-Process -PassThru returns a raw System.Diagnostics.Process. Its
+  # PowerShell Get-Process adapter's Path member is not guaranteed to exist on
+  # that raw object (and may therefore be empty even though MainModule is
+  # readable). Resolve the running image from the process itself, with a CIM
+  # query as a second independent source. Never hash the requested path as a
+  # substitute for the observed process image.
+  $observedPaths = [System.Collections.Generic.List[string]]::new()
+  try {
+    $adaptedPath = [string]$Process.Path
+    if (-not [string]::IsNullOrWhiteSpace($adaptedPath)) { $observedPaths.Add($adaptedPath) }
+  } catch {}
+  try {
+    $modulePath = [string]$Process.MainModule.FileName
+    if (-not [string]::IsNullOrWhiteSpace($modulePath)) { $observedPaths.Add($modulePath) }
+  } catch {}
+  try {
+    $processIdForQuery = [int]$Process.Id
+    $nativeProcess = @(Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $processIdForQuery" -Property ProcessId,ExecutablePath -ErrorAction Stop)
+    if ($nativeProcess.Count -eq 1 -and -not [string]::IsNullOrWhiteSpace([string]$nativeProcess[0].ExecutablePath)) {
+      $observedPaths.Add([string]$nativeProcess[0].ExecutablePath)
+    }
+  } catch {}
+  $normalizedPaths = @($observedPaths | ForEach-Object { [IO.Path]::GetFullPath($_) } | Sort-Object -Unique)
+  if ($normalizedPaths.Count -eq 0) { throw 'Narrator executable path could not be read from the running process.' }
+  if ($normalizedPaths.Count -ne 1) { throw "Narrator executable path sources disagreed: $($normalizedPaths -join '; ')" }
+  $imagePath = $normalizedPaths[0]
   if ([string]::IsNullOrWhiteSpace($imagePath) -or -not (Test-Path -LiteralPath $imagePath -PathType Leaf)) { throw 'Narrator executable path could not be verified.' }
   $imageFile = Get-Item -LiteralPath $imagePath -ErrorAction Stop
   $startTimeUtc = $Process.StartTime.ToUniversalTime()

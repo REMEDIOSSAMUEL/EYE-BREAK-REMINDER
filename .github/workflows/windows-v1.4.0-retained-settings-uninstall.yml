@@ -16,11 +16,11 @@ permissions:
 
 jobs:
   windows-11-arm64-power-capability:
-    name: Read Windows 11 ARM64 sleep and wake capability (no changes; not acceptance)
+    name: Read Windows 11 ARM64 sleep, wake, and display capabilities (no changes; not acceptance)
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 10
     steps:
-      - name: Query native Windows 11 ARM64 power capabilities without changing state
+      - name: Query native Windows 11 ARM64 power and active display topology without changing state
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -42,20 +42,26 @@ jobs:
             (Invoke-PowerCapabilityQuery 'Active power scheme' @('/getactivescheme'))
             (Invoke-PowerCapabilityQuery 'Wake timer policy' @('/query','SCHEME_CURRENT','SUB_SLEEP','RTCWAKE'))
           )
+          $displays = @()
+          $displayQueryError = $null
+          try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+            $displays = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { [pscustomobject]@{DeviceName=$_.DeviceName;Primary=$_.Primary;Bounds=@($_.Bounds.X,$_.Bounds.Y,$_.Bounds.Width,$_.Bounds.Height);WorkingArea=@($_.WorkingArea.X,$_.WorkingArea.Y,$_.WorkingArea.Width,$_.WorkingArea.Height)} })
+          } catch { $displayQueryError = $_.Exception.Message }
           $computer = Get-CimInstance Win32_ComputerSystem
           $process = Get-Process -Id $PID
           $evidenceDirectory = Join-Path $env:RUNNER_TEMP 'v1.4.0-arm64-power-capability'
           New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null
           $report = [pscustomobject]@{
             Requirement='ENV-007';Result='CAPABILITY ONLY — NOT AN ACCEPTANCE PASS'
-            Purpose='Read-only discovery; no candidate launch, sleep/wake, UI, display, or power setting action.'
+            Purpose='Read-only discovery; no candidate launch, UI action, sleep/wake, display change, or power setting action.'
             Environment='GitHub-hosted disposable Windows 11 ARM64 runner'
             OperatingSystem=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;Edition=$os.OperatingSystemSKU
             OSArchitecture=$osArchitecture;ProcessArchitecture=$processArchitecture;RunnerArchitecture=$env:RUNNER_ARCH
             NativeProcessorArchitectureCode=$cpu.Architecture;HypervisorPresent=$computer.HypervisorPresent
             SessionId=$process.SessionId;SessionName=$env:SESSIONNAME;UserInteractive=[Environment]::UserInteractive
-            Queries=$queries;ObservedUtc=[DateTime]::UtcNow.ToString('o')
-            Limitation='Even an available sleep state or wake source does not prove genuine sleep/resume or application timer recovery.'
+            Queries=$queries;VisibleDisplayCount=$displays.Count;Displays=$displays;DisplayQueryError=$displayQueryError;ObservedUtc=[DateTime]::UtcNow.ToString('o')
+            Limitation='Even an available sleep state or wake source does not prove genuine sleep/resume or application timer recovery. A read-only monitor inventory is not multi-display application positioning or disconnect/reconnect acceptance evidence.'
           }
           $reportPath = Join-Path $evidenceDirectory 'env-007-windows-11-arm64-power-capability.json'
           $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding UTF8
@@ -64,7 +70,7 @@ jobs:
             ''
             "Environment: $($report.Environment); $($report.OperatingSystem) $($report.Version) build $($report.Build); OS/process/native CPU architecture $osArchitecture/$processArchitecture/$($cpu.Architecture)."
             "Runner session: $($report.SessionId) ($($report.SessionName)); interactive flag $($report.UserInteractive); hypervisor present $($report.HypervisorPresent)."
-            'Only read-only powercfg queries were run. No candidate, UI, sleep/wake, display, or power setting was touched.'
+            "Read-only powercfg plus active display topology queries only; Windows reported $($report.VisibleDisplayCount) active display(s). No candidate, UI, sleep/wake, display configuration, or power setting was changed."
             'This does not satisfy ENV-007; a later test still needs genuine suspend/resume and observed application timer recovery.'
           ) -join "`n"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary

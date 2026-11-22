@@ -61,8 +61,55 @@ function Resolve-EBRTestRdpFileTrustPrompt {
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.ComponentModel;
 
 public static class EBR_RdpUiNative {
+  [StructLayout(LayoutKind.Sequential)]
+  private struct LVITEMW {
+    public uint mask;
+    public int iItem;
+    public int iSubItem;
+    public uint state;
+    public uint stateMask;
+    public IntPtr pszText;
+    public int cchTextMax;
+    public int iImage;
+    public IntPtr lParam;
+    public int iIndent;
+    public int iGroupId;
+    public uint cColumns;
+    public IntPtr puColumns;
+    public IntPtr piColFmt;
+    public int iGroup;
+  }
+
+  public sealed class ListViewSnapshot {
+    public int ColumnCount { get; set; }
+    public string[][] Rows { get; set; }
+  }
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, uint processId);
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool CloseHandle(IntPtr handle);
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern IntPtr VirtualAllocEx(IntPtr process, IntPtr address, UIntPtr size, uint allocationType, uint protect);
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool VirtualFreeEx(IntPtr process, IntPtr address, UIntPtr size, uint freeType);
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool WriteProcessMemory(IntPtr process, IntPtr address, byte[] buffer, UIntPtr size, out UIntPtr written);
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool ReadProcessMemory(IntPtr process, IntPtr address, byte[] buffer, UIntPtr size, out UIntPtr read);
+
   [DllImport("user32.dll", SetLastError = true)]
   [return: MarshalAs(UnmanagedType.Bool)]
   public static extern bool IsChild(IntPtr parent, IntPtr child);
@@ -86,6 +133,155 @@ public static class EBR_RdpUiNative {
 
   [DllImport("user32.dll", SetLastError = true)]
   public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMilliseconds, out IntPtr result);
+
+  private static IntPtr SendListViewMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam, string operation) {
+    IntPtr result;
+    IntPtr sent = SendMessageTimeout(hWnd, message, wParam, lParam, 0x0002u, 3000u, out result);
+    if (sent == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), operation + " timed out or failed.");
+    return result;
+  }
+
+  private static string GetWindowClassName(IntPtr hWnd) {
+    StringBuilder name = new StringBuilder(256);
+    if (GetClassName(hWnd, name, name.Capacity) <= 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "GetClassName failed.");
+    return name.ToString();
+  }
+
+  private static void AssertListViewIdentity(IntPtr listView, uint expectedProcessId) {
+    if (IntPtr.Size != 8) throw new InvalidOperationException("The native list-view reader requires a 64-bit controller process.");
+    if (listView == IntPtr.Zero || !IsWindowVisible(listView) || !IsWindowEnabled(listView)) throw new InvalidOperationException("The certificate property list is not a visible, enabled window.");
+    uint owner;
+    if (GetWindowThreadProcessId(listView, out owner) == 0 || owner != expectedProcessId) throw new InvalidOperationException("The certificate property list is not owned by the verified mstsc process.");
+    if (!String.Equals(GetWindowClassName(listView), "SysListView32", StringComparison.Ordinal)) throw new InvalidOperationException("The certificate property control is not the expected SysListView32.");
+  }
+
+  private static void WriteRemote(IntPtr process, IntPtr address, byte[] bytes, string operation) {
+    UIntPtr written;
+    if (!WriteProcessMemory(process, address, bytes, new UIntPtr((uint)bytes.Length), out written) || written.ToUInt64() != (ulong)bytes.Length)
+      throw new Win32Exception(Marshal.GetLastWin32Error(), operation + " could not write the exact remote buffer.");
+  }
+
+  private static string ReadListViewCell(IntPtr listView, IntPtr process, IntPtr remoteItem, IntPtr remoteText, int itemIndex, int subItemIndex) {
+    const int characterCapacity = 256;
+    byte[] clearedText = new byte[characterCapacity * 2];
+    WriteRemote(process, remoteText, clearedText, "Clearing the remote list-view text buffer");
+    LVITEMW item = new LVITEMW();
+    item.iItem = itemIndex;
+    item.iSubItem = subItemIndex;
+    item.pszText = remoteText;
+    item.cchTextMax = characterCapacity;
+    int itemSize = Marshal.SizeOf(typeof(LVITEMW));
+    IntPtr localItem = Marshal.AllocHGlobal(itemSize);
+    try {
+      Marshal.StructureToPtr(item, localItem, false);
+      byte[] itemBytes = new byte[itemSize];
+      Marshal.Copy(localItem, itemBytes, 0, itemSize);
+      WriteRemote(process, remoteItem, itemBytes, "Writing the remote LVITEMW structure");
+    } finally {
+      Marshal.FreeHGlobal(localItem);
+    }
+    IntPtr returnedCharacters = SendListViewMessage(listView, 0x1073u, new IntPtr(itemIndex), remoteItem, "LVM_GETITEMTEXTW");
+    int characterCount = returnedCharacters.ToInt32();
+    if (characterCount < 0 || characterCount >= characterCapacity) throw new InvalidOperationException("A certificate property cell was empty or exceeded the bounded text buffer.");
+    byte[] textBytes = new byte[(characterCount + 1) * 2];
+    UIntPtr read;
+    if (!ReadProcessMemory(process, remoteText, textBytes, new UIntPtr((uint)textBytes.Length), out read) || read.ToUInt64() < (ulong)textBytes.Length)
+      throw new Win32Exception(Marshal.GetLastWin32Error(), "Reading the exact remote certificate property cell failed.");
+    string value = Encoding.Unicode.GetString(textBytes, 0, characterCount * 2);
+    if (value.IndexOf('\0') >= 0) throw new InvalidOperationException("A certificate property cell contained an embedded terminator.");
+    return value;
+  }
+
+  public static ListViewSnapshot ReadCertificatePropertyList(IntPtr listView, uint expectedProcessId) {
+    AssertListViewIdentity(listView, expectedProcessId);
+    IntPtr header = SendListViewMessage(listView, 0x101Fu, IntPtr.Zero, IntPtr.Zero, "LVM_GETHEADER");
+    uint headerOwner;
+    if (header == IntPtr.Zero || !IsWindowVisible(header) || !IsWindowEnabled(header) ||
+        !String.Equals(GetWindowClassName(header), "SysHeader32", StringComparison.Ordinal) ||
+        GetWindowThreadProcessId(header, out headerOwner) == 0 || headerOwner != expectedProcessId || !IsChild(listView, header))
+      throw new InvalidOperationException("The certificate property list does not have one same-process, visible SysHeader32 child.");
+    int columns = SendListViewMessage(header, 0x1200u, IntPtr.Zero, IntPtr.Zero, "HDM_GETITEMCOUNT").ToInt32();
+    if (columns != 2) throw new InvalidOperationException("The certificate property list did not expose exactly two columns.");
+    int rows = SendListViewMessage(listView, 0x1004u, IntPtr.Zero, IntPtr.Zero, "LVM_GETITEMCOUNT").ToInt32();
+    if (rows < 1 || rows > 128) throw new InvalidOperationException("The certificate property list exposed an unexpected row count.");
+
+    IntPtr process = OpenProcess(0x0008u | 0x0010u | 0x0020u | 0x1000u, false, expectedProcessId);
+    if (process == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not read the verified mstsc list-view text buffers.");
+    IntPtr remote = IntPtr.Zero;
+    try {
+      remote = VirtualAllocEx(process, IntPtr.Zero, new UIntPtr(4096u), 0x3000u, 0x04u);
+      if (remote == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not allocate the bounded remote list-view text buffer.");
+      IntPtr remoteText = IntPtr.Add(remote, 512);
+      string[][] values = new string[rows][];
+      for (int row = 0; row < rows; row++) {
+        values[row] = new string[2];
+        values[row][0] = ReadListViewCell(listView, process, remote, remoteText, row, 0);
+      }
+      return new ListViewSnapshot { ColumnCount = columns, Rows = values };
+    } finally {
+      if (remote != IntPtr.Zero && !VirtualFreeEx(process, remote, UIntPtr.Zero, 0x8000u)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not release the bounded remote list-view text buffer.");
+      CloseHandle(process);
+    }
+  }
+
+  public static string ReadCertificatePropertyValue(IntPtr listView, uint expectedProcessId, int rowIndex) {
+    AssertListViewIdentity(listView, expectedProcessId);
+    IntPtr header = SendListViewMessage(listView, 0x101Fu, IntPtr.Zero, IntPtr.Zero, "LVM_GETHEADER");
+    if (header == IntPtr.Zero || !IsWindowVisible(header) || !IsWindowEnabled(header) || !IsChild(listView, header))
+      throw new InvalidOperationException("The certificate property header is unavailable or is not a visible list-view child.");
+    int columns = SendListViewMessage(header, 0x1200u, IntPtr.Zero, IntPtr.Zero, "HDM_GETITEMCOUNT").ToInt32();
+    if (columns != 2) throw new InvalidOperationException("The certificate property list did not retain exactly two columns.");
+    int rowCount = SendListViewMessage(listView, 0x1004u, IntPtr.Zero, IntPtr.Zero, "LVM_GETITEMCOUNT").ToInt32();
+    if (rowIndex < 0 || rowIndex >= rowCount) throw new InvalidOperationException("The requested certificate property row is outside the exact list-view range.");
+    IntPtr process = OpenProcess(0x0008u | 0x0010u | 0x0020u | 0x1000u, false, expectedProcessId);
+    if (process == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not read the verified mstsc Thumbprint value.");
+    IntPtr remote = IntPtr.Zero;
+    try {
+      remote = VirtualAllocEx(process, IntPtr.Zero, new UIntPtr(4096u), 0x3000u, 0x04u);
+      if (remote == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not allocate the bounded remote Thumbprint text buffer.");
+      return ReadListViewCell(listView, process, remote, IntPtr.Add(remote, 512), rowIndex, 1);
+    } finally {
+      if (remote != IntPtr.Zero && !VirtualFreeEx(process, remote, UIntPtr.Zero, 0x8000u)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not release the bounded remote Thumbprint text buffer.");
+      CloseHandle(process);
+    }
+  }
+
+  public static void SelectCertificatePropertyRow(IntPtr listView, uint expectedProcessId, int rowIndex) {
+    AssertListViewIdentity(listView, expectedProcessId);
+    int rowCount = SendListViewMessage(listView, 0x1004u, IntPtr.Zero, IntPtr.Zero, "LVM_GETITEMCOUNT").ToInt32();
+    if (rowIndex < 0 || rowIndex >= rowCount) throw new InvalidOperationException("The requested certificate row index is outside the exact list-view range.");
+    IntPtr visible = SendListViewMessage(listView, 0x1013u, new IntPtr(rowIndex), IntPtr.Zero, "LVM_ENSUREVISIBLE");
+    if (visible == IntPtr.Zero) throw new InvalidOperationException("The exact certificate property row could not be brought into view.");
+
+    IntPtr process = OpenProcess(0x0008u | 0x0010u | 0x0020u | 0x1000u, false, expectedProcessId);
+    if (process == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not open the verified mstsc process to select the exact certificate property row.");
+    IntPtr remote = IntPtr.Zero;
+    try {
+      remote = VirtualAllocEx(process, IntPtr.Zero, new UIntPtr(512u), 0x3000u, 0x04u);
+      if (remote == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not allocate the bounded remote LVITEMW selection buffer.");
+      LVITEMW item = new LVITEMW();
+      item.mask = 0x0008u;
+      item.iItem = rowIndex;
+      item.state = 0x0003u;
+      item.stateMask = 0x0003u;
+      int size = Marshal.SizeOf(typeof(LVITEMW));
+      IntPtr localItem = Marshal.AllocHGlobal(size);
+      try {
+        Marshal.StructureToPtr(item, localItem, false);
+        byte[] bytes = new byte[size];
+        Marshal.Copy(localItem, bytes, 0, size);
+        WriteRemote(process, remote, bytes, "Writing the bounded LVITEMW selection structure");
+      } finally {
+        Marshal.FreeHGlobal(localItem);
+      }
+      SendListViewMessage(listView, 0x102Bu, new IntPtr(rowIndex), remote, "LVM_SETITEMSTATE");
+      IntPtr selectedState = SendListViewMessage(listView, 0x102Cu, new IntPtr(rowIndex), new IntPtr(0x0002), "LVM_GETITEMSTATE");
+      if ((selectedState.ToInt64() & 0x0002L) == 0) throw new InvalidOperationException("The exact Thumbprint property row did not become selected.");
+    } finally {
+      if (remote != IntPtr.Zero && !VirtualFreeEx(process, remote, UIntPtr.Zero, 0x8000u)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not release the bounded LVITEMW selection buffer.");
+      CloseHandle(process);
+    }
+  }
 
   [DllImport("oleacc.dll", ExactSpelling = true)]
   private static extern int AccessibleObjectFromWindow(IntPtr hWnd, uint objectId, ref Guid interfaceId, [MarshalAs(UnmanagedType.Interface)] out object accessibleObject);
@@ -401,36 +597,23 @@ public static class EBR_RdpUiNative {
   }
 
   function Get-EBRDisplayedCertificateThumbprint($ViewerSnapshot){
-    $labels=@(foreach($node in $ViewerSnapshot.Nodes){try{$c=$node.Current;if(-not$c.IsOffscreen-and$c.Name-match'(?i)^\s*Thumbprint(?:\s*\(SHA-?1\))?(?:\s*[:=].*)?\s*$'){$node}}catch{}})
-    if($labels.Count-ne1){throw "certificate Details UI exposed $($labels.Count) exact Thumbprint labels."}
-    $walker=[System.Windows.Automation.TreeWalker]::ControlViewWalker;$row=$null;$labelControlType=$labels[0].Current.ControlType
-    if($labelControlType-in@([System.Windows.Automation.ControlType]::ListItem,[System.Windows.Automation.ControlType]::DataItem)){$row=$labels[0]}
-    else{
-      $ancestor=$labels[0]
-      for($depth=0;$depth-lt6;$depth++){
-        $ancestor=$walker.GetParent($ancestor);if($null-eq$ancestor){break}
-        if($ancestor.Current.ControlType-in@([System.Windows.Automation.ControlType]::ListItem,[System.Windows.Automation.ControlType]::DataItem)){$row=$ancestor;break}
-      }
-    }
-    if($null-eq$row-or$row.Current.IsOffscreen){throw 'visible Thumbprint label is not inside a visible UIA list/data row.'}
-    $related=[System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new();$related.Add($row)
-    foreach($node in $row.FindAll([System.Windows.Automation.TreeScope]::Descendants,$trueCondition)){$related.Add($node)}
-    $values=[System.Collections.Generic.List[string]]::new()
-    foreach($node in $related){
-      if($node.Current.IsOffscreen){continue}
-      $texts=[System.Collections.Generic.List[string]]::new()
-      try{$texts.Add([string]$node.Current.Name)}catch{}
-      try{$vp=$null;if($node.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern,[ref]$vp)){$texts.Add([string]([System.Windows.Automation.ValuePattern]$vp).Current.Value)}}catch{}
-      foreach($text in $texts){
-        $candidate=$text.Trim()
-        if($candidate-match'(?is)^Thumbprint(?:\s*\(SHA-?1\))?\s*[:=]\s*([0-9A-F:\s]{40,})$'){$candidate=$Matches[1]}
-        elseif($candidate-notmatch'(?is)^[0-9A-F:\s]{40,}$'){continue}
-        $normalized=($candidate-replace'[^0-9A-Fa-f]','').ToUpperInvariant()
-        if($normalized-match'^[0-9A-F]{40}$'-and-not$values.Contains($normalized)){$values.Add($normalized)}
-      }
-    }
-    if($values.Count-ne1){throw "Thumbprint row exposed $($values.Count) unique SHA-1 values."}
-    return $values[0]
+    if(-not(Test-EBRForegroundProcessWindow $ViewerSnapshot.Handle $MstscProcessId)){throw 'certificate Details viewer is not the unique foreground mstsc window.'}
+    $lists=@(foreach($node in $ViewerSnapshot.Nodes){try{$c=$node.Current;$h=[IntPtr]$c.NativeWindowHandle;if($c.ProcessId-eq$MstscProcessId-and$c.ClassName-ceq'SysListView32'-and$h-ne[IntPtr]::Zero-and-not$c.IsOffscreen-and$c.IsEnabled-and[EBR_RdpUiNative]::IsChild([IntPtr]$ViewerSnapshot.Handle,$h)){$node}}catch{}})
+    if($lists.Count-ne1){throw "certificate Details UI exposed $($lists.Count) exact same-process SysListView32 property controls."}
+    $listCurrent=$lists[0].Current;$listHandle=[IntPtr]$listCurrent.NativeWindowHandle;$owner=[uint32]0
+    [void][EBR_RdpUiNative]::GetWindowThreadProcessId($listHandle,[ref]$owner)
+    if($owner-ne[uint32]$MstscProcessId-or-not[EBR_RdpUiNative]::IsWindowVisible($listHandle)-or-not[EBR_RdpUiNative]::IsWindowEnabled($listHandle)){throw 'certificate property list is not a visible, enabled child of the verified mstsc process.'}
+    $propertyList=[EBR_RdpUiNative]::ReadCertificatePropertyList($listHandle,[uint32]$MstscProcessId)
+    if($propertyList.ColumnCount-ne2){throw "certificate property list exposed $($propertyList.ColumnCount) columns, expected Field and Value."}
+    $thumbRows=@(for($index=0;$index-lt$propertyList.Rows.Length;$index++){if(([string]$propertyList.Rows[$index][0]).Trim()-ceq'Thumbprint'){[pscustomobject]@{Index=$index;Field=([string]$propertyList.Rows[$index][0]).Trim()}}})
+    if($thumbRows.Count-ne1){throw "certificate Details UI exposed $($thumbRows.Count) exact Thumbprint property rows in its native Field column."}
+    $thumbRow=$thumbRows[0]
+    [EBR_RdpUiNative]::SelectCertificatePropertyRow($listHandle,[uint32]$MstscProcessId,[int]$thumbRow.Index)
+    $rawValue=[EBR_RdpUiNative]::ReadCertificatePropertyValue($listHandle,[uint32]$MstscProcessId,[int]$thumbRow.Index)
+    if($rawValue-notmatch'(?i)^[0-9A-F:\s]{40,}$'){throw 'the selected native Thumbprint row did not expose only a complete SHA-1 fingerprint.'}
+    $normalized=($rawValue-replace'[^0-9A-Fa-f]','').ToUpperInvariant()
+    if($normalized-notmatch'^[0-9A-F]{40}$'){throw 'the selected native Thumbprint row did not expose exactly one complete SHA-1 fingerprint.'}
+    [pscustomobject]@{ThumbprintSHA1=$normalized;PropertyField=$thumbRow.Field;PropertyValue=$rawValue;RowIndex=[int]$thumbRow.Index;ColumnCount=[int]$propertyList.ColumnCount;ListViewHandle=[long]$listCurrent.NativeWindowHandle;ControlClass='SysListView32';Selection='LVM_ENSUREVISIBLE and exact row selection; selected state independently read back'}
   }
 
   function Test-EBRServerCertificateWarning([string]$JoinedNames){
@@ -540,14 +723,14 @@ public static class EBR_RdpUiNative {
       }
       $viewerSnapshot=Get-EBRPromptSnapshot $viewer
       Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-details-tab-selected' ([pscustomobject]@{NativeTabs=$nativeTabsAfter.Items;SelectedTab='Details';DetailsChildId=$detailsAfter[0].ChildId;Action='IAccessible.accDoDefaultAction once'})
-      $displayed=$null;$thumbprintFailure='';$wait=[Diagnostics.Stopwatch]::StartNew()
-      while($wait.Elapsed.TotalSeconds-lt5-and-not$displayed){
+      $displayed=$null;$thumbprintFailure='';$propertyEvidence=$null
+      try{
+        $propertyEvidence=Get-EBRDisplayedCertificateThumbprint $viewerSnapshot
+        $displayed=[string]$propertyEvidence.ThumbprintSHA1
         $viewerSnapshot=Get-EBRPromptSnapshot $viewer
-        if($viewerSnapshot.JoinedNames-match'(?i)\bThumbprint\b'){try{$displayed=Get-EBRDisplayedCertificateThumbprint $viewerSnapshot}catch{$thumbprintFailure=$_.Exception.Message}}
-        if(-not$displayed){Start-Sleep -Milliseconds 100}
-      }
-      if(-not$displayed){$viewerSnapshot=Get-EBRPromptSnapshot $viewer;Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-thumbprint-unavailable' ([pscustomobject]@{Failure=$thumbprintFailure});throw 'Details UI did not expose exactly one readable Thumbprint row.'}
-      Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-viewer-thumbprint' ([pscustomobject]@{DetailsTabSelected=$true;DisplayedThumbprintSHA1=$displayed;ListenerCertificate=$listenerBefore})
+      }catch{$thumbprintFailure=$_.Exception.Message}
+      if(-not$displayed){$viewerSnapshot=Get-EBRPromptSnapshot $viewer;Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-thumbprint-unavailable' ([pscustomobject]@{Failure=$thumbprintFailure;PropertyEvidence=$propertyEvidence});throw 'Details UI did not expose exactly one readable Thumbprint row.'}
+      Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-viewer-thumbprint' ([pscustomobject]@{DetailsTabSelected=$true;DisplayedThumbprintSHA1=$displayed;SelectedPropertyRow=$propertyEvidence;ListenerCertificate=$listenerBefore})
       if($displayed-cne$listenerBefore.ThumbprintSHA1){throw 'displayed RDP certificate thumbprint does not match the configured listener certificate.'}
       if(-not(Test-EBRForegroundProcessWindow $viewerSnapshot.Handle $MstscProcessId)){throw 'certificate viewer lost foreground before close.'}
       $close=@(foreach($node in $viewerSnapshot.Nodes){try{$c=$node.Current;if($c.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$c.ProcessId-eq$MstscProcessId-and$c.IsEnabled-and-not$c.IsOffscreen-and$c.Name-cin@('Close','OK')){$node}}catch{}})

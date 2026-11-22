@@ -13,6 +13,7 @@ $expectedArtifactId='14695418078'
 $expectedRunId='44875679345'
 $events=[System.Collections.Generic.List[object]]::new()
 $captures=[System.Collections.Generic.List[object]]::new()
+$audioHandleMilestones=[System.Collections.Generic.List[object]]::new()
 $ownedProcess=$null
 $appPid=0
 $mainWindow=[IntPtr]::Zero
@@ -36,6 +37,10 @@ $consoleDesktopRecord=$null
 $nativeTypeLoaded=$false
 
 function Add-AudioEvent([string]$Name,[string]$Status,$Details=$null){$script:events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')})}
+function Get-CandidateHandleCount {
+  if(-not$script:ownedProcess){return $null}
+  try{$script:ownedProcess.Refresh();if($script:ownedProcess.HasExited){return $null};return [int]$script:ownedProcess.HandleCount}catch{return $null}
+}
 function Test-AudioRequire([bool]$Condition,[string]$Name,$Details=$null){
   if($Condition){Add-AudioEvent $Name 'PASS' $Details;return $true}
   Add-AudioEvent $Name 'FAIL' $Details;$script:controlFailure=$true;return $false
@@ -80,6 +85,7 @@ public static class EBR_AUDIO_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] static extern IntPtr GetParent(IntPtr hwnd);
   [DllImport("user32.dll",SetLastError=true)] static extern bool GetWindowRect(IntPtr hwnd,out RECT rect);
   [DllImport("user32.dll",SetLastError=true)] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll",SetLastError=true)] static extern IntPtr GetLastActivePopup(IntPtr hwnd);
   [DllImport("user32.dll",SetLastError=true)] static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll",SetLastError=true)] static extern bool ShowWindow(IntPtr hwnd,int command);
   [DllImport("user32.dll",SetLastError=true)] static extern IntPtr WindowFromPoint(POINT point);
@@ -103,6 +109,7 @@ public static class EBR_AUDIO_NATIVE {
   public static IntPtr Parent(IntPtr hwnd){return GetParent(hwnd);}
   public static bool WindowRect(IntPtr hwnd,out RECT rect){return GetWindowRect(hwnd,out rect);}
   public static IntPtr ForegroundWindow(){return GetForegroundWindow();}
+  public static IntPtr LastActivePopup(IntPtr hwnd){return hwnd==IntPtr.Zero?IntPtr.Zero:GetLastActivePopup(hwnd);}
   public static bool TryActivate(IntPtr hwnd){ShowWindow(hwnd,9);SetForegroundWindow(hwnd);return GetForegroundWindow()==hwnd;}
   public static IntPtr RootWindowAtCenter(IntPtr hwnd){RECT r;if(!GetWindowRect(hwnd,out r))return IntPtr.Zero;var p=new POINT{X=(r.Left+r.Right)/2,Y=(r.Top+r.Bottom)/2};var hit=WindowFromPoint(p);return hit==IntPtr.Zero?IntPtr.Zero:GetAncestor(hit,2);}
   public static IntPtr Send(IntPtr hwnd,uint msg,IntPtr w,IntPtr l){return SendMessageNative(hwnd,msg,w,l);}
@@ -384,11 +391,19 @@ function Read-AudioSettings {
   return $map
 }
 function Wait-AudioSetting([string]$Key,[string]$Expected){$watch=[Diagnostics.Stopwatch]::StartNew();do{$saved=Read-AudioSettings;if($saved.ContainsKey($Key)-and[string]$saved[$Key]-ceq$Expected){return $true};Start-Sleep -Milliseconds 50}while($watch.Elapsed.TotalSeconds-lt4);return $false}
+function Get-AudioWindowText([IntPtr]$Handle){
+  $text=@([EBR_AUDIO_NATIVE]::Text($Handle));foreach($child in [EBR_AUDIO_NATIVE]::ChildWindows($Handle)){$value=[EBR_AUDIO_NATIVE]::Text($child);if($value){$text+=,$value}}
+  try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($Handle);if($root){$all=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($e in $all){try{if($e.Current.Name){$text+=,$e.Current.Name}}catch{}}}}catch{}
+  return $text-join' '
+}
 function Get-AudioErrorDialog {
-  foreach($h in [EBR_AUDIO_NATIVE]::TopWindowsForProcess($script:appPid)){
-    $text=@([EBR_AUDIO_NATIVE]::Text($h));foreach($child in [EBR_AUDIO_NATIVE]::ChildWindows($h)){$value=[EBR_AUDIO_NATIVE]::Text($child);if($value){$text+=,$value}}
-    try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($h);if($root){$all=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($e in $all){try{if($e.Current.Name){$text+=,$e.Current.Name}}catch{}}}}catch{}
-    if(($text-join' ')-match'The alarm couldn.t play\. Check your Windows audio output\.') {return $h}
+  $candidates=[System.Collections.Generic.List[IntPtr]]::new()
+  $popup=[EBR_AUDIO_NATIVE]::LastActivePopup($script:mainWindow)
+  if($popup-ne[IntPtr]::Zero-and$popup-ne$script:mainWindow){$candidates.Add($popup)}
+  foreach($h in [EBR_AUDIO_NATIVE]::TopWindowsForProcess($script:appPid)){if($h-ne$script:mainWindow-and-not$candidates.Contains($h)){$candidates.Add($h)}}
+  foreach($h in $candidates){
+    if(-not[EBR_AUDIO_NATIVE]::Visible($h)-or[EBR_AUDIO_NATIVE]::OwnerPid($h)-ne$script:appPid){continue}
+    if((Get-AudioWindowText $h)-match'The alarm couldn.t play\. Check your Windows audio output\.') {return $h}
   }
   return [IntPtr]::Zero
 }
@@ -441,10 +456,24 @@ function Save-LoopbackWave($Capture,[string]$Name){
   return $path
 }
 function Complete-UnavailableDialog([IntPtr]$Dialog,[string]$Tag){
-  $shot=Save-WindowScreenshot $Dialog "$Tag-audio-unavailable.png";$buttons=@(foreach($h in [EBR_AUDIO_NATIVE]::ChildWindows($Dialog)){if([EBR_AUDIO_NATIVE]::ClassName($h)-eq'Button'-and[EBR_AUDIO_NATIVE]::Visible($h)-and[EBR_AUDIO_NATIVE]::Enabled($h)-and[EBR_AUDIO_NATIVE]::Text($h)-match'^\s*&?OK\s*$'){$h}})
-  if($buttons.Count-eq1){$r=[IntPtr]::Zero;[void][EBR_AUDIO_NATIVE]::SendBounded($buttons[0],0x00F5,[IntPtr]::Zero,[IntPtr]::Zero,3000,[ref]$r)}else{[void][EBR_AUDIO_NATIVE]::Post($Dialog,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)}
+  if($Dialog-eq$script:mainWindow-or[EBR_AUDIO_NATIVE]::OwnerPid($Dialog)-ne$script:appPid-or(Get-AudioWindowText $Dialog)-notmatch'The alarm couldn.t play\. Check your Windows audio output\.'){throw 'Refusing to dismiss a window that is not the candidate-owned audio-unavailable dialog.'}
+  $candidateHandleCountBeforeDismissal=Get-CandidateHandleCount
+  $shot=Save-WindowScreenshot $Dialog "$Tag-audio-unavailable.png";$buttons=@(foreach($h in [EBR_AUDIO_NATIVE]::ChildWindows($Dialog)){if([EBR_AUDIO_NATIVE]::ClassName($h)-ieq'Button'-and[EBR_AUDIO_NATIVE]::Visible($h)-and[EBR_AUDIO_NATIVE]::Enabled($h)-and[EBR_AUDIO_NATIVE]::Text($h)-match'^\s*&?OK\s*$'){$h}})
+  $dismissMethod=$null
+  if($buttons.Count-eq1){$r=[IntPtr]::Zero;if([EBR_AUDIO_NATIVE]::SendBounded($buttons[0],0x00F5,[IntPtr]::Zero,[IntPtr]::Zero,3000,[ref]$r)){$dismissMethod='native OK button BM_CLICK'}}
+  $uiaOkButtonCount=0
+  if(-not$dismissMethod){
+    try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($Dialog);$all=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);$uiaButtons=@(foreach($element in $all){try{if($element.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$element.Current.IsEnabled-and$element.Current.Name-match'^\s*&?OK\s*$'){$pattern=$null;if($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$pattern)){[pscustomobject]@{Element=$element;Pattern=$pattern}}}}catch{}});$uiaOkButtonCount=$uiaButtons.Count;if($uiaButtons.Count-eq1){$uiaButtons[0].Pattern.Invoke();$dismissMethod='UI Automation OK button InvokePattern'}}catch{}
+  }
+  $watch=[Diagnostics.Stopwatch]::StartNew();while([EBR_AUDIO_NATIVE]::Visible($Dialog)-and$watch.Elapsed.TotalSeconds-lt1){Start-Sleep -Milliseconds 25}
+  $taskDialogClickSent=$false
+  if([EBR_AUDIO_NATIVE]::Visible($Dialog)-and(Get-AudioWindowText $Dialog)-match'The alarm couldn.t play\. Check your Windows audio output\.'){
+    # TDM_CLICK_BUTTON is the documented Task Dialog message for activating the standard IDOK button when a native Button HWND is not exposed.
+    $r=[IntPtr]::Zero;$taskDialogClickSent=[EBR_AUDIO_NATIVE]::SendBounded($Dialog,0x0466,[IntPtr]::new(1),[IntPtr]::Zero,3000,[ref]$r);if($taskDialogClickSent){$dismissMethod='Task Dialog IDOK activation'}
+  }
   $watch=[Diagnostics.Stopwatch]::StartNew();while([EBR_AUDIO_NATIVE]::Visible($Dialog)-and$watch.Elapsed.TotalSeconds-lt4){Start-Sleep -Milliseconds 25}
-  return [pscustomobject]@{Closed=(-not[EBR_AUDIO_NATIVE]::Visible($Dialog));Screenshot=$shot;OKButtonCount=$buttons.Count}
+  $candidateHandleCountAfterDismissal=Get-CandidateHandleCount
+  return [pscustomobject]@{Closed=(-not[EBR_AUDIO_NATIVE]::Visible($Dialog));Screenshot=$shot;DialogHandle=('0x{0:X}'-f$Dialog.ToInt64());DialogClass=[EBR_AUDIO_NATIVE]::ClassName($Dialog);DialogOwnerProcessId=[EBR_AUDIO_NATIVE]::OwnerPid($Dialog);OKButtonCount=$buttons.Count;UIAOKButtonCount=$uiaOkButtonCount;DismissMethod=$dismissMethod;TaskDialogClickSent=$taskDialogClickSent;CandidateHandleCountBeforeDismissal=$candidateHandleCountBeforeDismissal;CandidateHandleCountAfterDismissal=$candidateHandleCountAfterDismissal;CandidateHandleDelta=if($null-ne$candidateHandleCountBeforeDismissal-and$null-ne$candidateHandleCountAfterDismissal){$candidateHandleCountAfterDismissal-$candidateHandleCountBeforeDismissal}else{$null}}
 }
 function Get-AudioPreview([int]$Sound,[int]$Volume,[bool]$CaptureEnabled,[string]$Tag,[bool]$ToggleAlarmDuringPlayback=$false,[bool]$WaitForNaturalCompletion=$false){
   $stop=Get-AudioControl 117 'Stop preview';if($stop.Enabled){Invoke-AudioClick 117 'Stop preview';$watch=[Diagnostics.Stopwatch]::StartNew();while((Get-AudioControl 117 'Stop preview').Enabled-and$watch.Elapsed.TotalSeconds-lt4){Start-Sleep -Milliseconds 20}}
@@ -452,6 +481,8 @@ function Get-AudioPreview([int]$Sound,[int]$Volume,[bool]$CaptureEnabled,[string
   $recorder=$null;$captureStartError=$null;$sessionMeter=$null;$sessionMeterStartError=$null
   if($CaptureEnabled){$recorder=[EBR_WASAPI+Recorder]::new();$captureStartError=$recorder.Begin(2200);if($captureStartError){$recorder=$null}}
   if($CaptureEnabled){$sessionMeter=[EBR_WASAPI+SessionMeterRecorder]::new();$sessionMeterStartError=$sessionMeter.Begin($script:appPid,2200);if($sessionMeterStartError){$sessionMeter=$null}}
+  $candidateHandleCountBeforePreview=Get-CandidateHandleCount
+  $script:audioHandleMilestones.Add([pscustomobject]@{Stage="before preview $Tag";HandleCount=$candidateHandleCountBeforePreview;Utc=[DateTime]::UtcNow.ToString('o')})
   $clickUtc=[DateTime]::UtcNow.ToString('o');$click=[EBR_AUDIO_NATIVE]::ClickButtonAsync((Get-AudioControl 116 'Preview alarm').Handle)
   $watch=[Diagnostics.Stopwatch]::StartNew();$started=$false;$dialog=[IntPtr]::Zero;$dialogEvidence=$null;$stopClicked=$false
   $alarmToggleAttempted=$false;$stopEnabledImmediatelyBeforeAlarmToggle=$false;$stopDisabledAfterAlarmToggle=$false;$alarmToggleElapsedMs=$null;$alarmEnabledAfterToggle=$null;$previewElapsedAtAlarmToggleMs=$null;$naturalCompletionObserved=$false;$naturalCompletionElapsedMs=$null
@@ -499,10 +530,12 @@ function Get-AudioPreview([int]$Sound,[int]$Volume,[bool]$CaptureEnabled,[string
   }
   $stopAfter=(Get-AudioControl 117 'Stop preview').Enabled
   $saved=Read-AudioSettings
+  $candidateHandleCountAfterPreview=Get-CandidateHandleCount
+  $script:audioHandleMilestones.Add([pscustomobject]@{Stage="after preview $Tag";HandleCount=$candidateHandleCountAfterPreview;Utc=[DateTime]::UtcNow.ToString('o')})
   $wave=Save-LoopbackWave $capture "$Tag-loopback.wav"
   $sampleHash=if($wave){(Get-FileHash -LiteralPath $wave -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null}
   $captureValid=[bool]($capture-and-not$capture.Error-and$capture.Frames-gt0)
-  $record=[pscustomobject]@{Tag=$Tag;SoundIndex=$Sound;Volume=$Volume;ClickUtc=$clickUtc;PreviewStartedObserved=$started;UnavailableDialog=$dialogEvidence;StopClicked=$stopClicked;StopEnabledAfter=$stopAfter;NaturalCompletionRequested=$WaitForNaturalCompletion;NaturalCompletionObserved=$naturalCompletionObserved;NaturalCompletionElapsedMs=$naturalCompletionElapsedMs;AlarmToggleAttempted=$alarmToggleAttempted;StopEnabledImmediatelyBeforeAlarmToggle=$stopEnabledImmediatelyBeforeAlarmToggle;StopDisabledAfterAlarmToggle=$stopDisabledAfterAlarmToggle;AlarmToggleElapsedMs=$alarmToggleElapsedMs;PreviewElapsedAtAlarmToggleMs=$previewElapsedAtAlarmToggleMs;AlarmEnabledAfterToggle=$alarmEnabledAfterToggle;SavedSound=$saved.sound;SavedVolume=$saved.volume;LoopbackAvailable=$captureValid;LoopbackStartError=$captureStartError;CandidateSessionMeterStartError=$sessionMeterStartError;CandidateSessionMeter=if($sessionMeterResult){[pscustomobject]@{ProcessId=$sessionMeterResult.ProcessId;EndpointId=$sessionMeterResult.EndpointId;Polls=$sessionMeterResult.Polls;SessionObservedSamples=$sessionMeterResult.SessionObservedSamples;ActiveSamples=$sessionMeterResult.ActiveSamples;MeterSamples=$sessionMeterResult.MeterSamples;NonZeroSamples=$sessionMeterResult.NonZeroSamples;Peak=[Math]::Round($sessionMeterResult.Peak,8);StartedUtc=$sessionMeterResult.StartedUtc;CompletedUtc=$sessionMeterResult.CompletedUtc;Error=$sessionMeterResult.Error}}else{$null};Loopback=if($capture){[pscustomobject]@{EndpointId=$capture.EndpointId;StartedUtc=$capture.StartedUtc;CompletedUtc=$capture.CompletedUtc;Error=$capture.Error;SampleRate=$capture.SampleRate;Channels=$capture.Channels;SourceBitsPerSample=$capture.SourceBitsPerSample;Frames=$capture.Frames;Packets=$capture.Packets;SilentPackets=$capture.SilentPackets;NonZeroSamples=$capture.NonZeroSamples;Rms=[Math]::Round($capture.Rms,8);Peak=[Math]::Round($capture.Peak,8);WaveFile=$wave;WaveSHA256=$sampleHash}}else{$null}}
+  $record=[pscustomobject]@{Tag=$Tag;SoundIndex=$Sound;Volume=$Volume;ClickUtc=$clickUtc;CandidateHandleCountBeforePreview=$candidateHandleCountBeforePreview;CandidateHandleCountAfterPreview=$candidateHandleCountAfterPreview;CandidateHandleDelta=if($null-ne$candidateHandleCountBeforePreview-and$null-ne$candidateHandleCountAfterPreview){$candidateHandleCountAfterPreview-$candidateHandleCountBeforePreview}else{$null};PreviewStartedObserved=$started;UnavailableDialog=$dialogEvidence;StopClicked=$stopClicked;StopEnabledAfter=$stopAfter;NaturalCompletionRequested=$WaitForNaturalCompletion;NaturalCompletionObserved=$naturalCompletionObserved;NaturalCompletionElapsedMs=$naturalCompletionElapsedMs;AlarmToggleAttempted=$alarmToggleAttempted;StopEnabledImmediatelyBeforeAlarmToggle=$stopEnabledImmediatelyBeforeAlarmToggle;StopDisabledAfterAlarmToggle=$stopDisabledAfterAlarmToggle;AlarmToggleElapsedMs=$alarmToggleElapsedMs;PreviewElapsedAtAlarmToggleMs=$previewElapsedAtAlarmToggleMs;AlarmEnabledAfterToggle=$alarmEnabledAfterToggle;SavedSound=$saved.sound;SavedVolume=$saved.volume;LoopbackAvailable=$captureValid;LoopbackStartError=$captureStartError;CandidateSessionMeterStartError=$sessionMeterStartError;CandidateSessionMeter=if($sessionMeterResult){[pscustomobject]@{ProcessId=$sessionMeterResult.ProcessId;EndpointId=$sessionMeterResult.EndpointId;Polls=$sessionMeterResult.Polls;SessionObservedSamples=$sessionMeterResult.SessionObservedSamples;ActiveSamples=$sessionMeterResult.ActiveSamples;MeterSamples=$sessionMeterResult.MeterSamples;NonZeroSamples=$sessionMeterResult.NonZeroSamples;Peak=[Math]::Round($sessionMeterResult.Peak,8);StartedUtc=$sessionMeterResult.StartedUtc;CompletedUtc=$sessionMeterResult.CompletedUtc;Error=$sessionMeterResult.Error}}else{$null};Loopback=if($capture){[pscustomobject]@{EndpointId=$capture.EndpointId;StartedUtc=$capture.StartedUtc;CompletedUtc=$capture.CompletedUtc;Error=$capture.Error;SampleRate=$capture.SampleRate;Channels=$capture.Channels;SourceBitsPerSample=$capture.SourceBitsPerSample;Frames=$capture.Frames;Packets=$capture.Packets;SilentPackets=$capture.SilentPackets;NonZeroSamples=$capture.NonZeroSamples;Rms=[Math]::Round($capture.Rms,8);Peak=[Math]::Round($capture.Peak,8);WaveFile=$wave;WaveSHA256=$sampleHash}}else{$null}}
   $script:captures.Add($record)
   return $record
 }
@@ -748,10 +781,12 @@ try{
   Assert-CandidateForegroundAndUnobscured
   $windowTitle=[EBR_AUDIO_NATIVE]::Text($script:mainWindow)
   Add-AudioEvent 'Exact candidate launches with a visible native window' 'PASS' ([pscustomobject]@{Pid=$script:appPid;Class=[EBR_AUDIO_NATIVE]::ClassName($script:mainWindow);Title=$windowTitle;Handle=('0x{0:X}'-f$script:mainWindow.ToInt64());MainWindowScreenshot=(Save-WindowScreenshot $script:mainWindow 'candidate-main-window.png')})
+  $audioHandlesAfterLaunch=Get-CandidateHandleCount;$script:audioHandleMilestones.Add([pscustomobject]@{Stage='after candidate main window launch, before Settings navigation';HandleCount=$audioHandlesAfterLaunch;Utc=[DateTime]::UtcNow.ToString('o')})
   Invoke-AudioClick 12 'Settings navigation';Invoke-AudioClick 132 'Alarm settings section'
   Start-Sleep -Milliseconds 200
+  $audioHandlesAfterAlarmSettings=Get-CandidateHandleCount;$script:audioHandleMilestones.Add([pscustomobject]@{Stage='after opening Alarm Settings, before control inspection';HandleCount=$audioHandlesAfterAlarmSettings;Utc=[DateTime]::UtcNow.ToString('o')})
   foreach($control in @(@(102,'Alarm sound'),@(103,'Alarm volume'),@(116,'Preview alarm'),@(117,'Stop preview'),@(32,'Alarm enabled'))){Add-ControlEvidence ([int]$control[0]) ([string]$control[1])}
-  $audioHandlesBefore=$script:ownedProcess.HandleCount
+  $audioHandlesBefore=Get-CandidateHandleCount;$script:audioHandleMilestones.Add([pscustomobject]@{Stage='acceptance baseline after Settings control inspection, before endpoint/audio trials';HandleCount=$audioHandlesBefore;Utc=[DateTime]::UtcNow.ToString('o')})
   $script:endpoint=[EBR_WASAPI]::Probe()
   Add-AudioEvent 'Enumerate real active WASAPI render endpoint and observe its current master state' $(if($script:endpoint.DefaultEndpointId){'PASS'}else{'NOT TESTED'}) ([pscustomobject]@{ActiveRenderEndpointCount=$script:endpoint.ActiveRenderEndpointCount;DefaultEndpointId=$script:endpoint.DefaultEndpointId;DefaultMasterVolume=$script:endpoint.DefaultMasterVolume;DefaultMuted=$script:endpoint.DefaultMuted;Error=$script:endpoint.Error;NoEndpointDriverInstalled=$true;HostVolumeChanged=$false})
   if($script:endpoint.DefaultEndpointId){
@@ -874,7 +909,7 @@ try{
   $naturalAlarmRecord=Invoke-NaturalAlarmTrial
   if($naturalAlarmRecord.Status-ne'PASS'){$acousticCoverageMissing=$true}
   if($script:mainWindow-ne[IntPtr]::Zero){Add-AudioEvent 'Candidate main window remains responsive after preview and natural-alarm tests' 'PASS' ([pscustomobject]@{WindowVisible=[EBR_AUDIO_NATIVE]::Visible($script:mainWindow);WindowTitle=[EBR_AUDIO_NATIVE]::Text($script:mainWindow);ProcessResponding=(-not$script:ownedProcess.HasExited);NaturalAlarmStatus=$naturalAlarmRecord.Status})}
-  $script:ownedProcess.Refresh();$audioHandlesAfter=$script:ownedProcess.HandleCount;$handlesReleased=($audioHandlesAfter-le($audioHandlesBefore+2));Test-AudioRequire $handlesReleased 'Preview, Stop, mute, and natural-alarm paths release candidate audio handles' ([pscustomobject]@{HandleCountBefore=$audioHandlesBefore;HandleCountAfter=$audioHandlesAfter;AllowedGrowth=2;NaturalAlarmStatus=$naturalAlarmRecord.Status})|Out-Null
+  $audioHandlesAfter=Get-CandidateHandleCount;$handlesReleased=($null-ne$audioHandlesAfter-and$audioHandlesAfter-le($audioHandlesBefore+2));Test-AudioRequire $handlesReleased 'Preview, Stop, mute, and natural-alarm paths release candidate audio handles' ([pscustomobject]@{HandleCountBefore=$audioHandlesBefore;HandleCountAfter=$audioHandlesAfter;AllowedGrowth=2;NaturalAlarmStatus=$naturalAlarmRecord.Status;Milestones=$script:audioHandleMilestones.ToArray()})|Out-Null
   $waveFiles=@(Get-ChildItem -LiteralPath $script:evidenceRoot -Filter '*.wav' -File -ErrorAction SilentlyContinue|Select-Object Name,Length)
   if($script:wasapiAvailable-and$naturalAlarmRecord.Status-eq'PASS'-and$naturalAlarmRecord.AcousticStatus-eq'PASS'-and-not$acousticCoverageMissing-and-not$controlFailure-and-not$acousticFailure){$overallStatus='PASS';$overallReason='Every required candidate sound/volume preview and mute/stop interaction plus one naturally timed one-minute Work-to-Break alarm produced valid same-endpoint WASAPI and exact-candidate session-meter evidence in '+$environmentDescription+'; physical speaker audibility was not verified.'}
   elseif($controlFailure-or$acousticFailure){$overallStatus='FAIL';$overallReason='One or more real candidate Settings/playback or loopback acoustic assertions failed; inspect the per-event evidence.'}
@@ -891,7 +926,7 @@ try{
     try{$local=[IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\')+'\';$resolved=[IO.Path]::GetFullPath($script:appDataPath);if(-not$resolved.StartsWith($local,[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($resolved)-cne'EyeBreakReminder'-or([IO.File]::GetAttributes($resolved)-band[IO.FileAttributes]::ReparsePoint)){throw 'Refusing to remove a non-test or reparse-point app-data path.'};if(-not$appExited){throw 'Candidate process is still running; preserving its data path.'};Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop;Add-AudioEvent 'Remove only the fresh candidate app-data folder' 'PASS' ([pscustomobject]@{Path=$resolved;Preexisting=$false;CandidateExited=$appExited})}catch{Add-AudioEvent 'Remove only the fresh candidate app-data folder' 'FAIL' $_.Exception.Message;$overallStatus='FAIL';$overallReason='Test cleanup failed: '+$_.Exception.Message}
   }
   try{
-    $record=[pscustomobject]@{Requirement='REG-008';Status=$overallStatus;Reason=$overallReason;AcousticCoverageComplete=(-not$acousticCoverageMissing);NaturalAlarmTrial=$naturalAlarmRecord;ArtifactId=$expectedArtifactId;FinalizerRunId=$expectedRunId;CandidateExecutableSHA256=$expectedSha256;CandidateArchitecture='AMD64 x64';CandidateExecution=$candidateExecution;Environment=$environmentDescription;RunnerFlavor=$runnerFlavor;SessionId=$testSessionId;SessionName=$sessionName;User=$testUser;ExpectedSessionId=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedSessionId}else{$null};ExpectedSessionName=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedSessionName}else{$null};ExpectedUser=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedUser}else{$null};ConsoleDesktop=$consoleDesktopRecord;OperatingSystem=[pscustomobject]@{Caption=$(if($os){$os.Caption}else{$null});Version=$(if($os){$os.Version}else{$null});Build=$(if($os){$os.BuildNumber}else{$null});OSArchitecture=$(if($osArch){$osArch}else{$null});ProcessArchitecture=$(if($procArch){$procArch}else{$null});UserInteractive=[Environment]::UserInteractive};Profile=[pscustomobject]@{AppDataPath=$script:appDataPath;ExistedBefore=$script:appDataExistedBefore;RemovedAfter=if($script:appDataPath){-not(Test-Path -LiteralPath $script:appDataPath)}else{$null}};AudioEndpoint=$script:endpoint;WasapiLoopbackStatus=if($script:wasapiAvailable){'CAPTURED'}else{'NOT AVAILABLE'};Baseline=if($script:baseline){[pscustomobject]@{Frames=$script:baseline.Frames;Packets=$script:baseline.Packets;Rms=[Math]::Round($script:baseline.Rms,8);Peak=[Math]::Round($script:baseline.Peak,8)}}else{$null};PhysicalAudibility='NOT VERIFIED';CaptureFiles=$waveFiles;Captures=$script:captures.ToArray();Events=$script:events.ToArray();AssertionCount=@($script:events|Where-Object{$_.Status-in@('PASS','FAIL')}).Count;PassCount=@($script:events|Where-Object{$_.Status-eq'PASS'}).Count;FailCount=@($script:events|Where-Object{$_.Status-eq'FAIL'}).Count;NotTestedCount=@($script:events|Where-Object{$_.Status-eq'NOT TESTED'}).Count;CompletedUtc=[DateTime]::UtcNow.ToString('o')}
+    $record=[pscustomobject]@{Requirement='REG-008';Status=$overallStatus;Reason=$overallReason;AcousticCoverageComplete=(-not$acousticCoverageMissing);NaturalAlarmTrial=$naturalAlarmRecord;ArtifactId=$expectedArtifactId;FinalizerRunId=$expectedRunId;CandidateExecutableSHA256=$expectedSha256;CandidateArchitecture='AMD64 x64';CandidateExecution=$candidateExecution;Environment=$environmentDescription;RunnerFlavor=$runnerFlavor;SessionId=$testSessionId;SessionName=$sessionName;User=$testUser;ExpectedSessionId=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedSessionId}else{$null};ExpectedSessionName=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedSessionName}else{$null};ExpectedUser=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedUser}else{$null};ConsoleDesktop=$consoleDesktopRecord;OperatingSystem=[pscustomobject]@{Caption=$(if($os){$os.Caption}else{$null});Version=$(if($os){$os.Version}else{$null});Build=$(if($os){$os.BuildNumber}else{$null});OSArchitecture=$(if($osArch){$osArch}else{$null});ProcessArchitecture=$(if($procArch){$procArch}else{$null});UserInteractive=[Environment]::UserInteractive};Profile=[pscustomobject]@{AppDataPath=$script:appDataPath;ExistedBefore=$script:appDataExistedBefore;RemovedAfter=if($script:appDataPath){-not(Test-Path -LiteralPath $script:appDataPath)}else{$null}};AudioEndpoint=$script:endpoint;WasapiLoopbackStatus=if($script:wasapiAvailable){'CAPTURED'}else{'NOT AVAILABLE'};Baseline=if($script:baseline){[pscustomobject]@{Frames=$script:baseline.Frames;Packets=$script:baseline.Packets;Rms=[Math]::Round($script:baseline.Rms,8);Peak=[Math]::Round($script:baseline.Peak,8)}}else{$null};PhysicalAudibility='NOT VERIFIED';CaptureFiles=$waveFiles;Captures=$script:captures.ToArray();AudioHandleMilestones=$script:audioHandleMilestones.ToArray();Events=$script:events.ToArray();AssertionCount=@($script:events|Where-Object{$_.Status-in@('PASS','FAIL')}).Count;PassCount=@($script:events|Where-Object{$_.Status-eq'PASS'}).Count;FailCount=@($script:events|Where-Object{$_.Status-eq'FAIL'}).Count;NotTestedCount=@($script:events|Where-Object{$_.Status-eq'NOT TESTED'}).Count;CompletedUtc=[DateTime]::UtcNow.ToString('o')}
     $record|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $script:evidenceRoot 'reg-008-audio-loopback-results.json') -Encoding UTF8
   }catch{Write-Error "Could not write REG-008 evidence: $($_.Exception.Message)"}
 }
