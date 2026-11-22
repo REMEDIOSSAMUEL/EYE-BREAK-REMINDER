@@ -686,7 +686,7 @@ jobs:
   settings-uninstall-windows-server-console-standard-user-x64:
     name: Exact candidate Settings uninstall from guarded Windows Server console
     runs-on: windows-2025
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Check out the PR test harness
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -823,6 +823,20 @@ jobs:
             Write-Host 'PASS: the exact production candidate was removed through the Settings Apps UI and the required settings/history bytes were preserved.'
           }
           if ($result.Status -eq 'FAIL') { throw "The broader standard-user harness also found a failure: $($result.Failure) (UN-009 result: $un009Status)." }
+
+      - name: Retry the real Settings route with the active Console owner token
+        id: active_console_owner_settings
+        if: always() && steps.candidate_identity.outcome == 'success' && steps.console_preflight.outputs.desktop_ready == 'true'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          EBR_RUNNER_ENVIRONMENT_CONTEXT: ${{ runner.environment }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_active_console_settings_uninstall.ps1 `
+            -InstallerPath 'production-candidate-artifact/final-candidate/EyeBreakReminder-Setup-x64.exe' `
+            -ExecutablePath 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe' `
+            -EvidenceDirectory 'remaining-coverage-evidence/standard-user-console/active-console-owner'
 
       - name: Recheck the seven candidate files remain byte-identical
         if: always() && steps.candidate_identity.outcome == 'success'

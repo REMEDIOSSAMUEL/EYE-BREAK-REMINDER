@@ -3,6 +3,9 @@ param(
   [Parameter(Mandatory)][string]$ExecutablePath,
   [Parameter(Mandatory)][string]$EvidenceDirectory,
   [switch]$Child,
+  [switch]$AllowActiveConsoleAdministrator,
+  [switch]$SkipCapabilityProbes,
+  [switch]$AllowNativeWindows11Host,
   [string]$ChildResultPath,
   [switch]$DisableWholeDesktopCaptures,
   [string]$ExpectedUserSid,
@@ -11,11 +14,24 @@ param(
   [string]$RunnerContextPath
 )
 $ErrorActionPreference='Stop'
+if($AllowActiveConsoleAdministrator-and-not$Child){throw 'Active Console administrator mode is available only for a guarded child process.'}
+if($SkipCapabilityProbes-and-not$Child-and-not$AllowNativeWindows11Host){throw 'Capability-probe skipping is available only for a guarded child or the explicitly verified native Windows 11 host test.'}
 
 function Save-StandardUserResult([string]$Path,$Result){
   $directory=Split-Path -Parent $Path
   if(-not(Test-Path -LiteralPath $directory)){[void][IO.Directory]::CreateDirectory($directory)}
   $Result|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $Path -Encoding utf8
+}
+
+function Get-ProcessesUsingStandardUserStage([string]$Root){
+  $fullRoot=[IO.Path]::GetFullPath($Root).TrimEnd('\')+'\'
+  $allProcesses=@(Get-CimInstance Win32_Process -ErrorAction Stop)
+  @($allProcesses|Where-Object{
+    $usesStage=$false
+    if($_.ExecutablePath){$image=[IO.Path]::GetFullPath([string]$_.ExecutablePath);if($image.StartsWith($fullRoot,[StringComparison]::OrdinalIgnoreCase)){$usesStage=$true}}
+    if(-not$usesStage-and$_.CommandLine-and([string]$_.CommandLine).IndexOf($Root,[StringComparison]::OrdinalIgnoreCase)-ge0){$usesStage=$true}
+    $usesStage
+  })
 }
 
 if($Child){
@@ -107,12 +123,21 @@ public static class EBR_STD_SESSION_NATIVE {
 '@
   Add-Type -TypeDefinition $sessionNative -ErrorAction Stop
   $guardFailures=[System.Collections.Generic.List[string]]::new()
-  $runnerContextValid=($null-ne$runnerContextFromParent-and$env:GITHUB_ACTIONS-ceq'true'-and$env:RUNNER_ENVIRONMENT-ceq'github-hosted'-and$env:RUNNER_OS-ceq'Windows'-and$env:RUNNER_ARCH-ceq'X64'-and$env:RUNNER_NAME-and$env:GITHUB_SERVER_URL-ceq'https://github.com'-and$env:GITHUB_REPOSITORY-ieq'REMEDIOSSAMUEL/EYE-BREAK-REMINDER'-and$env:GITHUB_RUN_ID-and$env:GITHUB_WORKSPACE-and$env:RUNNER_TEMP-and$env:EBR_RUNNER_ENVIRONMENT_CONTEXT-ceq'github-hosted')
+  $nativeHostOs=$null;$nativeHostCpu=$null;$nativeHostContextValid=$false
+  if($AllowNativeWindows11Host){
+    try{
+      $nativeHostOs=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+      $nativeHostCpu=Get-CimInstance Win32_Processor -ErrorAction Stop|Select-Object -First 1
+      $nativeHostContextValid=($RunnerEnvironmentContext-ceq'authorized-native-windows11-host'-and$env:EBR_RUNNER_ENVIRONMENT_CONTEXT-ceq'authorized-native-windows11-host'-and$null-ne$runnerContextFromParent-and$runnerContextFromParent.EBR_RUNNER_ENVIRONMENT_CONTEXT-ceq'authorized-native-windows11-host'-and$runnerContextFromParent.NativeHostOSCaption-match'^Microsoft Windows 11(?:\s|$)'-and$runnerContextFromParent.NativeHostOSArchitecture-ceq'64-bit'-and[int]$runnerContextFromParent.NativeHostProcessorArchitectureCode-eq9-and$nativeHostOs.Caption-match'^Microsoft Windows 11(?:\s|$)'-and$nativeHostOs.ProductType-eq1-and$nativeHostOs.OSArchitecture-ceq'64-bit'-and$nativeHostCpu-and[int]$nativeHostCpu.Architecture-eq9-and[Runtime.InteropServices.RuntimeInformation]::OSArchitecture-eq[Runtime.InteropServices.Architecture]::X64-and[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture-eq[Runtime.InteropServices.Architecture]::X64)
+    }catch{$runnerContextLoadError=if($runnerContextLoadError){$runnerContextLoadError+'; '}else{''}+'Native Windows 11 host check: '+$_.Exception.Message}
+  }
+  $githubRunnerContextValid=($null-ne$runnerContextFromParent-and$env:GITHUB_ACTIONS-ceq'true'-and$env:RUNNER_ENVIRONMENT-ceq'github-hosted'-and$env:RUNNER_OS-ceq'Windows'-and$env:RUNNER_ARCH-ceq'X64'-and$env:RUNNER_NAME-and$env:GITHUB_SERVER_URL-ceq'https://github.com'-and$env:GITHUB_REPOSITORY-ieq'REMEDIOSSAMUEL/EYE-BREAK-REMINDER'-and$env:GITHUB_RUN_ID-and$env:GITHUB_WORKSPACE-and$env:RUNNER_TEMP-and$env:EBR_RUNNER_ENVIRONMENT_CONTEXT-ceq'github-hosted')
+  $runnerContextValid=if($AllowNativeWindows11Host){$nativeHostContextValid}else{$githubRunnerContextValid}
   if($runnerContextLoadError){$guardFailures.Add("Parent runner context could not be loaded: $runnerContextLoadError")}
-  if(-not$runnerContextValid){$guardFailures.Add('Child did not receive the validated GitHub-hosted Windows x64 runner context from its parent.')}
+  if(-not$runnerContextValid){$guardFailures.Add($(if($AllowNativeWindows11Host){'Child did not receive independently verified native Windows 11 x64 host identity from its parent.'}else{'Child did not receive the validated GitHub-hosted Windows x64 runner context from its parent.'}))}
   $guardSessionId=-1;$guardSessionName=[string]$env:SESSIONNAME;$guardIdentity=$null;$guardIsAdministrator=$true;$guardUserInteractive=$false
   $guardActiveConsoleSessionId=[uint32]::MaxValue;$guardSessions=@();$guardConsoleSession=$null
-  $guardWindowStation=$null;$guardThreadDesktop=$null;$guardInputDesktop=$null;$guardExplorer=@();$guardTaskbarHandle=[IntPtr]::Zero;$guardTaskbarProcessId=0;$guardTaskbarProcess=$null
+  $guardWindowStation=$null;$guardThreadDesktop=$null;$guardInputDesktop=$null;$guardExplorer=@();$guardTaskbarHandle=[IntPtr]::Zero;$guardTaskbarProcessId=0;$guardTaskbarProcess=$null;$guardTaskbarOwnerSid=$null;$guardTaskbarOwnerName=$null
   try {
     $guardProcess=[Diagnostics.Process]::GetCurrentProcess();$guardSessionId=[int]$guardProcess.SessionId
     $guardIdentity=[Security.Principal.WindowsIdentity]::GetCurrent();$guardPrincipal=[Security.Principal.WindowsPrincipal]::new($guardIdentity)
@@ -129,6 +154,13 @@ public static class EBR_STD_SESSION_NATIVE {
     $guardTaskbarHandle=[EBR_STD_SESSION_NATIVE]::TaskbarWindow()
     $guardTaskbarProcessId=[EBR_STD_SESSION_NATIVE]::TaskbarProcessId($guardTaskbarHandle)
     if($guardTaskbarProcessId){$guardTaskbarProcess=Get-Process -Id ([int]$guardTaskbarProcessId) -ErrorAction SilentlyContinue}
+    if($guardTaskbarProcessId-and$AllowActiveConsoleAdministrator){
+      $taskbarOwnerProcess=Get-CimInstance Win32_Process -Filter "ProcessId=$guardTaskbarProcessId" -ErrorAction Stop
+      $taskbarOwnerSid=Invoke-CimMethod -InputObject $taskbarOwnerProcess -MethodName GetOwnerSid -ErrorAction Stop
+      if($taskbarOwnerSid.ReturnValue-eq0){$guardTaskbarOwnerSid=[string]$taskbarOwnerSid.Sid}
+      $taskbarOwner=Invoke-CimMethod -InputObject $taskbarOwnerProcess -MethodName GetOwner -ErrorAction Stop
+      if($taskbarOwner.ReturnValue-eq0){$guardTaskbarOwnerName="$($taskbarOwner.Domain)\$($taskbarOwner.User)"}
+    }
   } catch { $guardFailures.Add("Child console prelaunch probe failed: $($_.Exception.Message)") }
   $guardActiveConsoleSession=$null-ne$guardConsoleSession-and$guardConsoleSession.State-eq'Active'
   $guardProcessInActiveConsole=($guardActiveConsoleSession-and$guardSessionId-ge0-and[int64]$guardSessionId-eq[int64]$guardActiveConsoleSessionId)
@@ -137,12 +169,25 @@ public static class EBR_STD_SESSION_NATIVE {
   $guardInputDesktopConfirmed=$guardInputDesktop-ieq'Default'
   $guardTaskbarSameSession=($guardTaskbarHandle-ne[IntPtr]::Zero-and$guardTaskbarProcess-and$guardTaskbarProcess.SessionId-eq$guardSessionId-and$guardTaskbarProcess.ProcessName-ieq'explorer')
   $guardShellSameSession=($guardExplorer.Count-gt0-and$guardTaskbarSameSession)
+  $guardShellOwnerMatchesIdentity=($guardIdentity-and$guardTaskbarOwnerSid-and$guardIdentity.User.Value-ceq$guardTaskbarOwnerSid)
   if(-not$guardIdentity){$guardFailures.Add('Child Windows identity could not be established.')}
-  if(-not$ExpectedUserSid){$guardFailures.Add('Parent did not pass the SID of its generated disposable account.')}
-  elseif($guardIdentity-and$guardIdentity.User.Value-cne$ExpectedUserSid){$guardFailures.Add("Child SID '$($guardIdentity.User.Value)' does not match generated disposable SID '$ExpectedUserSid'.")}
-  if([string]::IsNullOrWhiteSpace($ExpectedUserName)){$guardFailures.Add('Parent did not pass the generated local principal name.')}
-  elseif($guardIdentity-and$guardIdentity.Name-ine$ExpectedUserName){$guardFailures.Add("Child identity '$($guardIdentity.Name)' does not match generated local principal '$ExpectedUserName'.")}
-  if($guardIsAdministrator){$guardFailures.Add('Child token is an administrator.')}
+  $expectedIdentityDescription=if($AllowActiveConsoleAdministrator){'active Console owner'}else{'generated disposable account'}
+  if(-not$ExpectedUserSid){$guardFailures.Add("Parent did not pass the SID of the $expectedIdentityDescription.")}
+  elseif($guardIdentity-and$guardIdentity.User.Value-cne$ExpectedUserSid){$guardFailures.Add("Child SID '$($guardIdentity.User.Value)' does not match expected $expectedIdentityDescription SID '$ExpectedUserSid'.")}
+  if([string]::IsNullOrWhiteSpace($ExpectedUserName)){$guardFailures.Add("Parent did not pass the $expectedIdentityDescription principal name.")}
+  elseif($guardIdentity-and$guardIdentity.Name-ine$ExpectedUserName){$guardFailures.Add("Child identity '$($guardIdentity.Name)' does not match expected $expectedIdentityDescription '$ExpectedUserName'.")}
+  if($AllowNativeWindows11Host){
+    if($ExpectedUserName-notmatch('^'+[regex]::Escape($env:COMPUTERNAME)+'\\EbrStd[0-9a-f]{14}$')){$guardFailures.Add("Native Windows 11 host child must run under this invocation's generated EbrStd account, never the caller's ordinary profile.")}
+    $nativeStageName=$null;$nativeStageRunId=$null
+    try{$nativeStageName=[IO.Path]::GetFileName((Split-Path -Parent ([IO.Path]::GetFullPath($RunnerContextPath))));$nativeStageMatch=[regex]::Match($nativeStageName,'^eye-break-reminder-standard-user-([0-9a-f]{32})$');if($nativeStageMatch.Success){$nativeStageRunId=$nativeStageMatch.Groups[1].Value}}catch{}
+    $nativeStageExpectedUser=if($nativeStageRunId){'EbrStd'+$nativeStageRunId.Substring(0,14)}else{$null}
+    $nativeExpectedUserLeaf=if($ExpectedUserName){$ExpectedUserName.Substring($ExpectedUserName.LastIndexOf('\')+1)}else{$null}
+    if(-not$nativeStageExpectedUser-or$nativeExpectedUserLeaf-cne$nativeStageExpectedUser){$guardFailures.Add("Native Windows 11 host child account suffix does not match this run's unique 128-bit staging identity.")}
+  }
+  if($guardIsAdministrator-and-not$AllowActiveConsoleAdministrator){$guardFailures.Add('Child token is an administrator.')}
+  if($AllowActiveConsoleAdministrator-and-not$runnerContextValid){$guardFailures.Add('Active Console administrator mode is permitted only in the validated project GitHub-hosted Windows Server x64 runner.')}
+  if($AllowActiveConsoleAdministrator-and-not$guardShellOwnerMatchesIdentity){$guardFailures.Add("Active Console administrator mode requires the current identity to own the same-session Explorer taskbar; process identity '$($guardIdentity.Name)' SID '$($guardIdentity.User.Value)' differs from Shell owner '$guardTaskbarOwnerName' SID '$guardTaskbarOwnerSid'.")}
+  if($SkipCapabilityProbes-and-not$AllowActiveConsoleAdministrator-and-not$AllowNativeWindows11Host){$guardFailures.Add('Optional capability probes may be skipped only for the dedicated active Console owner or native Windows 11 host Settings attempt.')}
   if(-not$guardActiveConsoleSession){$guardFailures.Add('The WTS active console session is not enumerated as Console/Active.')}
   if(-not$guardProcessInActiveConsole){$guardFailures.Add("Child session $guardSessionId does not match active WTS console session $guardActiveConsoleSessionId.")}
   if(-not$guardUserInteractive){$guardFailures.Add('Child Environment.UserInteractive is false.')}
@@ -150,7 +195,7 @@ public static class EBR_STD_SESSION_NATIVE {
   if(-not$guardThreadDesktopConfirmed){$guardFailures.Add("Child thread desktop is '$guardThreadDesktop', expected Default.")}
   if(-not$guardInputDesktopConfirmed){$guardFailures.Add("OpenInputDesktop returned '$guardInputDesktop', expected accessible Default.")}
   if(-not$guardShellSameSession){$guardFailures.Add('Explorer and the Shell_TrayWnd taskbar were not both confirmed in the child session.')}
-  $childDesktopGuard=[pscustomobject]@{Status=if($guardFailures.Count){'BLOCKED'}else{'PASS'};CandidateLaunchPrevented=([bool]$guardFailures.Count);ProcessSessionId=$guardSessionId;SessionName=$guardSessionName;User=if($guardIdentity){$guardIdentity.Name}else{$null};UserSid=if($guardIdentity){$guardIdentity.User.Value}else{$null};ExpectedUserSid=$ExpectedUserSid;ExpectedUserName=$ExpectedUserName;ExpectedUserIdentityMatches=([bool]($guardIdentity-and$ExpectedUserName-and$guardIdentity.Name-ieq$ExpectedUserName));RunnerEnvironmentContext=$RunnerEnvironmentContext;RunnerContextValid=$runnerContextValid;RunnerContext=$runnerContextFromParent;RunnerContextLoadError=$runnerContextLoadError;IsAdministrator=$guardIsAdministrator;UserInteractive=$guardUserInteractive;ActiveConsoleSessionId=$guardActiveConsoleSessionId;WtsSessions=$guardSessions;MatchingConsoleSession=$guardConsoleSession;ActiveConsoleSession=$guardActiveConsoleSession;ProcessMatchesActiveConsole=$guardProcessInActiveConsole;WindowStation=$guardWindowStation;ThreadDesktop=$guardThreadDesktop;InputDesktop=$guardInputDesktop;ExplorerProcesses=$guardExplorer;TaskbarWindowHandle=if($guardTaskbarHandle-ne[IntPtr]::Zero){'0x{0:X}'-f$guardTaskbarHandle.ToInt64()}else{$null};TaskbarProcessId=$guardTaskbarProcessId;TaskbarProcessName=if($guardTaskbarProcess){$guardTaskbarProcess.ProcessName}else{$null};TaskbarProcessSessionId=if($guardTaskbarProcess){$guardTaskbarProcess.SessionId}else{$null};ExplorerAndTaskbarInChildSession=$guardShellSameSession;Failures=$guardFailures.ToArray();ObservedUtc=[DateTime]::UtcNow.ToString('o')}
+  $childDesktopGuard=[pscustomobject]@{Status=if($guardFailures.Count){'BLOCKED'}else{'PASS'};CandidateLaunchPrevented=([bool]$guardFailures.Count);ProcessSessionId=$guardSessionId;SessionName=$guardSessionName;User=if($guardIdentity){$guardIdentity.Name}else{$null};UserSid=if($guardIdentity){$guardIdentity.User.Value}else{$null};ExpectedUserSid=$ExpectedUserSid;ExpectedUserName=$ExpectedUserName;ExpectedUserIdentityMatches=([bool]($guardIdentity-and$ExpectedUserName-and$guardIdentity.Name-ieq$ExpectedUserName));RunnerEnvironmentContext=$RunnerEnvironmentContext;RunnerContextValid=$runnerContextValid;RunnerContext=$runnerContextFromParent;RunnerContextLoadError=$runnerContextLoadError;IsAdministrator=$guardIsAdministrator;AllowActiveConsoleAdministrator=[bool]$AllowActiveConsoleAdministrator;AllowNativeWindows11Host=[bool]$AllowNativeWindows11Host;UserInteractive=$guardUserInteractive;ActiveConsoleSessionId=$guardActiveConsoleSessionId;WtsSessions=$guardSessions;MatchingConsoleSession=$guardConsoleSession;ActiveConsoleSession=$guardActiveConsoleSession;ProcessMatchesActiveConsole=$guardProcessInActiveConsole;WindowStation=$guardWindowStation;ThreadDesktop=$guardThreadDesktop;InputDesktop=$guardInputDesktop;ExplorerProcesses=$guardExplorer;TaskbarWindowHandle=if($guardTaskbarHandle-ne[IntPtr]::Zero){'0x{0:X}'-f$guardTaskbarHandle.ToInt64()}else{$null};TaskbarProcessId=$guardTaskbarProcessId;TaskbarProcessName=if($guardTaskbarProcess){$guardTaskbarProcess.ProcessName}else{$null};TaskbarProcessSessionId=if($guardTaskbarProcess){$guardTaskbarProcess.SessionId}else{$null};TaskbarOwnerName=$guardTaskbarOwnerName;TaskbarOwnerSid=$guardTaskbarOwnerSid;ShellOwnerMatchesCurrentIdentity=[bool]$guardShellOwnerMatchesIdentity;ExplorerAndTaskbarInChildSession=$guardShellSameSession;Failures=$guardFailures.ToArray();ObservedUtc=[DateTime]::UtcNow.ToString('o')}
   if($guardFailures.Count){
     if(-not$ChildResultPath){throw "Fail-closed console guard blocked candidate execution: $($guardFailures -join '; ')"}
     Save-StandardUserResult $ChildResultPath ([pscustomobject]@{Status='BLOCKED';Failure=$guardFailures -join '; ';CandidateExecutionStarted=$false;User=if($guardIdentity){$guardIdentity.Name}else{$null};DesktopGuard=$childDesktopGuard;Events=@([pscustomobject]@{Name='Child active-console prelaunch guard';Status='BLOCKED';Details=$childDesktopGuard});CompletedUtc=[DateTime]::UtcNow.ToString('o')})
@@ -739,9 +784,9 @@ public static class EBR_STD_APP_ACTIVATION {
       try{foreach($element in @($settingsRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))){try{if($element.Current.Name-match'(?i)^Eye Break Reminder$'-and$element.Current.ControlType-ne[System.Windows.Automation.ControlType]::Button-and(Test-SettingsElementBelongsToWindow $element $settingsRoot $settingsWindowHandle $settingsHost.ProcessId $settingsProcessIds $settingsPreexistingProcessIds)){$appEntry=$element;break}}catch{}}}catch{}
       if(-not$appEntry){Start-Sleep -Milliseconds 200}
     }
-    if(-not$appEntry){return [pscustomobject]@{Status='NOT TESTED';Reason='The standard-user installation did not appear in the Settings > Installed apps search results.';VisibleNames=@($names|Select-Object -Unique|Select-Object -First 80);Screenshot=$screenshot;SettingsWindowEvidence=$settingsWindowEvidence}}
+    if(-not$appEntry){return [pscustomobject]@{Status='NOT TESTED';Reason='The current user installation did not appear in the Settings > Installed apps search results.';VisibleNames=@($names|Select-Object -Unique|Select-Object -First 80);Screenshot=$screenshot;SettingsWindowEvidence=$settingsWindowEvidence}}
     $entryScreenshot=$null
-    try{$entryForeground=Focus-VerifiedSettingsWindow $settingsWindowHandle $settingsHost.ProcessId;$entryHandle=[IntPtr]$settingsRoot.Current.NativeWindowHandle;$entryScreenshot=Capture-StandardUserWizard $settingsWindowHandle 'standard-user-settings-apps-eye-break-reminder-found.png'}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not verify/capture the exact Settings app row: $($_.Exception.Message)";Screenshot=$screenshot;SettingsWindowEvidence=$settingsWindowEvidence}}
+    try{$entryForeground=Focus-VerifiedSettingsWindow $settingsWindowHandle $settingsHost.ProcessId;$entryHandle=[IntPtr]$settingsRoot.Current.NativeWindowHandle;$entryScreenshot=Capture-StandardUserWizard $settingsWindowHandle 'settings-apps-eye-break-reminder-found.png'}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not verify/capture the exact Settings app row: $($_.Exception.Message)";Screenshot=$screenshot;SettingsWindowEvidence=$settingsWindowEvidence}}
     $menuButton=$null;$scope=$appEntry
     for($depth=0;$depth-lt7-and-not$menuButton-and$scope-ne$settingsRoot;$depth++){
       try{$controls=@($scope.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition));$matches=@($controls|Where-Object{try{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$_.Current.Name-match'(?i)more options|more actions|options for'-and(Test-SettingsElementBelongsToWindow $_ $settingsRoot $settingsWindowHandle $settingsHost.ProcessId $settingsProcessIds $settingsPreexistingProcessIds)}catch{$false}});if($matches.Count-eq1){$menuButton=$matches[0]}}catch{}
@@ -899,8 +944,10 @@ public static class EBR_STD_APP_ACTIVATION {
     if(-not(Test-Path -LiteralPath $env:TEMP)){[void][IO.Directory]::CreateDirectory($env:TEMP)}
     $principal=[Security.Principal.WindowsPrincipal]::new($identity)
     $isAdministrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    if($isAdministrator){throw 'The disposable test account unexpectedly has administrator membership.'}
-    $events.Add([pscustomobject]@{Name='Child process has a standard Windows user token';Status='PASS';User=$identity.Name;Sid=$identity.User.Value;IsAdministrator=$false;ProfilePathSource=$userProfilePathSource;ProfilePath=$env:USERPROFILE})
+    if($isAdministrator-and-not$AllowActiveConsoleAdministrator){throw 'The disposable test account unexpectedly has administrator membership.'}
+    $testAccountLabel=if($AllowActiveConsoleAdministrator){'active Console owner'}else{'standard user'}
+    $identityEventName=if($AllowActiveConsoleAdministrator){'Child process is the active Console owner'}else{'Child process has a standard Windows user token'}
+    $events.Add([pscustomobject]@{Name=$identityEventName;Status='PASS';User=$identity.Name;Sid=$identity.User.Value;IsAdministrator=$isAdministrator;ActiveConsoleOwnerMode=[bool]$AllowActiveConsoleAdministrator;ProfilePathSource=$userProfilePathSource;ProfilePath=$env:USERPROFILE})
     $stageRoot=[IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath))
     $runnerTempRoot=[IO.Path]::GetFullPath([string]$env:RUNNER_TEMP).TrimEnd('\')+'\'
     if(-not$stageRoot.StartsWith($runnerTempRoot,[StringComparison]::OrdinalIgnoreCase)){throw "The disposable child script is outside the verified RUNNER_TEMP root: '$stageRoot'."}
@@ -913,52 +960,81 @@ public static class EBR_STD_APP_ACTIVATION {
     if(-not(Test-Path -LiteralPath $EvidenceDirectory -PathType Container)){throw "The standard-user child cannot find its staged evidence directory '$EvidenceDirectory'."}
     $installer=(Resolve-Path -LiteralPath $InstallerPath).Path;$candidate=(Resolve-Path -LiteralPath $ExecutablePath).Path
     $expectedHash=(Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+    if($AllowNativeWindows11Host){
+      $nativeHostExecutableSHA256='07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+      $nativeHostInstallerSHA256='a15fc525557603dbed1ef0dccb8d128e500dfee91c6416b478513de790dd5c9b'
+      $observedInstallerSHA256=(Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+      if($expectedHash-cne$nativeHostExecutableSHA256-or$observedInstallerSHA256-cne$nativeHostInstallerSHA256){throw "Native host child independently rejected a candidate hash mismatch (EXE $expectedHash; installer $observedInstallerSHA256)."}
+    }
     $script:capabilityProbeResults=[System.Collections.Generic.List[object]]::new();$script:capabilityProbeChainClean=$true
-    Invoke-StandardUserCapabilityProbe 'REG-008' 'windows_candidate_audio_loopback_acceptance.ps1' 'reg-008-audio-loopback-results.json' $true 480
-    # Run Shell before Narrator because Narrator can leave a cursor-highlight
-    # overlay that the Shell probe correctly treats as an obstruction.
-    Invoke-StandardUserCapabilityProbe 'ENV-009' 'windows_shell_notification_acceptance.ps1' 'env-009-shell-notification-results.json' $true 480
-    Invoke-StandardUserCapabilityProbe 'GUI-016' 'windows_narrator_speech_recap_acceptance.ps1' 'gui-016-narrator-speech-recap.json' $false 480
+    if(-not$SkipCapabilityProbes){
+      Invoke-StandardUserCapabilityProbe 'REG-008' 'windows_candidate_audio_loopback_acceptance.ps1' 'reg-008-audio-loopback-results.json' $true 480
+      # Run Shell before Narrator because Narrator can leave a cursor-highlight
+      # overlay that the Shell probe correctly treats as an obstruction.
+      Invoke-StandardUserCapabilityProbe 'ENV-009' 'windows_shell_notification_acceptance.ps1' 'env-009-shell-notification-results.json' $true 480
+      Invoke-StandardUserCapabilityProbe 'GUI-016' 'windows_narrator_speech_recap_acceptance.ps1' 'gui-016-narrator-speech-recap.json' $false 480
+    }else{
+      $skipReason=if($AllowNativeWindows11Host){'The owner-authorized bounded Windows 11 host attempt excludes audio, Shell, and Narrator probes; this run targets native Windows 11 x64 identity and the Settings Apps uninstall flow in a fresh temporary standard account.'}else{'Separate hosted workflows exercise these probes; this attempt targets the active Console owner Settings application identity.'}
+      $events.Add([pscustomobject]@{Name='Optional audio, Shell, and Narrator probes skipped for dedicated Settings UI attempt';Status='NOT APPLICABLE';Details=$skipReason})
+    }
     foreach($probeResult in $script:capabilityProbeResults){$events.Add([pscustomobject]@{Name="Optional pre-install capability probe $($probeResult.Requirement)";Status=$probeResult.Status;Details=$probeResult})}
+    if($AllowNativeWindows11Host){
+      $nativeHostExistingPaths=@(
+        (Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder'),
+        (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Eye Break Reminder.lnk')
+      )
+      $nativeHostExistingKeys=@(
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder_is1',
+        'HKCU:\Software\Classes\Applications\EyeBreakReminder.exe'
+      )
+      if((Get-StandardUserCandidateProcesses).Count-or@($nativeHostExistingPaths|Where-Object{Test-Path -LiteralPath $_}).Count-or@($nativeHostExistingKeys|Where-Object{Test-Path -LiteralPath $_}).Count){throw 'Native Windows 11 host test requires the newly created EbrStd account to have no pre-existing candidate process, install, shortcut, registration, settings, or history; refusing to remove or overwrite existing user data.'}
+    }
     if((Get-StandardUserCandidateProcesses).Count-or(Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'))){
-      if(-not(Remove-StandardUserFreshCandidateProfile)-or(Get-StandardUserCandidateProcesses).Count){throw 'Optional probe cleanup could not restore a fresh standard-user profile before the Settings uninstall acceptance.'}
-      $events.Add([pscustomobject]@{Name='Optional probes restore clean candidate process and profile state before Settings uninstall';Status='PASS';Details='Residual data from pre-install probes was removed only from the newly created standard-user EyeBreakReminder profile after verifying the staged candidate had exited.'})
-    }else{$events.Add([pscustomobject]@{Name='Optional probes restore clean candidate process and profile state before Settings uninstall';Status='PASS';Details='No exact staged-candidate process or EyeBreakReminder profile remained after the probes.'})}
+      if(-not(Remove-StandardUserFreshCandidateProfile)-or(Get-StandardUserCandidateProcesses).Count){throw "Candidate cleanup could not restore a fresh $testAccountLabel profile before the Settings uninstall acceptance."}
+      $cleanStateEventName=if($SkipCapabilityProbes){'Active Console owner candidate profile starts clean before the Settings uninstall acceptance'}else{'Optional probes restore clean candidate process and profile state before the Settings uninstall acceptance'}
+      $events.Add([pscustomobject]@{Name=$cleanStateEventName;Status='PASS';Details="Residual data was removed only from the fresh $testAccountLabel EyeBreakReminder profile after verifying the staged candidate had exited."})
+    }else{
+      $cleanStateEventName=if($SkipCapabilityProbes){'Active Console owner candidate profile starts clean before the Settings uninstall acceptance'}else{'Optional probes restore clean candidate process and profile state before the Settings uninstall acceptance'}
+      $cleanStateDetails=if($SkipCapabilityProbes){"No exact staged-candidate process or EyeBreakReminder profile existed in the fresh $testAccountLabel account."}else{'No exact staged-candidate process or EyeBreakReminder profile remained after the optional probes.'}
+      $events.Add([pscustomobject]@{Name=$cleanStateEventName;Status='PASS';Details=$cleanStateDetails})
+    }
     $installDir=Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder';$installed=Join-Path $installDir 'EyeBreakReminder.exe';$uninstaller=Join-Path $installDir 'Uninstall.exe'
-    $wizardInstall=Invoke-StandardUserWizard $installer 'standard-user interactive install wizard'
-    $events.Add([pscustomobject]@{Name='Standard-user interactive installer wizard';Status=$wizardInstall.Status;Details=$wizardInstall;TokenAdministrator=$false})
-    if($wizardInstall.Status-eq'PASS'){if($wizardInstall.FinishCheckbox-notmatch'(?i)^(Off|Unchecked)(?:\s+\(native Win32\))?$'){$events.Add([pscustomobject]@{Name='Standard-user installer finish-page Run checkbox state';Status='NOT TESTED';Details="Finish-page checkbox state: $($wizardInstall.FinishCheckbox)."})}else{$events.Add([pscustomobject]@{Name='Standard-user installer finish-page Run checkbox is unchecked';Status='PASS';State=$wizardInstall.FinishCheckbox})}}
+    $wizardInstall=Invoke-StandardUserWizard $installer "$testAccountLabel interactive install wizard"
+    $events.Add([pscustomobject]@{Name="$testAccountLabel interactive installer wizard";Status=$wizardInstall.Status;Details=$wizardInstall;TokenAdministrator=$isAdministrator})
+    if($wizardInstall.Status-eq'PASS'){if($wizardInstall.FinishCheckbox-notmatch'(?i)^(Off|Unchecked)(?:\s+\(native Win32\))?$'){$events.Add([pscustomobject]@{Name="$testAccountLabel installer finish-page Run checkbox state";Status='NOT TESTED';Details="Finish-page checkbox state: $($wizardInstall.FinishCheckbox)."})}else{$events.Add([pscustomobject]@{Name="$testAccountLabel installer finish-page Run checkbox is unchecked";Status='PASS';State=$wizardInstall.FinishCheckbox})}}
     if($wizardInstall.Status-eq'FAIL'){throw $wizardInstall.Reason}
     if($wizardInstall.Status-ne'PASS'){
       $install=Start-Process -FilePath $installer -ArgumentList '/S' -PassThru
-      if(-not$install.WaitForExit(120000)){Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue;throw 'Per-user installer timed out under the standard account.'}
-      if($install.ExitCode-ne0){throw "Per-user installer returned exit code $($install.ExitCode) under the standard account."}
-      $events.Add([pscustomobject]@{Name='Silent per-user install completes without administrator credentials or UAC elevation';Status='PASS';ExitCode=$install.ExitCode;TokenAdministrator=$false})
+      if(-not$install.WaitForExit(120000)){Stop-Process -Id $install.Id -Force -ErrorAction SilentlyContinue;throw "Per-user installer timed out in the $testAccountLabel account."}
+      if($install.ExitCode-ne0){throw "Per-user installer returned exit code $($install.ExitCode) in the $testAccountLabel account."}
+      $installEventName=if($isAdministrator){'Silent per-user install completes in the active Console owner account'}else{'Silent per-user install completes without administrator credentials or UAC elevation'}
+      $events.Add([pscustomobject]@{Name=$installEventName;Status='PASS';ExitCode=$install.ExitCode;TokenAdministrator=$isAdministrator;TestAccount=$testAccountLabel})
     }
     if(-not(Test-Path -LiteralPath $installed -PathType Leaf)){throw "Installer did not create the expected user-scoped executable '$installed'."}
     $installedHash=(Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()
     if($installedHash-cne$expectedHash){throw "Installed executable hash $installedHash differs from candidate hash $expectedHash."}
-    $events.Add([pscustomobject]@{Name='Installed image matches the candidate at the standard user LocalAppData path';Status='PASS';Path=$installed;SHA256=$installedHash})
+    $events.Add([pscustomobject]@{Name="Installed image matches the candidate at the $testAccountLabel LocalAppData path";Status='PASS';Path=$installed;SHA256=$installedHash;TestAccount=$testAccountLabel})
     $startMenuShortcut=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Eye Break Reminder\Eye Break Reminder.lnk'
-    if(-not(Test-Path -LiteralPath $startMenuShortcut -PathType Leaf)){throw "The standard-user installer did not create the expected per-user Start Menu shortcut '$startMenuShortcut'."}
+    if(-not(Test-Path -LiteralPath $startMenuShortcut -PathType Leaf)){throw "The installer did not create the expected per-user Start Menu shortcut in the $testAccountLabel profile: '$startMenuShortcut'."}
     $shortcutShell=$null;$shortcut=$null
     try{
       $shortcutShell=New-Object -ComObject WScript.Shell;$shortcut=$shortcutShell.CreateShortcut($startMenuShortcut)
       $shortcutTarget=[IO.Path]::GetFullPath([string]$shortcut.TargetPath);$shortcutArguments=[string]$shortcut.Arguments
-      if($shortcutTarget-ine[IO.Path]::GetFullPath($installed)){throw "The standard-user Start Menu shortcut targets '$shortcutTarget', expected '$installed'."}
-      if($shortcutArguments.Length-ne0){throw "The standard-user Start Menu shortcut has unexpected arguments '$shortcutArguments'."}
+      if($shortcutTarget-ine[IO.Path]::GetFullPath($installed)){throw "The $testAccountLabel Start Menu shortcut targets '$shortcutTarget', expected '$installed'."}
+      if($shortcutArguments.Length-ne0){throw "The $testAccountLabel Start Menu shortcut has unexpected arguments '$shortcutArguments'."}
       $events.Add([pscustomobject]@{Name='Per-user Start Menu shortcut points exactly to the installed executable without arguments';Status='PASS';ShortcutPath=$startMenuShortcut;TargetPath=$shortcutTarget;Arguments=$shortcutArguments})
     }finally{
       if($shortcut-and[Runtime.InteropServices.Marshal]::IsComObject($shortcut)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)}
       if($shortcutShell-and[Runtime.InteropServices.Marshal]::IsComObject($shortcutShell)){[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcutShell)}
     }
     $uninstallKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder';$appKey='HKCU:\Software\EyeBreakReminder'
-    if(-not(Test-Path -LiteralPath $uninstallKey)){throw 'The standard user HKCU uninstall registration was not created.'}
+    if(-not(Test-Path -LiteralPath $uninstallKey)){throw "The $testAccountLabel HKCU uninstall registration was not created."}
     $registration=Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Stop
     $registeredPath=[IO.Path]::GetFullPath([string]$registration.UninstallString.Trim('"'))
     if($registeredPath-ine[IO.Path]::GetFullPath($uninstaller)){throw "Uninstall registration points at '$registeredPath', expected '$uninstaller'."}
-    if(-not(Test-Path -LiteralPath $appKey)){throw 'The standard user HKCU application registration was not created.'}
-    $events.Add([pscustomobject]@{Name='Installer registers under the standard account HKCU hive';Status='PASS';UninstallKey=$uninstallKey;UninstallString=$registration.UninstallString})
+    if(-not(Test-Path -LiteralPath $appKey)){throw "The $testAccountLabel HKCU application registration was not created."}
+    $events.Add([pscustomobject]@{Name="Installer registers under the $testAccountLabel HKCU hive";Status='PASS';UninstallKey=$uninstallKey;UninstallString=$registration.UninstallString;TestAccount=$testAccountLabel})
     function Get-InstalledCandidateLaunchSnapshot([switch]$CaptureScreenshots){
       $expectedPath=[IO.Path]::GetFullPath($installed);$expectedSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$expectedSession=[int]$guardSessionId
       $candidateRows=@(Get-StandardUserCandidateProcesses $installed);$processSnapshots=[System.Collections.Generic.List[object]]::new()
@@ -1043,20 +1119,21 @@ public static class EBR_STD_APP_ACTIVATION {
       }
     }
     $launchSnapshot=Get-InstalledCandidateLaunchSnapshot -CaptureScreenshots
+    $launchEventName="Installed candidate launches with a visible window under the $testAccountLabel identity"
     if(-not$launchSnapshot.UniqueVisibleInstalledCandidateProcess){
-      $candidateLaunchFailure=$true;if(-not$candidateLaunchFailureReason){$candidateLaunchFailureReason='The exact installed executable did not produce one visible main window in the active standard-user session.'};try{$launchFailureDiagnostics=Get-StandardUserLaunchFailureDiagnostics $appProcess $launchAttemptProcessId $launchStartException $launchAttemptStartedUtc $installed $launchSnapshot}catch{$launchFailureDiagnostics=[pscustomobject]@{LaunchAttemptStartedUtc=$launchAttemptStartedUtc.ToString('o');ExpectedExecutable=$installed;LaunchStartException=$launchStartException;DiagnosticsCollectionError=$_.Exception.Message;LastWindowSnapshot=$launchSnapshot;CapturedUtc=[DateTime]::UtcNow.ToString('o')}}
+      $candidateLaunchFailure=$true;if(-not$candidateLaunchFailureReason){$candidateLaunchFailureReason="The exact installed executable did not produce one visible main window in the active $testAccountLabel session."};try{$launchFailureDiagnostics=Get-StandardUserLaunchFailureDiagnostics $appProcess $launchAttemptProcessId $launchStartException $launchAttemptStartedUtc $installed $launchSnapshot}catch{$launchFailureDiagnostics=[pscustomobject]@{LaunchAttemptStartedUtc=$launchAttemptStartedUtc.ToString('o');ExpectedExecutable=$installed;LaunchStartException=$launchStartException;DiagnosticsCollectionError=$_.Exception.Message;LastWindowSnapshot=$launchSnapshot;CapturedUtc=[DateTime]::UtcNow.ToString('o')}}
       foreach($candidateProcess in $launchSnapshot.Processes){if(-not$candidateProcess.ProcessExited-and$candidateProcess.ExactPathVerified-and$candidateProcess.SessionVerified-and$candidateProcess.UserIdentityVerified){try{Stop-Process -Id ([int]$candidateProcess.ProcessId) -Force -ErrorAction Stop}catch{}}}
       $closeWatch=[Diagnostics.Stopwatch]::StartNew();while((Get-StandardUserCandidateProcesses $installed).Count-and$closeWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
       $postFailureSnapshot=Get-InstalledCandidateLaunchSnapshot -CaptureScreenshots
       $launchFailureDiagnostics|Add-Member -NotePropertyName PostCleanupWindowSnapshot -NotePropertyValue $postFailureSnapshot -Force
       $launchFailureDiagnostics|Add-Member -NotePropertyName ExactCandidateProcessesRemainingAfterCleanup -NotePropertyValue((Get-StandardUserCandidateProcesses $installed).Count) -Force
-      $events.Add([pscustomobject]@{Name='Installed candidate launches with a visible window under the standard account';Status='FAIL';LaunchSource=$launchSource;LaunchAttemptProcessId=$launchAttemptProcessId;LaunchFailure=$launchFailureDiagnostics;Details=$candidateLaunchFailureReason+' Exact-image, owner- and session-verified processes were stopped when possible; the actual Settings uninstall will still be attempted.'})
+      $events.Add([pscustomobject]@{Name=$launchEventName;Status='FAIL';LaunchSource=$launchSource;LaunchAttemptProcessId=$launchAttemptProcessId;LaunchFailure=$launchFailureDiagnostics;Details=$candidateLaunchFailureReason+' Exact-image, owner- and session-verified processes were stopped when possible; the actual Settings uninstall will still be attempted.'})
       $events.Add([pscustomobject]@{Name='Installed candidate process cleanup before Settings uninstall';Status=if((Get-StandardUserCandidateProcesses $installed).Count){'NOT TESTED'}else{'PASS'};Details=$postFailureSnapshot})
       $appProcess=$null
     }else{
       $verifiedLaunchProcess=$launchSnapshot.Processes[0];$verifiedLaunchProcessId=[int]$verifiedLaunchProcess.ProcessId
       $verifiedScreenshot=@($verifiedLaunchProcess.TopLevelWindows|Where-Object{$_.IsProcessMainWindow-and$_.Visible-and$_.Screenshot})
-      if($verifiedScreenshot.Count-ne1-or-not(Test-Path -LiteralPath $verifiedScreenshot[0].Screenshot -PathType Leaf)){$candidateLaunchFailure=$true;$candidateLaunchFailureReason='A unique visible exact-candidate main window was observed, but a bounded screenshot could not be retained.';$events.Add([pscustomobject]@{Name='Installed candidate launches with a visible window under the standard account';Status='NOT TESTED';LaunchSource=$launchSource;Pid=$verifiedLaunchProcessId;Title=$verifiedLaunchProcess.MainWindowTitle;MainWindowHandle=$verifiedLaunchProcess.MainWindowHandle;ExecutablePath=$verifiedLaunchProcess.ExecutablePath;SHA256=$expectedHash;SessionId=$verifiedLaunchProcess.SessionId;UserSid=$verifiedLaunchProcess.UserSid;Details=$candidateLaunchFailureReason;TopLevelWindows=$verifiedLaunchProcess.TopLevelWindows})}else{$events.Add([pscustomobject]@{Name='Installed candidate launches with a visible window under the standard account';Status='PASS';LaunchSource=$launchSource;Pid=$verifiedLaunchProcessId;Title=$verifiedLaunchProcess.MainWindowTitle;MainWindowHandle=$verifiedLaunchProcess.MainWindowHandle;ExecutablePath=$verifiedLaunchProcess.ExecutablePath;SHA256=$expectedHash;SessionId=$verifiedLaunchProcess.SessionId;UserSid=$verifiedLaunchProcess.UserSid;Screenshot=$verifiedScreenshot[0].Screenshot;TopLevelWindows=$verifiedLaunchProcess.TopLevelWindows})}
+      if($verifiedScreenshot.Count-ne1-or-not(Test-Path -LiteralPath $verifiedScreenshot[0].Screenshot -PathType Leaf)){$candidateLaunchFailure=$true;$candidateLaunchFailureReason='A unique visible exact-candidate main window was observed, but a bounded screenshot could not be retained.';$events.Add([pscustomobject]@{Name=$launchEventName;Status='NOT TESTED';LaunchSource=$launchSource;Pid=$verifiedLaunchProcessId;Title=$verifiedLaunchProcess.MainWindowTitle;MainWindowHandle=$verifiedLaunchProcess.MainWindowHandle;ExecutablePath=$verifiedLaunchProcess.ExecutablePath;SHA256=$expectedHash;SessionId=$verifiedLaunchProcess.SessionId;UserSid=$verifiedLaunchProcess.UserSid;Details=$candidateLaunchFailureReason;TopLevelWindows=$verifiedLaunchProcess.TopLevelWindows})}else{$events.Add([pscustomobject]@{Name=$launchEventName;Status='PASS';LaunchSource=$launchSource;Pid=$verifiedLaunchProcessId;Title=$verifiedLaunchProcess.MainWindowTitle;MainWindowHandle=$verifiedLaunchProcess.MainWindowHandle;ExecutablePath=$verifiedLaunchProcess.ExecutablePath;SHA256=$expectedHash;SessionId=$verifiedLaunchProcess.SessionId;UserSid=$verifiedLaunchProcess.UserSid;Screenshot=$verifiedScreenshot[0].Screenshot;TopLevelWindows=$verifiedLaunchProcess.TopLevelWindows})}
       $currentVerifiedSnapshot=Get-InstalledCandidateLaunchSnapshot;$currentVerifiedRows=@($currentVerifiedSnapshot.Processes|Where-Object{$_.ProcessId-eq$verifiedLaunchProcessId-and$_.ExactPathVerified-and$_.SessionVerified-and$_.UserIdentityVerified-and-not$_.ProcessExited});if($currentVerifiedRows.Count-eq1){try{Stop-Process -Id $verifiedLaunchProcessId -Force -ErrorAction Stop}catch{}}
       $appProcess=$null
       $closeWatch=[Diagnostics.Stopwatch]::StartNew();while((Get-StandardUserCandidateProcesses $installed).Count-and$closeWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
@@ -1068,9 +1145,10 @@ public static class EBR_STD_APP_ACTIVATION {
     $settingsUninstallHistoryText="1700000000 1 20`n";$settingsUninstallUnrelatedText='unrelated disposable test document'
     [IO.File]::WriteAllText($settingsUninstallSettings,$settingsUninstallSettingsText,[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText($settingsUninstallHistory,$settingsUninstallHistoryText,[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText($settingsUninstallUnrelated,$settingsUninstallUnrelatedText,[Text.UTF8Encoding]::new($false))
     $settingsUninstallDataHashes=[pscustomobject]@{Settings=(Get-FileHash -LiteralPath $settingsUninstallSettings -Algorithm SHA256).Hash.ToLowerInvariant();History=(Get-FileHash -LiteralPath $settingsUninstallHistory -Algorithm SHA256).Hash.ToLowerInvariant();Unrelated=(Get-FileHash -LiteralPath $settingsUninstallUnrelated -Algorithm SHA256).Hash.ToLowerInvariant()}
-    $events.Add([pscustomobject]@{Name='Seed disposable settings, history, and unrelated file before Settings uninstall';Status='PASS';Hashes=$settingsUninstallDataHashes})
+    $events.Add([pscustomobject]@{Name="Seed $testAccountLabel settings, history, and unrelated file before Settings uninstall";Status='PASS';Hashes=$settingsUninstallDataHashes;TestAccount=$testAccountLabel})
     $settingsUninstall=Invoke-SettingsAppsUninstall $uninstaller
-    $events.Add([pscustomobject]@{Name='Windows Settings > Apps uninstalls the standard-user candidate';Status=$settingsUninstall.Status;Details=$settingsUninstall;TokenAdministrator=$false})
+    $settingsEventName=if($AllowActiveConsoleAdministrator){'Windows Settings > Apps uninstalls the active Console owner candidate'}else{'Windows Settings > Apps uninstalls the standard-user candidate'}
+    $events.Add([pscustomobject]@{Name=$settingsEventName;Status=$settingsUninstall.Status;Details=$settingsUninstall;TokenAdministrator=$isAdministrator})
     if($settingsUninstall.Status-eq'PASS'){
       $settingsAfter=Test-Path -LiteralPath $settingsUninstallSettings -PathType Leaf;$historyAfter=Test-Path -LiteralPath $settingsUninstallHistory -PathType Leaf;$unrelatedAfter=Test-Path -LiteralPath $settingsUninstallUnrelated -PathType Leaf
       $settingsAfterHash=if($settingsAfter){(Get-FileHash -LiteralPath $settingsUninstallSettings -Algorithm SHA256).Hash.ToLowerInvariant()}else{''};$historyAfterHash=if($historyAfter){(Get-FileHash -LiteralPath $settingsUninstallHistory -Algorithm SHA256).Hash.ToLowerInvariant()}else{''};$unrelatedAfterHash=if($unrelatedAfter){(Get-FileHash -LiteralPath $settingsUninstallUnrelated -Algorithm SHA256).Hash.ToLowerInvariant()}else{''}
@@ -1082,7 +1160,7 @@ public static class EBR_STD_APP_ACTIVATION {
     if($settingsUninstall.Status-eq'PASS'){
       $settingsReinstall=Start-Process -FilePath $installer -ArgumentList '/S' -PassThru
       if(-not$settingsReinstall.WaitForExit(120000)-or$settingsReinstall.ExitCode-ne0){throw 'Silent reinstall failed after Windows Settings > Apps uninstall.'}
-      if(-not(Test-Path -LiteralPath $installed)-or(Test-Path -LiteralPath $uninstallKey)-or-not(Test-Path -LiteralPath $appKey)){throw 'The standard-user install did not recover its expected file and registrations after the Settings uninstall.'}
+      if(-not(Test-Path -LiteralPath $installed)-or(Test-Path -LiteralPath $uninstallKey)-or-not(Test-Path -LiteralPath $appKey)){throw "The $testAccountLabel install did not recover its expected file and registrations after the Settings uninstall."}
       $events.Add([pscustomobject]@{Name='Per-user silent reinstall succeeds after Windows Settings > Apps removal';Status='PASS';ExitCode=$settingsReinstall.ExitCode;InstalledHash=(Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()})
     }
     $dataDir=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder';[void][IO.Directory]::CreateDirectory($dataDir)
@@ -1092,33 +1170,33 @@ public static class EBR_STD_APP_ACTIVATION {
     [IO.File]::WriteAllText($historyFixturePath,"1700000000 1 20`n",[Text.UTF8Encoding]::new($false))
     $settingsFixtureHash=(Get-FileHash -LiteralPath $settingsFixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $historyFixtureHash=(Get-FileHash -LiteralPath $historyFixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $events.Add([pscustomobject]@{Name='Disposable standard-user settings and history seeded immediately before interactive uninstall';Status='PASS';SettingsSHA256=$settingsFixtureHash;HistorySHA256=$historyFixtureHash})
-    $wizardUninstall=Invoke-StandardUserWizard $uninstaller 'standard-user interactive uninstall wizard'
-    $events.Add([pscustomobject]@{Name='Standard-user interactive uninstaller wizard';Status=$wizardUninstall.Status;Details=$wizardUninstall;TokenAdministrator=$false})
-    if($wizardUninstall.Status-eq'PASS'){if($wizardUninstall.FinishCheckbox-eq'Off'){$events.Add([pscustomobject]@{Name='Standard-user uninstaller finish-page Run checkbox is unchecked';Status='PASS';State=$wizardUninstall.FinishCheckbox})}else{$events.Add([pscustomobject]@{Name='Standard-user uninstaller finish-page Run checkbox';Status='NOT APPLICABLE';Details='The uninstaller uses MUI_UNPAGE_FINISH; setup.nsi defines the Run checkbox only for install finish pages.'})}}
+    $events.Add([pscustomobject]@{Name="Disposable $testAccountLabel settings and history seeded immediately before interactive uninstall";Status='PASS';SettingsSHA256=$settingsFixtureHash;HistorySHA256=$historyFixtureHash})
+    $wizardUninstall=Invoke-StandardUserWizard $uninstaller "$testAccountLabel interactive uninstall wizard"
+    $events.Add([pscustomobject]@{Name="$testAccountLabel interactive uninstaller wizard";Status=$wizardUninstall.Status;Details=$wizardUninstall;TokenAdministrator=$isAdministrator})
+    if($wizardUninstall.Status-eq'PASS'){if($wizardUninstall.FinishCheckbox-eq'Off'){$events.Add([pscustomobject]@{Name="$testAccountLabel uninstaller finish-page Run checkbox is unchecked";Status='PASS';State=$wizardUninstall.FinishCheckbox})}else{$events.Add([pscustomobject]@{Name="$testAccountLabel uninstaller finish-page Run checkbox";Status='NOT APPLICABLE';Details='The uninstaller uses MUI_UNPAGE_FINISH; setup.nsi defines the Run checkbox only for install finish pages.'})}}
     if($wizardUninstall.Status-eq'FAIL'){throw $wizardUninstall.Reason}
     if($wizardUninstall.Status-ne'PASS'){
       $uninstall=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
-      if(-not$uninstall.WaitForExit(90000)){Stop-Process -Id $uninstall.Id -Force -ErrorAction SilentlyContinue;throw 'Silent per-user uninstaller timed out under the standard account.'}
+      if(-not$uninstall.WaitForExit(90000)){Stop-Process -Id $uninstall.Id -Force -ErrorAction SilentlyContinue;throw "Silent per-user uninstaller timed out in the $testAccountLabel account."}
       if($uninstall.ExitCode-ne0){throw "Silent per-user uninstaller returned exit code $($uninstall.ExitCode)."}
-      $events.Add([pscustomobject]@{Name='Silent uninstall removes the standard user installation and both HKCU registrations';Status='PASS';ExitCode=$uninstall.ExitCode;InstallDirectoryExists=$false;UninstallRegistrationExists=$false;ApplicationRegistrationExists=$false})
+      $events.Add([pscustomobject]@{Name="Silent uninstall removes the $testAccountLabel installation and both HKCU registrations";Status='PASS';ExitCode=$uninstall.ExitCode;InstallDirectoryExists=$false;UninstallRegistrationExists=$false;ApplicationRegistrationExists=$false})
     }else{
-      if((Test-Path -LiteralPath $installed)-or(Test-Path -LiteralPath $installDir)-or(Test-Path -LiteralPath $uninstallKey)-or(Test-Path -LiteralPath $appKey)){throw 'Interactive standard-user uninstall left the executable, installation directory, or HKCU registration behind.'}
+      if((Test-Path -LiteralPath $installed)-or(Test-Path -LiteralPath $installDir)-or(Test-Path -LiteralPath $uninstallKey)-or(Test-Path -LiteralPath $appKey)){throw "Interactive $testAccountLabel uninstall left the executable, installation directory, or HKCU registration behind."}
       $settingsAfterUninstall=Test-Path -LiteralPath $settingsFixturePath -PathType Leaf;$historyAfterUninstall=Test-Path -LiteralPath $historyFixturePath -PathType Leaf
       $settingsAfterHash=if($settingsAfterUninstall){(Get-FileHash -LiteralPath $settingsFixturePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{''}
       $historyAfterHash=if($historyAfterUninstall){(Get-FileHash -LiteralPath $historyFixturePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{''}
       $settingsPreserved=$settingsAfterUninstall-and($settingsAfterHash-ceq$settingsFixtureHash)
       $historyPreserved=$historyAfterUninstall-and($historyAfterHash-ceq$historyFixtureHash)
-      if(-not$settingsPreserved-or-not$historyPreserved){throw 'Interactive standard-user uninstall did not retain its disposable settings and history byte-for-byte.'}
-      $events.Add([pscustomobject]@{Name='Interactive uninstall removes the standard user installation, preserves settings/history byte-for-byte, and clears both HKCU registrations';Status='PASS';ExitCode=$wizardUninstall.ExitCode;InstallDirectoryExists=$false;UninstallRegistrationExists=$false;ApplicationRegistrationExists=$false;SettingsSHA256=$settingsFixtureHash;SettingsPreserved=$settingsPreserved;HistorySHA256=$historyFixtureHash;HistoryPreserved=$historyPreserved})
+      if(-not$settingsPreserved-or-not$historyPreserved){throw "Interactive $testAccountLabel uninstall did not retain its disposable settings and history byte-for-byte."}
+      $events.Add([pscustomobject]@{Name="Interactive uninstall removes the $testAccountLabel installation, preserves settings/history byte-for-byte, and clears both HKCU registrations";Status='PASS';ExitCode=$wizardUninstall.ExitCode;InstallDirectoryExists=$false;UninstallRegistrationExists=$false;ApplicationRegistrationExists=$false;SettingsSHA256=$settingsFixtureHash;SettingsPreserved=$settingsPreserved;HistorySHA256=$historyFixtureHash;HistoryPreserved=$historyPreserved})
       $silentInstall=Start-Process -FilePath $installer -ArgumentList '/S' -PassThru
-      if(-not$silentInstall.WaitForExit(120000)-or$silentInstall.ExitCode-ne0){throw 'Silent reinstall failed after the standard-user interactive uninstall.'}
+      if(-not$silentInstall.WaitForExit(120000)-or$silentInstall.ExitCode-ne0){throw "Silent reinstall failed after the $testAccountLabel interactive uninstall."}
       $silentUninstall=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
-      if(-not$silentUninstall.WaitForExit(90000)-or$silentUninstall.ExitCode-ne0){throw 'Silent uninstall failed after the standard-user silent reinstall.'}
-      $events.Add([pscustomobject]@{Name='Silent uninstall after a standard-user silent reinstall';Status='PASS';ExitCode=$silentUninstall.ExitCode})
+      if(-not$silentUninstall.WaitForExit(90000)-or$silentUninstall.ExitCode-ne0){throw "Silent uninstall failed after the $testAccountLabel silent reinstall."}
+      $events.Add([pscustomobject]@{Name="Silent uninstall after a $testAccountLabel silent reinstall";Status='PASS';ExitCode=$silentUninstall.ExitCode})
     }
     if($candidateLaunchFailure){$status='FAIL';$failure=$candidateLaunchFailureReason+' The actual Settings uninstall was still attempted. See the launch diagnostics event for PID exit state, launch exception, and correlated Application Error/WER records.'}else{$status='PASS'}
-  }catch{$failure=$_.Exception.Message;$events.Add([pscustomobject]@{Name='Standard user acceptance';Status='FAIL';Details=$failure;ScriptStackTrace=$_.ScriptStackTrace;PositionMessage=$_.InvocationInfo.PositionMessage;ScriptLineNumber=$_.InvocationInfo.ScriptLineNumber})}
+  }catch{$failure=$_.Exception.Message;$acceptanceEventName=if($AllowActiveConsoleAdministrator){'Active Console owner Settings acceptance'}else{'Standard user acceptance'};$events.Add([pscustomobject]@{Name=$acceptanceEventName;Status='FAIL';Details=$failure;ScriptStackTrace=$_.ScriptStackTrace;PositionMessage=$_.InvocationInfo.PositionMessage;ScriptLineNumber=$_.InvocationInfo.ScriptLineNumber})}
   finally{
     if($appProcess-and-not$appProcess.HasExited){Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue}
     if($ChildResultPath){Save-StandardUserResult $ChildResultPath ([pscustomobject]@{Status=$status;Failure=$failure;User=[Security.Principal.WindowsIdentity]::GetCurrent().Name;Events=$events.ToArray();CompletedUtc=[DateTime]::UtcNow.ToString('o')})}
@@ -1126,17 +1204,36 @@ public static class EBR_STD_APP_ACTIVATION {
   if($status-eq'PASS'){exit 0}else{exit 1}
 }
 
-$finalResult=Join-Path $EvidenceDirectory 'standard-user-results.json';$runId=if($env:GITHUB_RUN_ID){$env:GITHUB_RUN_ID}else{[guid]::NewGuid().ToString('N').Substring(0,10)}
+$previousRunnerTemp=[Environment]::GetEnvironmentVariable('RUNNER_TEMP','Process');$previousRunnerContext=[Environment]::GetEnvironmentVariable('EBR_RUNNER_ENVIRONMENT_CONTEXT','Process')
+$stageTempRoot=if($AllowNativeWindows11Host){[IO.Path]::GetFullPath($env:TEMP).TrimEnd('\')}else{[IO.Path]::GetFullPath([string]$env:RUNNER_TEMP)}
+if($AllowNativeWindows11Host-and$stageTempRoot.IndexOfAny([char[]]@('*','?','[',']'))-ge0){throw 'The native-host TEMP root contains PowerShell wildcard characters.'}
+$finalResult=Join-Path $EvidenceDirectory 'standard-user-results.json';$runId=if($env:GITHUB_RUN_ID-and-not$AllowNativeWindows11Host){$env:GITHUB_RUN_ID}else{[guid]::NewGuid().ToString('N')}
 $userName=('EbrStd'+$runId);if($userName.Length-gt20){$userName=$userName.Substring(0,20)}
-$stageRoot=[IO.Path]::GetFullPath((Join-Path $env:RUNNER_TEMP "eye-break-reminder-standard-user-$runId"))
-$evidenceRoot=[IO.Path]::GetFullPath($EvidenceDirectory);$userCreated=$false;$testStarted=$false;$status='BLOCKED';$reason='';$result=$null;$childExitCode=$null;$cleanupActions=[System.Collections.Generic.List[string]]::new();$cleanupErrors=[System.Collections.Generic.List[string]]::new();$childResult=Join-Path $stageRoot 'standard-user-child-results.json'
+$stageRoot=[IO.Path]::GetFullPath((Join-Path $stageTempRoot "eye-break-reminder-standard-user-$runId"))
+$evidenceRoot=[IO.Path]::GetFullPath($EvidenceDirectory);$userCreated=$false;$stageRootCreatedByThisRun=$false;$testStarted=$false;$childExited=$true;$status='BLOCKED';$reason='';$result=$null;$childExitCode=$null;$cleanupActions=[System.Collections.Generic.List[string]]::new();$cleanupErrors=[System.Collections.Generic.List[string]]::new();$childResult=Join-Path $stageRoot 'standard-user-child-results.json';$runnerEnvironmentContext=$null;$nativeHostIdentity=$null
 [void][IO.Directory]::CreateDirectory($evidenceRoot)
 try{
   try{
-    $runnerEnvironmentContext=[string]$env:EBR_RUNNER_ENVIRONMENT_CONTEXT
+    if($AllowNativeWindows11Host){$env:RUNNER_TEMP=$stageTempRoot;$env:EBR_RUNNER_ENVIRONMENT_CONTEXT='authorized-native-windows11-host'}
     $runnerOs=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
-    $runnerContextValid=($env:GITHUB_ACTIONS-ceq'true'-and$env:RUNNER_ENVIRONMENT-ceq'github-hosted'-and$runnerEnvironmentContext-ceq'github-hosted'-and$env:RUNNER_OS-ceq'Windows'-and$env:RUNNER_ARCH-ceq'X64'-and$env:GITHUB_SERVER_URL-ceq'https://github.com'-and$env:GITHUB_REPOSITORY-ieq'REMEDIOSSAMUEL/EYE-BREAK-REMINDER'-and$env:GITHUB_RUN_ID-and$env:RUNNER_NAME-and$env:GITHUB_WORKSPACE-and$env:RUNNER_TEMP-and$runnerOs.Caption-match'Windows Server 2025'-and[Runtime.InteropServices.RuntimeInformation]::OSArchitecture-eq[Runtime.InteropServices.Architecture]::X64-and[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture-eq[Runtime.InteropServices.Architecture]::X64)
-    if(-not$runnerContextValid){throw 'The standard-user console acceptance harness requires the validated GitHub-hosted Windows Server 2025 x64 runner context.'}
+    if($AllowNativeWindows11Host){
+      $runnerCpu=Get-CimInstance Win32_Processor -ErrorAction Stop|Select-Object -First 1
+      $runnerPrincipal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+      if(-not$runnerPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Creating the approved temporary test account requires an elevated PowerShell process; this process has no administrator token.'}
+      if($runnerOs.Caption-notmatch'^Microsoft Windows 11(?:\s|$)'-or$runnerOs.ProductType-ne1-or$runnerOs.OSArchitecture-cne'64-bit'-or[int]$runnerCpu.Architecture-ne9-or[Runtime.InteropServices.RuntimeInformation]::OSArchitecture-ne[Runtime.InteropServices.Architecture]::X64-or[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture-ne[Runtime.InteropServices.Architecture]::X64){throw "Native host test requires native Windows 11 x64; observed $($runnerOs.Caption), OS arch $($runnerOs.OSArchitecture), CPU architecture code $($runnerCpu.Architecture), runtime $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)/$([Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)."}
+      $runnerEnvironmentContext='authorized-native-windows11-host'
+      $env:EBR_RUNNER_ENVIRONMENT_CONTEXT=$runnerEnvironmentContext
+      $expectedHostExeHash='07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+      $expectedHostInstallerHash='a15fc525557603dbed1ef0dccb8d128e500dfee91c6416b478513de790dd5c9b'
+      if(-not(Test-Path -LiteralPath $ExecutablePath -PathType Leaf)-or-not(Test-Path -LiteralPath $InstallerPath -PathType Leaf)){throw 'Native host mode requires both exact authoritative production candidate files.'}
+      if((Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()-cne$expectedHostExeHash-or(Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()-cne$expectedHostInstallerHash){throw 'Native host candidate EXE/installer SHA-256 does not match artifact 14695418078.'}
+      $nativeHostIdentity=[pscustomobject]@{Environment='native Windows 11 x64 personal host; app confined to a fresh temporary standard account';OSCaption=$runnerOs.Caption;OSVersion=$runnerOs.Version;OSBuild=$runnerOs.BuildNumber;OSArchitecture=$runnerOs.OSArchitecture;ProductType=$runnerOs.ProductType;ProcessorName=$runnerCpu.Name;ProcessorArchitectureCode=$runnerCpu.Architecture;RuntimeOSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();RuntimeProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();NativeOrEmulated='Native';CandidateArtifactId='14695418078';CandidateEXESHA256=$expectedHostExeHash;CandidateInstallerSHA256=$expectedHostInstallerHash;CandidateSourceCommit='491bd2ed29f84f4d434b884fc723144db2d6f294'}
+    }else{
+      $runnerEnvironmentContext=[string]$env:EBR_RUNNER_ENVIRONMENT_CONTEXT
+      if(-not$runnerEnvironmentContext){$runnerEnvironmentContext='github-hosted'}
+      $runnerContextValid=($env:GITHUB_ACTIONS-ceq'true'-and$env:RUNNER_ENVIRONMENT-ceq'github-hosted'-and$runnerEnvironmentContext-ceq'github-hosted'-and$env:RUNNER_OS-ceq'Windows'-and$env:RUNNER_ARCH-ceq'X64'-and$env:GITHUB_SERVER_URL-ceq'https://github.com'-and$env:GITHUB_REPOSITORY-ieq'REMEDIOSSAMUEL/EYE-BREAK-REMINDER'-and$env:GITHUB_RUN_ID-and$env:RUNNER_NAME-and$env:GITHUB_WORKSPACE-and$env:RUNNER_TEMP-and$runnerOs.Caption-match'Windows Server 2025'-and[Runtime.InteropServices.RuntimeInformation]::OSArchitecture-eq[Runtime.InteropServices.Architecture]::X64-and[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture-eq[Runtime.InteropServices.Architecture]::X64)
+      if(-not$runnerContextValid){throw 'The standard-user console acceptance harness requires the validated GitHub-hosted Windows Server 2025 x64 runner context.'}
+    }
     $bytes=[byte[]]::new(48);[Security.Cryptography.RandomNumberGenerator]::Fill($bytes);$passwordText=[Convert]::ToBase64String($bytes)+'aA9!';[Array]::Clear($bytes,0,$bytes.Length)
     $securePassword=ConvertTo-SecureString -String $passwordText -AsPlainText -Force;$passwordText=$null
     New-LocalUser -Name $userName -Password $securePassword -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -ErrorAction Stop|Out-Null
@@ -1149,9 +1246,12 @@ try{
     if($adminMembership.Count){throw 'Temporary account was added to the local Administrators group.'}
     $status='FAIL'
     $reason=''
-    [void][IO.Directory]::CreateDirectory($stageRoot)
+    if(Test-Path -LiteralPath $stageRoot){throw 'Unique standard-user staging path already exists; refusing to reuse it.'}
+    if($stageRoot.IndexOfAny([char[]]@('*','?','[',']'))-ge0){throw 'Standard-user staging path contains PowerShell wildcard characters.'}
+    [void](New-Item -ItemType Directory -Path $stageRoot -ErrorAction Stop)
+    $stageRootCreatedByThisRun=$true
     $runnerContextFile=Join-Path $stageRoot 'runner-context.json'
-    $runnerContext=[ordered]@{GITHUB_ACTIONS=[string]$env:GITHUB_ACTIONS;GITHUB_SERVER_URL=[string]$env:GITHUB_SERVER_URL;GITHUB_REPOSITORY=[string]$env:GITHUB_REPOSITORY;GITHUB_RUN_ID=[string]$env:GITHUB_RUN_ID;GITHUB_WORKSPACE=[string]$env:GITHUB_WORKSPACE;RUNNER_ENVIRONMENT=[string]$env:RUNNER_ENVIRONMENT;RUNNER_OS=[string]$env:RUNNER_OS;RUNNER_ARCH=[string]$env:RUNNER_ARCH;RUNNER_NAME=[string]$env:RUNNER_NAME;RUNNER_TEMP=[string]$env:RUNNER_TEMP;ImageOS=[string]$env:ImageOS;ImageVersion=[string]$env:ImageVersion;EBR_RUNNER_ENVIRONMENT_CONTEXT=$runnerEnvironmentContext}
+    $runnerContext=[ordered]@{GITHUB_ACTIONS=[string]$env:GITHUB_ACTIONS;GITHUB_SERVER_URL=[string]$env:GITHUB_SERVER_URL;GITHUB_REPOSITORY=[string]$env:GITHUB_REPOSITORY;GITHUB_RUN_ID=[string]$env:GITHUB_RUN_ID;GITHUB_WORKSPACE=[string]$env:GITHUB_WORKSPACE;RUNNER_ENVIRONMENT=[string]$env:RUNNER_ENVIRONMENT;RUNNER_OS=[string]$env:RUNNER_OS;RUNNER_ARCH=[string]$env:RUNNER_ARCH;RUNNER_NAME=[string]$env:RUNNER_NAME;RUNNER_TEMP=[string]$env:RUNNER_TEMP;ImageOS=[string]$env:ImageOS;ImageVersion=[string]$env:ImageVersion;EBR_RUNNER_ENVIRONMENT_CONTEXT=$runnerEnvironmentContext;NativeHostOSCaption=if($nativeHostIdentity){$nativeHostIdentity.OSCaption}else{$null};NativeHostOSArchitecture=if($nativeHostIdentity){$nativeHostIdentity.OSArchitecture}else{$null};NativeHostProcessorArchitectureCode=if($nativeHostIdentity){$nativeHostIdentity.ProcessorArchitectureCode}else{$null};NativeHostOSVersion=if($nativeHostIdentity){$nativeHostIdentity.OSVersion}else{$null};NativeHostOSBuild=if($nativeHostIdentity){$nativeHostIdentity.OSBuild}else{$null};NativeHostProcessorName=if($nativeHostIdentity){$nativeHostIdentity.ProcessorName}else{$null};NativeHostRuntimeOSArchitecture=if($nativeHostIdentity){$nativeHostIdentity.RuntimeOSArchitecture}else{$null};NativeHostRuntimeProcessArchitecture=if($nativeHostIdentity){$nativeHostIdentity.RuntimeProcessArchitecture}else{$null}}
     $runnerContext|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $runnerContextFile -Encoding utf8
     $stageEvidence=Join-Path $stageRoot 'evidence';[void][IO.Directory]::CreateDirectory($stageEvidence)
     Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $stageRoot 'windows_standard_user_acceptance.ps1') -Force
@@ -1159,15 +1259,15 @@ try{
     Copy-Item -LiteralPath $ExecutablePath -Destination (Join-Path $stageRoot 'EyeBreakReminder.exe') -Force
     $principal="$env:COMPUTERNAME\${userName}"
     $probeStage=Join-Path $stageRoot 'probes';[void][IO.Directory]::CreateDirectory($probeStage)
-    foreach($probeScriptName in @('windows_candidate_audio_loopback_acceptance.ps1','windows_narrator_speech_recap_acceptance.ps1','windows_shell_notification_acceptance.ps1')){
+    if(-not$SkipCapabilityProbes){foreach($probeScriptName in @('windows_candidate_audio_loopback_acceptance.ps1','windows_narrator_speech_recap_acceptance.ps1','windows_shell_notification_acceptance.ps1')){
       $probeSource=Join-Path $PSScriptRoot $probeScriptName
       if(-not(Test-Path -LiteralPath $probeSource -PathType Leaf)){throw "Required optional capability probe '$probeScriptName' is missing from the workspace."}
       Copy-Item -LiteralPath $probeSource -Destination (Join-Path $probeStage $probeScriptName) -Force
-    }
+    }}
     & icacls.exe $stageRoot /grant "${principal}:(OI)(CI)M" /T /C|Out-Null
     if($LASTEXITCODE-ne0){throw "Could not grant the disposable standard user access to its isolated staging folder (icacls $LASTEXITCODE)."}
     $pwsh=Join-Path $PSHOME 'pwsh.exe';$childScript=Join-Path $stageRoot 'windows_standard_user_acceptance.ps1'
-    $safeCaptureArgument=if($DisableWholeDesktopCaptures){' -DisableWholeDesktopCaptures'}else{''}
+    $safeCaptureArgument=if($DisableWholeDesktopCaptures-or$AllowNativeWindows11Host){' -DisableWholeDesktopCaptures'}else{''}
     $expectedUserSid=[string]$user.SID.Value
     $runnerEnvironmentContext=if($RunnerEnvironmentContext){$RunnerEnvironmentContext}else{[string]$env:EBR_RUNNER_ENVIRONMENT_CONTEXT}
     if($expectedUserSid-notmatch'^S-\d+(?:-\d+)+$'){throw 'Generated disposable account SID did not match the expected Windows SID format.'}
@@ -1177,13 +1277,22 @@ try{
     $expectedPrincipalArgument=" -ExpectedUserName `"$principal`""
     $runnerEnvironmentArgument=if($runnerEnvironmentContext){" -RunnerEnvironmentContext `"$runnerEnvironmentContext`""}else{''}
     $runnerContextArgument=" -RunnerContextPath `"$runnerContextFile`""
-    $arguments="-NoProfile -ExecutionPolicy Bypass -File `"$childScript`" -Child -InstallerPath `"$(Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe')`" -ExecutablePath `"$(Join-Path $stageRoot 'EyeBreakReminder.exe')`" -EvidenceDirectory `"$stageEvidence`" -ChildResultPath `"$childResult`"$safeCaptureArgument$expectedUserArgument$expectedPrincipalArgument$runnerEnvironmentArgument$runnerContextArgument"
+    $nativeHostArgument=if($AllowNativeWindows11Host){' -AllowNativeWindows11Host'}else{''}
+    $skipProbeArgument=if($SkipCapabilityProbes){' -SkipCapabilityProbes'}else{''}
+    $arguments="-NoProfile -ExecutionPolicy Bypass -File `"$childScript`" -Child -InstallerPath `"$(Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe')`" -ExecutablePath `"$(Join-Path $stageRoot 'EyeBreakReminder.exe')`" -EvidenceDirectory `"$stageEvidence`" -ChildResultPath `"$childResult`"$safeCaptureArgument$nativeHostArgument$skipProbeArgument$expectedUserArgument$expectedPrincipalArgument$runnerEnvironmentArgument$runnerContextArgument"
     $credential=[pscredential]::new($principal,$securePassword)
     $childStdout=Join-Path $stageRoot 'standard-user-child.stdout.log';$childStderr=Join-Path $stageRoot 'standard-user-child.stderr.log'
     $childProcess=Start-Process -FilePath $pwsh -Credential $credential -LoadUserProfile -ArgumentList $arguments -RedirectStandardOutput $childStdout -RedirectStandardError $childStderr -PassThru
     $testStarted=$true
+    $childExited=$false
     $credential=$null;try{$securePassword.Dispose()}catch{};$securePassword=$null
-    if(-not$childProcess.WaitForExit(2100000)){Stop-Process -Id $childProcess.Id -Force -ErrorAction SilentlyContinue;throw 'Standard-user test process exceeded its thirty-five-minute limit.'}
+    if(-not$childProcess.WaitForExit(2100000)){
+      try{if(-not$childProcess.HasExited){$childProcess.Kill($true)}}catch{$cleanupErrors.Add("Could not stop timed-out temporary standard-user child tree: $($_.Exception.Message)")}
+      try{$childExited=[bool]$childProcess.WaitForExit(10000)}catch{$cleanupErrors.Add("Could not verify temporary standard-user child exit after timeout: $($_.Exception.Message)")}
+      throw 'Standard-user test process exceeded its thirty-five-minute limit.'
+    }
+    $childExited=[bool]$childProcess.HasExited
+    if(-not$childExited){throw 'The standard-user child did not report a verified exit.'}
     $childExitCode=$childProcess.ExitCode;$childProcess.Dispose()
     foreach($capture in @(@($childResult,'standard-user-child-results.json'),@($childStdout,'standard-user-child.stdout.log'),@($childStderr,'standard-user-child.stderr.log'))){if(Test-Path -LiteralPath $capture[0]){Copy-Item -LiteralPath $capture[0] -Destination (Join-Path $evidenceRoot $capture[1]) -Force}}
     if(Test-Path -LiteralPath $childResult){$result=Get-Content -LiteralPath $childResult -Raw|ConvertFrom-Json}else{$result=$null}
@@ -1195,6 +1304,11 @@ try{
     if($testStarted){$status='FAIL';$reason=$_.Exception.Message}else{$status='BLOCKED';$reason="The hosted runner could not safely provision or launch the isolated standard-user test: $($_.Exception.Message)"}
   }
 }finally{
+  if($childProcess-and-not$childExited){
+    try{if(-not$childProcess.HasExited){$childProcess.Kill($true)}}catch{$cleanupErrors.Add("Could not stop the temporary standard-user child process tree: $($_.Exception.Message)")}
+    try{$childExited=[bool]$childProcess.WaitForExit(10000)}catch{$cleanupErrors.Add("Could not verify temporary standard-user child exit: $($_.Exception.Message)")}
+    if(-not$childExited){$cleanupErrors.Add('Temporary standard-user child remains active; preserving profile and staging.')}
+  }
   $stagedEvidence=Join-Path $stageRoot 'evidence'
   if(Test-Path -LiteralPath $stagedEvidence){
     try{
@@ -1204,7 +1318,7 @@ try{
       if(Test-Path -LiteralPath $probeEvidenceSource){Copy-Item -LiteralPath $probeEvidenceSource -Destination (Join-Path $evidenceRoot 'capability-probes') -Recurse -Force}
     }catch{$cleanupErrors.Add("Could not retain standard-user screenshots: $($_.Exception.Message)")}
   }
-  if($userCreated){
+  if($userCreated-and$childExited){
     try{
       $localUser=Get-LocalUser -Name $userName -ErrorAction SilentlyContinue
       if($localUser){
@@ -1229,18 +1343,30 @@ try{
         }
       }
     }catch{$cleanupErrors.Add($_.Exception.Message)}
-  }
-  if(Test-Path -LiteralPath $stageRoot){
-    $runnerTemp=[IO.Path]::GetFullPath($env:RUNNER_TEMP)
-    if(-not$stageRoot.StartsWith($runnerTemp+'\',[StringComparison]::OrdinalIgnoreCase)){throw "Refusing to remove a staging path outside RUNNER_TEMP: $stageRoot"}
-    Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }elseif($userCreated-and-not$childExited){$cleanupErrors.Add('Preserved the temporary standard-user account and profile because its child process could not be confirmed exited.')}
+  if($stageRootCreatedByThisRun-and$childExited-and(Test-Path -LiteralPath $stageRoot)){
+    try{
+      $runnerTemp=[IO.Path]::GetFullPath($stageTempRoot).TrimEnd('\')+'\'
+      if(-not$stageRoot.StartsWith($runnerTemp,[StringComparison]::OrdinalIgnoreCase)){throw "Refusing to remove a staging path outside its verified temporary root: $stageRoot"}
+      $stageDeadline=[DateTime]::UtcNow.AddSeconds(10);$stageUsers=@()
+      do{$stageUsers=@(Get-ProcessesUsingStandardUserStage -Root $stageRoot);if(-not$stageUsers.Count){break};Start-Sleep -Milliseconds 250}while([DateTime]::UtcNow-lt$stageDeadline)
+      if($stageUsers.Count){$cleanupErrors.Add("Preserved staging because process(es) still reference it: $(($stageUsers|ForEach-Object{"$($_.Name):$($_.ProcessId)"})-join', ').")}
+      else{Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction Stop;$cleanupActions.Add('Removed unique staging only after verifying no process image or command line still referenced it.')}
+    }catch{$cleanupErrors.Add("Could not verify/remove staging safely: $($_.Exception.Message)")}
+  }elseif($stageRootCreatedByThisRun-and-not$childExited){$cleanupErrors.Add('Preserved staging because the temporary standard-user process tree could not be confirmed exited.')}
+  elseif(Test-Path -LiteralPath $stageRoot){$cleanupErrors.Add('Preserved an existing staging path that this run did not create.')}
+  [Environment]::SetEnvironmentVariable('RUNNER_TEMP',$previousRunnerTemp,'Process')
+  [Environment]::SetEnvironmentVariable('EBR_RUNNER_ENVIRONMENT_CONTEXT',$previousRunnerContext,'Process')
+  if($childProcess){$childProcess.Dispose()}
+  if($AllowNativeWindows11Host){
+    $nativeHostIdentity|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $evidenceRoot 'native-windows11-host-identity.json') -Encoding utf8
   }
 }
 $accountRemoved=(-not[bool](Get-LocalUser -Name $userName -ErrorAction SilentlyContinue));$stageRemoved=(-not(Test-Path -LiteralPath $stageRoot))
 if(-not$accountRemoved){$cleanupErrors.Add('Disposable standard-user account still exists after cleanup.')};if(-not$stageRemoved){$cleanupErrors.Add('Temporary candidate staging directory still exists after cleanup.')}
 $settingsEvent=if($result){@($result.Events|Where-Object{$_.Name-eq'Windows Settings > Apps uninstalls the standard-user candidate'}|Select-Object -First 1)}else{@()}
 $settingsScreenshotDirectory=Join-Path $evidenceRoot 'standard-user-screenshots'
-$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;ChildExitCode=$childExitCode;ChildResultCaptured=[bool]$result;CleanupActions=$cleanupActions.ToArray();CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;WholeDesktopCapturesDisabled=[bool]$DisableWholeDesktopCaptures;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};CapabilityProbes=if($result){@($result.Events|Where-Object{$_.Name-like'Optional pre-install capability probe *'}|ForEach-Object{$_.Details})}else{@()};SettingsAppsUninstall=if($settingsEvent.Count){$settingsEvent[0].Status}else{'NOT TESTED'};SettingsAppsUninstallReason=if($settingsEvent.Count){$settingsEvent[0].Details.Reason}else{'The Settings Apps probe did not produce a result.'};SettingsScreenshots=@(Get-ChildItem -LiteralPath $settingsScreenshotDirectory -Filter '*.png' -File -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Name);CompletedUtc=[DateTime]::UtcNow.ToString('o')}
+$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;ChildExitCode=$childExitCode;ChildResultCaptured=[bool]$result;CleanupActions=$cleanupActions.ToArray();CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;WholeDesktopCapturesDisabled=([bool]$DisableWholeDesktopCaptures-or[bool]$AllowNativeWindows11Host);Environment=$nativeHostIdentity;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};CapabilityProbes=if($result){@($result.Events|Where-Object{$_.Name-like'Optional pre-install capability probe *'}|ForEach-Object{$_.Details})}else{@()};SettingsAppsUninstall=if($settingsEvent.Count){$settingsEvent[0].Status}else{'NOT TESTED'};SettingsAppsUninstallReason=if($settingsEvent.Count){$settingsEvent[0].Details.Reason}else{'The Settings Apps probe did not produce a result.'};SettingsScreenshots=@(Get-ChildItem -LiteralPath $settingsScreenshotDirectory -Filter '*.png' -File -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Name);CompletedUtc=[DateTime]::UtcNow.ToString('o')}
 if($cleanupErrors.Count-gt0){$resultObject.Status='FAIL';$failureParts=@($reason)+@($cleanupErrors.ToArray())|Where-Object{$_};$resultObject.Failure=$failureParts -join '; '}
 Save-StandardUserResult $finalResult $resultObject
 $resultObject|ConvertTo-Json -Depth 8
