@@ -4,6 +4,7 @@ param(
   [switch]$ServerRdpSession,
   [switch]$ServerConsoleSession,
   [switch]$ServerConsoleOwnerSession,
+  [switch]$WaitForQuietTimeExit,
   [switch]$AllowPrivacyOobeNext,
   [int]$ExpectedSessionId = -1,
   [string]$ExpectedSessionName,
@@ -83,6 +84,7 @@ $physicalAudioVerified = $false
 $osRecord = $null
 $candidateIdentity = $null
 $shellStateRecord = $null
+$notificationEligibilityWaitRecord = $null
 $timerRecord = $null
 $shellRecord = $null
 $sessionId = $null
@@ -851,7 +853,7 @@ function Save-Result([string]$FinalStatus, [string]$FinalReason) {
     OperatingSystem=$osRecord
     Environment=[pscustomobject]@{Provider=if($serverSessionModeCount){'GitHub-hosted disposable Windows Server 2025 runner'}else{'GitHub-hosted Actions runner'};ImageOS=$env:ImageOS;ImageVersion=$env:ImageVersion;RunnerOS=$env:RUNNER_OS;RunnerArchitecture=$env:RUNNER_ARCH;ProcessSessionId=$sessionId;SessionName=$currentSessionName;RawSessionName=$currentSessionName;User=$currentUserIdentity;ServerSessionMode=if($ServerRdpSession){'RDP'}elseif($ServerConsoleSession){'ActiveConsoleStandardUser'}elseif($ServerConsoleOwnerSession){'ActiveConsoleOwnerMatchedUser'}else{$null};ExpectedSessionId=if($serverSessionModeCount){$ExpectedSessionId}else{$null};ExpectedSessionName=if($serverSessionModeCount){$ExpectedSessionName}else{$null};ExpectedUser=if($serverSessionModeCount){$ExpectedUser}else{$null};ExpectedRdpSessionId=if($ServerRdpSession){$ExpectedSessionId}else{$null};ExpectedRdpSessionName=if($ServerRdpSession){$ExpectedSessionName}else{$null};ExpectedRdpUser=if($ServerRdpSession){$ExpectedUser}else{$null};UserInteractive=[Environment]::UserInteractive;Execution=$executionMode;ConsoleDesktopEvidence=$consoleDesktopEvidence}
     Profile=[pscustomobject]@{LocalAppData=$env:LOCALAPPDATA;AppDataPath=$dataDirectory;AppDataAbsentBeforeTest=(-not $dataExistedBefore);TestDataCreatedByHarness=$dataCreatedByHarness;TestDataRemoved=$dataRemoved;User=$currentUserIdentity;SessionId=$sessionId}
-    Timer=$timerRecord;FirstRunOobe=$oobeRecord;WindowsShell=$shellRecord;CloseToTrayDiagnostic=$closeToTrayDiagnostic;ShellNotificationVisibilityStatus=$shellVisibilityStatus;ShellNotificationVisibilityReason=$shellVisibilityReason
+    Timer=$timerRecord;FirstRunOobe=$oobeRecord;WindowsShell=$shellRecord;ShellNotificationEligibility=$shellStateRecord;NotificationEligibilityWait=$notificationEligibilityWaitRecord;CloseToTrayDiagnostic=$closeToTrayDiagnostic;ShellNotificationVisibilityStatus=$shellVisibilityStatus;ShellNotificationVisibilityReason=$shellVisibilityReason
     NotificationActivation=$activationRecord;NotificationDismissal=$dismissalRecord;NotificationPersistence=$persistenceRecord;NotificationActionSequence=$secondActionSequenceRecord
     SecondNaturalNotification=$secondNotificationRecord;SecondNotificationPersistence=$secondPersistenceRecord
     SecondShellNotificationVisibilityStatus=$secondShellNotificationStatus;SecondShellNotificationVisibilityReason=$secondShellNotificationReason
@@ -1133,6 +1135,27 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   $notificationStateName=switch($notificationState){1{'QUNS_NOT_PRESENT'}2{'QUNS_BUSY'}3{'QUNS_RUNNING_D3D_FULL_SCREEN'}4{'QUNS_PRESENTATION_MODE'}5{'QUNS_ACCEPTS_NOTIFICATIONS'}6{'QUNS_QUIET_TIME'}7{'QUNS_APP'}default{"Unknown ($notificationState)"}}
   $shellStateRecord=[pscustomobject]@{HRESULT=('0x{0:X8}'-f([long]$notificationStateHResult-band[long]4294967295));StateCode=$notificationState;StateName=$notificationStateName;AcceptsNotifications=($notificationStateHResult-eq0-and$notificationState-eq5);ThisIsEligibilityOnlyNotDisplayEvidence=$true}
   Add-Event 'Windows Shell notification eligibility before the real timer' 'INFO' $shellStateRecord
+  if($WaitForQuietTimeExit){
+    if(-not$ServerConsoleOwnerSession){throw 'BLOCKED: bounded first-login Quiet Time wait is allowed only in the verified owner-matched GitHub-hosted Server Console.'}
+    $waitLimitSeconds=4200;$pollIntervalSeconds=15;$waitClock=[Diagnostics.Stopwatch]::StartNew();$stateSamples=[System.Collections.Generic.List[object]]::new();$stateSamples.Add([pscustomobject]@{ElapsedSeconds=0;Utc=[DateTime]::UtcNow.ToString('o');HResult=$shellStateRecord.HRESULT;StateCode=$notificationState;StateName=$notificationStateName});$lastRecordedState=$notificationState;$lastSampleElapsed=0;$quietTimeEnded=($notificationStateHResult-eq0-and$notificationState-eq5);$initialQuietTime=($notificationStateHResult-eq0-and$notificationState-eq6);$waitFailure=$null
+    if(-not$quietTimeEnded-and-not$initialQuietTime){$waitFailure=if($notificationStateHResult-ne0){"Initial notification-state query failed with HRESULT $($shellStateRecord.HRESULT); refusing a long wait."}else{"Initial notification state was $notificationStateName; the bounded wait is only valid for QUNS_QUIET_TIME."}}
+    if($initialQuietTime){Write-Host ("Waiting up to {0} seconds for this isolated runner user's QUNS_QUIET_TIME to end; the candidate has not been launched." -f $waitLimitSeconds)}
+    while($initialQuietTime-and-not$quietTimeEnded-and-not$waitFailure-and$waitClock.Elapsed.TotalSeconds-lt$waitLimitSeconds){
+      $remainingMilliseconds=[int][Math]::Ceiling(($waitLimitSeconds-$waitClock.Elapsed.TotalSeconds)*1000);if($remainingMilliseconds-le0){break};Start-Sleep -Milliseconds ([Math]::Min($pollIntervalSeconds*1000,$remainingMilliseconds));if($waitClock.Elapsed.TotalSeconds-ge$waitLimitSeconds){break}
+      if([EBR_SHELL_NOTIFY_NATIVE]::WTSGetActiveConsoleSessionId()-ne$ExpectedSessionId){$waitFailure='The verified active Console session changed during the bounded quiet-time wait.';break}
+      $stateAfterWait=0;$hrAfterWait=[EBR_SHELL_NOTIFY_NATIVE]::NotificationState([ref]$stateAfterWait);$stateAfterName=switch($stateAfterWait){1{'QUNS_NOT_PRESENT'}2{'QUNS_BUSY'}3{'QUNS_RUNNING_D3D_FULL_SCREEN'}4{'QUNS_PRESENTATION_MODE'}5{'QUNS_ACCEPTS_NOTIFICATIONS'}6{'QUNS_QUIET_TIME'}7{'QUNS_APP'}default{"Unknown ($stateAfterWait)"}};$elapsedSeconds=[int][Math]::Floor($waitClock.Elapsed.TotalSeconds)
+      if($stateAfterWait-ne$lastRecordedState-or$elapsedSeconds-$lastSampleElapsed-ge300){$stateSamples.Add([pscustomobject]@{ElapsedSeconds=$elapsedSeconds;Utc=[DateTime]::UtcNow.ToString('o');HResult=('0x{0:X8}'-f([long]$hrAfterWait-band[long]4294967295));StateCode=$stateAfterWait;StateName=$stateAfterName});$lastRecordedState=$stateAfterWait;$lastSampleElapsed=$elapsedSeconds;Write-Host ("Quiet-time wait elapsed {0}s; state={1}, HRESULT=0x{2:X8}." -f $elapsedSeconds,$stateAfterName,([long]$hrAfterWait-band[long]4294967295))}
+      $notificationState=$stateAfterWait;$notificationStateHResult=$hrAfterWait;$notificationStateName=$stateAfterName;$shellStateRecord=[pscustomobject]@{HRESULT=('0x{0:X8}'-f([long]$hrAfterWait-band[long]4294967295));StateCode=$notificationState;StateName=$notificationStateName;AcceptsNotifications=($notificationStateHResult-eq0-and$notificationState-eq5);ThisIsEligibilityOnlyNotDisplayEvidence=$true}
+      if($hrAfterWait-ne0){$waitFailure="Notification-state query failed during the bounded wait with HRESULT $($shellStateRecord.HRESULT).";break}
+      if($stateAfterWait-eq5){$quietTimeEnded=$true}elseif($stateAfterWait-ne6){$waitFailure="Notification state changed from QUNS_QUIET_TIME to $stateAfterName; stopping the bounded wait.";break}
+    }
+    $notificationEligibilityWaitRecord=[pscustomobject]@{Requested=$true;Status=if($quietTimeEnded){'READY'}else{'NOT TESTED'};InitialState=$stateSamples[0];FinalState=[pscustomobject]@{Utc=[DateTime]::UtcNow.ToString('o');HResult=$shellStateRecord.HRESULT;StateCode=$notificationState;StateName=$notificationStateName;AcceptsNotifications=$quietTimeEnded};WaitedSeconds=[int][Math]::Floor($waitClock.Elapsed.TotalSeconds);MaximumWaitSeconds=$waitLimitSeconds;PollIntervalSeconds=$pollIntervalSeconds;StateSamples=$stateSamples.ToArray();CandidateLaunchedBeforeWaitEnded=$false;SessionFailure=$waitFailure;FailureReason=if($quietTimeEnded){$null}elseif($waitFailure){$waitFailure}else{'Windows did not leave QUNS_QUIET_TIME and reach QUNS_ACCEPTS_NOTIFICATIONS within the bounded wait.'}}
+    if(-not$quietTimeEnded){Add-Event 'Bounded wait for fresh-runner Quiet Time to expire before actual Shell notification test' 'NOT TESTED' $notificationEligibilityWaitRecord;throw ('NOT TESTED: '+$notificationEligibilityWaitRecord.FailureReason)}
+    Add-Event 'Bounded wait for fresh-runner Quiet Time to expire before actual Shell notification test' 'INFO' $notificationEligibilityWaitRecord
+    Add-Event 'Windows Shell notification eligibility after natural quiet-time expiration' 'INFO' $shellStateRecord
+  } elseif($ServerConsoleOwnerSession-and$notificationState-eq6){
+    $notificationEligibilityWaitRecord=[pscustomobject]@{Requested=$false;Status='NOT TESTED';InitialState=$shellStateRecord;FinalState=$shellStateRecord;WaitedSeconds=0;MaximumWaitSeconds=0;CandidateLaunchedBeforeWaitEnded=$false;FailureReason='Owner-matched runner is in QUNS_QUIET_TIME; no wait was requested.'}
+  }
 
   [void][IO.Directory]::CreateDirectory($dataDirectory)
   $dataCreatedByHarness=$true

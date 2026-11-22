@@ -15,6 +15,8 @@ on:
 # failed to create a second active user session through run 45007378820. Keep
 # those unchanged routes behind an explicit retry label until the RDP/session
 # environment changes; unrelated active-Console probes continue normally.
+# The owner-matched Shell job has a bounded first-login quiet-time wait, so it
+# also requires the one-off `run-shell-quiet-time-probe` label.
 
 permissions:
   actions: read
@@ -844,8 +846,9 @@ jobs:
 
   shell-notification-owner-matched-windows-server-console:
     name: Exact candidate Shell notification in its Console owner’s session
+    if: contains(github.event.pull_request.labels.*.name, 'run-shell-quiet-time-probe')
     runs-on: windows-2025
-    timeout-minutes: 25
+    timeout-minutes: 105
     steps:
       - name: Check out the PR test harness
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -891,6 +894,7 @@ jobs:
             -ExecutablePath $exe `
             -EvidenceDirectory $evidence `
             -ServerConsoleOwnerSession `
+            -WaitForQuietTimeExit `
             -ExpectedSessionId $process.SessionId `
             -ExpectedSessionName 'Console' `
             -ExpectedUser $user
@@ -902,7 +906,9 @@ jobs:
           $ownerPreflightVerified = [bool]($checks -and $checks.ExpectedUserAndSession -and $checks.ActiveWtsConsole -and $checks.Interactive -and $checks.Desktop -and $checks.TaskbarOwnedByExplorer -and $checks.ShellOwnerMatchesCurrentUser)
           $ownerPreflightText = if ($ownerPreflightVerified) { 'verified' } else { 'not verified; see recorded checks' }
           $adminText = if ($null -ne $desktop -and $null -ne $desktop.IsAdministrator) { [string][bool]$desktop.IsAdministrator } else { 'not recorded' }
-          $summary = "Requirement: ENV-009`nCandidate EXE: artifact 14695418078, SHA-256 $($report.Candidate.SHA256), native PE $($report.Candidate.Identity.PEMachine) (EXE identity checked)`nOS: $($report.OperatingSystem.Caption) $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nEnvironment: GitHub-hosted Windows Server 2025 x64; requested owner-matched active Console mode`nConsole/session/Shell-owner preflight: $ownerPreflightText`nCurrent token is administrator: $adminText`nShell visibility subtest: $($report.ShellNotificationVisibilityStatus) — $($report.ShellNotificationVisibilityReason)`nNotification audio: $($report.Audio.Status); physical output verified: $($report.Audio.PhysicalAudioVerified)`nOverall ENV-009: $($report.Status) — $($report.Reason)`n"
+          $wait = $report.NotificationEligibilityWait
+          $quietWaitText = if ($wait) { "requested=$($wait.Requested); result=$($wait.Status); seconds=$($wait.WaitedSeconds); initial=$($wait.InitialState.StateName); final=$($wait.FinalState.StateName)" } else { 'not recorded' }
+          $summary = "Requirement: ENV-009`nCandidate EXE: artifact 14695418078, SHA-256 $($report.Candidate.SHA256), native PE $($report.Candidate.Identity.PEMachine) (EXE identity checked)`nOS: $($report.OperatingSystem.Caption) $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nEnvironment: GitHub-hosted Windows Server 2025 x64; requested owner-matched active Console mode`nConsole/session/Shell-owner preflight: $ownerPreflightText`nCurrent token is administrator: $adminText`nQuiet-time readiness: $quietWaitText`nShell visibility subtest: $($report.ShellNotificationVisibilityStatus) — $($report.ShellNotificationVisibilityReason)`nNotification audio: $($report.Audio.Status); physical output verified: $($report.Audio.PhysicalAudioVerified)`nOverall ENV-009: $($report.Status) — $($report.Reason)`n"
           $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           Write-Host $summary
           if ($report.Status -eq 'FAIL') { throw "Owner-matched Windows Shell acceptance found a failure: $($report.Reason)" }

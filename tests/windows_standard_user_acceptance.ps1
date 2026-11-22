@@ -545,6 +545,23 @@ public static class EBR_STD_UIA_CLIENT {
       if($appsFeaturesProcess){$settingsProcess=$appsFeaturesProcess;$appsFeaturesWatch=[Diagnostics.Stopwatch]::StartNew();while($appsFeaturesWatch.Elapsed.TotalSeconds-lt25-and-not$settingsHost){try{$settingsHost=Find-LaunchedSettingsWindow $settingsPreexistingProcessIds $settingsLaunchProcessIds $settingsSessionId;if($settingsHost){$settingsRoot=$settingsHost.Root;$settingsWindowHandle=[IntPtr]$settingsHost.Handle}}catch{};if(-not$settingsHost){Start-Sleep -Milliseconds 250}}}
       if(-not$settingsHost){$settingsLaunchErrors.Add('The documented ms-settings:appsfeatures URI did not expose a newly launched Settings window in the verified test session.')}
     }
+    if(-not$settingsHost){
+      $settingsAumidMatches=@()
+      try{$settingsAumidMatches=@(Get-StartApps -ErrorAction Stop|Where-Object{$_.AppID-and[string]$_.Name-match'(?i)^(Settings|System Settings)$'-and[string]$_.AppID-match'(?i)immersivecontrolpanel'})}catch{$settingsLaunchErrors.Add("Enumerate the registered Settings AppsFolder identity: $($_.Exception.Message)")}
+      if($settingsAumidMatches.Count-eq1){
+        $settingsAumid=[string]$settingsAumidMatches[0].AppID;$appsFolderTarget="shell:AppsFolder\$settingsAumid";$explorer=Join-Path $env:WINDIR 'explorer.exe'
+        try{$settingsProcess=Start-Process -FilePath $explorer -ArgumentList $appsFolderTarget -PassThru -ErrorAction Stop;if($settingsProcess){[void]$settingsLaunchProcessIds.Add([int]$settingsProcess.Id);$settingsLaunchMethods.Add("Explorer activation of the unique registered Settings AppsFolder identity: $settingsAumid")};$aumidWatch=[Diagnostics.Stopwatch]::StartNew();while($aumidWatch.Elapsed.TotalSeconds-lt25-and-not$settingsHost){try{$settingsHost=Find-LaunchedSettingsWindow $settingsPreexistingProcessIds $settingsLaunchProcessIds $settingsSessionId;if($settingsHost){$settingsRoot=$settingsHost.Root;$settingsWindowHandle=[IntPtr]$settingsHost.Handle}}catch{};if(-not$settingsHost){Start-Sleep -Milliseconds 250}}}catch{$settingsLaunchErrors.Add("Registered Settings AppsFolder identity activation: $($_.Exception.Message)")}
+        if(-not$settingsHost){$settingsLaunchErrors.Add('The unique registered Settings AppsFolder identity did not expose a newly launched Settings window.')}
+      }elseif($settingsAumidMatches.Count-gt1){$settingsLaunchErrors.Add("Settings AppsFolder activation was skipped because $($settingsAumidMatches.Count) matching registered identities were found; no ambiguous application was launched.")}
+      else{$settingsLaunchErrors.Add('No unique registered Settings AppsFolder identity containing immersivecontrolpanel was available.')}
+    }
+    if(-not$settingsHost){
+      $settingsExe=Join-Path $env:WINDIR 'ImmersiveControlPanel\SystemSettings.exe'
+      if(Test-Path -LiteralPath $settingsExe){
+        try{$settingsProcess=Start-Process -FilePath $settingsExe -ArgumentList $appsFeaturesUri -PassThru -ErrorAction Stop;if($settingsProcess){[void]$settingsLaunchProcessIds.Add([int]$settingsProcess.Id);$settingsLaunchMethods.Add('direct SystemSettings.exe launch with documented ms-settings:appsfeatures page argument')};$exeUriWatch=[Diagnostics.Stopwatch]::StartNew();while($exeUriWatch.Elapsed.TotalSeconds-lt25-and-not$settingsHost){try{$settingsHost=Find-LaunchedSettingsWindow $settingsPreexistingProcessIds $settingsLaunchProcessIds $settingsSessionId;if($settingsHost){$settingsRoot=$settingsHost.Root;$settingsWindowHandle=[IntPtr]$settingsHost.Handle}}catch{};if(-not$settingsHost){Start-Sleep -Milliseconds 250}}}catch{$settingsLaunchErrors.Add("Direct SystemSettings.exe Apps & Features argument activation: $($_.Exception.Message)")}
+        if(-not$settingsHost){$settingsLaunchErrors.Add('Direct SystemSettings.exe Apps & Features argument did not expose a newly launched Settings window.')}
+      }else{$settingsLaunchErrors.Add('Direct SystemSettings.exe Apps & Features argument was skipped because the executable was not present at the standard path.')}
+    }
     if(-not$settingsHost){return [pscustomobject]@{Status='NOT TESTED';Reason="A newly launched Settings home window could not be identified: $($settingsLaunchErrors -join '; ')";LaunchMethods=$settingsLaunchMethods.ToArray();LaunchErrors=$settingsLaunchErrors.ToArray()}}
     if($settingsHost){
       $settingsRoot=$null
