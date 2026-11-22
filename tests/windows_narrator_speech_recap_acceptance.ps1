@@ -979,21 +979,40 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
     if ($null -eq $narratorOwnedIdentity) {
       $cleanupErrors.Add("Narrator PID $narratorPid was started by the harness, but a complete PID/start-time/session/image identity was not captured; it was not stopped.")
     } else {
+      $currentIdentity = $null
       try {
-        $ownedNarrator = Get-Process -Id $narratorPid -ErrorAction SilentlyContinue
-        if ($ownedNarrator) {
-          $currentIdentity = Get-NarratorProcessIdentity $ownedNarrator
-          $sameOwnedProcess = ($currentIdentity.ProcessId -eq $narratorOwnedIdentity.ProcessId -and $currentIdentity.StartTimeUtcTicks -eq $narratorOwnedIdentity.StartTimeUtcTicks -and $currentIdentity.SessionId -eq $narratorOwnedIdentity.SessionId -and $currentIdentity.ImageName -ceq $narratorOwnedIdentity.ImageName -and $currentIdentity.ImageSHA256 -ceq $narratorOwnedIdentity.ImageSHA256)
-          if (-not $sameOwnedProcess) { throw 'Narrator process no longer matches its captured PID, start time, session, and executable identity; it was not stopped.' }
-          $ownedNarrator.Kill()
-          if (-not $ownedNarrator.WaitForExit(5000)) { throw 'The exact owned Narrator process did not exit within five seconds after cleanup.' }
-          $narratorStoppedByHarness = $true
-          Add-Event 'Stop only the same Narrator process started by this harness' 'PASS' ([pscustomobject]@{ObservedIdentity=$narratorOwnedIdentity;RecheckedIdentity=$currentIdentity;MatchedPidStartTimeSessionAndExecutable=$true})
-        } else {
+        if ($null -eq $narratorProcess) { throw 'The original Narrator process handle is unavailable; no process was stopped.' }
+        $narratorProcess.Refresh()
+        if ($narratorProcess.HasExited) {
           $narratorStoppedByHarness = $true
           Add-Event 'Owned Narrator process already exited before cleanup' 'PASS' ([pscustomobject]@{ObservedIdentity=$narratorOwnedIdentity;ProcessStillRunning=$false})
+        } else {
+          # Keep cleanup bound to Start-Process -PassThru's original process
+          # handle. A new Get-Process wrapper may have no usable SafeHandle in
+          # the hosted runner and would also introduce a PID-reuse race.
+          $currentIdentity = Get-NarratorProcessIdentity $narratorProcess
+          $sameOwnedProcess = ($currentIdentity.ProcessId -eq $narratorOwnedIdentity.ProcessId -and $currentIdentity.StartTimeUtcTicks -eq $narratorOwnedIdentity.StartTimeUtcTicks -and $currentIdentity.SessionId -eq $narratorOwnedIdentity.SessionId -and $currentIdentity.ImagePath -ieq $narratorOwnedIdentity.ImagePath -and $currentIdentity.ImageName -ceq $narratorOwnedIdentity.ImageName -and $currentIdentity.ImageSHA256 -ceq $narratorOwnedIdentity.ImageSHA256)
+          if (-not $sameOwnedProcess) { throw 'Narrator process no longer matches its captured PID, start time, session, path, and executable identity; it was not stopped.' }
+          try { $narratorProcess.Kill() } catch {
+            $narratorProcess.Refresh()
+            if (-not $narratorProcess.HasExited) { throw }
+          }
+          $exited = $narratorProcess.WaitForExit(5000)
+          $narratorProcess.Refresh()
+          if (-not $exited -and -not $narratorProcess.HasExited) { throw 'The exact owned Narrator process did not exit within five seconds after cleanup.' }
+          $narratorStoppedByHarness = $true
+          Add-Event 'Stop only the same Narrator process started by this harness' 'PASS' ([pscustomobject]@{ObservedIdentity=$narratorOwnedIdentity;RecheckedIdentity=$currentIdentity;MatchedPidStartTimeSessionPathAndExecutable=$true;Exited=$narratorProcess.HasExited})
         }
-      } catch { $cleanupErrors.Add("Owned Narrator process cleanup: $($_.Exception.Message)") }
+      } catch {
+        # A natural-exit race after identity validation is safe to accept only
+        # when the original held process handle confirms that exact process is
+        # gone. Never resolve or stop a replacement process by PID.
+        try { $narratorProcess.Refresh() } catch {}
+        if ($null -ne $narratorProcess -and $narratorProcess.HasExited) {
+          $narratorStoppedByHarness = $true
+          Add-Event 'Owned Narrator process exited during cleanup' 'PASS' ([pscustomobject]@{ObservedIdentity=$narratorOwnedIdentity;RecheckedIdentity=$currentIdentity;ProcessStillRunning=$false;CleanupRace=$true})
+        } else { $cleanupErrors.Add("Owned Narrator process cleanup: $($_.Exception.Message)") }
+      }
     }
   }
   if ($dataCreatedByHarness -and -not $dataExistedBefore -and (Test-Path -LiteralPath $dataDirectory)) {
