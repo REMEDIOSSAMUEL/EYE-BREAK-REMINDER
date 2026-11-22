@@ -875,9 +875,11 @@ using System.Text;
 [StructLayout(LayoutKind.Sequential)] public struct EBR_SHELL_NOTIFY_RECT { public int Left, Top, Right, Bottom; }
 [StructLayout(LayoutKind.Sequential)] public struct EBR_SHELL_NOTIFY_POINT { public int X, Y; }
 [StructLayout(LayoutKind.Sequential)] public struct EBR_SHELL_NOTIFY_ICON_IDENTIFIER { public uint cbSize; public IntPtr hWnd; public uint uID; public Guid guidItem; }
+[StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] public struct EBR_SHELL_NOTIFY_ICON_DATA { public uint cbSize; public IntPtr hWnd; public uint uID; public uint uFlags; public uint uCallbackMessage; public IntPtr hIcon; [MarshalAs(UnmanagedType.ByValTStr,SizeConst=128)] public string szTip; public uint dwState; public uint dwStateMask; [MarshalAs(UnmanagedType.ByValTStr,SizeConst=256)] public string szInfo; public uint uTimeoutOrVersion; [MarshalAs(UnmanagedType.ByValTStr,SizeConst=64)] public string szInfoTitle; public uint dwInfoFlags; public Guid guidItem; public IntPtr hBalloonIcon; }
 [StructLayout(LayoutKind.Sequential)] public struct EBR_SHELL_SYSTEM_INFO { public ushort ProcessorArchitecture; public ushort Reserved; public uint PageSize; public IntPtr MinimumApplicationAddress; public IntPtr MaximumApplicationAddress; public UIntPtr ActiveProcessorMask; public uint NumberOfProcessors; public uint ProcessorType; public uint AllocationGranularity; public ushort ProcessorLevel; public ushort ProcessorRevision; }
 public sealed class EBR_SHELL_WTS_SESSION { public int SessionId; public string Station; public int State; }
 public sealed class EBR_SHELL_NOTIFY_CHILD_WINDOW { public string Handle; public int ProcessId; public string ClassName; public string Text; public int ControlId; public bool Visible; public int[] Bounds; }
+public sealed class EBR_SHELL_TRAY_CONTROL_PROBE { public bool WindowCreated; public string WindowHandle; public int WindowOwnerProcessId; public bool InteractiveShellPresent; public uint NotifyIconId; public bool AddSucceeded; public int AddLastError; public int RectHResult; public int[] IconBounds; public bool DeleteAttempted; public bool DeleteSucceeded; public int DeleteLastError; public bool WindowDestroyed; public string Error; }
 
 public static class EBR_SHELL_NOTIFY_NATIVE {
   [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] private struct WTS_SESSION_INFO { public int SessionId; [MarshalAs(UnmanagedType.LPWStr)] public string Station; public int State; }
@@ -911,6 +913,11 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="RegisterWindowMessageW", SetLastError=true)] private static extern uint RegisterWindowMessageNative(string name);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="CreateWindowExW", SetLastError=true)] private static extern IntPtr CreateWindowExNative(uint exStyle, string className, string windowName, uint style, int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter);
+  [DllImport("user32.dll", EntryPoint="DestroyWindow", SetLastError=true)] private static extern bool DestroyWindowNative(IntPtr hwnd);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="LoadIconW", SetLastError=true)] private static extern IntPtr LoadIconNative(IntPtr instance, IntPtr resource);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, EntryPoint="GetModuleHandleW", SetLastError=true)] private static extern IntPtr GetModuleHandleNative(string moduleName);
+  [DllImport("shell32.dll", CharSet=CharSet.Unicode, EntryPoint="Shell_NotifyIconW", SetLastError=true)] private static extern bool ShellNotifyIconNative(uint message, ref EBR_SHELL_NOTIFY_ICON_DATA data);
   [DllImport("shell32.dll", SetLastError=true)] private static extern int Shell_NotifyIconGetRect(ref EBR_SHELL_NOTIFY_ICON_IDENTIFIER id, out EBR_SHELL_NOTIFY_RECT rect);
   [DllImport("shell32.dll", SetLastError=true)] private static extern int SHQueryUserNotificationState(out int state);
 
@@ -945,6 +952,21 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
     return found.ToArray();
   }
   public static int[] Bounds(IntPtr hwnd) { EBR_SHELL_NOTIFY_RECT r;if(!GetWindowRect(hwnd,out r))return new int[0];return new int[]{r.Left,r.Top,r.Right,r.Bottom}; }
+  public static EBR_SHELL_TRAY_CONTROL_PROBE ProbeTrayRegistration() {
+    var result=new EBR_SHELL_TRAY_CONTROL_PROBE();result.IconBounds=new int[0];result.NotifyIconId=0xEB470001;result.InteractiveShellPresent=TaskbarWindow()!=IntPtr.Zero;
+    IntPtr hwnd=IntPtr.Zero;bool registered=false;var data=new EBR_SHELL_NOTIFY_ICON_DATA();
+    try {
+      hwnd=CreateWindowExNative(0,"Static","EBR disposable tray capability probe",0x80000000,0,0,1,1,IntPtr.Zero,IntPtr.Zero,GetModuleHandleNative(null),IntPtr.Zero);
+      result.WindowCreated=hwnd!=IntPtr.Zero;if(!result.WindowCreated){result.Error="CreateWindowExW failed: "+Marshal.GetLastWin32Error();return result;}
+      result.WindowHandle="0x"+hwnd.ToInt64().ToString("X");result.WindowOwnerProcessId=System.Diagnostics.Process.GetCurrentProcess().Id;
+      data.cbSize=(uint)Marshal.SizeOf(typeof(EBR_SHELL_NOTIFY_ICON_DATA));data.hWnd=hwnd;data.uID=result.NotifyIconId;data.uFlags=0x00000001|0x00000002|0x00000004;data.uCallbackMessage=0x8000+0x471;data.hIcon=LoadIconNative(IntPtr.Zero,new IntPtr(32512));data.szTip="Temporary Shell capability check";data.szInfo=String.Empty;data.szInfoTitle=String.Empty;
+      result.AddSucceeded=ShellNotifyIconNative(0,ref data);result.AddLastError=Marshal.GetLastWin32Error();registered=result.AddSucceeded;
+      if(result.AddSucceeded){result.RectHResult=TrayIconRectangle(hwnd,result.NotifyIconId,out result.IconBounds);data.uFlags=0;result.DeleteAttempted=true;result.DeleteSucceeded=ShellNotifyIconNative(2,ref data);result.DeleteLastError=Marshal.GetLastWin32Error();registered=!result.DeleteSucceeded;}
+      else {result.RectHResult=-1;}
+    } catch(Exception ex){result.Error=ex.GetType().FullName+": "+ex.Message;}
+    finally {if(registered&&hwnd!=IntPtr.Zero){data.uFlags=0;result.DeleteAttempted=true;try{result.DeleteSucceeded=ShellNotifyIconNative(2,ref data);result.DeleteLastError=Marshal.GetLastWin32Error();}catch(Exception ex){result.Error=(result.Error==null?String.Empty:result.Error+"; ")+"NIM_DELETE: "+ex.GetType().FullName+": "+ex.Message;}}if(hwnd!=IntPtr.Zero)result.WindowDestroyed=DestroyWindowNative(hwnd);}
+    return result;
+  }
   public static string WindowText(IntPtr hwnd) { var b=new StringBuilder(512);GetWindowTextNative(hwnd,b,b.Capacity);return b.ToString(); }
   private static string NativeControlText(IntPtr hwnd) { var b=new StringBuilder(2048);UIntPtr result;SendMessageTimeoutText(hwnd,0x000D,new IntPtr(b.Capacity),b,0x0002,100,out result);return b.ToString(); }
   public static string WindowClass(IntPtr hwnd) { var b=new StringBuilder(256);GetClassNameNative(hwnd,b,b.Capacity);return b.ToString(); }
@@ -1034,6 +1056,16 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   $shellRecord = [pscustomobject]@{TaskbarWindow=if($taskbar-ne[IntPtr]::Zero){'0x{0:X}'-f$taskbar.ToInt64()}else{$null};ExplorerProcesses=@($explorer|ForEach-Object{[pscustomobject]@{Id=$_.Id;SessionId=$_.SessionId}});InteractiveShellAvailable=$shellAvailable;ConsoleDesktopEvidence=$consoleDesktopEvidence}
   Add-Assertion 'Interactive Windows Shell and Explorer taskbar are present in the verified test session' $shellAvailable $shellRecord
   if (-not $shellAvailable) { throw 'NOT TESTED: the runner has no interactive Explorer taskbar for Shell notification display.' }
+
+  # Capability only: prove whether Explorer accepts an ordinary transient tray
+  # icon from this exact standard-user desktop before attributing the candidate's
+  # Shell_NotifyIcon failure to either the app or this hosted image. The hidden
+  # test HWND, icon registration, and icon are removed immediately; this does not
+  # emit a notification and is not ENV-009 acceptance evidence.
+  $shellApiControl=$null
+  try{$shellApiControl=[EBR_SHELL_NOTIFY_NATIVE]::ProbeTrayRegistration()}catch{$shellApiControl=[pscustomobject]@{Error=$_.Exception.GetType().FullName+': '+$_.Exception.Message;InteractiveShellPresent=$shellAvailable;AddSucceeded=$false;DeleteAttempted=$false;WindowDestroyed=$false}}
+  $shellRecord|Add-Member -MemberType NoteProperty -Name TransientTrayRegistrationControl -Value $shellApiControl -Force
+  Add-Event 'Capability-only transient Windows Shell tray registration control (not candidate acceptance)' 'INFO' $shellApiControl
 
   if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) { throw 'BLOCKED: exact standalone candidate is missing.' }
   $candidateInfo = Get-Item -LiteralPath $ExecutablePath -ErrorAction Stop

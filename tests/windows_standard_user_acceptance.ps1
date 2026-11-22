@@ -725,8 +725,9 @@ public static class EBR_STD_UIA_CLIENT {
       }
     }
   }
-  function Get-StandardUserCandidateProcesses{
-    $expectedCandidate=[IO.Path]::GetFullPath($candidate)
+  function Get-StandardUserCandidateProcesses([string]$ExpectedExecutable){
+    if([string]::IsNullOrWhiteSpace($ExpectedExecutable)){$ExpectedExecutable=$candidate}
+    $expectedCandidate=[IO.Path]::GetFullPath($ExpectedExecutable)
     @(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{
       [int]$_.SessionId-eq$guardSessionId-and
       [IO.Path]::GetFileName([string]$_.Name)-ieq'EyeBreakReminder.exe'-and
@@ -894,7 +895,7 @@ public static class EBR_STD_UIA_CLIENT {
     $events.Add([pscustomobject]@{Name='Installer registers under the standard account HKCU hive';Status='PASS';UninstallKey=$uninstallKey;UninstallString=$registration.UninstallString})
     function Get-InstalledCandidateLaunchSnapshot([switch]$CaptureScreenshots){
       $expectedPath=[IO.Path]::GetFullPath($installed);$expectedSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$expectedSession=[int]$guardSessionId
-      $candidateRows=@(Get-StandardUserCandidateProcesses);$processSnapshots=[System.Collections.Generic.List[object]]::new()
+      $candidateRows=@(Get-StandardUserCandidateProcesses $installed);$processSnapshots=[System.Collections.Generic.List[object]]::new()
       foreach($candidateRow in $candidateRows){
         $processId=[int]$candidateRow.ProcessId;$ownerSid=$null;$ownerError=$null;$liveRow=$null
         try{
@@ -923,30 +924,78 @@ public static class EBR_STD_UIA_CLIENT {
       $qualified=@($processSnapshots|Where-Object{$_.LaunchIdentityAndWindowVerified})
       [pscustomobject]@{ExpectedExecutable=$expectedPath;ExpectedUserSid=$expectedSid;ExpectedSessionId=$expectedSession;CandidateProcessCount=$candidateRows.Count;UniqueVisibleInstalledCandidateProcess=($candidateRows.Count-eq1-and$qualified.Count-eq1);Processes=$processSnapshots.ToArray();VisibleCandidateWindowCount=@($processSnapshots|ForEach-Object{$_.TopLevelWindows}|Where-Object{$_.Visible}).Count;CapturedUtc=[DateTime]::UtcNow.ToString('o')}
     }
-    $launchSource='interactive installer Finish action';$launchAttemptProcessId=$null;$launchWatch=[Diagnostics.Stopwatch]::StartNew();$launchSnapshot=Get-InstalledCandidateLaunchSnapshot
+    function Get-StandardUserLaunchFailureDiagnostics([Diagnostics.Process]$StartedProcess,$ProcessId,$StartException,[DateTime]$AttemptStartedUtc,[string]$ExpectedExecutable,$LastWindowSnapshot){
+      $processState=[pscustomobject]@{ProcessId=$ProcessId;HasExited=$null;ExitCode=$null;StartTimeUtc=$null;MainWindowHandle=$null;MainWindowTitle=$null;ObservationError=$null}
+      if($StartedProcess){
+        try{$StartedProcess.Refresh();$processState.HasExited=[bool]$StartedProcess.HasExited;if($processState.HasExited){$processState.ExitCode=[int]$StartedProcess.ExitCode};if(-not$processState.HasExited){$processState.StartTimeUtc=$StartedProcess.StartTime.ToUniversalTime().ToString('o');$processState.MainWindowHandle=if($StartedProcess.MainWindowHandle-ne[IntPtr]::Zero){'0x{0:X}'-f$StartedProcess.MainWindowHandle.ToInt64()}else{'0x0'};$processState.MainWindowTitle=[string]$StartedProcess.MainWindowTitle}}catch{$processState.ObservationError=$_.Exception.Message}
+      }
+      $liveProcess=$null;$liveProcessError=$null
+      if($ProcessId){try{$liveProcess=Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$ProcessId)" -ErrorAction Stop}catch{$liveProcessError=$_.Exception.Message}}
+      $eventRecords=[System.Collections.Generic.List[object]]::new();$eventQueryStatus='NOT QUERIED';$eventQueryError=$null
+      try{
+        $eventStart=$AttemptStartedUtc.ToLocalTime().AddSeconds(-2);$eventEnd=[DateTime]::Now
+        $applicationEvents=@(Get-WinEvent -FilterHashtable @{LogName='Application';StartTime=$eventStart;EndTime=$eventEnd;Id=@(1000,1001)} -MaxEvents 100 -ErrorAction Stop)
+        $eventQueryStatus='QUERIED'
+        foreach($record in $applicationEvents){
+          if($record.ProviderName-notmatch'(?i)^(Application Error|Windows Error Reporting)$'){continue}
+          $message='';$xml='';try{$message=[string]$record.Message}catch{};try{$xml=[string]$record.ToXml()}catch{}
+          $recordText=$message+"`n"+$xml;$imageMatched=($recordText-match'(?i)EyeBreakReminder\.exe');$pathMatched=($recordText.IndexOf($ExpectedExecutable,[StringComparison]::OrdinalIgnoreCase)-ge0);$processIdMatched=$false
+          if($ProcessId){$pidText=[string][int]$ProcessId;$pidHex=('{0:x}'-f[int]$ProcessId);$processIdMatched=($recordText-match("(?i)\b0x0*"+[Regex]::Escape($pidHex)+"\b|\b"+[Regex]::Escape($pidText)+"\b"))}
+          $eventRecords.Add([pscustomobject]@{Provider=$record.ProviderName;EventId=[int]$record.Id;RecordId=$record.RecordId;TimeCreatedUtc=if($record.TimeCreated){$record.TimeCreated.ToUniversalTime().ToString('o')}else{$null};CandidateImageMatched=$imageMatched;CandidatePathMatched=$pathMatched;LaunchedProcessIdMatched=$processIdMatched;CorrelatedToCandidate=($imageMatched-or$pathMatched-or$processIdMatched);Message=$message;Xml=$xml})
+        }
+        if(-not$eventRecords.Count){$eventQueryStatus='NO MATCHING APPLICATION ERROR/WER PROVIDER RECORDS'}
+      }catch{$eventQueryError=$_.Exception.Message;if($eventQueryError-match'(?i)no events were found'){$eventQueryStatus='NO MATCHING APPLICATION LOG RECORDS'}else{$eventQueryStatus='QUERY FAILED'}}
+      $werReports=[System.Collections.Generic.List[object]]::new();$werQueryErrors=[System.Collections.Generic.List[string]]::new();$werStartUtc=$AttemptStartedUtc.AddSeconds(-5)
+      $werRoots=@((Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\WER\ReportArchive'),(Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\WER\ReportQueue'))
+      foreach($werRoot in $werRoots){
+        if(-not(Test-Path -LiteralPath $werRoot -PathType Container)){continue}
+        try{$candidateReports=@(Get-ChildItem -LiteralPath $werRoot -Filter '*.wer' -File -Recurse -Force -ErrorAction SilentlyContinue|Where-Object{$_.LastWriteTimeUtc-ge$werStartUtc}|Select-Object -First 50)}catch{$werQueryErrors.Add("$werRoot : $($_.Exception.Message)");continue}
+        foreach($report in $candidateReports){
+          try{$reportText=[IO.File]::ReadAllText($report.FullName);$imageMatched=($reportText-match'(?i)EyeBreakReminder\.exe');$pathMatched=($reportText.IndexOf($ExpectedExecutable,[StringComparison]::OrdinalIgnoreCase)-ge0);$processIdMatched=$false;if($ProcessId){$pidText=[string][int]$ProcessId;$pidHex=('{0:x}'-f[int]$ProcessId);$processIdMatched=($reportText-match("(?i)\b0x0*"+[Regex]::Escape($pidHex)+"\b|\b"+[Regex]::Escape($pidText)+"\b"))};if($imageMatched-or$pathMatched-or$processIdMatched){$werReports.Add([pscustomobject]@{Path=$report.FullName;LastWriteTimeUtc=$report.LastWriteTimeUtc.ToString('o');CandidateImageMatched=$imageMatched;CandidatePathMatched=$pathMatched;LaunchedProcessIdMatched=$processIdMatched;Text=$reportText})}}catch{$werQueryErrors.Add("$($report.FullName) : $($_.Exception.Message)")}
+        }
+      }
+      [pscustomobject]@{LaunchAttemptStartedUtc=$AttemptStartedUtc.ToString('o');ExpectedExecutable=$ExpectedExecutable;LaunchStartException=$StartException;StartedProcess=$processState;LiveWin32Process=if($liveProcess){[pscustomobject]@{ProcessId=[int]$liveProcess.ProcessId;Name=[string]$liveProcess.Name;ExecutablePath=[string]$liveProcess.ExecutablePath;SessionId=[int]$liveProcess.SessionId;CreationDate=$liveProcess.CreationDate;CommandLine=[string]$liveProcess.CommandLine}}else{$null};LiveProcessQueryError=$liveProcessError;ApplicationLogQueryStatus=$eventQueryStatus;ApplicationLogQueryError=$eventQueryError;ApplicationErrorAndWerEvents=$eventRecords.ToArray();UserWerReports=$werReports.ToArray();WerQueryErrors=$werQueryErrors.ToArray();LastWindowSnapshot=$LastWindowSnapshot;CapturedUtc=[DateTime]::UtcNow.ToString('o')}
+    }
+    $launchSource='interactive installer Finish action';$launchAttemptProcessId=$null;$launchStartException=$null;$launchAttemptStartedUtc=[DateTime]::UtcNow;$candidateLaunchFailure=$false;$candidateLaunchFailureReason=$null;$launchWatch=[Diagnostics.Stopwatch]::StartNew();$launchSnapshot=Get-InstalledCandidateLaunchSnapshot
     while(-not$launchSnapshot.UniqueVisibleInstalledCandidateProcess-and$launchWatch.Elapsed.TotalSeconds-lt4){Start-Sleep -Milliseconds 150;$launchSnapshot=Get-InstalledCandidateLaunchSnapshot}
     if(-not$launchSnapshot.UniqueVisibleInstalledCandidateProcess){
       if($launchSnapshot.CandidateProcessCount){
         $unverifiedProcesses=@($launchSnapshot.Processes|Where-Object{-not$_.LaunchIdentityAndWindowVerified-and(-not$_.UserIdentityVerified-or-not$_.ExactPathVerified-or-not$_.SessionVerified)})
-        if($unverifiedProcesses.Count){$events.Add([pscustomobject]@{Name='Installed candidate launch pre-existing process diagnostic';Status='NOT TESTED';Details=$launchSnapshot});throw 'An exact-path candidate process existed after installer Finish but its test-user/session ownership was not fully verified; it was left untouched.'}
-        foreach($candidateProcess in $launchSnapshot.Processes){if($candidateProcess.LaunchIdentityAndWindowVerified-or($candidateProcess.ExactPathVerified-and$candidateProcess.SessionVerified-and$candidateProcess.UserIdentityVerified-and-not$candidateProcess.ProcessExited)){Stop-Process -Id ([int]$candidateProcess.ProcessId) -Force -ErrorAction Stop}}
-        $cleanupWatch=[Diagnostics.Stopwatch]::StartNew();while((Get-StandardUserCandidateProcesses).Count-and$cleanupWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
-        if((Get-StandardUserCandidateProcesses).Count){$launchSnapshot=Get-InstalledCandidateLaunchSnapshot -CaptureScreenshots;$events.Add([pscustomobject]@{Name='Installed candidate launch pre-existing process cleanup diagnostic';Status='NOT TESTED';Details=$launchSnapshot});throw 'An exact candidate process could not be cleared safely before the explicit installed-image launch.'}
+        if($unverifiedProcesses.Count){$candidateLaunchFailureReason='A candidate process was present after installer Finish, but its test-user/session ownership could not be fully verified; it was left untouched.';$events.Add([pscustomobject]@{Name='Installed candidate launch pre-existing process diagnostic';Status='NOT TESTED';Details=$launchSnapshot})}
+        if(-not$candidateLaunchFailure-and-not$candidateLaunchFailureReason){
+          foreach($candidateProcess in $launchSnapshot.Processes){if($candidateProcess.LaunchIdentityAndWindowVerified-or($candidateProcess.ExactPathVerified-and$candidateProcess.SessionVerified-and$candidateProcess.UserIdentityVerified-and-not$candidateProcess.ProcessExited)){try{Stop-Process -Id ([int]$candidateProcess.ProcessId) -Force -ErrorAction Stop}catch{$candidateLaunchFailureReason="An exact candidate process could not be stopped safely before the explicit launch: $($_.Exception.Message)"}}}
+          $cleanupWatch=[Diagnostics.Stopwatch]::StartNew();while((Get-StandardUserCandidateProcesses $installed).Count-and$cleanupWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
+          if((Get-StandardUserCandidateProcesses $installed).Count){$candidateLaunchFailureReason='An exact candidate process remained after bounded cleanup, so no second process was started.';$launchSnapshot=Get-InstalledCandidateLaunchSnapshot -CaptureScreenshots;$events.Add([pscustomobject]@{Name='Installed candidate launch pre-existing process cleanup diagnostic';Status='NOT TESTED';Details=$launchSnapshot})}
+        }
       }
-      $launchSource='explicit installed executable launch after exact-profile process cleanup'
-      $appProcess=Start-Process -FilePath $installed -PassThru;$launchAttemptProcessId=[int]$appProcess.Id
-      $windowWatch=[Diagnostics.Stopwatch]::StartNew();$launchSnapshot=Get-InstalledCandidateLaunchSnapshot
-      while(-not$launchSnapshot.UniqueVisibleInstalledCandidateProcess-and$windowWatch.Elapsed.TotalSeconds-lt15){Start-Sleep -Milliseconds 100;$launchSnapshot=Get-InstalledCandidateLaunchSnapshot}
+      if(-not$candidateLaunchFailure-and-not$candidateLaunchFailureReason){
+        $launchSource='explicit installed executable launch after exact-profile process cleanup'
+        $launchAttemptStartedUtc=[DateTime]::UtcNow
+        try{$appProcess=Start-Process -FilePath $installed -PassThru -ErrorAction Stop;$launchAttemptProcessId=[int]$appProcess.Id}catch{$launchStartException=[pscustomobject]@{Type=$_.Exception.GetType().FullName;Message=$_.Exception.Message;HResult=$_.Exception.HResult;CategoryInfo=$_.CategoryInfo.ToString();FullyQualifiedErrorId=$_.FullyQualifiedErrorId;PositionMessage=$_.InvocationInfo.PositionMessage};$appProcess=$null}
+        $windowWatch=[Diagnostics.Stopwatch]::StartNew();$launchSnapshot=Get-InstalledCandidateLaunchSnapshot
+        while(-not$launchSnapshot.UniqueVisibleInstalledCandidateProcess-and$windowWatch.Elapsed.TotalSeconds-lt15){Start-Sleep -Milliseconds 100;$launchSnapshot=Get-InstalledCandidateLaunchSnapshot}
+      }
     }
     $launchSnapshot=Get-InstalledCandidateLaunchSnapshot -CaptureScreenshots
-    if(-not$launchSnapshot.UniqueVisibleInstalledCandidateProcess){$events.Add([pscustomobject]@{Name='Installed candidate visible-window launch diagnostics';Status='NOT TESTED';LaunchSource=$launchSource;LaunchAttemptProcessId=$launchAttemptProcessId;Details=$launchSnapshot});throw 'No unique visible main window from the exact installed executable in the active standard-user session was proven; diagnostic process/window evidence was retained.'}
-    $verifiedLaunchProcess=$launchSnapshot.Processes[0];$appProcess=Get-Process -Id ([int]$verifiedLaunchProcess.ProcessId) -ErrorAction Stop;$appProcess.Refresh()
-    $verifiedScreenshot=@($verifiedLaunchProcess.TopLevelWindows|Where-Object{$_.IsProcessMainWindow-and$_.Visible-and$_.Screenshot})
-    if($verifiedScreenshot.Count-ne1-or-not(Test-Path -LiteralPath $verifiedScreenshot[0].Screenshot -PathType Leaf)){$events.Add([pscustomobject]@{Name='Installed candidate visible-window launch diagnostics';Status='NOT TESTED';LaunchSource=$launchSource;LaunchAttemptProcessId=$launchAttemptProcessId;Details=$launchSnapshot});throw 'The exact installed candidate window was visible but no fresh bounded screenshot could be retained.'}
-    $events.Add([pscustomobject]@{Name='Installed candidate launches with a visible window under the standard account';Status='PASS';LaunchSource=$launchSource;Pid=$appProcess.Id;Title=$verifiedLaunchProcess.MainWindowTitle;MainWindowHandle=$verifiedLaunchProcess.MainWindowHandle;ExecutablePath=$verifiedLaunchProcess.ExecutablePath;SHA256=$expectedHash;SessionId=$verifiedLaunchProcess.SessionId;UserSid=$verifiedLaunchProcess.UserSid;Screenshot=$verifiedScreenshot[0].Screenshot;TopLevelWindows=$verifiedLaunchProcess.TopLevelWindows})
-    Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue;$appProcess=$null
-    $closeWatch=[Diagnostics.Stopwatch]::StartNew();while((Get-StandardUserCandidateProcesses).Count-and$closeWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
-    if((Get-StandardUserCandidateProcesses).Count){$events.Add([pscustomobject]@{Name='Installed candidate process cleanup after visible-window verification';Status='NOT TESTED';Details=(Get-InstalledCandidateLaunchSnapshot -CaptureScreenshots)});throw 'Verified installed candidate process remained after bounded launch observation; Settings uninstall did not proceed.'}
+    if(-not$launchSnapshot.UniqueVisibleInstalledCandidateProcess){
+      $candidateLaunchFailure=$true;if(-not$candidateLaunchFailureReason){$candidateLaunchFailureReason='The exact installed executable did not produce one visible main window in the active standard-user session.'};try{$launchFailureDiagnostics=Get-StandardUserLaunchFailureDiagnostics $appProcess $launchAttemptProcessId $launchStartException $launchAttemptStartedUtc $installed $launchSnapshot}catch{$launchFailureDiagnostics=[pscustomobject]@{LaunchAttemptStartedUtc=$launchAttemptStartedUtc.ToString('o');ExpectedExecutable=$installed;LaunchStartException=$launchStartException;DiagnosticsCollectionError=$_.Exception.Message;LastWindowSnapshot=$launchSnapshot;CapturedUtc=[DateTime]::UtcNow.ToString('o')}}
+      foreach($candidateProcess in $launchSnapshot.Processes){if(-not$candidateProcess.ProcessExited-and$candidateProcess.ExactPathVerified-and$candidateProcess.SessionVerified-and$candidateProcess.UserIdentityVerified){try{Stop-Process -Id ([int]$candidateProcess.ProcessId) -Force -ErrorAction Stop}catch{}}}
+      $closeWatch=[Diagnostics.Stopwatch]::StartNew();while((Get-StandardUserCandidateProcesses $installed).Count-and$closeWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
+      $postFailureSnapshot=Get-InstalledCandidateLaunchSnapshot -CaptureScreenshots
+      $launchFailureDiagnostics|Add-Member -NotePropertyName PostCleanupWindowSnapshot -NotePropertyValue $postFailureSnapshot -Force
+      $launchFailureDiagnostics|Add-Member -NotePropertyName ExactCandidateProcessesRemainingAfterCleanup -NotePropertyValue((Get-StandardUserCandidateProcesses $installed).Count) -Force
+      $events.Add([pscustomobject]@{Name='Installed candidate launches with a visible window under the standard account';Status='FAIL';LaunchSource=$launchSource;LaunchAttemptProcessId=$launchAttemptProcessId;LaunchFailure=$launchFailureDiagnostics;Details=$candidateLaunchFailureReason+' Exact-image, owner- and session-verified processes were stopped when possible; the actual Settings uninstall will still be attempted.'})
+      $events.Add([pscustomobject]@{Name='Installed candidate process cleanup before Settings uninstall';Status=if((Get-StandardUserCandidateProcesses $installed).Count){'NOT TESTED'}else{'PASS'};Details=$postFailureSnapshot})
+      $appProcess=$null
+    }else{
+      $verifiedLaunchProcess=$launchSnapshot.Processes[0];$verifiedLaunchProcessId=[int]$verifiedLaunchProcess.ProcessId
+      $verifiedScreenshot=@($verifiedLaunchProcess.TopLevelWindows|Where-Object{$_.IsProcessMainWindow-and$_.Visible-and$_.Screenshot})
+      if($verifiedScreenshot.Count-ne1-or-not(Test-Path -LiteralPath $verifiedScreenshot[0].Screenshot -PathType Leaf)){$candidateLaunchFailure=$true;$candidateLaunchFailureReason='A unique visible exact-candidate main window was observed, but a bounded screenshot could not be retained.';$events.Add([pscustomobject]@{Name='Installed candidate launches with a visible window under the standard account';Status='NOT TESTED';LaunchSource=$launchSource;Pid=$verifiedLaunchProcessId;Title=$verifiedLaunchProcess.MainWindowTitle;MainWindowHandle=$verifiedLaunchProcess.MainWindowHandle;ExecutablePath=$verifiedLaunchProcess.ExecutablePath;SHA256=$expectedHash;SessionId=$verifiedLaunchProcess.SessionId;UserSid=$verifiedLaunchProcess.UserSid;Details=$candidateLaunchFailureReason;TopLevelWindows=$verifiedLaunchProcess.TopLevelWindows})}else{$events.Add([pscustomobject]@{Name='Installed candidate launches with a visible window under the standard account';Status='PASS';LaunchSource=$launchSource;Pid=$verifiedLaunchProcessId;Title=$verifiedLaunchProcess.MainWindowTitle;MainWindowHandle=$verifiedLaunchProcess.MainWindowHandle;ExecutablePath=$verifiedLaunchProcess.ExecutablePath;SHA256=$expectedHash;SessionId=$verifiedLaunchProcess.SessionId;UserSid=$verifiedLaunchProcess.UserSid;Screenshot=$verifiedScreenshot[0].Screenshot;TopLevelWindows=$verifiedLaunchProcess.TopLevelWindows})}
+      $currentVerifiedSnapshot=Get-InstalledCandidateLaunchSnapshot;$currentVerifiedRows=@($currentVerifiedSnapshot.Processes|Where-Object{$_.ProcessId-eq$verifiedLaunchProcessId-and$_.ExactPathVerified-and$_.SessionVerified-and$_.UserIdentityVerified-and-not$_.ProcessExited});if($currentVerifiedRows.Count-eq1){try{Stop-Process -Id $verifiedLaunchProcessId -Force -ErrorAction Stop}catch{}}
+      $appProcess=$null
+      $closeWatch=[Diagnostics.Stopwatch]::StartNew();while((Get-StandardUserCandidateProcesses $installed).Count-and$closeWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
+      if((Get-StandardUserCandidateProcesses $installed).Count){$cleanupSnapshot=Get-InstalledCandidateLaunchSnapshot -CaptureScreenshots;$events.Add([pscustomobject]@{Name='Installed candidate process cleanup before Settings uninstall';Status='NOT TESTED';Details=$cleanupSnapshot})}else{$events.Add([pscustomobject]@{Name='Installed candidate process cleanup before Settings uninstall';Status='PASS';Details='The verified exact installed-image process exited before invoking Windows Settings.'})}
+    }
     $settingsUninstallData=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder';[void][IO.Directory]::CreateDirectory($settingsUninstallData)
     $settingsUninstallSettings=Join-Path $settingsUninstallData 'settings.ini';$settingsUninstallHistory=Join-Path $settingsUninstallData 'history.dat';$settingsUninstallUnrelated=Join-Path $settingsUninstallData 'user-not-owned.txt'
     $settingsUninstallSettingsText="workMinutes=37`nbreakSeconds=33`ntheme=2`nvolume=32`ncustomWorkAccent=1`nworkAccentColor=3900150`ncustomBreakAccent=1`nbreakAccentColor=16746496`nstartup=0`nautoCheckUpdates=0`nautoDownloadUpdates=0`n"
@@ -1002,7 +1051,7 @@ public static class EBR_STD_UIA_CLIENT {
       if(-not$silentUninstall.WaitForExit(90000)-or$silentUninstall.ExitCode-ne0){throw 'Silent uninstall failed after the standard-user silent reinstall.'}
       $events.Add([pscustomobject]@{Name='Silent uninstall after a standard-user silent reinstall';Status='PASS';ExitCode=$silentUninstall.ExitCode})
     }
-    $status='PASS'
+    if($candidateLaunchFailure){$status='FAIL';$failure=$candidateLaunchFailureReason+' The actual Settings uninstall was still attempted. See the launch diagnostics event for PID exit state, launch exception, and correlated Application Error/WER records.'}else{$status='PASS'}
   }catch{$failure=$_.Exception.Message;$events.Add([pscustomobject]@{Name='Standard user acceptance';Status='FAIL';Details=$failure;ScriptStackTrace=$_.ScriptStackTrace;PositionMessage=$_.InvocationInfo.PositionMessage;ScriptLineNumber=$_.InvocationInfo.ScriptLineNumber})}
   finally{
     if($appProcess-and-not$appProcess.HasExited){Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue}
