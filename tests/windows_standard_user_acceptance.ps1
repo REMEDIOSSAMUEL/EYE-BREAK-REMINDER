@@ -217,21 +217,70 @@ public static class EBR_STD_UIA_CLIENT {
   function Invoke-SettingsAppsUninstall([string]$UninstallerPath){
     Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop;Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop;Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop;Add-Type -AssemblyName System.Drawing -ErrorAction Stop
     $settingsProcess=$null;$settingsRoot=$null;$names=[System.Collections.Generic.List[string]]::new();$screenshot=$null;$settingsLaunchMethods=[System.Collections.Generic.List[string]]::new();$directSettingsLaunched=$false
+    $settingsSessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId
+    $settingsPreexistingProcessIds=[Collections.Generic.HashSet[int]]::new()
+    foreach($process in @(Get-Process -Name SystemSettings,ApplicationFrameHost -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq$settingsSessionId})){[void]$settingsPreexistingProcessIds.Add([int]$process.Id)}
+    $settingsLaunchProcessIds=[Collections.Generic.HashSet[int]]::new();$settingsWindowEvidence=$null
+    function Test-SettingsHostProcess([Diagnostics.Process]$Process){
+      try{
+        $expectedPath=switch($Process.ProcessName){
+          'SystemSettings' {Join-Path $env:WINDIR 'ImmersiveControlPanel\SystemSettings.exe'}
+          'ApplicationFrameHost' {Join-Path $env:WINDIR 'System32\ApplicationFrameHost.exe'}
+          default {return $false}
+        }
+        return ([IO.Path]::GetFullPath($Process.Path)-ieq[IO.Path]::GetFullPath($expectedPath))
+      }catch{return $false}
+    }
+    function Find-SettingsAppsPage([Collections.Generic.HashSet[int]]$PreexistingProcessIds,[Collections.Generic.HashSet[int]]$LaunchProcessIds,[int]$ExpectedSessionId){
+      $desktop=[System.Windows.Automation.AutomationElement]::RootElement
+      $topWindows=$desktop.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)
+      foreach($topWindow in $topWindows){
+        try{
+          $windowHandle=[IntPtr]$topWindow.Current.NativeWindowHandle
+          if($windowHandle-eq[IntPtr]::Zero){continue}
+          $ownerProcessId=[EBR_STD_NATIVE]::ProcessId($windowHandle)
+          if($ownerProcessId-le0){continue}
+          $ownerProcess=Get-Process -Id $ownerProcessId -ErrorAction Stop
+          if($ownerProcess.SessionId-ne$ExpectedSessionId-or-not(Test-SettingsHostProcess $ownerProcess)){continue}
+          if($PreexistingProcessIds.Contains($ownerProcessId)-and-not$LaunchProcessIds.Contains($ownerProcessId)){continue}
+          $elements=@($topWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))
+          $currentNames=@(foreach($element in $elements){try{if($element.Current.Name){[string]$element.Current.Name}}catch{}})
+          if(($currentNames-join'|')-match'(?i)Installed apps|Apps & features|App & features'){
+            return [pscustomobject]@{Root=$topWindow;ProcessId=$ownerProcessId;ProcessName=$ownerProcess.ProcessName;ProcessPath=$ownerProcess.Path;SessionId=$ownerProcess.SessionId;WindowHandle=('0x{0:X}'-f$windowHandle.ToInt64());WindowTitle=[EBR_STD_NATIVE]::Text($windowHandle);InstalledAppsTextObserved=$true;MatchingAccessibleNames=@($currentNames|Where-Object{$_-match'(?i)Installed apps|Apps & features|App & features'}|Select-Object -Unique)}
+          }
+        }catch{}
+      }
+      return $null
+    }
+    function Get-SettingsOwnedElements([System.Windows.Automation.AutomationElement]$VerifiedSettingsRoot,[Collections.Generic.HashSet[int]]$VerifiedSettingsProcessIds){
+      $owned=[Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
+      if($VerifiedSettingsRoot){
+        $owned.Add($VerifiedSettingsRoot)
+        foreach($element in @($VerifiedSettingsRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))){$owned.Add($element)}
+      }
+      $desktop=[System.Windows.Automation.AutomationElement]::RootElement
+      foreach($topWindow in $desktop.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)){
+        try{
+          $windowHandle=[IntPtr]$topWindow.Current.NativeWindowHandle
+          if($windowHandle-eq[IntPtr]::Zero){continue}
+          $ownerProcessId=[EBR_STD_NATIVE]::ProcessId($windowHandle)
+          if(-not$VerifiedSettingsProcessIds.Contains($ownerProcessId)){continue}
+          if(-not$owned.Contains($topWindow)){$owned.Add($topWindow)}
+          foreach($element in @($topWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))){if(-not$owned.Contains($element)){$owned.Add($element)}}
+        }catch{}
+      }
+      return $owned.ToArray()
+    }
     try{
     $settingsLaunchErrors=[System.Collections.Generic.List[string]]::new()
-    try{$settingsProcess=Start-Process -FilePath 'ms-settings:appsfeatures' -PassThru;if($settingsProcess){$settingsLaunchMethods.Add('ms-settings URI activation')}}catch{$settingsLaunchErrors.Add("URI activation: $($_.Exception.Message)")}
-    if(-not$settingsProcess){try{$explorer=Join-Path $env:WINDIR 'explorer.exe';$settingsProcess=Start-Process -FilePath $explorer -ArgumentList 'ms-settings:appsfeatures' -PassThru;if($settingsProcess){$settingsLaunchMethods.Add('Explorer URI activation')}}catch{$settingsLaunchErrors.Add("Explorer URI activation: $($_.Exception.Message)")}}
+    try{$settingsProcess=Start-Process -FilePath 'ms-settings:appsfeatures' -PassThru;if($settingsProcess){[void]$settingsLaunchProcessIds.Add([int]$settingsProcess.Id);$settingsLaunchMethods.Add('ms-settings URI activation')}}catch{$settingsLaunchErrors.Add("URI activation: $($_.Exception.Message)")}
+    if(-not$settingsProcess){try{$explorer=Join-Path $env:WINDIR 'explorer.exe';$settingsProcess=Start-Process -FilePath $explorer -ArgumentList 'ms-settings:appsfeatures' -PassThru;if($settingsProcess){[void]$settingsLaunchProcessIds.Add([int]$settingsProcess.Id);$settingsLaunchMethods.Add('Explorer URI activation')}}catch{$settingsLaunchErrors.Add("Explorer URI activation: $($_.Exception.Message)")}}
     if(-not$settingsProcess-and$settingsLaunchErrors.Count){$settingsLaunchErrors.Add('Shell URI activation did not return a process handle.')}
-    if(-not$settingsProcess){$settingsExe=Join-Path $env:WINDIR 'ImmersiveControlPanel\SystemSettings.exe';if(Test-Path -LiteralPath $settingsExe){try{$settingsProcess=Start-Process -FilePath $settingsExe -ArgumentList 'ms-settings:appsfeatures' -PassThru;if($settingsProcess){$directSettingsLaunched=$true;$settingsLaunchMethods.Add('direct SystemSettings.exe activation')}}catch{$settingsLaunchErrors.Add("Direct SystemSettings.exe activation: $($_.Exception.Message)")}}}
+    if(-not$settingsProcess){$settingsExe=Join-Path $env:WINDIR 'ImmersiveControlPanel\SystemSettings.exe';if(Test-Path -LiteralPath $settingsExe){try{$settingsProcess=Start-Process -FilePath $settingsExe -ArgumentList 'ms-settings:appsfeatures' -PassThru;if($settingsProcess){[void]$settingsLaunchProcessIds.Add([int]$settingsProcess.Id);$directSettingsLaunched=$true;$settingsLaunchMethods.Add('direct SystemSettings.exe activation')}}catch{$settingsLaunchErrors.Add("Direct SystemSettings.exe activation: $($_.Exception.Message)")}}}
     if(-not$settingsProcess){return [pscustomobject]@{Status='NOT TESTED';Reason="Windows Settings Apps page could not be opened: $($settingsLaunchErrors -join '; ')";LaunchMethods=$settingsLaunchMethods.ToArray()}}
     $watch=[Diagnostics.Stopwatch]::StartNew()
     while($watch.Elapsed.TotalSeconds-lt35-and-not$settingsRoot){
-      try{
-        $tops=[System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)
-        foreach($top in $tops){
-          try{$elements=@($top.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition));$currentNames=@(foreach($element in $elements){try{if($element.Current.Name){[string]$element.Current.Name}}catch{}});if(($currentNames-join'|')-match'(?i)Installed apps|Apps & features|App & features'){$settingsRoot=$top;$names.AddRange([string[]]$currentNames);break}}catch{}
-        }
-      }catch{}
+      try{$settingsWindowEvidence=Find-SettingsAppsPage $settingsPreexistingProcessIds $settingsLaunchProcessIds $settingsSessionId;if($settingsWindowEvidence){$settingsRoot=$settingsWindowEvidence.Root;$names.AddRange([string[]]$settingsWindowEvidence.MatchingAccessibleNames)}}catch{}
       if(-not$settingsRoot){Start-Sleep -Milliseconds 250}
     }
     if(-not$settingsRoot){
@@ -239,10 +288,11 @@ public static class EBR_STD_UIA_CLIENT {
       if(-not$directSettingsLaunched-and(Test-Path -LiteralPath $settingsExe)){
         try{
           $settingsProcess=Start-Process -FilePath $settingsExe -ArgumentList 'ms-settings:appsfeatures' -PassThru
+          if($settingsProcess){[void]$settingsLaunchProcessIds.Add([int]$settingsProcess.Id)}
           $settingsLaunchMethods.Add('direct SystemSettings.exe activation after shell URI failed to expose Installed apps')
           $watch.Restart()
           while($watch.Elapsed.TotalSeconds-lt25-and-not$settingsRoot){
-            try{$tops=[System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition);foreach($top in $tops){try{$elements=@($top.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition));$currentNames=@(foreach($element in $elements){try{if($element.Current.Name){[string]$element.Current.Name}}catch{}});if(($currentNames-join'|')-match'(?i)Installed apps|Apps & features|App & features'){$settingsRoot=$top;$names.AddRange([string[]]$currentNames);break}}catch{}}}catch{}
+            try{$settingsWindowEvidence=Find-SettingsAppsPage $settingsPreexistingProcessIds $settingsLaunchProcessIds $settingsSessionId;if($settingsWindowEvidence){$settingsRoot=$settingsWindowEvidence.Root;$names.AddRange([string[]]$settingsWindowEvidence.MatchingAccessibleNames)}}catch{}
             if(-not$settingsRoot){Start-Sleep -Milliseconds 250}
           }
         }catch{$settingsLaunchErrors.Add("Direct SystemSettings.exe activation: $($_.Exception.Message)")}
@@ -252,19 +302,19 @@ public static class EBR_STD_UIA_CLIENT {
       $screenshot=Capture-StandardUserDesktop 'standard-user-settings-apps-page-unavailable.png'
       $settingsProcesses=@(Get-Process -Name SystemSettings,ApplicationFrameHost -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq[Diagnostics.Process]::GetCurrentProcess().SessionId}|ForEach-Object{[pscustomobject]@{Id=$_.Id;Name=$_.ProcessName;MainWindowHandle=('0x{0:X}' -f $_.MainWindowHandle.ToInt64());MainWindowTitle=$_.MainWindowTitle}})
       $visibleWindows=@(foreach($process in $settingsProcesses){foreach($handle in [EBR_STD_NATIVE]::TopWindowsForProcess($process.Id)){if([EBR_STD_NATIVE]::IsWindowVisible($handle)){[pscustomobject]@{ProcessId=$process.Id;ProcessName=$process.Name;Handle=('0x{0:X}' -f $handle.ToInt64());Title=[EBR_STD_NATIVE]::Text($handle);Class=[EBR_STD_NATIVE]::ClassName($handle);Bounds=[EBR_STD_NATIVE]::Bounds($handle)}}}})
-      return [pscustomobject]@{Status='NOT TESTED';Reason='The disposable Windows session did not expose the Installed apps page through UI Automation, including direct SystemSettings.exe activation.';SettingsProcessId=$(if($settingsProcess){$settingsProcess.Id}else{$null});SettingsProcesses=$settingsProcesses;VisibleWindows=$visibleWindows;Screenshot=$screenshot;LaunchMethods=$settingsLaunchMethods.ToArray();LaunchErrors=$settingsLaunchErrors.ToArray()}
+      return [pscustomobject]@{Status='NOT TESTED';Reason='A Settings-owned Installed apps UI Automation window was not identified. Page text outside a newly launched or directly activated SystemSettings/ApplicationFrameHost window is not accepted.';SettingsProcessId=$(if($settingsProcess){$settingsProcess.Id}else{$null});SettingsProcesses=$settingsProcesses;VisibleWindows=$visibleWindows;Screenshot=$screenshot;LaunchMethods=$settingsLaunchMethods.ToArray();LaunchErrors=$settingsLaunchErrors.ToArray();SettingsWindowEvidence=$settingsWindowEvidence;PreexistingSettingsProcessIds=@($settingsPreexistingProcessIds);LaunchProcessIds=@($settingsLaunchProcessIds)}
     }
       $screenshot=Capture-StandardUserDesktop 'standard-user-settings-apps-before-uninstall.png'
     $search=$null
     foreach($element in @($settingsRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))){try{if($element.Current.ControlType-eq[System.Windows.Automation.ControlType]::Edit-and$element.Current.Name-match'(?i)search apps|search this list'){$search=$element;break}}catch{}}
-    if(-not$search){return [pscustomobject]@{Status='NOT TESTED';Reason='Installed apps page has no accessible app-search field.';VisibleNames=@($names|Select-Object -Unique|Select-Object -First 80);Screenshot=$screenshot}}
-    try{$value=$search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern);$value.SetValue('Eye Break Reminder')}catch{try{$search.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('^a');[System.Windows.Forms.SendKeys]::SendWait('Eye Break Reminder')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="The Installed apps search field could not be set: $($_.Exception.Message)";Screenshot=$screenshot}}}
+    if(-not$search){return [pscustomobject]@{Status='NOT TESTED';Reason='Installed apps page has no accessible app-search field.';VisibleNames=@($names|Select-Object -Unique|Select-Object -First 80);Screenshot=$screenshot;SettingsWindowEvidence=$settingsWindowEvidence}}
+    try{$value=$search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern);$value.SetValue('Eye Break Reminder')}catch{try{$search.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('^a');[System.Windows.Forms.SendKeys]::SendWait('Eye Break Reminder')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="The Installed apps search field could not be set: $($_.Exception.Message)";Screenshot=$screenshot;SettingsWindowEvidence=$settingsWindowEvidence}}}
     $watch=[Diagnostics.Stopwatch]::StartNew();$appEntry=$null
     while($watch.Elapsed.TotalSeconds-lt20-and-not$appEntry){
       try{foreach($element in @($settingsRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))){try{if($element.Current.Name-match'(?i)^Eye Break Reminder$'-and$element.Current.ControlType-ne[System.Windows.Automation.ControlType]::Button){$appEntry=$element;break}}catch{}}}catch{}
       if(-not$appEntry){Start-Sleep -Milliseconds 200}
     }
-    if(-not$appEntry){return [pscustomobject]@{Status='NOT TESTED';Reason='The standard-user installation did not appear in the Settings > Installed apps search results.';VisibleNames=@($names|Select-Object -Unique|Select-Object -First 80);Screenshot=$screenshot}}
+    if(-not$appEntry){return [pscustomobject]@{Status='NOT TESTED';Reason='The standard-user installation did not appear in the Settings > Installed apps search results.';VisibleNames=@($names|Select-Object -Unique|Select-Object -First 80);Screenshot=$screenshot;SettingsWindowEvidence=$settingsWindowEvidence}}
     $entryScreenshot=$null
     try{$entryHandle=[IntPtr]$settingsRoot.Current.NativeWindowHandle;$entryScreenshot=Capture-StandardUserWizard $entryHandle 'standard-user-settings-apps-eye-break-reminder-found.png'}catch{}
     $menuButton=$null;$scope=$appEntry
@@ -272,23 +322,27 @@ public static class EBR_STD_UIA_CLIENT {
       try{$controls=@($scope.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition));$menuButton=@($controls|Where-Object{try{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$_.Current.IsEnabled-and$_.Current.Name-match'(?i)more options|more actions|options for'}catch{$false}}|Select-Object -First 1|ForEach-Object{$_})|Select-Object -First 1}catch{}
       if(-not$menuButton){try{$scope=[System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($scope)}catch{$scope=$null};if(-not$scope-or$scope-eq[System.Windows.Automation.AutomationElement]::RootElement){break}}
     }
-    if(-not$menuButton){return [pscustomobject]@{Status='NOT TESTED';Reason='The Eye Break Reminder entry exposes no accessible row-specific options button.';Screenshots=@($screenshot,$entryScreenshot)}}
-    try{$menuButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$menuButton.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not open the Eye Break Reminder row menu: $($_.Exception.Message)";Screenshot=$screenshot}}}
+    if(-not$menuButton){return [pscustomobject]@{Status='NOT TESTED';Reason='The Eye Break Reminder entry exposes no accessible row-specific options button.';Screenshots=@($screenshot,$entryScreenshot);SettingsWindowEvidence=$settingsWindowEvidence}}
+    try{$menuButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$menuButton.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not open the Eye Break Reminder row menu: $($_.Exception.Message)";Screenshot=$screenshot;SettingsWindowEvidence=$settingsWindowEvidence}}}
     $uninstallChoice=$null;$watch=[Diagnostics.Stopwatch]::StartNew()
     while($watch.Elapsed.TotalSeconds-lt10-and-not$uninstallChoice){
-      foreach($element in @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition))){try{if($element.Current.Name-match'(?i)^Uninstall$'-and$element.Current.IsEnabled-and$element.Current.ControlType-in@([System.Windows.Automation.ControlType]::Button,[System.Windows.Automation.ControlType]::MenuItem)){$uninstallChoice=$element;break}}catch{}}
+      $settingsProcessIds=[Collections.Generic.HashSet[int]]::new();[void]$settingsProcessIds.Add([int]$settingsWindowEvidence.ProcessId)
+      foreach($process in @(Get-Process -Name SystemSettings,ApplicationFrameHost -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq$settingsSessionId})){
+        try{if((Test-SettingsHostProcess $process)-and(-not$settingsPreexistingProcessIds.Contains([int]$process.Id)-or$settingsLaunchProcessIds.Contains([int]$process.Id))){[void]$settingsProcessIds.Add([int]$process.Id)}}catch{}
+      }
+      foreach($element in @(Get-SettingsOwnedElements $settingsRoot $settingsProcessIds)){try{if($element.Current.Name-match'(?i)^Uninstall$'-and$element.Current.IsEnabled-and$element.Current.ControlType-in@([System.Windows.Automation.ControlType]::Button,[System.Windows.Automation.ControlType]::MenuItem)){$uninstallChoice=$element;break}}catch{}}
       if(-not$uninstallChoice){Start-Sleep -Milliseconds 100}
     }
-    if(-not$uninstallChoice){return [pscustomobject]@{Status='NOT TESTED';Reason='The app row menu exposed no Uninstall action.';Screenshots=@($screenshot,$entryScreenshot)}}
+    if(-not$uninstallChoice){return [pscustomobject]@{Status='NOT TESTED';Reason='The app row menu exposed no Settings-owned Uninstall action.';Screenshots=@($screenshot,$entryScreenshot);SettingsWindowEvidence=$settingsWindowEvidence;SettingsOwnedProcessIds=@($settingsProcessIds)}}
     $menuChoiceRuntime='';try{$menuChoiceRuntime=$uninstallChoice.GetRuntimeId()-join'.'}catch{}
-    try{$uninstallChoice.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$uninstallChoice.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not activate Settings > Apps > Uninstall: $($_.Exception.Message)";Screenshots=@($screenshot,$entryScreenshot)}}}
+    try{$uninstallChoice.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()}catch{try{$uninstallChoice.SetFocus();[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')}catch{return [pscustomobject]@{Status='NOT TESTED';Reason="Could not activate Settings > Apps > Uninstall: $($_.Exception.Message)";Screenshots=@($screenshot,$entryScreenshot);SettingsWindowEvidence=$settingsWindowEvidence;SettingsOwnedProcessIds=@($settingsProcessIds)}}}
     $uninstallProcess=$null;$confirmClicks=0;$watch=[Diagnostics.Stopwatch]::StartNew();$settingsUninstallerRootIds=[Collections.Generic.HashSet[int]]::new();$settingsSessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId
     while($watch.Elapsed.TotalSeconds-lt35-and-not$uninstallProcess){
       $uninstallProcess=Get-SettingsLaunchedUninstallerProcess $UninstallerPath $settingsSessionId $settingsUninstallerRootIds
       if($uninstallProcess){break}
       if($confirmClicks-eq0-and$watch.Elapsed.TotalSeconds-ge2-and$menuChoiceRuntime){
         $uiNames=[System.Collections.Generic.List[string]]::new();$confirm=$null
-        foreach($element in [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)){
+        foreach($element in @(Get-SettingsOwnedElements $settingsRoot $settingsProcessIds)){
           try{$elementName=[string]$element.Current.Name;if($elementName){$uiNames.Add($elementName)};$runtime=$element.GetRuntimeId()-join'.';if($runtime-cne$menuChoiceRuntime-and$elementName-match'(?i)^Uninstall$'-and$element.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$element.Current.IsEnabled-and-not$element.Current.IsOffscreen){$confirm=$element;break}}catch{}
         }
         $confirmationVisible=($uiNames.ToArray()-join'|')-match'(?i)are you sure|this app.*uninstall|uninstall.*Eye Break Reminder|Eye Break Reminder.*uninstall'
@@ -296,12 +350,12 @@ public static class EBR_STD_UIA_CLIENT {
       }
       Start-Sleep -Milliseconds 200
     }
-    if(-not$uninstallProcess){return [pscustomobject]@{Status='NOT TESTED';Reason='Settings launched no visible per-user NSIS uninstaller within 35 seconds.';Screenshots=@($screenshot,$entryScreenshot);ConfirmationClicks=$confirmClicks}}
+    if(-not$uninstallProcess){return [pscustomobject]@{Status='NOT TESTED';Reason='Settings launched no visible per-user NSIS uninstaller within 35 seconds.';Screenshots=@($screenshot,$entryScreenshot);ConfirmationClicks=$confirmClicks;SettingsWindowEvidence=$settingsWindowEvidence;SettingsOwnedProcessIds=@($settingsProcessIds)}}
     $wizard=Invoke-StandardUserWizard $UninstallerPath 'Settings Apps interactive uninstall wizard' $uninstallProcess
-    if($wizard.Status-ne'PASS'){return [pscustomobject]@{Status=$wizard.Status;Reason=$wizard.Reason;Wizard=$wizard;Screenshots=@($screenshot,$entryScreenshot)}}
+    if($wizard.Status-ne'PASS'){return [pscustomobject]@{Status=$wizard.Status;Reason=$wizard.Reason;Wizard=$wizard;Screenshots=@($screenshot,$entryScreenshot);SettingsWindowEvidence=$settingsWindowEvidence;SettingsOwnedProcessIds=@($settingsProcessIds)}}
     $installDir=Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder';$uninstallKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder';$appKey='HKCU:\Software\EyeBreakReminder'
-    if((Test-Path -LiteralPath $installDir)-or(Test-Path -LiteralPath $uninstallKey)-or(Test-Path -LiteralPath $appKey)){return [pscustomobject]@{Status='FAIL';Reason='Settings uninstall completed its wizard but left the per-user app, install directory, or HKCU registrations.';Wizard=$wizard;Screenshot=$screenshot}}
-    [pscustomobject]@{Status='PASS';ExitCode=$wizard.ExitCode;Wizard=$wizard;InstallationRemoved=$true;HKCURegistrationsRemoved=$true;Screenshots=@($screenshot,$entryScreenshot);ConfirmationClicks=$confirmClicks}
+    if((Test-Path -LiteralPath $installDir)-or(Test-Path -LiteralPath $uninstallKey)-or(Test-Path -LiteralPath $appKey)){return [pscustomobject]@{Status='FAIL';Reason='Settings uninstall completed its wizard but left the per-user app, install directory, or HKCU registrations.';Wizard=$wizard;Screenshot=$screenshot;SettingsWindowEvidence=$settingsWindowEvidence;SettingsOwnedProcessIds=@($settingsProcessIds)}}
+    [pscustomobject]@{Status='PASS';ExitCode=$wizard.ExitCode;Wizard=$wizard;InstallationRemoved=$true;HKCURegistrationsRemoved=$true;Screenshots=@($screenshot,$entryScreenshot);ConfirmationClicks=$confirmClicks;SettingsWindowEvidence=$settingsWindowEvidence;SettingsOwnedProcessIds=@($settingsProcessIds)}
     }finally{
       if($settingsRoot){try{$settingsRoot.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()}catch{}}
       if($settingsProcess){try{$settingsProcess.Refresh();if(-not$settingsProcess.HasExited-and$settingsProcess.MainWindowTitle-match'(?i)Settings'){[void]$settingsProcess.CloseMainWindow()}}catch{}}

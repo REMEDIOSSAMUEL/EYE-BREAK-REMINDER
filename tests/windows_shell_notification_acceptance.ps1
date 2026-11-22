@@ -1,6 +1,11 @@
 param(
   [Parameter(Mandatory=$true)][string]$ExecutablePath,
-  [Parameter(Mandatory=$true)][string]$EvidenceDirectory
+  [Parameter(Mandatory=$true)][string]$EvidenceDirectory,
+  [switch]$ServerRdpSession,
+  [switch]$AllowPrivacyOobeNext,
+  [int]$ExpectedSessionId = -1,
+  [string]$ExpectedSessionName,
+  [string]$ExpectedUser
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,10 +16,13 @@ $candidateSourceCommit = '491bd2ed29f84f4d434b884fc723144db2d6f294'
 $expectedNotificationTitle = 'Time to rest your eyes'
 $expectedNotificationBodyPattern = 'Look 20 feet / 6 metres away for 20 seconds'
 
-# Run only inside the disposable GitHub-hosted Windows 11 ARM64 runner. The
-# production x64 executable is intentionally tested here under x64 emulation.
-if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'ARM64') {
-  throw 'BLOCKED: this Shell notification probe may run only on a GitHub-hosted Windows 11 ARM64 runner.'
+# Default mode remains the disposable Windows 11 ARM64 runner with the x64
+# candidate under emulation. The opt-in Server mode is restricted to the
+# temporary standard-user localhost-RDP session on the hosted Server runner.
+$requiredRunnerArchitecture = if ($ServerRdpSession) { 'X64' } else { 'ARM64' }
+$runnerDescription = if ($ServerRdpSession) { 'GitHub-hosted Windows Server 2025 x64 temporary localhost-RDP session' } else { 'GitHub-hosted Windows 11 ARM64 runner' }
+if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne $requiredRunnerArchitecture) {
+  throw "BLOCKED: this Shell notification probe may run only on a $runnerDescription."
 }
 if ($env:GITHUB_SERVER_URL -cne 'https://github.com' -or $env:GITHUB_REPOSITORY -ine 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER' -or -not $env:GITHUB_RUN_ID -or -not $env:RUNNER_NAME) {
   throw 'BLOCKED: a GitHub Actions run context for the authorized project repository is required.'
@@ -52,8 +60,13 @@ $assertions = [System.Collections.Generic.List[object]]::new()
 $events = [System.Collections.Generic.List[object]]::new()
 $shellSnapshots = [System.Collections.Generic.List[object]]::new()
 $activationRecord = $null
-$dismissalRecord = $null
+$dismissalRecord = [pscustomobject]@{Status='NOT TESTED';ControlName=$null;Reason='A distinct second natural Shell notification has not yet been observed.';SurfaceDisappeared=$false;Utc=[DateTime]::UtcNow.ToString('o')}
 $persistenceRecord = $null
+$secondNotificationRecord = [pscustomobject]@{Status='NOT TESTED';Reason='A second natural timer cycle has not yet been attempted.';FirstBreakCompletedUtc=$null;SecondWorkStartUtc=$null;SecondBreakDueUtc=$null;SecondsFromSecondWorkStart=$null;DistinctFromFirstNotification=$false;FirstIdentity=$null;SecondIdentity=$null}
+$secondPersistenceRecord = $null
+$secondShellNotificationStatus = 'NOT TESTED'
+$secondShellNotificationReason = 'No second natural Shell notification has been observed.'
+$secondActionSequenceRecord = [pscustomobject]@{Status='NOT TESTED';Reason='First-notification activation and a distinct second-notification dismissal have not been verified.'}
 $status = 'BLOCKED'
 $reason = 'Preflight did not complete.'
 $shellVisibilityStatus = 'NOT TESTED'
@@ -66,6 +79,9 @@ $shellStateRecord = $null
 $timerRecord = $null
 $shellRecord = $null
 $sessionId = $null
+$currentSessionName = $null
+$currentUserIdentity = $null
+$executionMode = if ($ServerRdpSession) { 'native x64 on Windows Server 2025 in a temporary interactive localhost-RDP session' } else { 'x64 emulation on native Windows 11 ARM64' }
 $candidateMainWindow = [IntPtr]::Zero
 $candidateBreakWindow = [IntPtr]::Zero
 $desktopScreenshotPath = $null
@@ -73,7 +89,12 @@ $shellNotificationScreenshotPath = $null
 $sameShellWindow = $false
 $postScreenshotSnapshot = $null
 $breakScreenshotPath = $null
-$oobeRecord = [pscustomobject]@{Status='NOT TESTED';PrivacyPageDetected=$false;PrivacyPageAdvanced=$false;CandidateForegroundVerified=$false;CandidateUnobscuredVerified=$false;Reason='Candidate window has not yet been checked for a first-run OOBE overlay.';Surfaces=@();Screenshots=@()}
+$activationDesktopScreenshotPath = $null
+$secondBreakScreenshotPath = $null
+$secondDesktopScreenshotPath = $null
+$secondShellNotificationScreenshotPath = $null
+$postDismissalScreenshotPath = $null
+$oobeRecord = [pscustomobject]@{Status='NOT TESTED';PrivacyPageDetected=$false;PrivacyPageAdvanced=$false;PrivacyNextAuthorizationRequired=$false;PrivacyNextAuthorized=[bool]$AllowPrivacyOobeNext;CandidateForegroundVerified=$false;CandidateUnobscuredVerified=$false;Reason='Candidate window has not yet been checked for a first-run OOBE overlay.';Surfaces=@();Screenshots=@()}
 
 function Add-Event([string]$Name, [string]$Status, $Details=$null) {
   $events.Add([pscustomobject]@{ Name=$Name; Status=$Status; Details=$Details; Utc=[DateTime]::UtcNow.ToString('o') })
@@ -107,6 +128,12 @@ function Get-CandidateWindow([int]$ProcessId, [string]$TitlePattern) {
 
 function Get-ControlText([IntPtr]$Parent, [int]$ControlId) {
   $handle = [EBR_SHELL_NOTIFY_NATIVE]::FindVisibleChildById($Parent, $ControlId)
+  if ($handle -eq [IntPtr]::Zero) { return $null }
+  return [EBR_SHELL_NOTIFY_NATIVE]::WindowText($handle)
+}
+
+function Get-ControlTextIncludingHidden([IntPtr]$Parent, [int]$ControlId) {
+  $handle = [EBR_SHELL_NOTIFY_NATIVE]::FindChildByIdIncludingHidden($Parent, $ControlId)
   if ($handle -eq [IntPtr]::Zero) { return $null }
   return [EBR_SHELL_NOTIFY_NATIVE]::WindowText($handle)
 }
@@ -193,6 +220,7 @@ function Test-WindowInVisibleZOrder([IntPtr]$Window) {
 function Resolve-FirstRunOobeAndVerifyCandidate([IntPtr]$CandidateWindow, [int]$CandidateProcessId) {
   $record = [ordered]@{
     Status='NOT TESTED';PrivacyPageDetected=$false;PrivacyPageAdvanced=$false
+    PrivacyNextAuthorizationRequired=$false;PrivacyNextAuthorized=[bool]$AllowPrivacyOobeNext
     CandidateForegroundVerified=$false;CandidateUnobscuredVerified=$false
     Reason=$null;Surfaces=@();Screenshots=@();ForegroundBefore=$null;ForegroundAfter=$null;ZOrderBlockers=@()
   }
@@ -276,6 +304,13 @@ function Resolve-FirstRunOobeAndVerifyCandidate([IntPtr]$CandidateWindow, [int]$
     }
     $record.Screenshots += $beforeShot.Path
     $record.Surfaces += [pscustomobject]@{Stage='before-privacy-next';DesktopScreenshot=$beforeShot;Window=$privacySurface.Window;AccessibleNames=@($privacySurface.Names);NextButton=$nextButtons[0].Name;NextButtonBounds=$nextButtons[0].Bounds;DefaultSelectionsChanged=$false}
+    if(-not$AllowPrivacyOobeNext){
+      $record.PrivacyNextAuthorizationRequired=$true
+      $record.Reason='The exact Windows privacy page and its single enabled Next control were observed and captured, but owner authorization to advance this OOBE page has not been provided; the harness did not invoke or otherwise click it.'
+      $script:oobeRecord=[pscustomobject]$record
+      Add-Event 'Require explicit controller authorization before advancing the Windows privacy OOBE page; no click sent' 'BLOCKED' ([pscustomobject]@{Window=$privacySurface.Window;Button='Next';InvokePatternNotInvoked=$true;OwnerAuthorizationProvided=$false;DefaultSelectionsChanged=$false;Screenshot=$beforeShot.Path;Reason=$record.Reason})
+      throw "BLOCKED: $($record.Reason)"
+    }
     $record.Reason='The exact privacy page was identified; the harness is about to invoke its single visible Next control without changing any defaults.'
     $script:oobeRecord=[pscustomobject]$record
     $nextElement=$nextButtons[0].Element
@@ -582,22 +617,187 @@ function Try-DismissShellNotification([object]$Snapshot) {
   return $record
 }
 
+function Invoke-SecondNaturalNotificationSequence([object]$FirstSnapshot, [object]$FirstActivation) {
+  $secondRecord=[pscustomobject]@{Status='NOT TESTED';Reason='The second natural notification cycle has not completed.';FirstBreakCompletedUtc=$null;SecondWorkStartObservedUtc=$null;SecondWorkMainWindowHidden=$false;SecondWorkCandidateProcessAlive=$false;SecondWorkStatusText=$null;SecondWorkStatusIndicatesRunning=$false;SecondWorkCountdownText=$null;SecondWorkCountdownNonempty=$false;SecondWorkStatusAndCountdownVerified=$false;SecondWorkStateObservedUtc=$null;SecondBreakDueUtc=$null;SecondsFromSecondWorkStart=$null;DistinctFromFirstNotification=$false;FirstIdentity=$null;SecondIdentity=$null;SecondBreakScreenshot=$null;SecondDesktopScreenshot=$null;SecondShellScreenshot=$null}
+  $secondPersistence=$null
+  $secondShellStatus='NOT TESTED'
+  $secondShellReason='No distinct second Shell notification has been observed.'
+  $dismissal=[pscustomobject]@{Status='NOT TESTED';ControlName=$null;Reason='A distinct second natural Shell notification has not yet been observed.';SurfaceDisappeared=$false;Utc=[DateTime]::UtcNow.ToString('o')}
+  $sequenceStatus='NOT TESTED'
+  $sequenceReason='The activation-then-dismissal sequence has not completed.'
+  $screenshots=[pscustomobject]@{AfterActivation=$null;AfterFirstBreak=$null;SecondBreakWindow=$null;SecondReminderDesktop=$null;SecondShellVisible=$null;AfterDismissal=$null}
+
+  try {
+    if(-not$FirstSnapshot-or-not$FirstSnapshot.SurfaceObserved-or$FirstActivation.Status-ne'PASS'){
+      $sequenceReason='A real first Shell notification activation was not verified; the requested follow-up cycle was not attempted.'
+      $secondRecord.Reason=$sequenceReason
+      throw "NOT TESTED: $sequenceReason"
+    }
+
+    $activationDesktop=Capture-InteractiveDesktop 'env-009-first-notification-after-activation.png'
+    if(-not$activationDesktop){throw 'NOT TESTED: no desktop screenshot was retained after first-notification activation.'}
+    $screenshots.AfterActivation=$activationDesktop.Path
+    Add-Event 'Capture the interactive desktop immediately after first-notification activation' 'PASS' $activationDesktop
+
+    # Use the app's real WM_CLOSE -> closeMain -> hideMain tray behavior. The
+    # break window itself is never closed, skipped, completed, or time-shifted.
+    $mainVisibleAfterActivation=[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow)
+    $closeToTrayPosted=$false
+    if($mainVisibleAfterActivation){$closeToTrayPosted=[EBR_SHELL_NOTIFY_NATIVE]::CloseWindow($candidateMainWindow)}
+    $hideWatch=[Diagnostics.Stopwatch]::StartNew()
+    while($closeToTrayPosted-and[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow)-and$hideWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
+    $candidateProcess.Refresh()
+    $mainHidden=($mainVisibleAfterActivation-and$closeToTrayPosted-and-not[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow)-and-not$candidateProcess.HasExited)
+    Add-Assertion 'After first Shell activation, the candidate returns to tray through its real close-to-tray behavior' $mainHidden ([pscustomobject]@{MainWindowVisibleBeforeClose=$mainVisibleAfterActivation;CloseWindowPosted=$closeToTrayPosted;MainWindowHiddenAfter=$mainHidden;ProcessAlive=(-not$candidateProcess.HasExited);ProcessId=$candidatePid;Utc=[DateTime]::UtcNow.ToString('o')})
+    Add-Event 'Hide the activated candidate main window through its real close-to-tray behavior' $(if($mainHidden){'PASS'}else{'NOT TESTED'}) ([pscustomobject]@{MainWindowVisibleBeforeClose=$mainVisibleAfterActivation;CloseWindowPosted=$closeToTrayPosted;MainWindowHiddenAfter=$mainHidden;ProcessAlive=(-not$candidateProcess.HasExited)})
+    if(-not$mainHidden){throw 'NOT TESTED: the activated main window did not return to the tray while the exact candidate process remained alive.'}
+
+    $firstBreakStartUtc=$script:breakDueUtc
+    $firstBreakWatch=[Diagnostics.Stopwatch]::StartNew()
+    $firstBreakWindow=Get-CandidateWindow $candidatePid 'Taking an eye break'
+    while($firstBreakWindow-ne[IntPtr]::Zero-and$firstBreakWatch.Elapsed.TotalSeconds-lt45){
+      $candidateProcess.Refresh()
+      if($candidateProcess.HasExited){throw 'NOT TESTED: the candidate exited before the first natural break completed.'}
+      Start-Sleep -Milliseconds 250
+      $firstBreakWindow=Get-CandidateWindow $candidatePid 'Taking an eye break'
+    }
+    $firstBreakCompletedUtc=[DateTime]::UtcNow
+    $secondsForFirstBreak=($firstBreakCompletedUtc-$firstBreakStartUtc).TotalSeconds
+    $firstBreakNaturallyEnded=($firstBreakWindow-eq[IntPtr]::Zero-and$secondsForFirstBreak-ge15-and$secondsForFirstBreak-le45-and-not$candidateProcess.HasExited)
+    Add-Event 'Wait for the first real 20-second break to finish naturally' $(if($firstBreakNaturallyEnded){'PASS'}else{'NOT TESTED'}) ([pscustomobject]@{BreakWindowDisappeared=($firstBreakWindow-eq[IntPtr]::Zero);SecondsFromObservedFirstBreak=[Math]::Round($secondsForFirstBreak,2);ExpectedRangeSeconds=@(15,45);ProcessAlive=(-not$candidateProcess.HasExited);CompletedUtc=$firstBreakCompletedUtc.ToString('o')})
+    if(-not$firstBreakNaturallyEnded){throw 'NOT TESTED: the first break did not complete naturally within its expected interval; no second timer cycle was inferred.'}
+    $secondRecord.FirstBreakCompletedUtc=$firstBreakCompletedUtc.ToString('o')
+    $candidateProcess.Refresh()
+    $secondWorkStatusText=([string](Get-ControlTextIncludingHidden $candidateMainWindow 41)).Trim()
+    $secondWorkCountdownText=([string](Get-ControlTextIncludingHidden $candidateMainWindow 40)).Trim()
+    $secondWorkStateObservedUtc=[DateTime]::UtcNow
+    $mainHiddenDuringStateQuery=(-not[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow))
+    $candidateAliveDuringStateQuery=(-not$candidateProcess.HasExited)
+    $secondWorkStatusIndicatesRunning=($secondWorkStatusText-match'(?i)^Running(?:\b|$)')
+    $secondWorkCountdownNonempty=(-not[string]::IsNullOrWhiteSpace($secondWorkCountdownText))
+    $secondWorkStateVerified=($mainHiddenDuringStateQuery-and$candidateAliveDuringStateQuery-and$secondWorkStatusIndicatesRunning-and$secondWorkCountdownNonempty)
+    $secondRecord.SecondWorkMainWindowHidden=$mainHiddenDuringStateQuery
+    $secondRecord.SecondWorkCandidateProcessAlive=$candidateAliveDuringStateQuery
+    $secondRecord.SecondWorkStatusText=$secondWorkStatusText
+    $secondRecord.SecondWorkStatusIndicatesRunning=$secondWorkStatusIndicatesRunning
+    $secondRecord.SecondWorkCountdownText=$secondWorkCountdownText
+    $secondRecord.SecondWorkCountdownNonempty=$secondWorkCountdownNonempty
+    $secondRecord.SecondWorkStatusAndCountdownVerified=$secondWorkStateVerified
+    $secondRecord.SecondWorkStateObservedUtc=$secondWorkStateObservedUtc.ToString('o')
+    Add-Assertion 'After the first break disappears, hidden candidate controls report Running with a nonempty Work countdown' $secondWorkStateVerified ([pscustomobject]@{MainWindow=(Get-WindowDescription $candidateMainWindow);MainWindowVisible=[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow);ProcessAlive=$candidateAliveDuringStateQuery;StatusControlId=41;StatusText=$secondWorkStatusText;CountdownControlId=40;CountdownText=$secondWorkCountdownText;ObservedUtc=$secondWorkStateObservedUtc.ToString('o');ReadWhileMainWindowHidden=$mainHiddenDuringStateQuery})
+    Add-Event 'Read actual candidate status and countdown controls while its main window is hidden' $(if($secondWorkStateVerified){'PASS'}else{'NOT TESTED'}) ([pscustomobject]@{MainWindow=(Get-WindowDescription $candidateMainWindow);MainWindowVisible=[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow);ProcessAlive=$candidateAliveDuringStateQuery;StatusControlId=41;StatusText=$secondWorkStatusText;CountdownControlId=40;CountdownText=$secondWorkCountdownText;ObservedUtc=$secondWorkStateObservedUtc.ToString('o');ReadWhileMainWindowHidden=$mainHiddenDuringStateQuery})
+    if(-not$secondWorkStateVerified){throw 'NOT TESTED: after the first break disappeared, the hidden main window did not report Running with a nonempty countdown in the actual status/countdown controls.'}
+    $secondWorkStartUtc=[DateTime]::UtcNow
+    $secondRecord.SecondWorkStartObservedUtc=$secondWorkStartUtc.ToString('o')
+    try{$afterBreakDesktop=Capture-InteractiveDesktop 'env-009-first-break-completed-before-second-cycle.png';if($afterBreakDesktop){$screenshots.AfterFirstBreak=$afterBreakDesktop.Path};Add-Event 'Capture the desktop after the first break completed naturally' $(if($afterBreakDesktop){'PASS'}else{'NOT TESTED'}) $afterBreakDesktop}catch{Add-Event 'Capture the desktop after the first break completed naturally' 'NOT TESTED' $_.Exception.Message}
+    if(-not$screenshots.AfterFirstBreak){throw 'NOT TESTED: no desktop screenshot was retained between the first break and second Work cycle.'}
+
+    $secondDueWatch=[Diagnostics.Stopwatch]::StartNew()
+    $secondBreakWindow=[IntPtr]::Zero
+    while($secondDueWatch.Elapsed.TotalSeconds-lt90-and$secondBreakWindow-eq[IntPtr]::Zero){
+      $candidateProcess.Refresh()
+      if($candidateProcess.HasExited){throw 'NOT TESTED: the candidate exited during the second natural Work cycle.'}
+      if([EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow)){throw 'NOT TESTED: the candidate main window became visible before its second natural reminder.'}
+      $secondBreakWindow=Get-CandidateWindow $candidatePid 'Taking an eye break'
+      if($secondBreakWindow-eq[IntPtr]::Zero){Start-Sleep -Milliseconds 200}
+    }
+    $secondBreakDueUtc=[DateTime]::UtcNow
+    $secondsFromSecondWorkStart=($secondBreakDueUtc-$secondWorkStartUtc).TotalSeconds
+    $secondRecord.SecondBreakDueUtc=$secondBreakDueUtc.ToString('o')
+    $secondRecord.SecondsFromSecondWorkStart=[Math]::Round($secondsFromSecondWorkStart,2)
+    $secondBreakNaturallyDue=($secondBreakWindow-ne[IntPtr]::Zero-and$secondsFromSecondWorkStart-ge50-and$secondsFromSecondWorkStart-le90-and-not$candidateProcess.HasExited-and-not[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow))
+    Add-Event 'Wait for the next real one-minute Work cycle and second natural break' $(if($secondBreakNaturallyDue){'PASS'}else{'NOT TESTED'}) ([pscustomobject]@{BreakWindow=if($secondBreakWindow-ne[IntPtr]::Zero){Get-WindowDescription $secondBreakWindow}else{$null};SecondsFromSecondWorkStart=[Math]::Round($secondsFromSecondWorkStart,2);ExpectedRangeSeconds=@(50,90);MainWindowHidden=(-not[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow));ProcessAlive=(-not$candidateProcess.HasExited);DueUtc=$secondBreakDueUtc.ToString('o')})
+    if(-not$secondBreakNaturallyDue){throw 'NOT TESTED: a second natural one-minute Work cycle did not produce a break within 50–90 seconds.'}
+
+    $secondBreakShot=Capture-WindowScreenshot $secondBreakWindow 'env-009-candidate-second-natural-break-window.png'
+    if($secondBreakShot){$screenshots.SecondBreakWindow=$secondBreakShot.Path;$secondRecord.SecondBreakScreenshot=$secondBreakShot.Path}
+    Add-Event 'Capture the second naturally timed candidate break window' $(if($secondBreakShot){'PASS'}else{'NOT TESTED'}) $secondBreakShot
+    if(-not$secondBreakShot){throw 'NOT TESTED: no screenshot of the second natural candidate break window was retained.'}
+    $secondDesktopShot=Capture-InteractiveDesktop 'env-009-second-natural-reminder-desktop.png'
+    if($secondDesktopShot){$screenshots.SecondReminderDesktop=$secondDesktopShot.Path;$secondRecord.SecondDesktopScreenshot=$secondDesktopShot.Path}
+    Add-Event 'Capture the desktop immediately at the second natural reminder' $(if($secondDesktopShot){'PASS'}else{'NOT TESTED'}) $secondDesktopShot
+    if(-not$secondDesktopShot){throw 'NOT TESTED: no desktop screenshot was retained at the second natural reminder.'}
+
+    $secondSnapshot=$null
+    $secondShellWatch=[Diagnostics.Stopwatch]::StartNew()
+    while($secondShellWatch.Elapsed.TotalSeconds-lt12-and-not($secondSnapshot-and$secondSnapshot.SurfaceObserved)){$secondSnapshot=Get-ShellNotificationSnapshot;if($secondSnapshot.SurfaceObserved){break};Start-Sleep -Milliseconds 750}
+    if(-not$secondSnapshot-or-not$secondSnapshot.SurfaceObserved){
+      $secondShellReason='The second natural break appeared, but no correlated actual Windows Shell title/body surface was observed.'
+      Add-Event 'Observe the second actual Shell notification outside the candidate process' 'NOT TESTED' ([pscustomobject]@{NaturalBreakWindow=(Get-WindowDescription $secondBreakWindow);Snapshot=if($secondSnapshot){[pscustomobject]@{Utc=$secondSnapshot.Utc;SurfaceObserved=$secondSnapshot.SurfaceObserved;TitleObserved=$secondSnapshot.TitleObserved;BodyObserved=$secondSnapshot.BodyObserved;ShellWindows=$secondSnapshot.ShellWindows;Error=$secondSnapshot.Error;TraversalErrors=$secondSnapshot.TraversalErrors}}else{$null};Reason=$secondShellReason})
+      throw "NOT TESTED: $secondShellReason"
+    }
+
+    $sameAsFirst=Test-SameShellNotification $FirstSnapshot $secondSnapshot
+    $identityEvidence=[pscustomobject]@{FirstNotificationUtc=$FirstSnapshot.Utc;FirstIdentity=$FirstSnapshot.CorrelatedContainer;SecondNotificationUtc=$secondSnapshot.Utc;SecondIdentity=$secondSnapshot.CorrelatedContainer;SameIdentityAsFirst=$sameAsFirst;DistinctIdentityObserved=(-not$sameAsFirst);NaturalSecondCycleElapsedSeconds=[Math]::Round($secondsFromSecondWorkStart,2)}
+    $secondRecord.FirstIdentity=$FirstSnapshot.CorrelatedContainer
+    $secondRecord.SecondIdentity=$secondSnapshot.CorrelatedContainer
+    $secondRecord.DistinctFromFirstNotification=(-not$sameAsFirst)
+    if($sameAsFirst){$secondShellReason='The second natural cycle still correlated to the first Shell UIA identity; no stale notification was acted upon.';Add-Event 'Verify a new Shell identity for the second natural notification' 'NOT TESTED' $identityEvidence;throw "NOT TESTED: $secondShellReason"}
+
+    $secondVisibleShot=Capture-InteractiveDesktop 'env-009-second-windows-shell-notification-visible.png'
+    $secondPostScreenshot=if($secondVisibleShot){Get-ShellNotificationSnapshot}else{$null}
+    $sameSecondAfterScreenshot=Test-SameShellNotification $secondSnapshot $secondPostScreenshot
+    $secondVisibilityPass=($secondVisibleShot-and$sameSecondAfterScreenshot)
+    if($secondVisibleShot){$screenshots.SecondShellVisible=$secondVisibleShot.Path;$secondRecord.SecondShellScreenshot=$secondVisibleShot.Path}
+    $secondShellStatus=if($secondVisibilityPass){'PASS'}else{'NOT TESTED'}
+    $secondShellReason=if($secondVisibilityPass){'A distinct second notification identity was correlated to the real second timer cycle and remained in the same visible Windows Shell window after a retained desktop screenshot.'}elseif(-not$secondVisibleShot){'The second Shell UIA notification was observed, but a desktop screenshot could not be retained.'}else{'The second notification identity did not remain correlated in the same Shell window after screenshot capture.'}
+    Add-Assertion 'A distinct second natural Shell notification remains visible in the same Shell window after screenshot capture' $secondVisibilityPass ([pscustomobject]@{Identity=$identityEvidence;Screenshot=$secondVisibleShot;SameIdentityAfterScreenshot=$sameSecondAfterScreenshot;Reason=$secondShellReason})
+    Add-Event 'Capture the second real Shell notification and recheck its same-window identity' $secondShellStatus ([pscustomobject]@{Identity=$identityEvidence;Screenshot=$secondVisibleShot;SameIdentityAfterScreenshot=$sameSecondAfterScreenshot;PostScreenshotContainer=if($secondPostScreenshot){$secondPostScreenshot.CorrelatedContainer}else{$null};Reason=$secondShellReason})
+    if(-not$secondVisibilityPass){throw "NOT TESTED: $secondShellReason"}
+
+    $secondRecord.Status='PASS'
+    $secondRecord.Reason=$secondShellReason
+    $secondShellStatus='PASS'
+    $secondPersistenceWatch=[Diagnostics.Stopwatch]::StartNew();$secondPersisted=$false;$secondChecks=[System.Collections.Generic.List[object]]::new()
+    while($secondPersistenceWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 500;$latestSecond=Get-ShellNotificationSnapshot;$sameSecond=Test-SameShellNotification $secondSnapshot $latestSecond;$secondChecks.Add([pscustomobject]@{Utc=$latestSecond.Utc;SameNotificationIdentity=$sameSecond;CorrelatedContainer=$latestSecond.CorrelatedContainer});if($sameSecond){$secondPersisted=$true}else{break}}
+    $secondPersistence=[pscustomobject]@{Status=if($secondPersisted){'OBSERVED'}else{'NOT OBSERVED'};ObservedForSeconds=[Math]::Round($secondPersistenceWatch.Elapsed.TotalSeconds,2);SameNotificationIdentityChecks=$secondChecks.ToArray();Reason=if($secondPersisted){'The same second Shell window and title/body RuntimeIds remained hit-test visible throughout the observation interval.'}else{'The second Shell notification identity was not preserved through the full observation interval.'}}
+    Add-Event 'Observe persistence of the distinct second Shell notification without simulating time' $(if($secondPersisted){'PASS'}else{'NOT TESTED'}) $secondPersistence
+
+    $dismissal=Try-DismissShellNotification $secondSnapshot
+    $postDismissShot=$null
+    try{$postDismissShot=Capture-InteractiveDesktop 'env-009-second-notification-after-dismissal.png';if($postDismissShot){$screenshots.AfterDismissal=$postDismissShot.Path}}catch{Add-Event 'Capture desktop after the second-notification dismissal attempt' 'NOT TESTED' $_.Exception.Message}
+    $postDismissSnapshot=Get-ShellNotificationSnapshot
+    $postDismissHealthy=(-not$postDismissSnapshot.Error-and-not$postDismissSnapshot.CorrelationFailure-and@($postDismissSnapshot.TraversalErrors).Count-eq0-and@($postDismissSnapshot.ShellWindows).Count-gt0)
+    $postDismissNoText=(-not$postDismissSnapshot.TitleObserved-and-not$postDismissSnapshot.BodyObserved)
+    $postDismissGone=($postDismissHealthy-and$postDismissNoText-and-not$postDismissSnapshot.SurfaceObserved)
+    $dismissConfirmed=($dismissal.Status-eq'PASS'-and$postDismissShot-and$postDismissGone)
+    if($dismissal.Status-eq'PASS'-and-not$dismissConfirmed){$dismissal.Status='NOT TESTED';$dismissal.Reason='The scoped dismissal appeared successful immediately, but the retained post-action screenshot and healthy Shell recheck did not confirm that the notification stayed dismissed.'}
+    $dismissal | Add-Member -NotePropertyName SecondNotificationIdentity -NotePropertyValue $secondSnapshot.CorrelatedContainer -Force
+    $dismissal | Add-Member -NotePropertyName PostDismissalScreenshot -NotePropertyValue $(if($postDismissShot){$postDismissShot.Path}else{$null}) -Force
+    $dismissal | Add-Member -NotePropertyName PostScreenshotSnapshotHealthy -NotePropertyValue $postDismissHealthy -Force
+    $dismissal | Add-Member -NotePropertyName NoResidualTitleOrBody -NotePropertyValue $postDismissNoText -Force
+    $dismissal | Add-Member -NotePropertyName SurfaceAbsentAfterScreenshot -NotePropertyValue $postDismissGone -Force
+    $dismissal | Add-Member -NotePropertyName PostScreenshotShellWindows -NotePropertyValue @($postDismissSnapshot.ShellWindows) -Force
+    $dismissal | Add-Member -NotePropertyName PostScreenshotTraversalErrors -NotePropertyValue @($postDismissSnapshot.TraversalErrors) -Force
+    Add-Event 'Capture and recheck Windows Shell after the second-notification dismissal attempt' $(if($postDismissShot-and$postDismissHealthy-and$postDismissNoText-and-not$postDismissSnapshot.SurfaceObserved){'PASS'}else{'NOT TESTED'}) ([pscustomobject]@{Screenshot=$postDismissShot;SnapshotHealthy=$postDismissHealthy;NoResidualTitleOrBody=$postDismissNoText;SurfaceObserved=$postDismissSnapshot.SurfaceObserved;ShellWindows=$postDismissSnapshot.ShellWindows;TraversalErrors=$postDismissSnapshot.TraversalErrors;Error=$postDismissSnapshot.Error})
+    if($dismissal.Status-eq'PASS'){$sequenceStatus='PASS';$sequenceReason='The first real Shell notification was activated, the app returned to tray through its real close path, the first break and next Work cycle elapsed naturally, a distinct second Shell notification was observed, and its scoped dismissal remained absent after screenshot/recheck.';Add-Assertion 'Distinct second natural Shell notification is explicitly dismissed through its scoped Shell control' $true $dismissal}else{$sequenceReason='The second natural notification was visible, but a scoped explicit dismissal was not fully verified.';Add-Assertion 'Distinct second natural Shell notification exposes and completes explicit dismissal' $false $dismissal}
+    Add-Event 'Attempt dismissal only through a notification-scoped Dismiss/Close InvokePattern on the distinct second notification' $dismissal.Status $dismissal
+  } catch {
+    if($sequenceStatus-ne'PASS'){$sequenceStatus='NOT TESTED';if($sequenceReason-eq'The activation-then-dismissal sequence has not completed.'){$sequenceReason=$_.Exception.Message};if(-not$secondRecord.Reason-or$secondRecord.Reason-eq'The second natural notification cycle has not completed.'){$secondRecord.Reason=$sequenceReason}}
+    Add-Event 'Second natural notification activation/dismissal sequence' 'NOT TESTED' ([pscustomobject]@{Message=$_.Exception.Message;SequenceReason=$sequenceReason;SecondNotification=$secondRecord;Dismissal=$dismissal})
+  }
+
+  return [pscustomobject]@{SequenceStatus=$sequenceStatus;SequenceReason=$sequenceReason;SecondNaturalNotification=$secondRecord;SecondPersistence=$secondPersistence;SecondShellStatus=$secondShellStatus;SecondShellReason=$secondShellReason;Dismissal=$dismissal;Screenshots=$screenshots}
+}
+
 function Save-Result([string]$FinalStatus, [string]$FinalReason) {
   $result = [pscustomobject]@{
     Requirement='ENV-009'; Status=$FinalStatus; Reason=$FinalReason
-    Candidate=[pscustomobject]@{ArtifactId=$candidateArtifactId;FinalizerRunId=$candidateRunId;SourceCommit=$candidateSourceCommit;ExecutablePath=$ExecutablePath;SHA256=$expectedSha256;Identity=$candidateIdentity;Execution='x64 emulation on native Windows 11 ARM64';InstallerLaunched=$false}
+    Candidate=[pscustomobject]@{ArtifactId=$candidateArtifactId;FinalizerRunId=$candidateRunId;SourceCommit=$candidateSourceCommit;ExecutablePath=$ExecutablePath;SHA256=$expectedSha256;Identity=$candidateIdentity;Execution=$executionMode;InstallerLaunched=$false}
     OperatingSystem=$osRecord
-    Environment=[pscustomobject]@{Provider='GitHub-hosted Actions runner';ImageOS=$env:ImageOS;ImageVersion=$env:ImageVersion;RunnerOS=$env:RUNNER_OS;RunnerArchitecture=$env:RUNNER_ARCH;ProcessSessionId=$sessionId;UserInteractive=[Environment]::UserInteractive}
-    Profile=[pscustomobject]@{LocalAppData=$env:LOCALAPPDATA;AppDataPath=$dataDirectory;AppDataAbsentBeforeTest=(-not $dataExistedBefore);TestDataCreatedByHarness=$dataCreatedByHarness;TestDataRemoved=$dataRemoved}
+    Environment=[pscustomobject]@{Provider=if($ServerRdpSession){'GitHub-hosted disposable Windows Server 2025 runner'}else{'GitHub-hosted Actions runner'};ImageOS=$env:ImageOS;ImageVersion=$env:ImageVersion;RunnerOS=$env:RUNNER_OS;RunnerArchitecture=$env:RUNNER_ARCH;ProcessSessionId=$sessionId;SessionName=$currentSessionName;User=$currentUserIdentity;ExpectedRdpSessionId=if($ServerRdpSession){$ExpectedSessionId}else{$null};ExpectedRdpSessionName=if($ServerRdpSession){$ExpectedSessionName}else{$null};ExpectedRdpUser=if($ServerRdpSession){$ExpectedUser}else{$null};UserInteractive=[Environment]::UserInteractive;Execution=$executionMode}
+    Profile=[pscustomobject]@{LocalAppData=$env:LOCALAPPDATA;AppDataPath=$dataDirectory;AppDataAbsentBeforeTest=(-not $dataExistedBefore);TestDataCreatedByHarness=$dataCreatedByHarness;TestDataRemoved=$dataRemoved;User=$currentUserIdentity;SessionId=$sessionId}
     Timer=$timerRecord;FirstRunOobe=$oobeRecord;WindowsShell=$shellRecord;ShellNotificationVisibilityStatus=$shellVisibilityStatus;ShellNotificationVisibilityReason=$shellVisibilityReason
-    NotificationActivation=$activationRecord;NotificationDismissal=$dismissalRecord;NotificationPersistence=$persistenceRecord
+    NotificationActivation=$activationRecord;NotificationDismissal=$dismissalRecord;NotificationPersistence=$persistenceRecord;NotificationActionSequence=$secondActionSequenceRecord
+    SecondNaturalNotification=$secondNotificationRecord;SecondNotificationPersistence=$secondPersistenceRecord
+    SecondShellNotificationVisibilityStatus=$secondShellNotificationStatus;SecondShellNotificationVisibilityReason=$secondShellNotificationReason
     Audio=[pscustomobject]@{Status=$notificationAudioStatus;PhysicalAudioVerified=$physicalAudioVerified;NotificationSoundExpected=$false;Reason='The candidate sets NIIF_NOSOUND and NIIF_RESPECT_QUIET_TIME for Shell reminders. Alarm audio was disabled for this test; no audio endpoint or audible output was verified.'}
     Assertions=@($assertions);Events=@($events);ShellUiAutomationSnapshots=@($shellSnapshots)
     AssertionCounts=[pscustomobject]@{Total=$assertions.Count;Passed=@($assertions|Where-Object{$_.Passed}).Count;NotTested=@($assertions|Where-Object{-not$_.Passed}).Count}
-    Screenshots=@(@($desktopScreenshotPath,$shellNotificationScreenshotPath,$breakScreenshotPath) + @($oobeRecord.Screenshots) | Where-Object { $_ })
+    Screenshots=@(@($desktopScreenshotPath,$shellNotificationScreenshotPath,$breakScreenshotPath,$activationDesktopScreenshotPath,$secondBreakScreenshotPath,$secondDesktopScreenshotPath,$secondShellNotificationScreenshotPath,$postDismissalScreenshotPath) + @($oobeRecord.Screenshots) | Where-Object { $_ })
     LogFile=$logPath
     Cleanup=[pscustomobject]@{CandidateProcessStopped=$candidateStopped;AppDataRemoved=$dataRemoved;Errors=@($cleanupErrors)}
-    Limitations=@('Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.','ENV-009 aggregate status remains BLOCKED because audio was not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer, updater, or physical speaker path was exercised.')
+    Limitations=if($ServerRdpSession){@('Windows Server 2025 x64 interactive localhost-RDP session; this is not Windows 11.','The exact x64 candidate ran natively on x64; no architecture emulation was used.','ENV-009 aggregate status remains BLOCKED because audio and physical audibility were not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer or updater was exercised.')}else{@('Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.','ENV-009 aggregate status remains BLOCKED because audio was not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer, updater, or physical speaker path was exercised.')}
     ObservedUtc=[DateTime]::UtcNow.ToString('o')
   }
   $result | ConvertTo-Json -Depth 14 | Set-Content -LiteralPath $resultPath -Encoding utf8
@@ -655,6 +855,10 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
     EnumWindows((hwnd,data)=>{uint pid;GetWindowThreadProcessId(hwnd,out pid);if(pid==(uint)expectedPid&&IsWindowVisible(hwnd))found.Add(hwnd);return true;},IntPtr.Zero);
     var result=new List<string>();foreach(var h in found)result.Add(h.ToInt64().ToString());return result.ToArray();
   }
+  public static IntPtr FindChildByIdIncludingHidden(IntPtr parent,int id) {
+    IntPtr found=IntPtr.Zero;uint parentPid;GetWindowThreadProcessId(parent,out parentPid);
+    EnumChildWindows(parent,(hwnd,data)=>{uint childPid;GetWindowThreadProcessId(hwnd,out childPid);if(found==IntPtr.Zero&&childPid==parentPid&&GetDlgCtrlID(hwnd)==id){found=hwnd;return false;}return true;},IntPtr.Zero);return found;
+  }
   public static IntPtr FindVisibleChildById(IntPtr parent,int id) {
     IntPtr found=IntPtr.Zero;EnumChildWindows(parent,(hwnd,data)=>{if(found==IntPtr.Zero&&GetDlgCtrlID(hwnd)==id&&IsWindowVisible(hwnd)&&IsWindowEnabled(hwnd)){found=hwnd;return false;}return true;},IntPtr.Zero);return found;
   }
@@ -682,18 +886,41 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   $osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
   $processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
   $nativeCpuArchitecture = [EBR_SHELL_NOTIFY_NATIVE]::NativeArchitecture()
-  $osRecord = [pscustomobject]@{Caption=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;OSArchitecture=$osArchitecture;ProcessArchitecture=$processArchitecture;NativeProcessorArchitectureCode=$nativeCpuArchitecture;NativeProcessorArchitecture=if($nativeCpuArchitecture-eq12){'ARM64'}else{"Unknown ($nativeCpuArchitecture)"}}
-  $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
-  $osValid = ($os.Caption -match 'Windows 11' -and $osArchitecture -eq 'Arm64' -and $processArchitecture -eq 'Arm64' -and $nativeCpuArchitecture -eq 12)
-  Add-Assertion 'Runner is Windows 11 with native ARM64 OS, CPU, and ARM64 PowerShell process' $osValid $osRecord
-  if (-not $osValid) { throw 'BLOCKED: runner is not native Windows 11 ARM64.' }
-  if (-not [Environment]::UserInteractive) { throw 'BLOCKED: runner has no interactive user session.' }
-  Add-Assertion 'Windows runner has a genuinely interactive user session' $true ([pscustomobject]@{SessionId=$sessionId;UserInteractive=[Environment]::UserInteractive;RunnerImage=$env:ImageOS})
+  $nativeArchitectureName = switch ($nativeCpuArchitecture) { 9 { 'AMD64' } 12 { 'ARM64' } default { "Unknown ($nativeCpuArchitecture)" } }
+  $osRecord = [pscustomobject]@{Caption=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;OSArchitecture=$osArchitecture;ProcessArchitecture=$processArchitecture;NativeProcessorArchitectureCode=$nativeCpuArchitecture;NativeProcessorArchitecture=$nativeArchitectureName}
+  $currentProcess = Get-Process -Id $PID -ErrorAction Stop
+  $sessionId = $currentProcess.SessionId
+  $currentSessionName = [string]$env:SESSIONNAME
+  $currentUserIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+  if ($ServerRdpSession) {
+    if ($ExpectedSessionId -le 0 -or [string]::IsNullOrWhiteSpace($ExpectedSessionName) -or [string]::IsNullOrWhiteSpace($ExpectedUser)) {
+      throw 'BLOCKED: Server RDP mode requires the expected active session ID, exact rdp-tcp session name, and temporary user identity.'
+    }
+    if ($ExpectedSessionName -notmatch '^rdp-tcp#\d+$' -or $currentSessionName -ine $ExpectedSessionName -or $sessionId -ne $ExpectedSessionId -or $currentUserIdentity -ine $ExpectedUser) {
+      throw "BLOCKED: current interactive identity/session does not match the expected temporary RDP context (user='$currentUserIdentity', session=$sessionId, name='$currentSessionName')."
+    }
+    $isAdministrator = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isAdministrator) { throw 'BLOCKED: Server Shell tests require the temporary standard RDP user, not an administrator token.' }
+    $osValid = ($os.Caption -match 'Windows Server 2025' -and $osArchitecture -eq 'X64' -and $processArchitecture -eq 'X64' -and $nativeCpuArchitecture -eq 9)
+    Add-Assertion 'RDP guest is native Windows Server 2025 x64 with a native x64 PowerShell process' $osValid $osRecord
+    if (-not $osValid) { throw 'BLOCKED: Server RDP mode requires native Windows Server 2025 x64 (AMD64 code 9); no emulation is accepted.' }
+    $rdpContext = [pscustomobject]@{ExpectedSessionId=$ExpectedSessionId;ObservedSessionId=$sessionId;ExpectedSessionName=$ExpectedSessionName;ObservedSessionName=$currentSessionName;ExpectedUser=$ExpectedUser;ObservedUser=$currentUserIdentity;IsAdministrator=$isAdministrator;UserInteractive=[Environment]::UserInteractive}
+    Add-Assertion 'Current process runs as the expected temporary standard user in the active interactive localhost RDP session' ([Environment]::UserInteractive) $rdpContext
+    if (-not [Environment]::UserInteractive) { throw 'BLOCKED: the verified temporary RDP session is not interactive.' }
+  } else {
+    $osValid = ($os.Caption -match 'Windows 11' -and $osArchitecture -eq 'Arm64' -and $processArchitecture -eq 'Arm64' -and $nativeCpuArchitecture -eq 12)
+    Add-Assertion 'Runner is Windows 11 with native ARM64 OS, CPU, and ARM64 PowerShell process' $osValid $osRecord
+    if (-not $osValid) { throw 'BLOCKED: runner is not native Windows 11 ARM64.' }
+    if (-not [Environment]::UserInteractive) { throw 'BLOCKED: runner has no interactive user session.' }
+    Add-Assertion 'Windows runner has a genuinely interactive user session' $true ([pscustomobject]@{SessionId=$sessionId;UserInteractive=[Environment]::UserInteractive;RunnerImage=$env:ImageOS})
+  }
+  if (-not [Environment]::UserInteractive) { throw 'BLOCKED: no genuinely interactive Windows user session is available.' }
+  $executionMode = if ($ServerRdpSession) { 'native x64 on Windows Server 2025 in a temporary interactive localhost-RDP session' } else { 'x64 emulation on native Windows 11 ARM64' }
   $taskbar = [EBR_SHELL_NOTIFY_NATIVE]::TaskbarWindow()
   $explorer = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId })
   $shellAvailable = ($taskbar -ne [IntPtr]::Zero -and $explorer.Count -gt 0)
   $shellRecord = [pscustomobject]@{TaskbarWindow=if($taskbar-ne[IntPtr]::Zero){'0x{0:X}'-f$taskbar.ToInt64()}else{$null};ExplorerProcesses=@($explorer|ForEach-Object{[pscustomobject]@{Id=$_.Id;SessionId=$_.SessionId}});InteractiveShellAvailable=$shellAvailable}
-  Add-Assertion 'Interactive Windows Shell and Explorer taskbar are present in the runner session' $shellAvailable $shellRecord
+  Add-Assertion 'Interactive Windows Shell and Explorer taskbar are present in the verified test session' $shellAvailable $shellRecord
   if (-not $shellAvailable) { throw 'NOT TESTED: the runner has no interactive Explorer taskbar for Shell notification display.' }
 
   if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) { throw 'BLOCKED: exact standalone candidate is missing.' }
@@ -704,7 +931,7 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   try { $reader.BaseStream.Position=0x3C;$peOffset=$reader.ReadInt32();$reader.BaseStream.Position=$peOffset;if($reader.ReadUInt32()-ne0x00004550){throw 'Candidate has no valid PE signature.'};$peMachine=$reader.ReadUInt16() } finally { $reader.Dispose() }
   if ($peMachine -ne 0x8664) { throw "BLOCKED: exact candidate is not AMD64 PE (0x8664); found 0x$('{0:X4}' -f $peMachine)." }
   if ($candidateInfo.VersionInfo.ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw "BLOCKED: candidate version is '$($candidateInfo.VersionInfo.ProductVersion)', not 1.4.0." }
-  $candidateIdentity = [pscustomobject]@{ArtifactId=$candidateArtifactId;FinalizerRunId=$candidateRunId;SourceCommit=$candidateSourceCommit;SHA256=$actualSha256;Bytes=$candidateInfo.Length;ProductVersion=$candidateInfo.VersionInfo.ProductVersion;PEMachine=('0x{0:X4}'-f$peMachine);Execution='x64 emulation on native Windows 11 ARM64'}
+  $candidateIdentity = [pscustomobject]@{ArtifactId=$candidateArtifactId;FinalizerRunId=$candidateRunId;SourceCommit=$candidateSourceCommit;SHA256=$actualSha256;Bytes=$candidateInfo.Length;ProductVersion=$candidateInfo.VersionInfo.ProductVersion;PEMachine=('0x{0:X4}'-f$peMachine);Execution=$executionMode}
   Add-Assertion 'Standalone executable matches authoritative production artifact 14695418078' $true $candidateIdentity
 
   if ($dataExistedBefore) { throw "BLOCKED: fresh runner profile requirement failed; existing EyeBreakReminder data is present at '$dataDirectory'." }
@@ -728,6 +955,10 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   $timerStartUtc=[DateTime]::UtcNow
   $candidateProcess=Start-Process -FilePath $ExecutablePath -WorkingDirectory (Split-Path -Parent $ExecutablePath) -PassThru -ErrorAction Stop
   $candidatePid=$candidateProcess.Id;$candidateOwned=$true
+  $candidateSessionId=(Get-Process -Id $candidatePid -ErrorAction Stop).SessionId
+  $candidateSessionValid=($candidateSessionId-eq$sessionId)
+  Add-Assertion 'Exact candidate process starts inside the verified interactive test session' $candidateSessionValid ([pscustomobject]@{CandidatePid=$candidatePid;CandidateSessionId=$candidateSessionId;ExpectedSessionId=$sessionId;Execution=$executionMode;User=$currentUserIdentity})
+  if(-not$candidateSessionValid){throw 'BLOCKED: exact candidate process did not start in the verified interactive test session.'}
   $windowWatch=[Diagnostics.Stopwatch]::StartNew()
   while($windowWatch.Elapsed.TotalSeconds-lt20-and$candidateMainWindow-eq[IntPtr]::Zero){
     $candidateProcess.Refresh();if($candidateProcess.HasExited){throw "NOT TESTED: candidate exited during startup (code $($candidateProcess.ExitCode))."}
@@ -844,10 +1075,34 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
     Add-Event 'Attempt activation only through an exposed Windows Shell notification InvokePattern' $activationRecord.Status $activationRecord
     if($activationRecord.Status-eq'PASS'){
       Add-Assertion 'Actual Shell notification activation makes the hidden candidate main window visible' $true $activationRecord
+      $sequence=Invoke-SecondNaturalNotificationSequence $firstShellSnapshot $activationRecord
+      $secondNotificationRecord=$sequence.SecondNaturalNotification
+      $secondPersistenceRecord=$sequence.SecondPersistence
+      $secondShellNotificationStatus=$sequence.SecondShellStatus
+      $secondShellNotificationReason=$sequence.SecondShellReason
+      $dismissalRecord=$sequence.Dismissal
+      $secondActionSequenceRecord=[pscustomobject]@{Status=$sequence.SequenceStatus;Reason=$sequence.SequenceReason;FirstActivationStatus=$activationRecord.Status;SecondNotificationStatus=$secondNotificationRecord.Status;SecondShellNotificationVisibilityStatus=$secondShellNotificationStatus;SecondNotificationDismissalStatus=$dismissalRecord.Status;Screenshots=$sequence.Screenshots}
+      $activationDesktopScreenshotPath=$sequence.Screenshots.AfterActivation
+      $secondBreakScreenshotPath=$sequence.Screenshots.SecondBreakWindow
+      $secondDesktopScreenshotPath=$sequence.Screenshots.SecondReminderDesktop
+      $secondShellNotificationScreenshotPath=$sequence.Screenshots.SecondShellVisible
+      $postDismissalScreenshotPath=$sequence.Screenshots.AfterDismissal
+      Add-Event 'Complete separate genuine notification activation and dismissal attempts' $secondActionSequenceRecord.Status $secondActionSequenceRecord
     }else{
-      $dismissalRecord=Try-DismissShellNotification $firstShellSnapshot
-      Add-Event 'Attempt dismissal only through an exposed notification-scoped Dismiss/Close control' $dismissalRecord.Status $dismissalRecord
+      Add-Assertion 'First real Shell notification exposes an activation action that opens the candidate main window' $false $activationRecord
+      $secondNotificationRecord=[pscustomobject]@{Status='NOT TESTED';Reason='The first Shell notification activation did not verify; no second-cycle dismissal was attempted.';FirstActivationStatus=$activationRecord.Status;DistinctFromFirstNotification=$false}
+      $secondActionSequenceRecord=[pscustomobject]@{Status='NOT TESTED';Reason=$secondNotificationRecord.Reason;FirstActivationStatus=$activationRecord.Status;SecondNotificationStatus='NOT TESTED';SecondNotificationDismissalStatus='NOT TESTED'}
+      $dismissalRecord=[pscustomobject]@{Status='NOT TESTED';ControlName=$null;Reason='No second distinct natural Shell notification was produced after a verified first-notification activation; no dismissal action was attempted.';SurfaceDisappeared=$false;Utc=[DateTime]::UtcNow.ToString('o')}
+      Add-Event 'Second natural notification and explicit dismissal sequence' 'NOT TESTED' $secondActionSequenceRecord
+      Add-Event 'Attempt dismissal only through a scoped Dismiss/Close control on the distinct second Shell notification' 'NOT TESTED' $dismissalRecord
     }
+  }else{
+    $activationRecord=[pscustomobject]@{Status='NOT TESTED';Method=$null;ControlName=$null;Reason='No correlated real Windows Shell notification surface was available for activation.';MainWindowVisibleAfter=[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow);Utc=[DateTime]::UtcNow.ToString('o')}
+    $secondNotificationRecord=[pscustomobject]@{Status='NOT TESTED';Reason='No first real Shell notification was correlated, so the requested second notification/dismissal sequence was not attempted.';DistinctFromFirstNotification=$false}
+    $secondActionSequenceRecord=[pscustomobject]@{Status='NOT TESTED';Reason=$secondNotificationRecord.Reason;FirstActivationStatus='NOT TESTED';SecondNotificationStatus='NOT TESTED';SecondNotificationDismissalStatus='NOT TESTED'}
+    $dismissalRecord=[pscustomobject]@{Status='NOT TESTED';ControlName=$null;Reason='No distinct second natural Shell notification was observed; no dismissal action was attempted.';SurfaceDisappeared=$false;Utc=[DateTime]::UtcNow.ToString('o')}
+    Add-Event 'First activation and second natural notification/dismissal sequence' 'NOT TESTED' $secondActionSequenceRecord
+    Add-Event 'Attempt dismissal only through a scoped Dismiss/Close control on the distinct second Shell notification' 'NOT TESTED' $dismissalRecord
   }
 
   $audioRecord=[pscustomobject]@{Status='NOT TESTED';PhysicalAudioVerified=$false;NotificationSoundExpected=$false;Reason='Candidate notifications use NIIF_NOSOUND|NIIF_RESPECT_QUIET_TIME. Alarm was disabled and no audio capture/physical output was tested.'}

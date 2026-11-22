@@ -1,0 +1,58 @@
+{
+  "requirement_id": "ENV-002",
+  "status": "PASS",
+  "observed_utc": "2026-11-22T00:50:12.5301951Z",
+  "environment": "Owner's personal Windows host; read-only operating-system identity probe",
+  "native_or_emulated": "Windows and PowerShell report X64; WMI reports an x64-based PC and processor architecture code 9 (AMD64). This is native x64 Windows, not ARM64 x64 emulation. Hypervisor status was not queried.",
+  "operating_system": {
+    "win32_operating_system_caption": "Microsoft Windows 11 Pro",
+    "version": "10.0.26300",
+    "build": "26300",
+    "update_build_revision": 9974,
+    "display_version": "26H2",
+    "edition_id": "Professional",
+    "win32_os_architecture": "64-bit",
+    "registry_product_name": "Windows 10 Pro",
+    "registry_product_name_note": "Legacy registry ProductName conflicts with the direct Win32_OperatingSystem.Caption and was not used as OS identification."
+  },
+  "architecture": {
+    "win32_computer_system_type": "x64-based PC",
+    "win32_processor_architecture_code": 9,
+    "win32_processor_address_width": 64,
+    "runtime_os_architecture": "X64",
+    "runtime_process_architecture": "X64",
+    "processor_architecture_environment": "AMD64",
+    "is_64_bit_operating_system": true,
+    "is_64_bit_process": true
+  },
+  "procedure": [
+    "Read Win32_OperatingSystem Caption, Version, BuildNumber, and OSArchitecture through Get-CimInstance.",
+    "Read Win32_ComputerSystem SystemType and Win32_Processor Architecture/AddressWidth through Get-CimInstance.",
+    "Read CurrentVersion registry EditionID, DisplayVersion, CurrentBuild, UBR, and the legacy ProductName field.",
+    "Read .NET RuntimeInformation OSArchitecture/ProcessArchitecture, Environment.Is64BitOperatingSystem/Is64BitProcess, and PROCESSOR_ARCHITECTURE."
+  ],
+  "assertions": [
+    {
+      "name": "Windows identifies itself as Windows 11 Pro",
+      "passed": true,
+      "observed": "Microsoft Windows 11 Pro"
+    },
+    {
+      "name": "Windows edition and version/build are recorded",
+      "passed": true,
+      "observed": "Professional, 26H2, version 10.0.26300, build 26300.9974"
+    },
+    {
+      "name": "Running OS and process architecture are 64-bit x64/AMD64",
+      "passed": true,
+      "observed": "WMI OS 64-bit; CPU architecture code 9; x64-based PC; .NET OS/process X64/X64; PROCESSOR_ARCHITECTURE AMD64"
+    }
+  ],
+  "candidate": {
+    "artifact_id": 14695418078,
+    "sha256": "07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720",
+    "execution": "Not launched for this OS-identity requirement"
+  },
+  "side_effects": "Read-only system queries only; no application, installer, updater, or uninstaller launched; no user settings or system configuration changed.",
+  "limitations": "This PASS establishes native Windows 11 x64 OS/architecture identity only. It does not claim application UI behavior, installation/uninstallation, audio, Narrator, notifications, lock/unlock, sleep/resume, or display behavior. The approved bounded application tests remain separately permission-gated because temporary-account creation requires UAC/elevation."
+}

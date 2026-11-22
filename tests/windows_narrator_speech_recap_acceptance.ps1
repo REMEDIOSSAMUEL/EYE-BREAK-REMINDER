@@ -1,6 +1,10 @@
 param(
   [Parameter(Mandatory=$true)][string]$ExecutablePath,
-  [Parameter(Mandatory=$true)][string]$EvidenceDirectory
+  [Parameter(Mandatory=$true)][string]$EvidenceDirectory,
+  [Parameter()][int]$ExpectedSessionId,
+  [Parameter()][string]$ExpectedSessionName,
+  [Parameter()][string]$ExpectedUser,
+  [Parameter()][switch]$AllowExactPrivacyOobeNext
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,15 +13,41 @@ $candidateArtifactId = '14695418078'
 $candidateRunId = '44875679345'
 $candidateSourceCommit = '491bd2ed29f84f4d434b884fc723144db2d6f294'
 
-# This probe is deliberately restricted to the fresh, disposable GitHub-hosted
-# Windows 11 ARM64 runner. It never installs the candidate and never edits a
-# pre-existing EyeBreakReminder profile.
-if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'ARM64' -or $env:GITHUB_SERVER_URL -cne 'https://github.com' -or $env:GITHUB_REPOSITORY -ine 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER' -or -not $env:RUNNER_NAME) {
-  throw 'BLOCKED: this Narrator probe may run only on a GitHub-hosted Windows 11 ARM64 runner.'
+# The default path remains the fresh GitHub-hosted Windows 11 ARM64 runner.
+# Server 2025 is accepted only when the RDP controller supplies all three
+# expected identity values and this process independently verifies them below.
+$serverRdpParameters = @('ExpectedSessionId','ExpectedSessionName','ExpectedUser')
+$serverRdpParametersSupplied = @($serverRdpParameters | Where-Object { $PSBoundParameters.ContainsKey($_) }).Count
+$serverRdpMode = ($serverRdpParametersSupplied -gt 0)
+if ($serverRdpMode -and $serverRdpParametersSupplied -ne $serverRdpParameters.Count) {
+  throw 'BLOCKED: Server RDP mode requires ExpectedSessionId, ExpectedSessionName, and ExpectedUser together.'
+}
+if ($serverRdpMode) {
+  if ($ExpectedSessionId -le 0 -or $ExpectedSessionName -notmatch '^rdp-tcp#\d+$' -or [string]::IsNullOrWhiteSpace($ExpectedUser)) {
+    throw 'BLOCKED: expected Server RDP session ID, rdp-tcp#N session name, and temporary user are invalid.'
+  }
+  if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or $env:GITHUB_SERVER_URL -cne 'https://github.com' -or $env:GITHUB_REPOSITORY -ine 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER' -or -not $env:RUNNER_NAME) {
+    throw 'BLOCKED: Server RDP Narrator mode requires the validated GitHub-hosted Windows x64 runner context.'
+  }
+  if ($env:SESSIONNAME -notmatch '^rdp-tcp#\d+$' -or $env:SESSIONNAME -ine $ExpectedSessionName) {
+    throw 'BLOCKED: SESSIONNAME does not match the controller-provided active RDP session.'
+  }
+} else {
+  # This probe is deliberately restricted to the fresh, disposable GitHub-hosted
+  # Windows 11 ARM64 runner. It never installs the candidate and never edits a
+  # pre-existing EyeBreakReminder profile.
+  if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'ARM64' -or $env:GITHUB_SERVER_URL -cne 'https://github.com' -or $env:GITHUB_REPOSITORY -ine 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER' -or -not $env:RUNNER_NAME) {
+    throw 'BLOCKED: this Narrator probe may run only on a GitHub-hosted Windows 11 ARM64 runner.'
+  }
 }
 if (-not $env:GITHUB_WORKSPACE -or -not $env:RUNNER_TEMP -or -not [Environment]::UserInteractive) {
   throw 'BLOCKED: GitHub workspace and runner temporary roots are required.'
 }
+
+$candidateExecution = if ($serverRdpMode) { 'native AMD64 x64 on Windows Server 2025 x64' } else { 'x64 candidate under Windows 11 ARM64 x64 emulation' }
+$candidateIdentityExecution = if ($serverRdpMode) { 'native AMD64 x64 on Windows Server 2025 x64' } else { 'x64 emulation on native Windows 11 ARM64' }
+$candidateArchitectureDescription = if ($serverRdpMode) { 'native AMD64 x64 on Windows Server 2025 x64' } else { 'x64 emulation on Windows 11 ARM64' }
+$environmentDescription = if ($serverRdpMode) { 'GitHub-hosted Windows Server 2025 x64 in the validated temporary localhost RDP user session' } else { 'GitHub-hosted interactive Windows 11 ARM64 runner' }
 
 $workspaceRoot = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd('\') + '\'
 $runnerTempRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\'
@@ -61,6 +91,7 @@ $speechAcceptanceAssertionRecorded = $false
 $osRecord = $null
 $nativeCpuArchitecture = $null
 $sessionId = $null
+$testUser = $null
 $candidateIdentity = $null
 $narratorRecord = $null
 $physicalAudioVerified = $false
@@ -192,6 +223,11 @@ function Resolve-PrivacyOobeIfPresent {
   )
   if ($privacyToggles.Count -eq 0 -or @($privacyToggles | Where-Object { [string]::IsNullOrWhiteSpace($_.Name) }).Count -gt 0) { throw 'NOT TESTED: the visible privacy OOBE page did not expose named toggle states; no OOBE action was taken.' }
   $oobeShot = Capture-WindowScreenshot $windowHandle 'gui-016-windows-privacy-oobe-before-next.png' 'Windows privacy OOBE'
+  if (-not $AllowExactPrivacyOobeNext) {
+    $oobeActions.Add([pscustomobject]@{Detected=$true;PageName=$oobeWindow.PageName;WindowTitle=$title;WindowHandle=('0x{0:X}' -f $windowHandle.ToInt64());OwnerProcessId=$oobeWindow.OwnerProcessId;Screenshot=$oobeShot.Path;PrivacyToggleValues=$privacyToggles;Action='None; exact Next action requires explicit owner authorization';Button=$buttonRecord;AgreementAccepted=$false;DefaultSelectionsChanged=$false;Utc=[DateTime]::UtcNow.ToString('o')})
+    Add-Event 'Do not advance the exact Windows privacy OOBE page without owner authorization' 'BLOCKED' ([pscustomobject]@{PageName=$oobeWindow.PageName;WindowTitle=$title;Screenshot=$oobeShot.Path;NextButton=$buttonRecord;PrivacyToggleValues=$privacyToggles;Action='None';AgreementAccepted=$false;DefaultSelectionsChanged=$false})
+    return
+  }
   $oobeActions.Add([pscustomobject]@{Detected=$true;PageName=$oobeWindow.PageName;WindowTitle=$title;WindowHandle=('0x{0:X}' -f $windowHandle.ToInt64());OwnerProcessId=$oobeWindow.OwnerProcessId;Screenshot=$oobeShot.Path;PrivacyToggleValues=$privacyToggles;Action='Invoke the exact visible privacy page Next button through UI Automation; leave every displayed toggle unchanged';Button=$buttonRecord;AgreementAccepted=$false;SettingsEffect='Not measured; advancing may apply the displayed privacy choices.';Utc=[DateTime]::UtcNow.ToString('o')})
   try { $invoke = [System.Windows.Automation.InvokePattern]$nextButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern); $invoke.Invoke() }
   catch { throw "NOT TESTED: could not advance only the detected Windows privacy page through its Next control: $($_.Exception.Message)" }
@@ -313,17 +349,17 @@ function Save-Result([string]$FinalStatus, [string]$FinalReason) {
     Candidate=[pscustomobject]@{
       ArtifactId=$candidateArtifactId; FinalizerRunId=$candidateRunId; SourceCommit=$candidateSourceCommit
       ExecutablePath=$ExecutablePath; SHA256=$expectedSha256; Identity=$candidateIdentity
-      Execution='x64 candidate under Windows 11 ARM64 x64 emulation'; InstallerLaunched=$false
+      Execution=$candidateExecution; InstallerLaunched=$false
     }
     OperatingSystem=$osRecord; NativeCPUArchitecture=$nativeCpuArchitecture
-    Environment=[pscustomobject]@{ Provider='GitHub-hosted Actions runner'; ImageOS=$env:ImageOS; ImageVersion=$env:ImageVersion; RunnerOS=$env:RUNNER_OS; RunnerArchitecture=$env:RUNNER_ARCH; ProcessSessionId=$sessionId; UserInteractive=[Environment]::UserInteractive }
+    Environment=[pscustomobject]@{ Provider='GitHub-hosted Actions runner'; Description=$environmentDescription; ImageOS=$env:ImageOS; ImageVersion=$env:ImageVersion; RunnerOS=$env:RUNNER_OS; RunnerArchitecture=$env:RUNNER_ARCH; ProcessSessionId=$sessionId; SessionName=$env:SESSIONNAME; User=$testUser; ExpectedSessionId=if($serverRdpMode){$ExpectedSessionId}else{$null};ExpectedSessionName=if($serverRdpMode){$ExpectedSessionName}else{$null};ExpectedUser=if($serverRdpMode){$ExpectedUser}else{$null};UserInteractive=[Environment]::UserInteractive }
     Profile=[pscustomobject]@{ LocalAppData=$env:LOCALAPPDATA; AppDataPath=$dataDirectory; AppDataAbsentBeforeTest=(-not $dataExistedBefore); TestDataCreatedByHarness=$dataCreatedByHarness; TestDataRemoved=$dataRemoved }
     Narrator=[pscustomobject]@{ ProcessId=$narratorPid; StartedByHarness=$narratorOwned; Version=if($narratorRecord){$narratorRecord.Version}else{$null}; SessionId=if($narratorRecord){$narratorRecord.SessionId}else{$null}; RecapMethod='Insert+Ctrl+X Copy Last Phrase'; Captures=@($speechCaptures); PhysicalAudioVerified=$physicalAudioVerified }
     OOBEActions=@($oobeActions); FocusTrace=@($focusTrace); Assertions=@($assertions); Events=@($events)
      AssertionCounts=[pscustomobject]@{Total=$assertions.Count;Passed=@($assertions|Where-Object{$_.Status -eq 'PASS'}).Count;Fail=@($assertions|Where-Object{$_.Status -eq 'FAIL'}).Count;NotTested=@($assertions|Where-Object{$_.Status -eq 'NOT TESTED'}).Count}
     Screenshots=@($screenshots); TranscriptFile=$transcriptPath; LogFile=$logPath
     Cleanup=[pscustomobject]@{CandidateProcessStopped=$candidateStoppedByHarness;NarratorProcessStopped=$narratorStoppedByHarness;AppDataRemoved=$dataRemoved;Errors=@($cleanupErrors)}
-    Limitations=@('Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.','Speech Recap text verifies Narrator speech content only; physical audio rendering and audibility were not tested.','The standalone candidate was launched; no installer or updater was run.')
+    Limitations=@($(if($serverRdpMode){'Windows Server 2025 x64 host; this is not Windows 11 evidence.'}else{'Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.'}),'Speech Recap text verifies Narrator speech content only; physical audio rendering and audibility were not tested.','The standalone candidate was launched; no installer or updater was run.')
     ObservedUtc=[DateTime]::UtcNow.ToString('o')
   }
   $result | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $resultPath -Encoding utf8
@@ -445,12 +481,29 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
   $osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
   $processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
   $nativeCpuArchitecture = [EBR_NARRATOR_NATIVE]::NativeArchitecture()
-  $osRecord = [pscustomobject]@{ Caption=$os.Caption; Version=$os.Version; Build=$os.BuildNumber; OSArchitecture=$osArchitecture; ProcessArchitecture=$processArchitecture; NativeProcessorArchitectureCode=$nativeCpuArchitecture; NativeProcessorArchitecture=if($nativeCpuArchitecture -eq 12){'ARM64'}else{"Unknown ($nativeCpuArchitecture)"} }
+  $nativeCpuArchitectureName = if($nativeCpuArchitecture -eq 12){'ARM64'}elseif($nativeCpuArchitecture -eq 9){'AMD64'}else{"Unknown ($nativeCpuArchitecture)"}
+  $osRecord = [pscustomobject]@{ Caption=$os.Caption; Version=$os.Version; Build=$os.BuildNumber; OSArchitecture=$osArchitecture; ProcessArchitecture=$processArchitecture; NativeProcessorArchitectureCode=$nativeCpuArchitecture; NativeProcessorArchitecture=$nativeCpuArchitectureName }
   $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
-  $osValid = ($os.Caption -match 'Windows 11' -and $osArchitecture -eq 'Arm64' -and $processArchitecture -eq 'Arm64' -and $nativeCpuArchitecture -eq 12)
-  Add-Assertion 'Runner is Windows 11 with native ARM64 OS, CPU, and ARM64 PowerShell process' $osValid $osRecord
-  if (-not $osValid) { throw 'BLOCKED: the runner is not a native Windows 11 ARM64 environment.' }
-  Add-Assertion 'Runner process has an interactive desktop session' ([Environment]::UserInteractive) ([pscustomobject]@{SessionId=$sessionId;UserInteractive=[Environment]::UserInteractive;RunnerImage=$env:ImageOS})
+  if ($serverRdpMode) {
+    $osValid = ($os.Caption -match 'Windows Server 2025' -and $osArchitecture -eq 'X64' -and $processArchitecture -eq 'X64' -and $nativeCpuArchitecture -eq 9)
+    Add-Assertion 'Runner is Windows Server 2025 with native AMD64 OS, CPU, and x64 PowerShell process' $osValid $osRecord
+    if (-not $osValid) { throw 'BLOCKED: the runner is not a native Windows Server 2025 x64 environment.' }
+  } else {
+    $osValid = ($os.Caption -match 'Windows 11' -and $osArchitecture -eq 'Arm64' -and $processArchitecture -eq 'Arm64' -and $nativeCpuArchitecture -eq 12)
+    Add-Assertion 'Runner is Windows 11 with native ARM64 OS, CPU, and ARM64 PowerShell process' $osValid $osRecord
+    if (-not $osValid) { throw 'BLOCKED: the runner is not a native Windows 11 ARM64 environment.' }
+  }
+  if ($serverRdpMode) {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $testUser = $identity.Name
+    $sessionMatches = ($sessionId -eq $ExpectedSessionId -and $env:SESSIONNAME -ieq $ExpectedSessionName)
+    $userMatches = ($testUser -ieq $ExpectedUser)
+    Add-Assertion 'Server probe runs as the expected temporary user in the expected active RDP session' ($sessionMatches -and $userMatches) ([pscustomobject]@{ProcessSessionId=$sessionId;ExpectedSessionId=$ExpectedSessionId;SessionName=$env:SESSIONNAME;ExpectedSessionName=$ExpectedSessionName;User=$testUser;ExpectedUser=$ExpectedUser;UserInteractive=[Environment]::UserInteractive})
+    if (-not $sessionMatches -or -not $userMatches) { throw 'BLOCKED: the Narrator probe identity or session differs from the controller-validated temporary RDP user session.' }
+  } else {
+    $testUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+  }
+  Add-Assertion 'Runner process has an interactive desktop session' ([Environment]::UserInteractive) ([pscustomobject]@{SessionId=$sessionId;SessionName=$env:SESSIONNAME;User=$testUser;UserInteractive=[Environment]::UserInteractive;RunnerImage=$env:ImageOS})
   if (-not [Environment]::UserInteractive) { throw 'BLOCKED: this runner job does not have an interactive desktop.' }
 
   if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) { throw 'BLOCKED: exact standalone candidate executable is missing.' }
@@ -465,7 +518,7 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
   } finally { $reader.Dispose() }
   if ($peMachine -ne 0x8664) { throw "BLOCKED: expected an x64 PE candidate, found machine 0x$('{0:X4}' -f $peMachine)." }
   if ($candidateInfo.VersionInfo.ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw "BLOCKED: candidate file version is '$($candidateInfo.VersionInfo.ProductVersion)', not 1.4.0." }
-  $candidateIdentity = [pscustomobject]@{ ArtifactId=$candidateArtifactId; FinalizerRunId=$candidateRunId; SourceCommit=$candidateSourceCommit; SHA256=$actualSha256; Bytes=$candidateInfo.Length; ProductVersion=$candidateInfo.VersionInfo.ProductVersion; PEMachine=('0x{0:X4}' -f $peMachine); Execution='x64 emulation on native Windows 11 ARM64' }
+  $candidateIdentity = [pscustomobject]@{ ArtifactId=$candidateArtifactId; FinalizerRunId=$candidateRunId; SourceCommit=$candidateSourceCommit; SHA256=$actualSha256; Bytes=$candidateInfo.Length; ProductVersion=$candidateInfo.VersionInfo.ProductVersion; PEMachine=('0x{0:X4}' -f $peMachine); Execution=$candidateIdentityExecution }
   Add-Assertion 'Standalone executable matches production artifact 14695418078 exact x64 payload' $true $candidateIdentity
 
   $currentAppProcesses = @(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId })
@@ -498,6 +551,7 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
   $candidateProcess = Start-Process -FilePath $ExecutablePath -WorkingDirectory (Split-Path -Parent $ExecutablePath) -PassThru -ErrorAction Stop
   $candidatePid = $candidateProcess.Id
   $candidateOwned = $true
+  if ($candidateProcess.SessionId -ne $sessionId) { throw 'BLOCKED: exact candidate did not start in the verified Narrator test session.' }
   $mainWindow = [IntPtr]::Zero
   $windowWatch = [Diagnostics.Stopwatch]::StartNew()
   while ($windowWatch.Elapsed.TotalSeconds -lt 20 -and $mainWindow -eq [IntPtr]::Zero) {
@@ -604,7 +658,7 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
     $status = 'NOT TESTED'
     $reason = 'The harness did not capture sufficient fresh Narrator Recap text associated with candidate controls; UI Automation observations alone are not accepted as speech evidence.'
   }
-  Add-Event 'GUI-016 documented Speech Recap alternative result' $status ([pscustomobject]@{FreshSpeechCaptureCount=$goodCaptures.Count;PhysicalAudioVerified=$false;CandidateArchitecture='x64 emulation on Windows 11 ARM64'})
+  Add-Event 'GUI-016 documented Speech Recap alternative result' $status ([pscustomobject]@{FreshSpeechCaptureCount=$goodCaptures.Count;PhysicalAudioVerified=$false;CandidateArchitecture=$candidateArchitectureDescription;Environment=$environmentDescription})
   Add-Assertion 'GUI-016 Narrator speech content follows real candidate keyboard focus' ($status -eq 'PASS') ([pscustomobject]@{Status=$status;Reason=$reason;FreshSpeechCaptureCount=$goodCaptures.Count;PhysicalAudioVerified=$false})
   $speechAcceptanceAssertionRecorded = $true
 } catch {

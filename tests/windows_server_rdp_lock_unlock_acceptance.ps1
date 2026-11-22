@@ -652,18 +652,17 @@ function Initialize-DisposableRunnerFirewall {
   $script:FirewallGroupPolicySnapshot=Get-GroupPolicyAllowSignatures
   $script:FirewallSnapshotComplete=$true
   $script:FirewallProfilesModified=$true
+  foreach($entry in $script:FirewallLocalAllowsSnapshot) {
+    $current=@(Get-NetFirewallRule -PolicyStore PersistentStore -Name $entry.Name -ErrorAction Stop | Where-Object {
+      $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and $_.Enabled -eq 'True'
+    })
+    if ($current.Count -ne 1) { throw "BLOCKED: could not re-identify exactly one live PersistentStore inbound Allow rule '$($entry.Name)' before firewall profile isolation." }
+    $script:FirewallLocalAllowsChanged.Add($entry)
+    try { Disable-NetFirewallRule -InputObject $current[0] -ErrorAction Stop | Out-Null }
+    catch { throw "BLOCKED: disabling local inbound Allow rule '$($entry.Name)' from PersistentStore failed before profile isolation: $($_.Exception.Message)" }
+  }
   foreach($profile in $script:FirewallProfilesSnapshot) {
     Set-NetFirewallProfile -Profile $profile.Name -Enabled True -DefaultInboundAction Block -ErrorAction Stop | Out-Null
-  }
-  foreach($entry in $script:FirewallLocalAllowsSnapshot) {
-    $current=@(Get-ActiveFirewallRules | Where-Object {
-      $_.Name -ceq $entry.Name -and $_.PolicyStoreSourceType -eq 'Local' -and
-      [string]$_.PolicyStoreSource -ceq $entry.Source -and $_.Direction -eq 'Inbound' -and
-      $_.Action -eq 'Allow' -and $_.Enabled -eq 'True'
-    })
-    if ($current.Count -ne 1) { throw "BLOCKED: could not re-identify exactly one live local inbound Allow rule '$($entry.Name)' after firewall profile isolation." }
-    $script:FirewallLocalAllowsChanged.Add($entry)
-    Disable-NetFirewallRule -InputObject $current[0] -ErrorAction Stop | Out-Null
   }
   $verifiedProfiles=@(Get-NetFirewallProfile -ErrorAction Stop)
   foreach($profile in $verifiedProfiles) {
@@ -675,35 +674,52 @@ function Initialize-DisposableRunnerFirewall {
   Add-Event 'Snapshot and temporarily secure only the disposable hosted runner firewall' 'PASS' ([pscustomobject]@{Profiles=$script:FirewallProfilesSnapshot;DisabledLocalInboundAllowRules=@($script:FirewallLocalAllowsSnapshot | ForEach-Object {$_.Name});UnchangedGroupPolicyInboundAllows=$script:FirewallGroupPolicySnapshot;DefaultInboundAction='Block';EnabledProfiles=$true})
 }
 function Restore-DisposableRunnerFirewall {
+  $restoreErrors=[System.Collections.Generic.List[string]]::new()
   if ($script:FirewallCreated) {
-    $temporary=@(Get-NetFirewallRule -Name $script:FirewallName -ErrorAction SilentlyContinue)
-    if ($temporary.Count) { Remove-NetFirewallRule -InputObject $temporary -ErrorAction Stop }
-    $script:FirewallCreated=$false
+    try {
+      $temporary=@(Get-NetFirewallRule -Name $script:FirewallName -ErrorAction SilentlyContinue)
+      if ($temporary.Count) { Remove-NetFirewallRule -InputObject $temporary -ErrorAction Stop }
+      $script:FirewallCreated=$false
+    } catch { $restoreErrors.Add("Temporary loopback rule removal: $($_.Exception.Message)") }
   }
   foreach($entry in $script:FirewallLocalAllowsChanged) {
-    $current=@(Get-ActiveFirewallRules | Where-Object {$_.Name -ceq $entry.Name -and $_.PolicyStoreSourceType -eq 'Local'})
-    if ($current.Count -ne 1) { throw "Unable to identify exactly one original local firewall rule '$($entry.Name)' for restoration." }
-    if ($current[0].Enabled -ne 'True') { Enable-NetFirewallRule -InputObject $current[0] -ErrorAction Stop | Out-Null }
+    try {
+      $current=@(Get-NetFirewallRule -PolicyStore PersistentStore -Name $entry.Name -ErrorAction Stop)
+      if ($current.Count -ne 1 -or $current[0].Direction -ne 'Inbound' -or $current[0].Action -ne 'Allow') { throw "Unable to identify exactly one original PersistentStore inbound Allow rule '$($entry.Name)' for restoration." }
+      if ($current[0].Enabled -ne 'True') { Enable-NetFirewallRule -InputObject $current[0] -ErrorAction Stop | Out-Null }
+    } catch { $restoreErrors.Add("Restore local inbound Allow rule '$($entry.Name)': $($_.Exception.Message)") }
   }
   if ($script:FirewallProfilesModified) {
     foreach($profile in $script:FirewallProfilesSnapshot) {
-      $enabledValue=[Enum]::Parse($script:FirewallEnabledParameterType,[string]$profile.Enabled,$true)
-      Set-NetFirewallProfile -Profile $profile.Name -Enabled $enabledValue -DefaultInboundAction $profile.DefaultInboundAction -ErrorAction Stop | Out-Null
+      try {
+        $enabledValue=[Enum]::Parse($script:FirewallEnabledParameterType,[string]$profile.Enabled,$true)
+        Set-NetFirewallProfile -Profile $profile.Name -Enabled $enabledValue -DefaultInboundAction $profile.DefaultInboundAction -ErrorAction Stop | Out-Null
+      } catch { $restoreErrors.Add("Restore firewall profile '$($profile.Name)': $($_.Exception.Message)") }
     }
   }
   if ($script:FirewallSnapshotComplete) {
-    $restoredProfiles=@(Get-NetFirewallProfile -ErrorAction Stop)
-    foreach($saved in $script:FirewallProfilesSnapshot) {
-      $current=@($restoredProfiles | Where-Object {$_.Name -ceq $saved.Name})
-      $restoredEnabled=if($current.Count){([string]$current[0].Enabled).Trim()}else{''}
-      if ($current.Count -ne 1 -or $restoredEnabled -ine [string]$saved.Enabled -or [string]$current[0].DefaultInboundAction -ne $saved.DefaultInboundAction) { throw "Firewall profile '$($saved.Name)' did not restore to its snapshotted values." }
-    }
+    try {
+      $restoredProfiles=@(Get-NetFirewallProfile -ErrorAction Stop)
+      foreach($saved in $script:FirewallProfilesSnapshot) {
+        $current=@($restoredProfiles | Where-Object {$_.Name -ceq $saved.Name})
+        $restoredEnabled=if($current.Count){([string]$current[0].Enabled).Trim()}else{''}
+        if ($current.Count -ne 1 -or $restoredEnabled -ine [string]$saved.Enabled -or [string]$current[0].DefaultInboundAction -ne $saved.DefaultInboundAction) { $restoreErrors.Add("Firewall profile '$($saved.Name)' did not restore to its snapshotted values.") }
+      }
+    } catch { $restoreErrors.Add("Verify restored firewall profiles: $($_.Exception.Message)") }
     foreach($entry in $script:FirewallLocalAllowsSnapshot) {
-      $current=@(Get-ActiveFirewallRules | Where-Object {$_.Name -ceq $entry.Name -and $_.PolicyStoreSourceType -eq 'Local'})
-      if ($current.Count -ne 1 -or $current[0].Enabled -ne 'True') { throw "Original local inbound Allow rule '$($entry.Name)' was not restored enabled." }
+      try {
+        $current=@(Get-NetFirewallRule -PolicyStore PersistentStore -Name $entry.Name -ErrorAction Stop | Where-Object {$_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow'})
+        if ($current.Count -ne 1 -or $current[0].Enabled -ne 'True') { $restoreErrors.Add("Original PersistentStore inbound Allow rule '$($entry.Name)' was not restored enabled.") }
+      } catch { $restoreErrors.Add("Verify restored local inbound Allow rule '$($entry.Name)': $($_.Exception.Message)") }
     }
-    if ((Get-GroupPolicyAllowSignatures) -join "`n" -cne ($script:FirewallGroupPolicySnapshot -join "`n")) { throw 'Group Policy firewall Allow rules differ from their original snapshot.' }
-    if (@(Get-ActiveFirewallRules | Where-Object {$_.Name -ceq $script:FirewallName}).Count) { throw 'Temporary loopback RDP firewall rule remained after cleanup.' }
+    try { if ((Get-GroupPolicyAllowSignatures) -join "`n" -cne ($script:FirewallGroupPolicySnapshot -join "`n")) { $restoreErrors.Add('Group Policy firewall Allow rules differ from their original snapshot.') } }
+    catch { $restoreErrors.Add("Verify Group Policy firewall rules: $($_.Exception.Message)") }
+    try { if (@(Get-ActiveFirewallRules | Where-Object {$_.Name -ceq $script:FirewallName}).Count) { $restoreErrors.Add('Temporary loopback RDP firewall rule remained after cleanup.') } }
+    catch { $restoreErrors.Add("Verify temporary loopback rule removal: $($_.Exception.Message)") }
+  }
+  if ($restoreErrors.Count) {
+    Add-Event 'Restore and verify disposable runner firewall profiles and rules' 'BLOCKED' @($restoreErrors.ToArray())
+    throw "Firewall restoration had $($restoreErrors.Count) error(s): $($restoreErrors -join '; ')"
   }
   Add-Event 'Restore and verify disposable runner firewall profiles and rules' 'PASS' ([pscustomobject]@{Profiles=$script:FirewallProfilesSnapshot;RestoredLocalInboundAllowRules=@($script:FirewallLocalAllowsSnapshot | ForEach-Object {$_.Name});GroupPolicyUnchanged=$true;TemporaryLoopbackRuleAbsent=$true})
 }

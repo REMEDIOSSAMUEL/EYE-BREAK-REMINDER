@@ -1,15 +1,15 @@
 {
   "schema_version": "1.0",
-  "generated_on": "2026-11-21",
+  "generated_on": "2026-11-22",
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
-  "branch_head": "95b37e70003ae6a0cb695f4d1f4c7febe1f71a5a",
-  "branch_head_scope": "Current live PR test-harness head: 95b37e70003ae6a0cb695f4d1f4c7febe1f71a5a. Core PR validation run 44956790475 and update security run 44956790460 passed. Retained-candidate run 44956790473 attempted remaining Windows probes but produced no new acceptance PASS: UN-009 stopped at the first-run RDP-file trust prompt; ENV-006 stopped with a file-not-found exception before a session/lock; hosted Windows 11 ARM64 Shell, audio, and Narrator probes were blocked by the first-sign-in privacy OOBE surface and/or no render endpoint. Test harness only; the authoritative candidate remains sourced from 491bd2ed29f84f4d434b884fc723144db2d6f294 and all seven production payloads remain byte-identical. Earlier full product/security validation and production-key transaction evidence remain recorded below at their own tested commits/runs.",
+  "branch_head": "c96aab8756c9f76475e1654e49497760cc93536b",
+  "branch_head_scope": "Latest live PR head with terminal checks at this tested harness commit: c96aab8756c9f76475e1654e49497760cc93536b. PR validation 44964963901 and update security 44964963829 passed. Retained-candidate run 44964963862 produced no new acceptance PASS: UN-009 stopped before an interactive RDP session at the first-run education prompt; ENV-006 failed during the runner firewall setup before a guest lock test; ARM64 UI probes remained blocked by first-sign-in privacy OOBE and/or unavailable render audio. The local test-only follow-up currently being prepared is uncommitted and not represented as tested by those results. The production candidate remains artifact 14695418078 sourced from 491bd2ed29f84f4d434b884fc723144db2d6f294, with seven verified payloads.",
   "current_release_candidate": {
     "status": "A seven-file production candidate with an authentic ECDSA P-256/SHA-256 signed update manifest is retained and independently verified. The application and installer are Authenticode NotSigned; this is allowed by the owner's approved v1.4.0 policy. Candidate is ready for separate owner publication approval; it has not been published or merged.",
     "candidate_class": "PRODUCTION-AUTHENTICATED UPDATE CANDIDATE (Authenticode unsigned)",
     "publication_ready": true,
-    "readiness_scope": "Mandatory signed-manifest authentication, exact artifact verification, affected security checks, and the exact-binary 110-cycle resource soak passed. On the exact signed candidate, production-key GUI transactions passed for installed Preserve Settings, portable updating, clean installation retaining history, and clean installation deleting history only after explicit selection. Latest run 44882543550 retained three transaction reports in artifact 14698945865 (21, 24, and 25 assertions); payload hashes match the candidate and each updated application relaunched with a progressing timer. UN-009 remains NOT TESTED because hosted Settings > Installed Apps was unavailable; ENV-004 passes for disposable hosted runner availability only, and nine environment-dependent requirements remain BLOCKED. Separate owner publication approval is still required.",
+    "readiness_scope": "Mandatory signed-manifest authentication, exact artifact verification, affected security checks, and the exact-binary 110-cycle resource soak passed. On the exact signed candidate, production-key GUI transactions passed for installed Preserve Settings, portable updating, clean installation retaining history, and clean installation deleting history only after explicit selection. Latest run 44882543550 retained three transaction reports in artifact 14698945865 (21, 24, and 25 assertions); payload hashes match the candidate and each updated application relaunched with a progressing timer. UN-009 remains NOT TESTED because hosted Settings > Installed Apps was unavailable; ENV-004 passes for disposable hosted runner availability only, and eight environment-dependent requirements remain BLOCKED after ENV-002 passed native Windows 11 x64 identity verification only. Separate owner publication approval is still required.",
     "run_id": 44875679345,
     "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44875679345",
     "artifact_id": 14695418078,
@@ -3223,15 +3223,16 @@
     {
       "requirement_id": "ENV-002",
       "description": "Native Windows 11 x64",
-      "implementation_status": "HOST PLATFORM VERIFIED; candidate acceptance remains blocked because the exact production candidate was not exercised in an authorized isolated Windows 11 x64 environment.",
+      "implementation_status": "HOST PLATFORM VERIFIED. The separate approved candidate app tests were not run on the personal host; temporary-account creation still awaits UAC/elevation.",
       "required_tests": "Native OS and architecture evidence",
-      "actual_verification_evidence": "Read-only verification on 2026-11-21 confirms the owner's personal host as Microsoft Windows 11 Pro 26H2 build 26300: Win32_OperatingSystem.Caption=Microsoft Windows 11 Pro, version 10.0.26300, OS architecture 64-bit, Win32_ComputerSystem SystemType=x64-based PC, and native/runtime architecture X64. Registry ProductName still reads Windows 10 Pro; the WMI caption is used for OS identity rather than inferring from build. Exact candidate artifact 14695418078 (EXE SHA-256 07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720) was downloaded to temporary staging and all seven artifact hashes plus the embedded production manifest signature were independently verified. The candidate was not launched. Owner explicitly approved the portable test in a new standard account and a separate Settings install/uninstall test in a new standard account. The native Computer Use API failed twice with 'Computer Use native pipe is unavailable: failed to connect native pipe: The system cannot find the file specified' including after a fresh session, so no test account was created and no host UI/app operation occurred. Owner reports no existing authorized guest; an existing no-extra-charge native Windows 11 x64 runner is being identified, but its organization/label is not yet available. Status remains BLOCKED until a usable authorized interactive UI route is available. No host UI or application data was changed.",
-      "environment": "Read-only personal-host identity: native Windows 11 Pro 26H2 x64. Candidate artifact 14695418078 verified but not launched. Temporary-profile tests are approved but awaiting a working native UI-control pipe; owner reports no existing guest and is identifying a no-extra-charge Windows 11 x64 runner. Standard hosted Windows 11 runners used earlier are ARM64 with x64 emulation; hosted x64 tests are Windows Server 2025.",
+      "actual_verification_evidence": "PASS for the original requirement, Native OS and architecture evidence. Read-only evidence captured 2026-11-22 at docs/evidence/v1.4.0-remaining-coverage/env-002-native-host-identity.json: Win32_OperatingSystem.Caption=Microsoft Windows 11 Pro; edition Professional; version 10.0.26300, build 26300.9974, DisplayVersion 26H2; OS architecture 64-bit; Win32_ComputerSystem reports x64-based PC; Win32_Processor reports architecture code 9 (AMD64), address width 64; .NET OS and process architecture both X64; PROCESSOR_ARCHITECTURE=AMD64. Registry ProductName reads legacy Windows 10 Pro and is documented as conflicting metadata; the direct Windows caption identifies the OS. Exact candidate artifact 14695418078 and EXE SHA-256 07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720 are recorded but the app was not launched. This PASS is limited to native Windows 11 x64 OS/architecture identification; it does not claim application behavior.",
+      "environment": "Owner personal Windows 11 Pro 26H2 x64 host; read-only system identity queries; no candidate launch. Application tests remain separately permission-gated.",
       "tested_source_commit": null,
       "tested_binary_sha256": null,
-      "status": "BLOCKED",
+      "status": "PASS",
       "implementation_evidence": [
-        "docs/V1.4.0_AUTONOMOUS_COMPLETION_PROGRESS.md: environment audit"
+        "docs/evidence/v1.4.0-remaining-coverage/env-002-native-host-identity.json",
+        "docs/V1.4.0_REMAINING_COVERAGE_PROGRESS.md"
       ]
     },
     {
@@ -4143,13 +4144,13 @@
     }
   ],
   "status_counts": {
-    "PASS": 222,
+    "PASS": 223,
     "FAIL": 0,
     "NOT TESTED": 1,
-    "BLOCKED": 9,
+    "BLOCKED": 8,
     "NOT APPLICABLE": 2
   },
-  "generated_at_utc": "2026-11-21T23:30:25Z",
+  "generated_at_utc": "2026-11-22T00:50:12.5301951Z",
   "latest_validation": {
     "latest_implementation_test_head": "9c19da9884ebd77d7c230c70de6fc5209a815095",
     "candidate_source_commit": "491bd2ed29f84f4d434b884fc723144db2d6f294",
@@ -4190,25 +4191,32 @@
     "production_transaction_artifact_url_latest": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44882543550/artifacts/14698945865"
   },
   "current_campaign_validation": {
-    "tested_pr_head": "95b37e70003ae6a0cb695f4d1f4c7febe1f71a5a",
-    "required_ci_run_id": 44956790475,
-    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44956790475",
-    "required_ci_status": "PASS: Core tests and Windows package completed successfully on this head.",
-    "security_run_id": 44956790460,
-    "security_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44956790460",
-    "security_status": "PASS: Windows update security workflow completed successfully on this harness-only head; candidate provenance and payload hashes were verified.",
-    "remaining_coverage_run_id": 44956790473,
-    "remaining_coverage_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44956790473",
-    "remaining_coverage_status": "NO NEW ACCEPTANCE PASS. UN-009 was blocked by the first-run RDP-file trust prompt before an interactive session; ENV-006 was blocked by a file-not-found exception before an RDP session or lock; REG-008, GUI-016, and ENV-009 were blocked/not tested on hosted Windows 11 ARM64 because the exact candidate could not take foreground through the privacy OOBE surface, with no active audio render endpoint for REG-008. Screenshots, logs, candidate identity, and cleanup reports are retained in run artifacts.",
-    "new_acceptance_passes": 0,
+    "tested_pr_head": "c96aab8756c9f76475e1654e49497760cc93536b",
+    "required_ci_run_id": 44964963901,
+    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44964963901",
+    "required_ci_status": "PASS: Core tests and Windows package completed successfully on c96aab8756c9f76475e1654e49497760cc93536b.",
+    "security_run_id": 44964963829,
+    "security_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44964963829",
+    "security_status": "PASS: Windows update security workflow completed successfully on c96aab8756c9f76475e1654e49497760cc93536b; candidate provenance and payload hashes were verified.",
+    "remaining_coverage_run_id": 44964963862,
+    "remaining_coverage_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44964963862",
+    "remaining_coverage_status": "NO NEW ACCEPTANCE PASS on c96aab8756c9f76475e1654e49497760cc93536b. UN-009 remained NOT TESTED because the first-run RDP education prompt stopped the workflow before an interactive session, install, or Settings uninstall. ENV-006 failed while applying an isolated runner firewall rule (Error 2) before lock/unlock. The Windows 11 ARM64 audio, Narrator, and Shell jobs were blocked by the first-sign-in privacy OOBE; audio also lacked a render endpoint. A new consent-window fallback, PersistentStore firewall correction, and exact-candidate Server RDP audio/Narrator/Shell probes are present only in the uncommitted follow-up and have not yet been tested. Separate read-only identity evidence now passes ENV-002 on native Windows 11 Pro 26H2 x64 without launching the candidate.",
+    "new_acceptance_passes": 1,
     "candidate_artifact_id": 14695418078,
     "candidate_exe_sha256": "07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720",
     "matrix_counts_unchanged": {
-      "PASS": 222,
+      "PASS": 223,
       "FAIL": 0,
       "NOT TESTED": 1,
-      "BLOCKED": 9,
+      "BLOCKED": 8,
       "NOT APPLICABLE": 2
+    },
+    "environment_identity_test": {
+      "Requirement": "ENV-002",
+      "Status": "PASS",
+      "ObservedUtc": "2026-11-22T00:50:12.5301951Z",
+      "Evidence": "docs/evidence/v1.4.0-remaining-coverage/env-002-native-host-identity.json",
+      "CandidateLaunched": false
     }
   },
   "latest_pr_head_sha": "95b37e70003ae6a0cb695f4d1f4c7febe1f71a5a",

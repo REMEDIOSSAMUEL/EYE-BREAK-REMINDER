@@ -55,6 +55,39 @@ function Resolve-EBRTestRdpFileTrustPrompt {
   }
   Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
   Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
+  if ($null -eq ('EBR_RdpUiNative' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class EBR_RdpUiNative {
+  [DllImport("user32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool IsChild(IntPtr parent, IntPtr child);
+
+  [DllImport("user32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool IsWindowVisible(IntPtr hWnd);
+
+  [DllImport("user32.dll", SetLastError = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool IsWindowEnabled(IntPtr hWnd);
+
+  [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+  public static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
+
+  [DllImport("user32.dll", SetLastError = true)]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+
+  [DllImport("user32.dll", SetLastError = true)]
+  public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMilliseconds, out IntPtr result);
+}
+'@ -ErrorAction Stop
+  }
 
   $educationCheckboxName = 'I understand and allow RDP files to open on this device for my account'
   $educationHeading = 'Opening Remote Desktop Connection'
@@ -93,6 +126,8 @@ function Resolve-EBRTestRdpFileTrustPrompt {
             ControlType = [string]$current.ControlType.ProgrammaticName
             AutomationId = [string]$current.AutomationId
             ProcessId = [int]$current.ProcessId
+            NativeWindowHandle = [long]$current.NativeWindowHandle
+            ClassName = [string]$current.ClassName
             Enabled = [bool]$current.IsEnabled
             Offscreen = [bool]$current.IsOffscreen
             Bounds = @([double]$current.BoundingRectangle.Left, [double]$current.BoundingRectangle.Top, [double]$current.BoundingRectangle.Width, [double]$current.BoundingRectangle.Height)
@@ -110,7 +145,7 @@ function Resolve-EBRTestRdpFileTrustPrompt {
     }
   }
 
-  function Get-EBRNamedPromptActions($Nodes, [string]$Name, [string]$AutomationId = '') {
+  function Get-EBRNamedPromptActions($Nodes, [string]$Name, [string]$AutomationId, [int]$ProcessId) {
     $actions = [System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
     foreach ($node in $Nodes) {
       try {
@@ -118,17 +153,18 @@ function Resolve-EBRTestRdpFileTrustPrompt {
         $isActionControl = $current.ControlType -eq [System.Windows.Automation.ControlType]::Button -or
           $current.ControlType -eq [System.Windows.Automation.ControlType]::Pane
         $automationIdMatches = [string]::IsNullOrEmpty($AutomationId) -or $current.AutomationId -ceq $AutomationId
-        if ($isActionControl -and $current.Name -ceq $Name -and $automationIdMatches -and -not $current.IsOffscreen) { $actions.Add($node) }
+        if ($isActionControl -and $current.ProcessId -eq $ProcessId -and $current.Name -ceq $Name -and $automationIdMatches -and -not $current.IsOffscreen) { $actions.Add($node) }
       } catch { }
     }
     return $actions.ToArray()
   }
 
-  function Invoke-EBRNamedPromptAction($Element, [string]$Name) {
+  function Invoke-EBRNamedPromptAction($Element, [string]$Name, [int]$ExpectedProcessId, [long]$PromptWindowHandle, [string]$ExpectedAutomationId = '') {
     $current = $Element.Current
     $isActionControl = $current.ControlType -eq [System.Windows.Automation.ControlType]::Button -or
       $current.ControlType -eq [System.Windows.Automation.ControlType]::Pane
-    if (-not $isActionControl -or $current.Name -cne $Name -or -not $current.IsEnabled -or $current.IsOffscreen) {
+    $automationIdMatches = [string]::IsNullOrEmpty($ExpectedAutomationId) -or $current.AutomationId -ceq $ExpectedAutomationId
+    if (-not $isActionControl -or $current.ProcessId -ne $ExpectedProcessId -or $current.Name -cne $Name -or -not $automationIdMatches -or -not $current.IsEnabled -or $current.IsOffscreen) {
       throw "BLOCKED: refusing to invoke an unverified '$Name' RDP prompt action."
     }
 
@@ -137,18 +173,28 @@ function Resolve-EBRTestRdpFileTrustPrompt {
       ([System.Windows.Automation.InvokePattern]$pattern).Invoke()
       return 'InvokePattern'
     }
-    $legacyPattern = $null
-    if ($Element.TryGetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern, [ref]$legacyPattern)) {
-      $legacy = [System.Windows.Automation.LegacyIAccessiblePattern]$legacyPattern
-      $legacyCurrent = $legacy.Current
-      $pushButtonRole = 43 # ROLE_SYSTEM_PUSHBUTTON from oleacc.h
-      if ([int]$legacyCurrent.Role -ne $pushButtonRole -or [string]::IsNullOrWhiteSpace([string]$legacyCurrent.DefaultAction)) {
-        throw "BLOCKED: the exact '$Name' control's legacy action is not a verified push button with a default action."
-      }
-      $legacy.DoDefaultAction()
-      return "LegacyIAccessiblePattern(role=$pushButtonRole; defaultAction=$([string]$legacyCurrent.DefaultAction))"
+    $rootHandle = [IntPtr]$PromptWindowHandle
+    $controlHandle = [IntPtr]$current.NativeWindowHandle
+    if ($rootHandle -eq [IntPtr]::Zero -or $controlHandle -eq [IntPtr]::Zero -or
+        -not [EBR_RdpUiNative]::IsChild($rootHandle, $controlHandle)) {
+      throw "BLOCKED: the exact '$Name' pane did not expose a child HWND owned by its verified RDP prompt window."
     }
-    throw "BLOCKED: the exact '$Name' RDP prompt action exposed neither Invoke nor LegacyIAccessible action support."
+    $ownerProcessId = [uint32]0
+    [void][EBR_RdpUiNative]::GetWindowThreadProcessId($controlHandle, [ref]$ownerProcessId)
+    if ($ownerProcessId -ne [uint32]$MstscProcessId -or
+        -not [EBR_RdpUiNative]::IsWindowVisible($controlHandle) -or
+        -not [EBR_RdpUiNative]::IsWindowEnabled($controlHandle) -or
+        [EBR_RdpUiNative]::GetForegroundWindow() -ne $rootHandle) {
+      throw "BLOCKED: refusing the native '$Name' action because HWND process, visibility, enabled state, or foreground-window checks failed."
+    }
+    $className = [Text.StringBuilder]::new(128)
+    if ([EBR_RdpUiNative]::GetClassName($controlHandle, $className, $className.Capacity) -le 0 -or $className.ToString() -cne 'Button') {
+      throw "BLOCKED: the exact '$Name' pane's native window class is not Button."
+    }
+    $messageResult = [IntPtr]::Zero
+    $sendStatus = [EBR_RdpUiNative]::SendMessageTimeout($controlHandle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero, 0x0002, 3000, [ref]$messageResult)
+    if ($sendStatus -eq [IntPtr]::Zero) { throw "BLOCKED: the verified native '$Name' Button did not accept BM_CLICK within three seconds." }
+    return "NativeBM_CLICK: class=Button; process=$ownerProcessId; automationId=$([string]$current.AutomationId); foregroundPromptVerified=True"
   }
 
   function Save-EBRPromptEvidence($Snapshot, [string]$BaseName, $Extra = $null) {
@@ -200,8 +246,8 @@ function Resolve-EBRTestRdpFileTrustPrompt {
       )
       if ($names -match '(?is)You\s+are\s+opening\s+an\s+RDP\s+file\s+which\s+will\s+establish\s+a\s+connection\s+to\s+another\s+computer' -and
           $names -match [regex]::Escape($educationHeading) -and $educationCheckboxes.Count -eq 1) {
-        $okButtons = @(Get-EBRNamedPromptActions $nodes 'OK' 'CommandButton_1')
-        $cancelButtons = @(Get-EBRNamedPromptActions $nodes 'Cancel' 'CommandButton_2' | Where-Object { $_.Current.IsEnabled })
+        $okButtons = @(Get-EBRNamedPromptActions $nodes 'OK' 'CommandButton_1' $MstscProcessId)
+        $cancelButtons = @(Get-EBRNamedPromptActions $nodes 'Cancel' 'CommandButton_2' $MstscProcessId | Where-Object { $_.Current.IsEnabled })
         if ($okButtons.Count -ne 1 -or $cancelButtons.Count -ne 1) {
           Save-EBRPromptEvidence $snapshot 'rdp-file-education-prompt-unrecognized'
           throw 'BLOCKED: the exact educational RDP-file prompt did not expose unique OK and Cancel actions.'
@@ -216,7 +262,7 @@ function Resolve-EBRTestRdpFileTrustPrompt {
         }
         Save-EBRPromptEvidence $snapshot 'rdp-file-education-prompt-before-acknowledgement' ([pscustomobject]@{Checkbox=$educationCheckboxName;Before=$before;After=$after;Action='OK'})
         $handle = $snapshot.Handle
-        $actionPattern = Invoke-EBRNamedPromptAction $okButtons[0] 'OK'
+        $actionPattern = Invoke-EBRNamedPromptAction $okButtons[0] 'OK' $MstscProcessId $snapshot.Handle 'CommandButton_1'
         $promptActionMethods.Add("Education OK: $actionPattern")
         $educationAcknowledged = $true
         $closeWatch = [Diagnostics.Stopwatch]::StartNew()
@@ -237,8 +283,8 @@ function Resolve-EBRTestRdpFileTrustPrompt {
             try { $current = $node.Current; if ($current.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and -not $current.IsOffscreen) { $node } } catch { }
           }
         )
-        $connectButtons = @(Get-EBRNamedPromptActions $nodes 'Connect')
-        $cancelButtons = @(Get-EBRNamedPromptActions $nodes 'Cancel' | Where-Object { $_.Current.IsEnabled })
+        $connectButtons = @(Get-EBRNamedPromptActions $nodes 'Connect' '' $MstscProcessId)
+        $cancelButtons = @(Get-EBRNamedPromptActions $nodes 'Cancel' '' $MstscProcessId | Where-Object { $_.Current.IsEnabled })
         if ($checkboxes.Count -eq 0 -or $connectButtons.Count -ne 1 -or $cancelButtons.Count -ne 1) {
           Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-unrecognized'
           throw 'BLOCKED: the exact localhost connection warning lacked uniquely verifiable resource controls or Connect/Cancel actions.'
@@ -286,7 +332,7 @@ function Resolve-EBRTestRdpFileTrustPrompt {
         }
         if (-not $connectButtons[0].Current.IsEnabled) { throw 'BLOCKED: the exact localhost Connect action is disabled.' }
         $buttonHandle = $snapshot.Handle
-        $actionPattern = Invoke-EBRNamedPromptAction $connectButtons[0] 'Connect'
+        $actionPattern = Invoke-EBRNamedPromptAction $connectButtons[0] 'Connect' $MstscProcessId $snapshot.Handle ([string]$connectButtons[0].Current.AutomationId)
         $promptActionMethods.Add("Connection Connect: $actionPattern")
         $connectionAcknowledged = $true
         $closeWatch = [Diagnostics.Stopwatch]::StartNew()
