@@ -56,6 +56,7 @@ function Resolve-EBRTestRdpFileTrustPrompt {
   }
   Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
   Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
+  Add-Type -AssemblyName Accessibility -ErrorAction Stop
   if ($null -eq ('EBR_RdpUiNative' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -86,6 +87,18 @@ public static class EBR_RdpUiNative {
 
   [DllImport("user32.dll", SetLastError = true)]
   public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMilliseconds, out IntPtr result);
+
+  [DllImport("oleacc.dll", ExactSpelling = true)]
+  private static extern int AccessibleObjectFromWindow(IntPtr hWnd, uint objectId, ref Guid interfaceId, [MarshalAs(UnmanagedType.Interface)] out object accessibleObject);
+
+  public static object GetAccessibleClient(IntPtr hWnd) {
+    Guid interfaceId = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
+    object accessibleObject;
+    int hr = AccessibleObjectFromWindow(hWnd, 0xFFFFFFFCu, ref interfaceId, out accessibleObject);
+    Marshal.ThrowExceptionForHR(hr);
+    if (accessibleObject == null) throw new InvalidOperationException("OBJID_CLIENT returned no IAccessible object.");
+    return accessibleObject;
+  }
 }
 '@ -ErrorAction Stop
   }
@@ -337,6 +350,22 @@ public static class EBR_RdpUiNative {
     return $owner-eq[uint32]$ProcessId
   }
 
+  function Get-EBRNativeCertificateTabs([long]$TabHandle){
+    $accessible=[Accessibility.IAccessible][EBR_RdpUiNative]::GetAccessibleClient([IntPtr]$TabHandle)
+    $count=[int]$accessible.accChildCount
+    if($count-lt1-or$count-gt8){throw "native SysTabControl32 exposed an unexpected MSAA child count: $count."}
+    $items=[System.Collections.Generic.List[object]]::new()
+    for($childId=1;$childId-le$count;$childId++){
+      $name=[string]$accessible.get_accName([object]$childId)
+      $role=[int]$accessible.get_accRole([object]$childId)
+      $state=[int]$accessible.get_accState([object]$childId)
+      if([string]::IsNullOrWhiteSpace($name)-or$role-ne37){throw "MSAA tab child $childId did not expose an exact named ROLE_SYSTEM_PAGETAB (name '$name', role $role)."}
+      $defaultAction=[string]$accessible.get_accDefaultAction([object]$childId)
+      $items.Add([pscustomobject]@{ChildId=$childId;Name=$name;Role=$role;State=$state;Selected=(($state-band0x2)-ne0);DefaultAction=$defaultAction})
+    }
+    return [pscustomobject]@{Accessible=$accessible;Items=$items.ToArray()}
+  }
+
   function Get-EBRListenerCertificate {
     if($env:GITHUB_ACTIONS-cne'true'-or$env:RUNNER_ENVIRONMENT-cne'github-hosted'-or$env:EBR_RUNNER_ENVIRONMENT_CONTEXT-cne'github-hosted'-or$env:RUNNER_OS-cne'Windows'-or$env:RUNNER_ARCH-cne'X64'-or$env:GITHUB_RUN_ID-notmatch'^[0-9]+$'){
       throw 'listener certificate validation is allowed only in the identified GitHub-hosted Windows x64 disposable run.'
@@ -482,15 +511,36 @@ public static class EBR_RdpUiNative {
       }
       Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-viewer-before-thumbprint' ([pscustomobject]@{ViewAction=$viewAction;Source=$viewerSource;ListenerCertificate=$listenerBefore})
       if(-not(Test-EBRForegroundProcessWindow $viewerSnapshot.Handle $MstscProcessId)){throw 'certificate viewer is not the foreground mstsc window.'}
-      $tabs=@(foreach($node in $viewerSnapshot.Nodes){try{$c=$node.Current;if($c.ControlType-eq[System.Windows.Automation.ControlType]::TabItem-and$c.ProcessId-eq$MstscProcessId-and$c.Name-ceq'Details'-and$c.IsEnabled-and-not$c.IsOffscreen){$node}}catch{}})
-      if($tabs.Count-ne1){throw "expected one exact Details tab; found $($tabs.Count)."}
-      $selection=$null
-      if($tabs[0].TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$selection)){
-        if(-not([System.Windows.Automation.SelectionItemPattern]$selection).Current.IsSelected){([System.Windows.Automation.SelectionItemPattern]$selection).Select()}
-      }else{$selection=$null;if(-not$tabs[0].TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$selection)){throw 'Details tab has no supported UIA action.'};([System.Windows.Automation.InvokePattern]$selection).Invoke()}
+      $tabHosts=@(foreach($node in $viewerSnapshot.Nodes){try{$c=$node.Current;if($c.ControlType-eq[System.Windows.Automation.ControlType]::Pane-and$c.ClassName-ceq'SysTabControl32'-and$c.ProcessId-eq$MstscProcessId-and$c.NativeWindowHandle-ne0-and$c.IsEnabled-and-not$c.IsOffscreen){$node}}catch{}})
+      if($tabHosts.Count-ne1){throw "expected one exact visible SysTabControl32 certificate tab host; found $($tabHosts.Count)."}
+      $tabHost=$tabHosts[0];$tabHostCurrent=$tabHost.Current;$tabHandle=[long]$tabHostCurrent.NativeWindowHandle;$tabOwner=[uint32]0
+      [void][EBR_RdpUiNative]::GetWindowThreadProcessId([IntPtr]$tabHandle,[ref]$tabOwner)
+      if($tabHandle-eq0-or$tabOwner-ne[uint32]$MstscProcessId-or-not[EBR_RdpUiNative]::IsChild([IntPtr]$viewerSnapshot.Handle,[IntPtr]$tabHandle)-or-not[EBR_RdpUiNative]::IsWindowVisible([IntPtr]$tabHandle)-or-not[EBR_RdpUiNative]::IsWindowEnabled([IntPtr]$tabHandle)){
+        throw 'the exact certificate tab host is not a visible, enabled child of the verified foreground mstsc Certificate window.'
+      }
+      $nativeTabs=Get-EBRNativeCertificateTabs $tabHandle
+      $expectedTabNames=@('General','Details','Certification Path')
+      $observedTabNames=@($nativeTabs.Items|ForEach-Object{$_.Name})
+      $details=@($nativeTabs.Items|Where-Object{$_.Name-ceq'Details'-and$_.Role-eq37})
+      $general=@($nativeTabs.Items|Where-Object{$_.Name-ceq'General'-and$_.Role-eq37})
+      $selectedBefore=@($nativeTabs.Items|Where-Object{$_.Selected})
+      $tabSetMatches=($nativeTabs.Items.Count-eq$expectedTabNames.Count-and[string]::Join("`n",$observedTabNames)-ceq[string]::Join("`n",$expectedTabNames))
+      if(-not$tabSetMatches-or$details.Count-ne1-or$general.Count-ne1-or$selectedBefore.Count-ne1-or$selectedBefore[0].Name-cne'General'-or$details[0].Selected-or$details[0].DefaultAction-cne'Switch'){
+        Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-tabs-unrecognized' ([pscustomobject]@{NativeTabs=$nativeTabs.Items;ExpectedTabNames=$expectedTabNames;NativeTabHostHandle=$tabHandle})
+        throw 'native IAccessible did not expose the exact General/Details/Certification Path tabs with General selected and a unique Details Switch action.'
+      }
+      Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-tabs-before-details' ([pscustomobject]@{NativeTabs=$nativeTabs.Items;SelectedTab='General';DetailsChildId=$details[0].ChildId;NativeTabHostHandle=$tabHandle;ListenerCertificate=$listenerBefore})
+      $nativeTabs.Accessible.accDoDefaultAction([object]$details[0].ChildId)
+      $nativeTabsAfter=Get-EBRNativeCertificateTabs $tabHandle
+      $detailsAfter=@($nativeTabsAfter.Items|Where-Object{$_.Name-ceq'Details'-and$_.Role-eq37})
+      $selectedAfter=@($nativeTabsAfter.Items|Where-Object{$_.Selected})
+      if($detailsAfter.Count-ne1-or-not$detailsAfter[0].Selected-or$selectedAfter.Count-ne1-or$selectedAfter[0].Name-cne'Details'){
+        $viewerSnapshot=Get-EBRPromptSnapshot $viewer
+        Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-details-tab-not-selected' ([pscustomobject]@{NativeTabs=$nativeTabsAfter.Items;DetailsChildId=$details[0].ChildId;Action='IAccessible.accDoDefaultAction once'})
+        throw 'the exact native Details tab did not become the unique selected certificate tab after its single accessible Switch action.'
+      }
       $viewerSnapshot=Get-EBRPromptSnapshot $viewer
-      $selectedDetailsTabs=@(foreach($node in $viewerSnapshot.Nodes){try{$c=$node.Current;if($c.ControlType-eq[System.Windows.Automation.ControlType]::TabItem-and$c.ProcessId-eq$MstscProcessId-and$c.Name-ceq'Details'-and-not$c.IsOffscreen){$pattern=$null;if($node.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$pattern)-and([System.Windows.Automation.SelectionItemPattern]$pattern).Current.IsSelected){$node}}}catch{}})
-      if($selectedDetailsTabs.Count-ne1){Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-details-tab-not-selected' ([pscustomobject]@{DetailsTabCount=$selectedDetailsTabs.Count});throw 'UIA did not report the exact Details tab as selected.'}
+      Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-details-tab-selected' ([pscustomobject]@{NativeTabs=$nativeTabsAfter.Items;SelectedTab='Details';DetailsChildId=$detailsAfter[0].ChildId;Action='IAccessible.accDoDefaultAction once'})
       $displayed=$null;$thumbprintFailure='';$wait=[Diagnostics.Stopwatch]::StartNew()
       while($wait.Elapsed.TotalSeconds-lt5-and-not$displayed){
         $viewerSnapshot=Get-EBRPromptSnapshot $viewer

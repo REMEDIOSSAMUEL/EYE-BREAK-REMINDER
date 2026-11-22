@@ -576,6 +576,16 @@ public static class EBR_STD_UIA_CLIENT {
     $isAdministrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if($isAdministrator){throw 'The disposable test account unexpectedly has administrator membership.'}
     $events.Add([pscustomobject]@{Name='Child process has a standard Windows user token';Status='PASS';User=$identity.Name;Sid=$identity.User.Value;IsAdministrator=$false;ProfilePathSource=$userProfilePathSource;ProfilePath=$env:USERPROFILE})
+    $stageRoot=[IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath))
+    $runnerTempRoot=[IO.Path]::GetFullPath([string]$env:RUNNER_TEMP).TrimEnd('\')+'\'
+    if(-not$stageRoot.StartsWith($runnerTempRoot,[StringComparison]::OrdinalIgnoreCase)){throw "The disposable child script is outside the verified RUNNER_TEMP root: '$stageRoot'."}
+    $events.Add([pscustomobject]@{Name='Child test staging root resolves from its own script path';Status='PASS';StageRoot=$stageRoot;RunnerTemp=$runnerTempRoot})
+    foreach($requiredPath in @([pscustomobject]@{Name='installer';Path=$InstallerPath},[pscustomobject]@{Name='candidate executable';Path=$ExecutablePath},[pscustomobject]@{Name='evidence directory';Path=$EvidenceDirectory},[pscustomobject]@{Name='child result';Path=$ChildResultPath})){
+      if([string]::IsNullOrWhiteSpace([string]$requiredPath.Path)){throw "The standard-user child received an empty $($requiredPath.Name) path."}
+    }
+    if(-not(Test-Path -LiteralPath $InstallerPath -PathType Leaf)){throw "The standard-user child cannot find its staged installer '$InstallerPath'."}
+    if(-not(Test-Path -LiteralPath $ExecutablePath -PathType Leaf)){throw "The standard-user child cannot find its staged candidate executable '$ExecutablePath'."}
+    if(-not(Test-Path -LiteralPath $EvidenceDirectory -PathType Container)){throw "The standard-user child cannot find its staged evidence directory '$EvidenceDirectory'."}
     $installer=(Resolve-Path -LiteralPath $InstallerPath).Path;$candidate=(Resolve-Path -LiteralPath $ExecutablePath).Path
     $expectedHash=(Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
     $script:capabilityProbeResults=[System.Collections.Generic.List[object]]::new();$script:capabilityProbeChainClean=$true
@@ -685,7 +695,7 @@ public static class EBR_STD_UIA_CLIENT {
       $events.Add([pscustomobject]@{Name='Silent uninstall after a standard-user silent reinstall';Status='PASS';ExitCode=$silentUninstall.ExitCode})
     }
     $status='PASS'
-  }catch{$failure=$_.Exception.Message;$events.Add([pscustomobject]@{Name='Standard user acceptance';Status='FAIL';Details=$failure})}
+  }catch{$failure=$_.Exception.Message;$events.Add([pscustomobject]@{Name='Standard user acceptance';Status='FAIL';Details=$failure;ScriptStackTrace=$_.ScriptStackTrace;PositionMessage=$_.InvocationInfo.PositionMessage;ScriptLineNumber=$_.InvocationInfo.ScriptLineNumber})}
   finally{
     if($appProcess-and-not$appProcess.HasExited){Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue}
     if($ChildResultPath){Save-StandardUserResult $ChildResultPath ([pscustomobject]@{Status=$status;Failure=$failure;User=[Security.Principal.WindowsIdentity]::GetCurrent().Name;Events=$events.ToArray();CompletedUtc=[DateTime]::UtcNow.ToString('o')})}
