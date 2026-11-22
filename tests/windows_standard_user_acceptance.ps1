@@ -505,7 +505,7 @@ public static class EBR_STD_UIA_CLIENT {
       return $record
     }
     try{
-    $settingsLaunchErrors=[System.Collections.Generic.List[string]]::new()
+    $settingsLaunchErrors=[System.Collections.Generic.List[string]]::new();$settingsAppsFeaturesUriAttempted=$false
     try{$settingsProcess=Start-Process -FilePath 'ms-settings:' -PassThru;if($settingsProcess){[void]$settingsLaunchProcessIds.Add([int]$settingsProcess.Id);$settingsLaunchMethods.Add('Settings home URI activation')}}catch{$settingsLaunchErrors.Add("Settings home URI activation: $($_.Exception.Message)")}
     if(-not$settingsProcess){try{$explorer=Join-Path $env:WINDIR 'explorer.exe';$settingsProcess=Start-Process -FilePath $explorer -ArgumentList 'ms-settings:' -PassThru;if($settingsProcess){[void]$settingsLaunchProcessIds.Add([int]$settingsProcess.Id);$settingsLaunchMethods.Add('Explorer Settings home URI activation')}}catch{$settingsLaunchErrors.Add("Explorer Settings home URI activation: $($_.Exception.Message)")}}
     if(-not$settingsProcess-and$settingsLaunchErrors.Count){$settingsLaunchErrors.Add('Shell URI activation did not return a process handle.')}
@@ -530,6 +530,20 @@ public static class EBR_STD_UIA_CLIENT {
           }
         }catch{$settingsLaunchErrors.Add("Direct SystemSettings.exe home activation: $($_.Exception.Message)")}
       }else{$settingsLaunchErrors.Add('Direct SystemSettings.exe was not present at the standard Windows path.')}
+    }
+    if(-not$settingsHost){
+      # A home-URI activation may be unavailable on a Server SKU even when the
+      # documented Apps & Features page URI is registered. This is an entry
+      # fallback only: the acceptance gate below still requires an observed
+      # Apps action, an Installed apps action, the exact Settings-owned page and
+      # candidate row, then the row-scoped Settings Uninstall action.
+      $settingsAppsFeaturesUriAttempted=$true;$appsFeaturesUri='ms-settings:appsfeatures';$appsFeaturesProcess=$null
+      try{$appsFeaturesProcess=Start-Process -FilePath $appsFeaturesUri -PassThru -ErrorAction Stop;if($appsFeaturesProcess){[void]$settingsLaunchProcessIds.Add([int]$appsFeaturesProcess.Id);$settingsLaunchMethods.Add('documented ms-settings:appsfeatures URI activation')}}catch{$settingsLaunchErrors.Add("Documented ms-settings:appsfeatures URI activation: $($_.Exception.Message)")}
+      if(-not$appsFeaturesProcess){
+        try{$explorer=Join-Path $env:WINDIR 'explorer.exe';$appsFeaturesProcess=Start-Process -FilePath $explorer -ArgumentList $appsFeaturesUri -PassThru -ErrorAction Stop;if($appsFeaturesProcess){[void]$settingsLaunchProcessIds.Add([int]$appsFeaturesProcess.Id);$settingsLaunchMethods.Add('Explorer activation of documented ms-settings:appsfeatures URI')}}catch{$settingsLaunchErrors.Add("Explorer ms-settings:appsfeatures URI activation: $($_.Exception.Message)")}
+      }
+      if($appsFeaturesProcess){$settingsProcess=$appsFeaturesProcess;$appsFeaturesWatch=[Diagnostics.Stopwatch]::StartNew();while($appsFeaturesWatch.Elapsed.TotalSeconds-lt25-and-not$settingsHost){try{$settingsHost=Find-LaunchedSettingsWindow $settingsPreexistingProcessIds $settingsLaunchProcessIds $settingsSessionId;if($settingsHost){$settingsRoot=$settingsHost.Root;$settingsWindowHandle=[IntPtr]$settingsHost.Handle}}catch{};if(-not$settingsHost){Start-Sleep -Milliseconds 250}}}
+      if(-not$settingsHost){$settingsLaunchErrors.Add('The documented ms-settings:appsfeatures URI did not expose a newly launched Settings window in the verified test session.')}
     }
     if(-not$settingsHost){return [pscustomobject]@{Status='NOT TESTED';Reason="A newly launched Settings home window could not be identified: $($settingsLaunchErrors -join '; ')";LaunchMethods=$settingsLaunchMethods.ToArray();LaunchErrors=$settingsLaunchErrors.ToArray()}}
     if($settingsHost){
@@ -557,8 +571,10 @@ public static class EBR_STD_UIA_CLIENT {
         $settingsRoot=$settingsHost.Root;$settingsWindowHandle=[IntPtr]$settingsHost.Handle
         $navigationEvidence=[System.Collections.Generic.List[object]]::new()
         try{$settingsHomeForeground=Focus-VerifiedSettingsWindow $settingsWindowHandle $settingsHost.ProcessId}catch{return [pscustomobject]@{Status='NOT TESTED';Reason=$_.Exception.Message;SettingsHost=(Get-SettingsHostRecord $settingsHost);LaunchMethods=$settingsLaunchMethods.ToArray()}}
-        $settingsShot=Capture-StandardUserWizard $settingsWindowHandle 'standard-user-settings-home-before-apps-navigation.png'
-        $navigationEvidence.Add([pscustomobject]@{Stage='Settings home before Apps navigation';Host=(Get-SettingsHostRecord $settingsHost);Foreground=$settingsHomeForeground;Screenshot=$settingsShot;Tree=(Get-SettingsTreeSnapshot $settingsRoot 'Settings home before Apps navigation')})
+        $settingsEntryStage=if($settingsAppsFeaturesUriAttempted){'Documented Apps & Features URI state before observed Apps navigation'}else{'Settings home before Apps navigation'}
+        $settingsEntryScreenshot=if($settingsAppsFeaturesUriAttempted){'standard-user-settings-appsfeatures-before-apps-navigation.png'}else{'standard-user-settings-home-before-apps-navigation.png'}
+        $settingsShot=Capture-StandardUserWizard $settingsWindowHandle $settingsEntryScreenshot
+        $navigationEvidence.Add([pscustomobject]@{Stage=$settingsEntryStage;Host=(Get-SettingsHostRecord $settingsHost);Foreground=$settingsHomeForeground;Screenshot=$settingsShot;Tree=(Get-SettingsTreeSnapshot $settingsRoot $settingsEntryStage)})
         $appsAction=Find-UniqueSettingsAction $settingsRoot $settingsWindowHandle $settingsHost.ProcessId $settingsLaunchProcessIds $settingsPreexistingProcessIds @('Apps')
         if($appsAction.MatchCount-ne1){
           try{

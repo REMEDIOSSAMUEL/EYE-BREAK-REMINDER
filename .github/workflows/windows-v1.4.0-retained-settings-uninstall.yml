@@ -842,6 +842,81 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
+  shell-notification-owner-matched-windows-server-console:
+    name: Exact candidate Shell notification in its Console owner’s session
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Verify the exact retained x64 executable
+        id: candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Authoritative production executable is missing.' }
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "ENV-009 owner-matched Shell candidate hash mismatch: $actual" }
+          $pe = [IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($pe, 0x3C)
+          $machine = [BitConverter]::ToUInt16($pe, $peOffset + 4)
+          if ($machine -ne 0x8664) { throw ('Expected AMD64 PE 0x8664; found 0x{0:X4}.' -f $machine) }
+          "sha256=$actual" >> $env:GITHUB_OUTPUT
+          Write-Host 'PASS: artifact 14695418078 executable hash and native AMD64 PE identity match.'
+
+      - name: Test the exact candidate against the Shell owned by the active Console user
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $process = Get-Process -Id $PID -ErrorAction Stop
+          $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $evidence = Join-Path $env:RUNNER_TEMP 'env-009-owner-matched-shell-evidence'
+          & .\tests\windows_shell_notification_acceptance.ps1 `
+            -ExecutablePath $exe `
+            -EvidenceDirectory $evidence `
+            -ServerConsoleOwnerSession `
+            -ExpectedSessionId $process.SessionId `
+            -ExpectedSessionName 'Console' `
+            -ExpectedUser $user
+          $reportPath = Join-Path $evidence 'env-009-shell-notification-results.json'
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'Owner-matched Shell harness produced no result report.' }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          $desktop = $report.Environment.ConsoleDesktopEvidence
+          $checks = if ($desktop) { $desktop.Checks } else { $null }
+          $ownerPreflightVerified = [bool]($checks -and $checks.ExpectedUserAndSession -and $checks.ActiveWtsConsole -and $checks.Interactive -and $checks.Desktop -and $checks.TaskbarOwnedByExplorer -and $checks.ShellOwnerMatchesCurrentUser)
+          $ownerPreflightText = if ($ownerPreflightVerified) { 'verified' } else { 'not verified; see recorded checks' }
+          $adminText = if ($null -ne $desktop -and $null -ne $desktop.IsAdministrator) { [string][bool]$desktop.IsAdministrator } else { 'not recorded' }
+          $summary = "Requirement: ENV-009`nCandidate EXE: artifact 14695418078, SHA-256 $($report.Candidate.SHA256), native PE $($report.Candidate.Identity.PEMachine) (EXE identity checked)`nOS: $($report.OperatingSystem.Caption) $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nEnvironment: GitHub-hosted Windows Server 2025 x64; requested owner-matched active Console mode`nConsole/session/Shell-owner preflight: $ownerPreflightText`nCurrent token is administrator: $adminText`nShell visibility subtest: $($report.ShellNotificationVisibilityStatus) — $($report.ShellNotificationVisibilityReason)`nNotification audio: $($report.Audio.Status); physical output verified: $($report.Audio.PhysicalAudioVerified)`nOverall ENV-009: $($report.Status) — $($report.Reason)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($report.Status -eq 'FAIL') { throw "Owner-matched Windows Shell acceptance found a failure: $($report.Reason)" }
+          if ($report.Status -ne 'PASS') { Write-Warning "ENV-009 remains $($report.Status); inspect actual Shell/audio subresults before changing acceptance status." }
+
+      - name: Preserve owner-matched Shell UIA, logs, and screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-env-009-owner-matched-shell-${{ github.run_id }}
+          path: ${{ runner.temp }}/env-009-owner-matched-shell-evidence/**
+          if-no-files-found: warn
+          retention-days: 90
+
   isolated-lock-unlock-windows-server-x64:
     name: Exact candidate lock/unlock in a separate disposable Windows Server x64 guest
     if: contains(github.event.pull_request.labels.*.name, 'retry-server-rdp-lock-after-env-change')
