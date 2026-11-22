@@ -56,7 +56,6 @@ function Resolve-EBRTestRdpFileTrustPrompt {
   }
   Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
   Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
-  Add-Type -AssemblyName Accessibility -ErrorAction Stop
   if ($null -eq ('EBR_RdpUiNative' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -351,16 +350,16 @@ public static class EBR_RdpUiNative {
   }
 
   function Get-EBRNativeCertificateTabs([long]$TabHandle){
-    $accessible=[Accessibility.IAccessible][EBR_RdpUiNative]::GetAccessibleClient([IntPtr]$TabHandle)
+    $accessible=[EBR_RdpUiNative]::GetAccessibleClient([IntPtr]$TabHandle)
     $count=[int]$accessible.accChildCount
     if($count-lt1-or$count-gt8){throw "native SysTabControl32 exposed an unexpected MSAA child count: $count."}
     $items=[System.Collections.Generic.List[object]]::new()
     for($childId=1;$childId-le$count;$childId++){
-      $name=[string]$accessible.get_accName([object]$childId)
-      $role=[int]$accessible.get_accRole([object]$childId)
-      $state=[int]$accessible.get_accState([object]$childId)
+      $name=[string]$accessible.accName([object]$childId)
+      $role=[int]$accessible.accRole([object]$childId)
+      $state=[int]$accessible.accState([object]$childId)
       if([string]::IsNullOrWhiteSpace($name)-or$role-ne37){throw "MSAA tab child $childId did not expose an exact named ROLE_SYSTEM_PAGETAB (name '$name', role $role)."}
-      $defaultAction=[string]$accessible.get_accDefaultAction([object]$childId)
+      $defaultAction=[string]$accessible.accDefaultAction([object]$childId)
       $items.Add([pscustomobject]@{ChildId=$childId;Name=$name;Role=$role;State=$state;Selected=(($state-band0x2)-ne0);DefaultAction=$defaultAction})
     }
     return [pscustomobject]@{Accessible=$accessible;Items=$items.ToArray()}
@@ -601,6 +600,7 @@ public static class EBR_RdpUiNative {
           try {
             $current = $node.Current
             if ($current.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and
+                $current.ProcessId -eq $MstscProcessId -and $current.AutomationId -ceq 'VerificationCheckBox' -and
                 $current.Name -ceq $educationCheckboxName -and $current.IsEnabled -and -not $current.IsOffscreen) { $node }
           } catch { }
         }
@@ -616,42 +616,79 @@ public static class EBR_RdpUiNative {
         $checkbox = $educationCheckboxes[0]
         $toggle = [System.Windows.Automation.TogglePattern]$checkbox.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
         $before = [string]$toggle.Current.ToggleState
-        if ($before -eq [string][System.Windows.Automation.ToggleState]::Off) { $toggle.Toggle() }
-        $after = [string]$toggle.Current.ToggleState
-        if ($after -ne [string][System.Windows.Automation.ToggleState]::On) {
-          Save-EBRPromptEvidence (Get-EBRPromptSnapshot $ownedWindows[0]) 'rdp-file-education-prompt-checkbox-not-enabled' ([pscustomobject]@{Checkbox=$educationCheckboxName;Before=$before;After=$after;Action='None'})
-          throw 'BLOCKED: the exact per-account RDP-file acknowledgement checkbox did not reach On.'
-        }
-        $freshEducationWindows = @(
-          foreach ($candidateWindow in $desktop.FindAll([System.Windows.Automation.TreeScope]::Children, $trueCondition)) {
-            try {
-              if ([long]$candidateWindow.Current.NativeWindowHandle -eq $snapshot.Handle -and $candidateWindow.Current.ProcessId -eq $MstscProcessId) { $candidateWindow }
-            } catch { }
+        $checkboxAction = 'AlreadyOn; no toggle sent'
+        $immediateAfterToggle = $before
+        $toggleError = $null
+        if ($before -eq [string][System.Windows.Automation.ToggleState]::Off) {
+          $checkboxAction = 'One TogglePattern.Toggle() on exact VerificationCheckBox'
+          try {
+            $toggle.Toggle()
+            $immediateAfterToggle = [string]$toggle.Current.ToggleState
+          } catch {
+            $toggleError = $_.Exception.Message
           }
-        )
+        }
+        # This consent checkbox can visually update before the original UIA
+        # element/pattern reports the new state. Never toggle twice on a stale
+        # Off reading: reacquire the same mstsc dialog and exact control first.
+        $freshEducationWindows = @()
+        $freshEducation = $null
+        $freshCheckboxes = @()
+        $freshCheckboxState = 'UNREADABLE'
+        $freshCheckboxObservation = $null
+        $checkboxStateWatch = [Diagnostics.Stopwatch]::StartNew()
+        do {
+          $freshEducationWindows = @(
+            foreach ($candidateWindow in $desktop.FindAll([System.Windows.Automation.TreeScope]::Children, $trueCondition)) {
+              try {
+                if ([long]$candidateWindow.Current.NativeWindowHandle -eq $snapshot.Handle -and $candidateWindow.Current.ProcessId -eq $MstscProcessId) { $candidateWindow }
+              } catch { }
+            }
+          )
+          if ($freshEducationWindows.Count -eq 1) {
+            $freshEducation = Get-EBRPromptSnapshot $freshEducationWindows[0]
+            $freshCheckboxes = @(
+              foreach ($node in $freshEducation.Nodes) {
+                try {
+                  $current = $node.Current
+                  if ($current.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and
+                      $current.ProcessId -eq $MstscProcessId -and $current.AutomationId -ceq 'VerificationCheckBox' -and
+                      $current.Name -ceq $educationCheckboxName -and $current.IsEnabled -and -not $current.IsOffscreen) { $node }
+                } catch { }
+              }
+            )
+            if ($freshCheckboxes.Count -eq 1) {
+              try {
+                $freshToggle = [System.Windows.Automation.TogglePattern]$freshCheckboxes[0].GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+                $freshCheckboxState = [string]$freshToggle.Current.ToggleState
+                $freshCurrent = $freshCheckboxes[0].Current
+                $freshCheckboxObservation = [pscustomobject]@{ProcessId=$freshCurrent.ProcessId;AutomationId=$freshCurrent.AutomationId;Name=$freshCurrent.Name;ControlType=$freshCurrent.ControlType.ProgrammaticName;Enabled=$freshCurrent.IsEnabled;Offscreen=$freshCurrent.IsOffscreen;NativeWindowHandle=[long]$freshCurrent.NativeWindowHandle;Bounds=@($freshCurrent.BoundingRectangle.Left,$freshCurrent.BoundingRectangle.Top,$freshCurrent.BoundingRectangle.Width,$freshCurrent.BoundingRectangle.Height);ToggleState=$freshCheckboxState}
+              } catch {
+                $freshCheckboxState = 'UNREADABLE'
+                $freshCheckboxObservation = [pscustomobject]@{Error=$_.Exception.Message}
+              }
+            } elseif ($freshCheckboxes.Count -gt 1) {
+              $freshCheckboxState = 'AMBIGUOUS'
+            }
+          } elseif ($freshEducationWindows.Count -gt 1) {
+            $freshCheckboxState = 'AMBIGUOUS'
+          }
+          if ($freshEducationWindows.Count -eq 1 -and $freshCheckboxes.Count -eq 1 -and $freshCheckboxState -eq [string][System.Windows.Automation.ToggleState]::On) { break }
+          Start-Sleep -Milliseconds 100
+        } while ($checkboxStateWatch.Elapsed.TotalSeconds -lt 3)
+        $after = $freshCheckboxState
+        if ($after -ne [string][System.Windows.Automation.ToggleState]::On) {
+          $failureSnapshot = if ($freshEducation) { $freshEducation } else { Get-EBRPromptSnapshot $ownedWindows[0] }
+          Save-EBRPromptEvidence $failureSnapshot 'rdp-file-education-prompt-checkbox-not-enabled' ([pscustomobject]@{Checkbox=$educationCheckboxName;AutomationId='VerificationCheckBox';Before=$before;ImmediateAfterToggle=$immediateAfterToggle;RefreshedAfter=$after;Action=$checkboxAction;ToggleError=$toggleError;FreshWindowMatches=$freshEducationWindows.Count;FreshControlMatches=$freshCheckboxes.Count;FreshControl=$freshCheckboxObservation;ReacquisitionMilliseconds=[Math]::Round($checkboxStateWatch.Elapsed.TotalMilliseconds,1)})
+          throw 'BLOCKED: the exact per-account RDP-file acknowledgement checkbox did not reach On after a fresh same-window/control re-read.'
+        }
         if ($freshEducationWindows.Count -ne 1) {
-          Save-EBRPromptEvidence $snapshot 'rdp-file-education-prompt-window-refresh-failed' ([pscustomobject]@{Checkbox=$educationCheckboxName;Before=$before;After=$after;WindowMatches=$freshEducationWindows.Count})
+          Save-EBRPromptEvidence $snapshot 'rdp-file-education-prompt-window-refresh-failed' ([pscustomobject]@{Checkbox=$educationCheckboxName;AutomationId='VerificationCheckBox';Before=$before;ImmediateAfterToggle=$immediateAfterToggle;After=$after;Action=$checkboxAction;WindowMatches=$freshEducationWindows.Count})
           throw 'BLOCKED: the exact educational prompt could not be re-identified after the acknowledgement checkbox changed.'
         }
-        $freshEducation = Get-EBRPromptSnapshot $freshEducationWindows[0]
-        $freshCheckboxes = @(
-          foreach ($node in $freshEducation.Nodes) {
-            try {
-              $current = $node.Current
-              if ($current.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and $current.Name -ceq $educationCheckboxName -and $current.IsEnabled -and -not $current.IsOffscreen) { $node }
-            } catch { }
-          }
-        )
         $freshOkButtons = @(Get-EBRNamedPromptActions $freshEducation.Nodes 'OK' 'CommandButton_1' $MstscProcessId)
         $freshCancelButtons = @(Get-EBRNamedPromptActions $freshEducation.Nodes 'Cancel' 'CommandButton_2' $MstscProcessId | Where-Object { $_.Current.IsEnabled })
-        $freshCheckboxState = 'UNREADABLE'
-        if ($freshCheckboxes.Count -eq 1) {
-          try {
-            $freshToggle = [System.Windows.Automation.TogglePattern]$freshCheckboxes[0].GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
-            $freshCheckboxState = [string]$freshToggle.Current.ToggleState
-          } catch { }
-        }
-        $educationRefreshEvidence = [pscustomobject]@{Checkbox=$educationCheckboxName;Before=$before;After=$after;RefreshedCheckboxState=$freshCheckboxState;UniqueEnabledOK=($freshOkButtons.Count -eq 1 -and [bool]$freshOkButtons[0].Current.IsEnabled);UniqueEnabledCancel=($freshCancelButtons.Count -eq 1);Action='OK'}
+        $educationRefreshEvidence = [pscustomobject]@{Checkbox=$educationCheckboxName;AutomationId='VerificationCheckBox';Before=$before;ImmediateAfterToggle=$immediateAfterToggle;After=$after;RefreshedCheckboxState=$freshCheckboxState;FreshControl=$freshCheckboxObservation;ToggleError=$toggleError;UniqueEnabledOK=($freshOkButtons.Count -eq 1 -and [bool]$freshOkButtons[0].Current.IsEnabled);UniqueEnabledCancel=($freshCancelButtons.Count -eq 1);Action=$checkboxAction}
         Save-EBRPromptEvidence $freshEducation 'rdp-file-education-prompt-after-ui-refresh' $educationRefreshEvidence
         if ($freshCheckboxes.Count -ne 1 -or $freshCheckboxState -ne [string][System.Windows.Automation.ToggleState]::On -or $freshOkButtons.Count -ne 1 -or $freshCancelButtons.Count -ne 1) {
           Save-EBRPromptEvidence $freshEducation 'rdp-file-education-prompt-refreshed-controls-invalid' $educationRefreshEvidence

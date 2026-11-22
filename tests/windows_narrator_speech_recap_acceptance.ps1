@@ -91,6 +91,8 @@ $narratorProcess = $null
 $narratorPid = 0
 $narratorOwned = $false
 $narratorStoppedByHarness = $false
+$narratorProcessIdentity = $null
+$narratorOwnedIdentity = $null
 $dataDirectory = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'))
 $localAppDataRoot = [IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\') + '\'
 $dataExistedBefore = Test-Path -LiteralPath $dataDirectory
@@ -125,11 +127,33 @@ function Add-Assertion([string]$Name, [bool]$Passed, $Details=$null, [string]$Fa
   Add-Event $Name $assertionStatus $Details
 }
 
+function Get-NarratorProcessIdentity([Diagnostics.Process]$Process) {
+  if ($null -eq $Process) { throw 'Narrator process identity was not available.' }
+  $Process.Refresh()
+  if ($Process.HasExited) { throw 'Narrator exited before its process identity could be recorded.' }
+  $imagePath = [IO.Path]::GetFullPath([string]$Process.Path)
+  if ([string]::IsNullOrWhiteSpace($imagePath) -or -not (Test-Path -LiteralPath $imagePath -PathType Leaf)) { throw 'Narrator executable path could not be verified.' }
+  $imageFile = Get-Item -LiteralPath $imagePath -ErrorAction Stop
+  $startTimeUtc = $Process.StartTime.ToUniversalTime()
+  return [pscustomobject]@{
+    ProcessId=[int]$Process.Id
+    StartTimeUtc=$startTimeUtc.ToString('o')
+    StartTimeUtcTicks=[long]$startTimeUtc.Ticks
+    SessionId=[int]$Process.SessionId
+    ImagePath=$imagePath
+    ImageName=[string]$imageFile.Name
+    ImageSHA256=(Get-FileHash -LiteralPath $imagePath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+    ProductVersion=[string]$imageFile.VersionInfo.ProductVersion
+    FileVersion=[string]$imageFile.VersionInfo.FileVersion
+  }
+}
+
 function Get-FocusSnapshot([int]$CandidateProcessId, [string]$Phase) {
   $snapshot = [pscustomobject]@{
     Phase=$Phase; Utc=[DateTime]::UtcNow.ToString('o'); ProcessId=$null; IsCandidateProcess=$false
     Name=''; AutomationId=''; ControlType=''; ClassName=''; HasKeyboardFocus=$false
     IsKeyboardFocusable=$false; NativeWindowHandle=[long]0; Bounds=$null; Error=$null
+    NativeThreadFocusHandle=[long]0; NativeThreadFocusProcessId=0; NativeThreadFocusControlId=0; NativeThreadFocusError=$null
   }
   try {
     $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
@@ -147,22 +171,54 @@ function Get-FocusSnapshot([int]$CandidateProcessId, [string]$Phase) {
     $snapshot.NativeWindowHandle = [long]$current.NativeWindowHandle
     $snapshot.Bounds = @([double]$bounds.Left, [double]$bounds.Top, [double]$bounds.Width, [double]$bounds.Height)
   } catch { $snapshot.Error = $_.Exception.Message }
+  if ($mainWindow -ne [IntPtr]::Zero) {
+    try {
+      $nativeThreadFocus = [EBR_NARRATOR_NATIVE]::TargetThreadFocus($mainWindow)
+      $snapshot.NativeThreadFocusHandle = [long]$nativeThreadFocus.ToInt64()
+      if ($nativeThreadFocus -ne [IntPtr]::Zero) {
+        $snapshot.NativeThreadFocusProcessId = [EBR_NARRATOR_NATIVE]::OwnerProcessId($nativeThreadFocus)
+        $snapshot.NativeThreadFocusControlId = [EBR_NARRATOR_NATIVE]::WindowControlId($nativeThreadFocus)
+      }
+    } catch { $snapshot.NativeThreadFocusError = $_.Exception.Message }
+  }
   $focusTrace.Add($snapshot)
   return $snapshot
 }
 
-function Get-ControlElement([IntPtr]$MainWindow, [int]$ControlId, [string]$Description) {
+function Get-ControlElement([IntPtr]$MainWindow, [int]$ControlId, [string]$Description, [string]$ExpectedControlType='') {
   $handle = [EBR_NARRATOR_NATIVE]::FindVisibleChildById($MainWindow, $ControlId)
   if ($handle -eq [IntPtr]::Zero) { throw "NOT TESTED: the candidate does not currently expose visible enabled control ID $ControlId ($Description)." }
+  $nativeProcessId = [EBR_NARRATOR_NATIVE]::OwnerProcessId($handle)
+  $nativeControlId = [EBR_NARRATOR_NATIVE]::WindowControlId($handle)
+  $nativeClassName = [EBR_NARRATOR_NATIVE]::WindowClass($handle)
+  $nativeStyle = [EBR_NARRATOR_NATIVE]::WindowStyle($handle)
+  $nativeVisible = [EBR_NARRATOR_NATIVE]::IsWindowVisible($handle)
+  $nativeEnabled = [EBR_NARRATOR_NATIVE]::WindowEnabled($handle)
+  $nativeRect = [EBR_NARRATOR_NATIVE]::Bounds($handle)
+  if ($nativeProcessId -ne $candidatePid -or $nativeControlId -ne $ControlId) {
+    throw "NOT TESTED: native child identity mismatch for $Description; expected candidate PID $candidatePid/control ID $ControlId, observed PID $nativeProcessId/control ID $nativeControlId."
+  }
+  if (-not $nativeVisible -or -not $nativeEnabled) { throw "NOT TESTED: native child '$Description' is not visible and enabled." }
+  if ($nativeRect.Count -ne 4 -or $nativeRect[2] -le $nativeRect[0] -or $nativeRect[3] -le $nativeRect[1]) { throw "NOT TESTED: native child '$Description' has no usable window bounds." }
   $element = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
   if ($null -eq $element) { throw "UI Automation could not attach to candidate control ID $ControlId ($Description)." }
   $current = $element.Current
-  if ($current.ProcessId -ne $candidatePid) { throw "Control ID $ControlId is owned by PID $($current.ProcessId), not candidate PID $candidatePid." }
-  $control = [pscustomobject]@{ Handle=$handle; Element=$element; ProcessId=[int]$current.ProcessId; Name=[string]$current.Name; AutomationId=[string]$current.AutomationId; ControlType=[string]$current.ControlType.ProgrammaticName; ClassName=[string]$current.ClassName; Enabled=[bool]$current.IsEnabled; Offscreen=[bool]$current.IsOffscreen; KeyboardFocusable=[bool]$current.IsKeyboardFocusable; NativeWindowHandle=[int]$current.NativeWindowHandle; Bounds=@([double]$current.BoundingRectangle.Left,[double]$current.BoundingRectangle.Top,[double]$current.BoundingRectangle.Width,[double]$current.BoundingRectangle.Height) }
+  $uiaBounds = $current.BoundingRectangle
+  $control = [pscustomobject]@{
+    Handle=$handle; Element=$element; ProcessId=[int]$current.ProcessId; Name=[string]$current.Name
+    AutomationId=[string]$current.AutomationId; ControlType=[string]$current.ControlType.ProgrammaticName
+    ClassName=[string]$current.ClassName; Enabled=[bool]$current.IsEnabled; Offscreen=[bool]$current.IsOffscreen
+    KeyboardFocusable=[bool]$current.IsKeyboardFocusable; NativeWindowHandle=[long]$current.NativeWindowHandle
+    Bounds=@([double]$nativeRect[0],[double]$nativeRect[1],[double]($nativeRect[2]-$nativeRect[0]),[double]($nativeRect[3]-$nativeRect[1]))
+    UIABounds=@([double]$uiaBounds.Left,[double]$uiaBounds.Top,[double]$uiaBounds.Width,[double]$uiaBounds.Height)
+    NativeIdentity=[pscustomobject]@{ProcessId=$nativeProcessId;ControlId=$nativeControlId;ClassName=$nativeClassName;NativeWindowHandle=[long]$handle.ToInt64();Style=('0x{0:X}' -f $nativeStyle);HasWsTabStop=(($nativeStyle -band 0x00010000) -ne 0);HasWsGroup=(($nativeStyle -band 0x00020000) -ne 0);Visible=$nativeVisible;Enabled=$nativeEnabled;WindowBounds=$nativeRect}
+  }
+  $uiaIdentityMatches = ($control.ProcessId -eq $candidatePid -and $control.NativeWindowHandle -eq [long]$handle.ToInt64() -and $control.AutomationId -ceq [string]$ControlId)
+  $focusabilityExpectedFromNative = (($nativeStyle -band 0x00010000) -ne 0 -and $nativeEnabled)
+  Add-Event "Native/UIA identity and focusability observation for $Description" 'INFO' ([pscustomobject]@{ControlId=$ControlId;ExpectedControlType=$ExpectedControlType;Native=$control.NativeIdentity;UIA=[pscustomobject]@{ProcessId=$control.ProcessId;AutomationId=$control.AutomationId;ControlType=$control.ControlType;ClassName=$control.ClassName;NativeWindowHandle=$control.NativeWindowHandle;Name=$control.Name;Enabled=$control.Enabled;Offscreen=$control.Offscreen;KeyboardFocusable=$control.KeyboardFocusable;Bounds=$control.UIABounds};UIAIdentityMatches=$uiaIdentityMatches;UIAFocusabilityExpectedFromNativeStyleAndEnabled=$focusabilityExpectedFromNative;KeyboardFocusablePropertyMatchesNativeExpectation=($control.KeyboardFocusable -eq $focusabilityExpectedFromNative)})
+  if (-not $uiaIdentityMatches) { throw "NOT TESTED: UI Automation identity did not resolve to native candidate child ID $ControlId ($Description); details were recorded." }
   if ([string]::IsNullOrWhiteSpace($control.Name)) { throw "PRODUCT DEFECT: visible candidate control ID $ControlId ($Description) has no accessible name." }
-  if (-not $control.KeyboardFocusable) { throw "PRODUCT DEFECT: visible candidate control ID $ControlId ($Description) is not keyboard-focusable in UI Automation." }
-  if (-not $control.Enabled -or $control.Offscreen) { throw "NOT TESTED: candidate control ID $ControlId ($Description) is disabled or offscreen." }
-  if ($control.NativeWindowHandle -ne [int]$handle.ToInt64()) { throw "NOT TESTED: UI Automation native identity for control ID $ControlId ($Description) does not match its native HWND." }
+  if (-not [string]::IsNullOrWhiteSpace($ExpectedControlType) -and $control.ControlType -cne $ExpectedControlType) { throw "PRODUCT DEFECT: candidate control ID $ControlId ($Description) exposes UI Automation role '$($control.ControlType)', expected '$ExpectedControlType'." }
   return $control
 }
 
@@ -273,11 +329,33 @@ function Wait-CandidateFocus([string]$Phase, [int]$TimeoutSeconds=5) {
   return $snapshot
 }
 
+function Get-ExactNativeCandidateFocus([int]$ControlId, [string]$Description) {
+  $handle = [EBR_NARRATOR_NATIVE]::TargetThreadFocus($mainWindow)
+  if ($handle -eq [IntPtr]::Zero) { throw "PRODUCT DEFECT: target thread has no focused HWND after $Description." }
+  $processId = [EBR_NARRATOR_NATIVE]::OwnerProcessId($handle)
+  $nativeControlId = [EBR_NARRATOR_NATIVE]::WindowControlId($handle)
+  if ($processId -ne $candidatePid -or $nativeControlId -ne $ControlId) {
+    throw "PRODUCT DEFECT: keyboard focus after $Description resolved to PID $processId/control $nativeControlId; expected candidate PID $candidatePid/control $ControlId."
+  }
+  $control = Get-ControlElement $mainWindow $ControlId $Description 'ControlType.RadioButton'
+  $controlStyle = [EBR_NARRATOR_NATIVE]::WindowStyle($handle)
+  $hasTabStop = (($controlStyle -band 0x00010000) -ne 0)
+  if (-not $hasTabStop -or -not $control.Enabled -or $control.Offscreen) {
+    throw "PRODUCT DEFECT: control $ControlId ($Description) has target-thread keyboard focus but is not an enabled, visible WS_TABSTOP control."
+  }
+  $selection = $control.Element.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+  $isSelected = [bool]$selection.Current.IsSelected
+  if (-not $isSelected) { throw "PRODUCT DEFECT: keyboard focus moved to control $ControlId ($Description), but its radio selection state is not selected." }
+  $snapshot = Get-FocusSnapshot $candidatePid "Native target-thread focus after $Description"
+  Add-Event "Native target-thread keyboard focus after $Description" 'PASS' ([pscustomobject]@{ExpectedProcessId=$candidatePid;ObservedProcessId=$processId;ExpectedControlId=$ControlId;ObservedControlId=$nativeControlId;NativeWindowHandle=('0x{0:X}' -f $handle.ToInt64());NativeStyle=('0x{0:X}' -f $controlStyle);HasWsTabStop=$hasTabStop;Selected=$isSelected;UIAFocusSnapshot=$snapshot})
+  return [pscustomobject]@{Control=$control;Snapshot=$snapshot;Selection=$isSelected;NativeStyle=$controlStyle;NativeWindowHandle=$handle}
+}
+
 function Test-SameFocusIdentity($Left, $Right) {
   return ($Left.ProcessId -eq $Right.ProcessId -and $Left.NativeWindowHandle -eq $Right.NativeWindowHandle -and $Left.Name -ceq $Right.Name -and $Left.AutomationId -ceq $Right.AutomationId -and $Left.ControlType -ceq $Right.ControlType -and $Left.ClassName -ceq $Right.ClassName)
 }
 
-function Assert-ExactCandidateFocus($Control, [string]$Phase, $ExpectedIdentity=$null) {
+function Assert-ExactCandidateFocus($Control, [string]$Phase, $ExpectedIdentity=$null, [bool]$AllowNativeRadioFocus=$false) {
   $foreground = [EBR_NARRATOR_NATIVE]::ForegroundWindow()
   $foregroundPid = [EBR_NARRATOR_NATIVE]::OwnerProcessId($foreground)
   if ($foreground -ne $mainWindow -or $foregroundPid -ne $candidatePid) { throw "NOT TESTED: candidate lost the foreground before or during $Phase; no Narrator command was sent." }
@@ -288,7 +366,18 @@ function Assert-ExactCandidateFocus($Control, [string]$Phase, $ExpectedIdentity=
   if ($snapshot.Name -cne $Control.Name -or $snapshot.AutomationId -cne $Control.AutomationId -or $snapshot.ControlType -cne $Control.ControlType -or $snapshot.ClassName -cne $Control.ClassName) {
     throw "PRODUCT DEFECT: UI Automation identity for the focused candidate control changed during $Phase. Expected $($Control | Select-Object Name,AutomationId,ControlType,ClassName,NativeWindowHandle | ConvertTo-Json -Compress); observed $($snapshot | Select-Object Name,AutomationId,ControlType,ClassName,NativeWindowHandle | ConvertTo-Json -Compress)."
   }
-  if (-not $snapshot.IsKeyboardFocusable -or -not $snapshot.HasKeyboardFocus) { throw "PRODUCT DEFECT: UI Automation did not report the exact candidate control as keyboard-focusable and keyboard-focused during $Phase." }
+  if (-not $snapshot.IsKeyboardFocusable -or -not $snapshot.HasKeyboardFocus) {
+    $nativeRadioFocusVerified = $false
+    if ($AllowNativeRadioFocus -and $Control.ControlType -ceq 'ControlType.RadioButton') {
+      try {
+        $nativeFocus = [EBR_NARRATOR_NATIVE]::TargetThreadFocus($mainWindow)
+        $style = [EBR_NARRATOR_NATIVE]::WindowStyle($Control.Handle)
+        $nativeRadioFocusVerified = ($nativeFocus -eq $Control.Handle -and [EBR_NARRATOR_NATIVE]::OwnerProcessId($nativeFocus) -eq $candidatePid -and [EBR_NARRATOR_NATIVE]::WindowControlId($nativeFocus) -eq [int]$Control.AutomationId -and ($style -band 0x00010000) -ne 0 -and $Control.Enabled -and -not $Control.Offscreen)
+      } catch { $nativeRadioFocusVerified = $false }
+    }
+    if (-not $nativeRadioFocusVerified) { throw "PRODUCT DEFECT: UI Automation did not report the exact candidate control as keyboard-focusable and keyboard-focused during $Phase, and native target-thread radio focus could not verify it." }
+    Add-Event "UI Automation focus-property discrepancy during $Phase" 'INFO' ([pscustomobject]@{UIAHasKeyboardFocus=$snapshot.HasKeyboardFocus;UIAIsKeyboardFocusable=$snapshot.IsKeyboardFocusable;NativeThreadFocusVerified=$true;ControlId=[int]$Control.AutomationId;NativeStyle=('0x{0:X}' -f $style);Evidence='A fresh Narrator Read Item/Copy Last Phrase capture must still contain the exact accessible name before the speech assertion can pass.'})
+  }
   if ($snapshot.Name.Trim().Length -lt 3) { throw "PRODUCT DEFECT: focused candidate control accessible name is shorter than three characters during $Phase." }
   if ($null -ne $ExpectedIdentity -and -not (Test-SameFocusIdentity $ExpectedIdentity $snapshot)) { throw "NOT TESTED: the exact candidate control identity changed during $Phase." }
   return $snapshot
@@ -328,16 +417,16 @@ function Send-KeyboardKey([byte]$Key, [string]$Description) {
   return [pscustomobject]@{Key=$Key;InputEventsSent=$eventsSent;DeliveryVerified=$true}
 }
 
-function Copy-NarratorLastPhrase($Control, [string]$Phase) {
+function Copy-NarratorLastPhrase($Control, [string]$Phase, [switch]$AllowNativeRadioFocus) {
   if ([string]::IsNullOrWhiteSpace($Control.Name) -or $Control.Name.Trim().Length -lt 3) { throw 'PRODUCT DEFECT: refusing to accept Narrator speech for a candidate control without a full accessible name of at least three characters.' }
-  $beforeRead = Assert-ExactCandidateFocus $Control "$Phase before Read Item"
+  $beforeRead = Assert-ExactCandidateFocus $Control "$Phase before Read Item" $null ([bool]$AllowNativeRadioFocus)
   $sentinel = '__EBR_NARRATOR_RECAP_' + [guid]::NewGuid().ToString('N')
   Set-Clipboard -Value $sentinel -ErrorAction Stop
   Start-Sleep -Milliseconds 100
-  $afterSentinel = Assert-ExactCandidateFocus $Control "$Phase after clipboard sentinel" $beforeRead
+  $afterSentinel = Assert-ExactCandidateFocus $Control "$Phase after clipboard sentinel" $beforeRead ([bool]$AllowNativeRadioFocus)
   $readItemChord = Send-NarratorChord 0x09 0 'Read Item'
   Start-Sleep -Milliseconds 500
-  $afterRead = Assert-ExactCandidateFocus $Control "$Phase after Read Item" $afterSentinel
+  $afterRead = Assert-ExactCandidateFocus $Control "$Phase after Read Item" $afterSentinel ([bool]$AllowNativeRadioFocus)
   $copyChord = Send-NarratorChord 0x58 0x11 'Copy Last Phrase'
   $watch = [Diagnostics.Stopwatch]::StartNew()
   $phrase = ''
@@ -346,7 +435,7 @@ function Copy-NarratorLastPhrase($Control, [string]$Phase) {
     try { $phrase = [string](Get-Clipboard -Raw -ErrorAction Stop) } catch { $phrase = '' }
     if (-not [string]::IsNullOrWhiteSpace($phrase) -and $phrase -cne $sentinel) { break }
   }
-  $afterCopy = Assert-ExactCandidateFocus $Control "$Phase after Copy Last Phrase" $afterRead
+  $afterCopy = Assert-ExactCandidateFocus $Control "$Phase after Copy Last Phrase" $afterRead ([bool]$AllowNativeRadioFocus)
   $phrase = ($phrase -replace '[\r\n\t]+', ' ').Trim()
   $accessibleName = ($Control.Name -replace '[\r\n\t]+', ' ').Trim()
   $nameIncluded = ($phrase.Length -gt 0 -and $phrase.IndexOf($accessibleName, [StringComparison]::OrdinalIgnoreCase) -ge 0)
@@ -373,11 +462,11 @@ function Save-Result([string]$FinalStatus, [string]$FinalReason) {
     OperatingSystem=$osRecord; NativeCPUArchitecture=$nativeCpuArchitecture
     Environment=[pscustomobject]@{ Provider='GitHub-hosted Actions runner'; Description=$environmentDescription; ImageOS=$env:ImageOS; ImageVersion=$env:ImageVersion; RunnerOS=$env:RUNNER_OS; RunnerArchitecture=$env:RUNNER_ARCH; ProcessSessionId=$sessionId; SessionName=$env:SESSIONNAME; User=$testUser; ExpectedSessionId=if($serverMode){$ExpectedSessionId}else{$null};ExpectedSessionName=if($serverRdpMode){$ExpectedSessionName}elseif($serverConsoleMode){'Console'}else{$null};ExpectedUser=if($serverMode){$ExpectedUser}else{$null};UserInteractive=[Environment]::UserInteractive;ConsoleSessionEvidence=$consoleSessionEvidence }
     Profile=[pscustomobject]@{ LocalAppData=$env:LOCALAPPDATA; AppDataPath=$dataDirectory; AppDataAbsentBeforeTest=(-not $dataExistedBefore); TestDataCreatedByHarness=$dataCreatedByHarness; TestDataRemoved=$dataRemoved }
-    Narrator=[pscustomobject]@{ ProcessId=$narratorPid; StartedByHarness=$narratorOwned; Version=if($narratorRecord){$narratorRecord.Version}else{$null}; SessionId=if($narratorRecord){$narratorRecord.SessionId}else{$null}; RecapMethod='Insert+Ctrl+X Copy Last Phrase'; Captures=@($speechCaptures); PhysicalAudioVerified=$physicalAudioVerified }
+    Narrator=[pscustomobject]@{ ProcessId=$narratorPid; StartedByHarness=$narratorOwned; Version=if($narratorRecord){$narratorRecord.Version}else{$null}; SessionId=if($narratorRecord){$narratorRecord.SessionId}else{$null}; ProcessIdentity=$narratorProcessIdentity; RecapMethod='Insert+Ctrl+X Copy Last Phrase'; Captures=@($speechCaptures); PhysicalAudioVerified=$physicalAudioVerified }
     OOBEActions=@($oobeActions); FocusTrace=@($focusTrace); Assertions=@($assertions); Events=@($events)
      AssertionCounts=[pscustomobject]@{Total=$assertions.Count;Passed=@($assertions|Where-Object{$_.Status -eq 'PASS'}).Count;Fail=@($assertions|Where-Object{$_.Status -eq 'FAIL'}).Count;NotTested=@($assertions|Where-Object{$_.Status -eq 'NOT TESTED'}).Count}
     Screenshots=@($screenshots); TranscriptFile=$transcriptPath; LogFile=$logPath
-    Cleanup=[pscustomobject]@{CandidateProcessStopped=$candidateStoppedByHarness;NarratorProcessStopped=$narratorStoppedByHarness;AppDataRemoved=$dataRemoved;Errors=@($cleanupErrors)}
+    Cleanup=[pscustomobject]@{CandidateProcessStopped=$candidateStoppedByHarness;NarratorProcessStopped=$narratorStoppedByHarness;NarratorOwnedIdentity=$narratorOwnedIdentity;AppDataRemoved=$dataRemoved;Errors=@($cleanupErrors)}
     Limitations=@($(if($serverMode){'Windows Server 2025 x64 host; this is not Windows 11 evidence.'}else{'Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.'}),'Speech Recap text verifies Narrator speech content only; physical audio rendering and audibility were not tested.','The standalone candidate was launched; no installer or updater was run.')
     ObservedUtc=[DateTime]::UtcNow.ToString('o')
   }
@@ -424,9 +513,12 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
   [DllImport("user32.dll", SetLastError=true)] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr data);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr data);
   [DllImport("user32.dll", SetLastError=true)] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+  [DllImport("user32.dll", SetLastError=true)] private static extern bool GetGUIThreadInfo(uint threadId, ref EBR_NARRATOR_GUITHREADINFO info);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="GetWindowTextW", SetLastError=true)] private static extern int GetWindowTextNative(IntPtr hwnd, StringBuilder text, int maxCount);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="GetClassNameW", SetLastError=true)] private static extern int GetClassNameNative(IntPtr hwnd, StringBuilder text, int maxCount);
   [DllImport("user32.dll", SetLastError=true)] private static extern int GetDlgCtrlID(IntPtr hwnd);
+  [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW", SetLastError=true)] private static extern IntPtr GetWindowLongPtr64(IntPtr hwnd, int index);
+  [DllImport("user32.dll", EntryPoint="GetWindowLongW", SetLastError=true)] private static extern int GetWindowLong32(IntPtr hwnd, int index);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool IsWindowVisible(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool IsWindowEnabled(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool GetWindowRect(IntPtr hwnd, out EBR_NARRATOR_RECT rect);
@@ -445,6 +537,8 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
   [DllImport("user32.dll", SetLastError=true)] private static extern bool CloseDesktop(IntPtr desktop);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool GetUserObjectInformationW(IntPtr handle, int index, IntPtr info, uint length, out uint needed);
   [StructLayout(LayoutKind.Sequential)] private struct EBR_NARRATOR_RECT { public int Left, Top, Right, Bottom; }
+  [StructLayout(LayoutKind.Sequential)] private struct EBR_NARRATOR_GUIRECT { public int Left, Top, Right, Bottom; }
+  [StructLayout(LayoutKind.Sequential)] private struct EBR_NARRATOR_GUITHREADINFO { public int cbSize; public uint flags; public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret; public EBR_NARRATOR_GUIRECT rcCaret; }
   private static string UserObjectName(IntPtr handle) {
     if (handle == IntPtr.Zero) return null;
     uint needed;
@@ -457,7 +551,7 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
     } finally { Marshal.FreeHGlobal(buffer); }
   }
   private static EBR_NARRATOR_INPUT KeyboardInput(byte key, bool keyUp) {
-    uint flags = key == 0x2D ? 0x0001u : 0u; // VK_INSERT is an E0-prefixed extended key.
+    uint flags = (key == 0x2D || (key >= 0x21 && key <= 0x2E)) ? 0x0001u : 0u; // Insert and navigation keys are E0-prefixed extended keys.
     if (keyUp) flags |= 0x0002u;
     return new EBR_NARRATOR_INPUT { type=1u, u=new EBR_NARRATOR_INPUTUNION { ki=new EBR_NARRATOR_KEYBDINPUT { wVk=key, wScan=0, dwFlags=flags, time=0, dwExtraInfo=UIntPtr.Zero } } };
   }
@@ -491,6 +585,16 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
     return (int)sent;
   }
   public static ushort NativeArchitecture() { EBR_NARRATOR_SYSTEM_INFO i; GetNativeSystemInfo(out i); return i.ProcessorArchitecture; }
+  public static int WindowControlId(IntPtr hwnd) { return GetDlgCtrlID(hwnd); }
+  public static IntPtr TargetThreadFocus(IntPtr targetWindow) {
+    uint processId; uint threadId=GetWindowThreadProcessId(targetWindow, out processId);
+    if (threadId == 0 || processId == 0) throw new InvalidOperationException("Could not identify the candidate UI thread.");
+    EBR_NARRATOR_GUITHREADINFO info=new EBR_NARRATOR_GUITHREADINFO(); info.cbSize=Marshal.SizeOf(typeof(EBR_NARRATOR_GUITHREADINFO));
+    if (!GetGUIThreadInfo(threadId, ref info)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "GetGUIThreadInfo failed for the candidate UI thread.");
+    return info.hwndFocus;
+  }
+  public static long WindowStyle(IntPtr hwnd) { return IntPtr.Size == 8 ? GetWindowLongPtr64(hwnd, -16).ToInt64() : GetWindowLong32(hwnd, -16); }
+  public static bool WindowEnabled(IntPtr hwnd) { return IsWindowEnabled(hwnd); }
   public static uint ActiveConsoleSessionId() { return WTSGetActiveConsoleSessionId(); }
   public static bool TryGetWtsSessionString(uint sessionId, int infoClass, out string value) {
     IntPtr buffer; uint bytes;
@@ -644,6 +748,7 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
 
   $narratorPath = Join-Path $env:WINDIR 'System32\Narrator.exe'
   if (-not (Test-Path -LiteralPath $narratorPath -PathType Leaf)) { throw 'NOT TESTED: Narrator.exe is unavailable on this runner image.' }
+  $expectedNarratorImageSha256 = (Get-FileHash -LiteralPath $narratorPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
   $narratorInSession = @(Get-Process -Name Narrator -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId })
   if ($narratorInSession.Count -gt 0) {
     $narratorProcess = $narratorInSession | Select-Object -First 1
@@ -704,33 +809,68 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
     if ($narratorProcess.SessionId -ne $sessionId) { throw 'NOT TESTED: Narrator is not running in the candidate test session.' }
     Add-Event 'Start Narrator because no instance was already running in the test session' 'PASS' ([pscustomobject]@{ProcessId=$narratorPid;SessionId=$narratorProcess.SessionId;OwnedByHarness=$true;Path=$narratorPath})
   }
-  $narratorInfo = Get-Item -LiteralPath $narratorPath -ErrorAction Stop
-  $narratorRecord = [pscustomobject]@{Path=$narratorPath;ProductVersion=$narratorInfo.VersionInfo.ProductVersion;Version=$narratorInfo.VersionInfo.FileVersion;ProcessId=$narratorPid;SessionId=$narratorProcess.SessionId;OwnedByHarness=$narratorOwned;ModifierKey='Insert';CopyLastPhraseShortcut='Insert+Ctrl+X'}
+  $narratorProcessIdentity = Get-NarratorProcessIdentity $narratorProcess
+  if ($narratorOwned) { $narratorOwnedIdentity = $narratorProcessIdentity }
+  if ($narratorProcessIdentity.SessionId -ne $sessionId) { throw 'NOT TESTED: observed Narrator process identity is not in the candidate test session.' }
+  if ($narratorProcessIdentity.ImageName -ine 'Narrator.exe' -or $narratorProcessIdentity.ImageSHA256 -cne $expectedNarratorImageSha256) { throw 'NOT TESTED: observed Narrator process image does not match the requested built-in Narrator executable.' }
+  $narratorRecord = [pscustomobject]@{RequestedPath=$narratorPath;RequestedImageSHA256=$expectedNarratorImageSha256;ProductVersion=$narratorProcessIdentity.ProductVersion;Version=$narratorProcessIdentity.FileVersion;ProcessId=$narratorPid;SessionId=$narratorProcess.SessionId;OwnedByHarness=$narratorOwned;ProcessIdentity=$narratorProcessIdentity;ModifierKey='Insert';CopyLastPhraseShortcut='Insert+Ctrl+X'}
   Start-Sleep -Seconds 2
 
-  $settingsButton = Get-ControlElement $mainWindow 12 'Settings navigation button'
+  # Verify real Right-arrow movement through both native radio groups. The
+  # provider can report IsKeyboardFocusable=false for an unfocused radio peer,
+  # so target-thread focus + WS_TABSTOP + selected state prove delivered key
+  # navigation while UIA's property is retained as a separate observation.
+  $timerNav = Get-ControlElement $mainWindow 10 'Timer navigation radio item' 'ControlType.RadioButton'
+  $historyNav = Get-ControlElement $mainWindow 11 'History navigation radio item' 'ControlType.RadioButton'
+  $settingsButton = Get-ControlElement $mainWindow 12 'Settings navigation radio item' 'ControlType.RadioButton'
+  if ($timerNav.Name -notmatch '(?i)timer' -or $historyNav.Name -notmatch '(?i)history') { throw 'PRODUCT DEFECT: navigation radio items do not expose their expected Timer and History names.' }
   if ($settingsButton.Name -notmatch '(?i)settings') { throw "PRODUCT DEFECT: candidate Settings navigation control has accessible name '$($settingsButton.Name)', which does not identify the Settings action." }
-  if ($settingsButton.ControlType -ne 'ControlType.Button') { throw "PRODUCT DEFECT: candidate Settings navigation control exposes role '$($settingsButton.ControlType)', not Button." }
-  $navClick = $settingsButton.Bounds
-  if ($navClick.Count -ne 4 -or $navClick[2] -le 0 -or $navClick[3] -le 0) { throw 'NOT TESTED: Settings navigation control has no usable visible UIA bounds.' }
-  if (-not [EBR_NARRATOR_NATIVE]::ClickAt([int]($navClick[0] + $navClick[2]/2), [int]($navClick[1] + $navClick[3]/2))) { throw 'NOT TESTED: real pointer input could not focus Settings navigation.' }
+  $timerNav.Element.SetFocus()
+  Start-Sleep -Milliseconds 250
+  $timerFocused = Get-ExactNativeCandidateFocus 10 'initial Timer navigation focus'
+  $navRight1 = Send-KeyboardKey 0x27 'Right-arrow navigation from Timer to History'
+  Start-Sleep -Milliseconds 250
+  $historyFocused = Get-ExactNativeCandidateFocus 11 'Right-arrow navigation from Timer to History'
+  $navRight2 = Send-KeyboardKey 0x27 'Right-arrow navigation from History to Settings'
+  Start-Sleep -Milliseconds 250
+  $settingsFocused = Get-ExactNativeCandidateFocus 12 'Right-arrow navigation from History to Settings'
+  $navScreenshot = Capture-CandidateWindow $mainWindow 'gui-016-candidate-keyboard-navigation-window.png'
+  Add-Assertion 'Real Right-arrow input moves native keyboard focus and radio selection Timer > History > Settings' $true ([pscustomobject]@{Timer=$timerFocused;FirstRight=$navRight1;History=$historyFocused;SecondRight=$navRight2;Settings=$settingsFocused;Screenshot=$navScreenshot.Path})
+  $navigationSpeech = Copy-NarratorLastPhrase $settingsFocused.Control 'Keyboard Right-arrow focus to Settings navigation' -AllowNativeRadioFocus
+  $navigationSpeechValid = $navigationSpeech.ValidatedFreshPhrase
+  Add-Assertion 'Narrator Read Item and Copy Last Phrase capture the Settings navigation accessible name after real Right-arrow navigation' $navigationSpeechValid ([pscustomobject]@{NativeFocus=$settingsFocused;Capture=$navigationSpeech;PhysicalAudioVerified=$false})
   Start-Sleep -Milliseconds 350
-  $alarmSection = Get-ControlElement $mainWindow 132 'Alarm Settings section navigation'
+  $intervalsNav = Get-ControlElement $mainWindow 130 'Intervals Settings section radio item' 'ControlType.RadioButton'
+  $scheduleNav = Get-ControlElement $mainWindow 131 'Schedule Settings section radio item' 'ControlType.RadioButton'
+  $alarmSection = Get-ControlElement $mainWindow 132 'Alarm Settings section radio item' 'ControlType.RadioButton'
+  if ($intervalsNav.Name -notmatch '(?i)intervals' -or $scheduleNav.Name -notmatch '(?i)schedule') { throw 'PRODUCT DEFECT: Settings section radio items do not expose their expected Intervals and Schedule names.' }
   if ($alarmSection.Name -notmatch '(?i)alarm') { throw "PRODUCT DEFECT: candidate Alarm section navigation has accessible name '$($alarmSection.Name)', which does not identify the Alarm section." }
-  $alarmBounds = $alarmSection.Bounds
-  if ($alarmBounds.Count -ne 4 -or $alarmBounds[2] -le 0 -or $alarmBounds[3] -le 0) { throw 'NOT TESTED: Alarm section navigation control has no usable visible UIA bounds.' }
-  if (-not [EBR_NARRATOR_NATIVE]::ClickAt([int]($alarmBounds[0] + $alarmBounds[2]/2), [int]($alarmBounds[1] + $alarmBounds[3]/2))) { throw 'NOT TESTED: real pointer input could not select the candidate Alarm settings section.' }
+  $intervalsNav.Element.SetFocus()
+  Start-Sleep -Milliseconds 250
+  $intervalsFocused = Get-ExactNativeCandidateFocus 130 'initial Intervals Settings section focus'
+  $sectionRight1 = Send-KeyboardKey 0x27 'Right-arrow navigation from Intervals to Schedule'
+  Start-Sleep -Milliseconds 250
+  $scheduleFocused = Get-ExactNativeCandidateFocus 131 'Right-arrow navigation from Intervals to Schedule'
+  $sectionRight2 = Send-KeyboardKey 0x27 'Right-arrow navigation from Schedule to Alarm'
+  Start-Sleep -Milliseconds 250
+  $alarmFocused = Get-ExactNativeCandidateFocus 132 'Right-arrow navigation from Schedule to Alarm'
+  $sectionScreenshot = Capture-CandidateWindow $mainWindow 'gui-016-candidate-keyboard-alarm-navigation-window.png'
+  Add-Assertion 'Real Right-arrow input moves native keyboard focus and radio selection Intervals > Schedule > Alarm' $true ([pscustomobject]@{Intervals=$intervalsFocused;FirstRight=$sectionRight1;Schedule=$scheduleFocused;SecondRight=$sectionRight2;Alarm=$alarmFocused;Screenshot=$sectionScreenshot.Path})
+  $alarmNavigationSpeech = Copy-NarratorLastPhrase $alarmFocused.Control 'Keyboard Right-arrow focus to Alarm Settings section' -AllowNativeRadioFocus
+  $alarmNavigationSpeechValid = $alarmNavigationSpeech.ValidatedFreshPhrase
+  Add-Assertion 'Narrator Read Item and Copy Last Phrase capture the Alarm section accessible name after real Right-arrow navigation' $alarmNavigationSpeechValid ([pscustomobject]@{NativeFocus=$alarmFocused;Capture=$alarmNavigationSpeech;PhysicalAudioVerified=$false})
+  Start-Sleep -Milliseconds 250
   Start-Sleep -Milliseconds 350
   $settingsWait = [Diagnostics.Stopwatch]::StartNew()
   $volumeControl = $null
   while ($settingsWait.Elapsed.TotalSeconds -lt 8 -and $null -eq $volumeControl) {
-    try { $volumeControl = Get-ControlElement $mainWindow 103 'Alarm volume slider' }
+    try { $volumeControl = Get-ControlElement $mainWindow 103 'Alarm volume slider' 'ControlType.Slider' }
     catch { if ($_.Exception.Message -match '^PRODUCT DEFECT:') { throw }; Start-Sleep -Milliseconds 100 }
   }
   if ($null -eq $volumeControl) { throw 'NOT TESTED: the real candidate Settings page did not expose its Alarm volume control.' }
   if ($volumeControl.ControlType -ne 'ControlType.Slider') { throw "PRODUCT DEFECT: candidate Alarm volume control exposes role '$($volumeControl.ControlType)', not Slider." }
   $settingsShot = Capture-CandidateWindow $mainWindow 'gui-016-candidate-settings-window.png'
-  Add-Assertion 'Real Settings > Alarm navigation opens the candidate alarm controls through pointer input' $true ([pscustomobject]@{NavigationControl=$settingsButton;AlarmSection=$alarmSection;VolumeControl=$volumeControl;Screenshot=$settingsShot.Path})
+  Add-Assertion 'Real keyboard Settings and Alarm navigation opens the candidate alarm controls' $true ([pscustomobject]@{NavigationControl=$settingsButton;AlarmSection=$alarmSection;VolumeControl=$volumeControl;Screenshots=@($navScreenshot.Path,$sectionScreenshot.Path,$settingsShot.Path)})
 
   $volumeBounds = $volumeControl.Bounds
   if ($volumeBounds.Count -ne 4 -or $volumeBounds[2] -le 0 -or $volumeBounds[3] -le 0) { throw 'NOT TESTED: Alarm volume control has no usable visible UIA bounds.' }
@@ -798,18 +938,25 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
     } catch { $cleanupErrors.Add("Candidate process cleanup: $($_.Exception.Message)") }
   }
   if ($narratorOwned -and $narratorPid -gt 0) {
-    try {
-      $ownedNarrator = Get-Process -Id $narratorPid -ErrorAction SilentlyContinue
-      if ($ownedNarrator) {
-        $narratorImage = ''
-        try { $narratorImage = [IO.Path]::GetFullPath($ownedNarrator.Path) } catch {}
-        if ($narratorImage -ieq [IO.Path]::GetFullPath((Join-Path $env:WINDIR 'System32\Narrator.exe'))) {
-          Stop-Process -Id $narratorPid -Force -ErrorAction Stop
+    if ($null -eq $narratorOwnedIdentity) {
+      $cleanupErrors.Add("Narrator PID $narratorPid was started by the harness, but a complete PID/start-time/session/image identity was not captured; it was not stopped.")
+    } else {
+      try {
+        $ownedNarrator = Get-Process -Id $narratorPid -ErrorAction SilentlyContinue
+        if ($ownedNarrator) {
+          $currentIdentity = Get-NarratorProcessIdentity $ownedNarrator
+          $sameOwnedProcess = ($currentIdentity.ProcessId -eq $narratorOwnedIdentity.ProcessId -and $currentIdentity.StartTimeUtcTicks -eq $narratorOwnedIdentity.StartTimeUtcTicks -and $currentIdentity.SessionId -eq $narratorOwnedIdentity.SessionId -and $currentIdentity.ImageName -ceq $narratorOwnedIdentity.ImageName -and $currentIdentity.ImageSHA256 -ceq $narratorOwnedIdentity.ImageSHA256)
+          if (-not $sameOwnedProcess) { throw 'Narrator process no longer matches its captured PID, start time, session, and executable identity; it was not stopped.' }
+          $ownedNarrator.Kill()
+          if (-not $ownedNarrator.WaitForExit(5000)) { throw 'The exact owned Narrator process did not exit within five seconds after cleanup.' }
           $narratorStoppedByHarness = $true
-          Add-Event 'Stop only the Narrator process started by this harness' 'PASS' ([pscustomobject]@{ProcessId=$narratorPid;Path=$narratorImage})
-        } else { $cleanupErrors.Add("Narrator PID $narratorPid no longer resolves to Narrator.exe; it was not stopped.") }
-      } else { $narratorStoppedByHarness = $true }
-    } catch { $cleanupErrors.Add("Owned Narrator process cleanup: $($_.Exception.Message)") }
+          Add-Event 'Stop only the same Narrator process started by this harness' 'PASS' ([pscustomobject]@{ObservedIdentity=$narratorOwnedIdentity;RecheckedIdentity=$currentIdentity;MatchedPidStartTimeSessionAndExecutable=$true})
+        } else {
+          $narratorStoppedByHarness = $true
+          Add-Event 'Owned Narrator process already exited before cleanup' 'PASS' ([pscustomobject]@{ObservedIdentity=$narratorOwnedIdentity;ProcessStillRunning=$false})
+        }
+      } catch { $cleanupErrors.Add("Owned Narrator process cleanup: $($_.Exception.Message)") }
+    }
   }
   if ($dataCreatedByHarness -and -not $dataExistedBefore -and (Test-Path -LiteralPath $dataDirectory)) {
     try {

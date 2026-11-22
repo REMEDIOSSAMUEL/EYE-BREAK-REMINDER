@@ -15,6 +15,71 @@ permissions:
   contents: read
 
 jobs:
+  windows-11-arm64-power-capability:
+    name: Read Windows 11 ARM64 sleep and wake capability (no changes; not acceptance)
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 10
+    steps:
+      - name: Query native Windows 11 ARM64 power capabilities without changing state
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+          $osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          $processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+          if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'ARM64' -or $os.Caption -notmatch 'Windows 11' -or $osArchitecture -cne 'Arm64' -or $cpu.Architecture -ne 12) {
+            throw "This read-only probe requires the existing GitHub-hosted native Windows 11 ARM64 runner; found OS '$($os.Caption)', OS architecture '$osArchitecture', runner architecture '$env:RUNNER_ARCH', and CPU architecture '$($cpu.Architecture)'."
+          }
+          function Invoke-PowerCapabilityQuery([string]$Name, [string[]]$Arguments) {
+            $output = @(& powercfg.exe @Arguments 2>&1 | ForEach-Object { [string]$_ })
+            [pscustomobject]@{Name=$Name;Arguments=@($Arguments);ExitCode=$LASTEXITCODE;Output=($output -join "`n")}
+          }
+          $queries = @(
+            (Invoke-PowerCapabilityQuery 'Supported sleep states' @('/a'))
+            (Invoke-PowerCapabilityQuery 'Active wake timers' @('/waketimers'))
+            (Invoke-PowerCapabilityQuery 'Wake-armed devices' @('/devicequery','wake_armed'))
+            (Invoke-PowerCapabilityQuery 'Active power scheme' @('/getactivescheme'))
+            (Invoke-PowerCapabilityQuery 'Wake timer policy' @('/query','SCHEME_CURRENT','SUB_SLEEP','RTCWAKE'))
+          )
+          $computer = Get-CimInstance Win32_ComputerSystem
+          $process = Get-Process -Id $PID
+          $evidenceDirectory = Join-Path $env:RUNNER_TEMP 'v1.4.0-arm64-power-capability'
+          New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null
+          $report = [pscustomobject]@{
+            Requirement='ENV-007';Result='CAPABILITY ONLY — NOT AN ACCEPTANCE PASS'
+            Purpose='Read-only discovery; no candidate launch, sleep/wake, UI, display, or power setting action.'
+            Environment='GitHub-hosted disposable Windows 11 ARM64 runner'
+            OperatingSystem=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;Edition=$os.OperatingSystemSKU
+            OSArchitecture=$osArchitecture;ProcessArchitecture=$processArchitecture;RunnerArchitecture=$env:RUNNER_ARCH
+            NativeProcessorArchitectureCode=$cpu.Architecture;HypervisorPresent=$computer.HypervisorPresent
+            SessionId=$process.SessionId;SessionName=$env:SESSIONNAME;UserInteractive=[Environment]::UserInteractive
+            Queries=$queries;ObservedUtc=[DateTime]::UtcNow.ToString('o')
+            Limitation='Even an available sleep state or wake source does not prove genuine sleep/resume or application timer recovery.'
+          }
+          $reportPath = Join-Path $evidenceDirectory 'env-007-windows-11-arm64-power-capability.json'
+          $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding UTF8
+          $summary = @(
+            '**ENV-007 hosted capability probe — not an acceptance PASS**'
+            ''
+            "Environment: $($report.Environment); $($report.OperatingSystem) $($report.Version) build $($report.Build); OS/process/native CPU architecture $osArchitecture/$processArchitecture/$($cpu.Architecture)."
+            "Runner session: $($report.SessionId) ($($report.SessionName)); interactive flag $($report.UserInteractive); hypervisor present $($report.HypervisorPresent)."
+            'Only read-only powercfg queries were run. No candidate, UI, sleep/wake, display, or power setting was touched.'
+            'This does not satisfy ENV-007; a later test still needs genuine suspend/resume and observed application timer recovery.'
+          ) -join "`n"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary
+          Write-Host $summary
+          Write-Host "Evidence: $reportPath"
+
+      - name: Retain Windows 11 ARM64 capability evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-env-007-arm64-power-capability-${{ github.run_id }}
+          path: ${{ runner.temp }}/v1.4.0-arm64-power-capability/**
+          if-no-files-found: warn
+          retention-days: 90
+
   audio-endpoint-preflight:
     name: Exact candidate Windows 11 ARM64 audio endpoint preflight
     if: contains(github.event.pull_request.labels.*.name, 'run-win11-arm64-ui-probes')
@@ -711,16 +776,39 @@ jobs:
           $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
           $identityPath = Join-Path $evidence 'candidate-identity.json'
           $identity = Get-Content -LiteralPath $identityPath -Raw | ConvertFrom-Json
-          $summary = "Requirement: UN-009`nCandidate: artifact $($identity.ArtifactId), EXE SHA-256 $($identity.CandidateEXESHA256)`nOS: $($identity.OS) build $($identity.OSBuild); OS/native process architecture $($identity.OSArchitecture)/$($identity.ProcessArchitecture)`nEnvironment: GitHub-hosted disposable Windows Server 2025 x64 active console desktop; temporary standard-user account`nConsole session: $($preflight.Process.SessionId) ($($preflight.Process.SessionName)); active WTS Console session: $($preflight.WTS.ActiveConsoleSessionId)`nWhole desktop captures disabled: $($result.WholeDesktopCapturesDisabled)`nUN-009 result: $($result.Status)`nReason: $($result.Failure)`nSettings Apps subtest: $($result.SettingsAppsUninstall) — $($result.SettingsAppsUninstallReason)`nTemporary account removed: $($result.AccountRemoved); staging removed: $($result.StageRemoved); cleanup errors: $(@($result.CleanupErrors).Count)`n"
+          $settingsAppsStatus = [string]$result.SettingsAppsUninstall
+          if ($settingsAppsStatus -notin @('PASS', 'FAIL', 'BLOCKED', 'NOT TESTED')) { $settingsAppsStatus = 'NOT TESTED' }
+          $settingsRetention = @($result.Events | Where-Object { $_.Name -eq 'Windows Settings uninstall preserves settings/history and unrelated file byte-for-byte' } | Select-Object -First 1)
+          $settingsRetentionStatus = if ($settingsRetention.Count) { [string]$settingsRetention[0].Status } else { 'NOT TESTED' }
+          $un009Status = switch ($settingsAppsStatus) {
+            'PASS' {
+              if ($settingsRetentionStatus -eq 'PASS') { 'PASS' }
+              elseif ($settingsRetentionStatus -eq 'FAIL') { 'FAIL' }
+              elseif ($settingsRetentionStatus -eq 'BLOCKED') { 'BLOCKED' }
+              else { 'NOT TESTED' }
+            }
+            'FAIL' { 'FAIL' }
+            'BLOCKED' { 'BLOCKED' }
+            default { 'NOT TESTED' }
+          }
+          $un009Reason = [string]$result.SettingsAppsUninstallReason
+          if ($settingsAppsStatus -eq 'PASS' -and $settingsRetentionStatus -eq 'FAIL') {
+            $un009Reason = 'Windows Settings removed the app, but byte-identical settings/history retention verification failed.'
+          } elseif ($settingsAppsStatus -eq 'PASS' -and $settingsRetentionStatus -ne 'PASS') {
+            $un009Reason = 'Windows Settings removal was reported, but the required byte-identical settings/history retention result is missing or incomplete.'
+          } elseif (-not $un009Reason) {
+            $un009Reason = 'The standard-user harness did not record a Windows Settings > Apps uninstall result.'
+          }
+          $summary = "Requirement: UN-009`nCandidate: artifact $($identity.ArtifactId), EXE SHA-256 $($identity.CandidateEXESHA256)`nOS: $($identity.OS) build $($identity.OSBuild); OS/native process architecture $($identity.OSArchitecture)/$($identity.ProcessArchitecture)`nEnvironment: GitHub-hosted disposable Windows Server 2025 x64 active console desktop; temporary standard-user account`nConsole session: $($preflight.Process.SessionId) ($($preflight.Process.SessionName)); active WTS Console session: $($preflight.WTS.ActiveConsoleSessionId)`nWhole desktop captures disabled: $($result.WholeDesktopCapturesDisabled)`nUN-009 result: $un009Status`nUN-009 reason: $un009Reason`nSettings Apps UI result: $settingsAppsStatus — $($result.SettingsAppsUninstallReason)`nSettings/history retention result: $settingsRetentionStatus`nBroader standard-user harness status: $($result.Status) — $($result.Failure)`nTemporary account removed: $($result.AccountRemoved); staging removed: $($result.StageRemoved); cleanup errors: $(@($result.CleanupErrors).Count)`n"
           $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           Write-Host $summary
-          if ($result.Status -eq 'FAIL') { throw "Standard-user console Settings uninstall harness failed: $($result.Failure)" }
-          if ($result.Status -eq 'BLOCKED') {
-            $childGuardBlocked = @($result.Events | Where-Object { $_.Name -eq 'Child active-console prelaunch guard' -and $_.Status -eq 'BLOCKED' }).Count -gt 0
-            if ($childGuardBlocked) { Write-Warning 'UN-009 remains blocked by the child prelaunch guard; candidate app execution was prevented.' }
-            else { Write-Warning 'UN-009 remains blocked during isolated standard-user provisioning; the candidate app was not launched.' }
+          if ($un009Status -eq 'FAIL') { throw "Standard-user Windows Settings uninstall acceptance failed: $un009Reason" }
+          if ($un009Status -ne 'PASS') {
+            Write-Warning "UN-009 remains $un009Status; the broader standard-user harness status does not substitute for the Settings Apps result."
+          } else {
+            Write-Host 'PASS: the exact production candidate was removed through the Settings Apps UI and the required settings/history bytes were preserved.'
           }
-          if ($result.Status -eq 'PASS') { Write-Host 'Exact production candidate passed the standard-user Settings uninstall acceptance harness on the verified console desktop.' }
+          if ($result.Status -eq 'FAIL') { throw "The broader standard-user harness also found a failure: $($result.Failure) (UN-009 result: $un009Status)." }
 
       - name: Recheck the seven candidate files remain byte-identical
         if: always() && steps.candidate_identity.outcome == 'success'

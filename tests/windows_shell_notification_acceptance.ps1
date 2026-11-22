@@ -551,7 +551,11 @@ function Test-SameShellNotification([object]$First,[object]$Next) {
 }
 
 function Try-InvokeShellNotification([object]$Snapshot, [IntPtr]$MainWindow) {
-  $record = [pscustomobject]@{Status='NOT TESTED';Method=$null;ControlName=$null;Reason='No exposed invokable notification control was found.';MainWindowVisibleAfter=$false;Utc=[DateTime]::UtcNow.ToString('o')}
+  $record = [pscustomobject]@{Status='NOT TESTED';Method=$null;ControlName=$null;Reason='No exposed invokable notification control was found.';MainWindowVisibleBefore=$null;MainWindowVisibleImmediatelyBeforeInvoke=$null;MainWindowVisibleAfter=$false;Utc=[DateTime]::UtcNow.ToString('o')}
+  if($MainWindow-eq[IntPtr]::Zero){$record.Reason='The exact candidate main-window HWND is unavailable; notification activation cannot be attributed.';return $record}
+  $mainWindowVisibleBefore=[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($MainWindow)
+  $record.MainWindowVisibleBefore=$mainWindowVisibleBefore
+  if($mainWindowVisibleBefore){$record.Reason='The candidate main window was already visible before activation, so a post-action visible state would not prove Shell notification activation.';return $record}
   $activeSnapshot=Get-ShellNotificationSnapshot
   if(-not(Test-SameShellNotification $Snapshot $activeSnapshot)){$record.Reason='The exact observed notification identity changed before activation; no stale UIA element was invoked.';return $record}
   foreach ($element in $activeSnapshot.ElementReferences) {
@@ -563,6 +567,11 @@ function Try-InvokeShellNotification([object]$Snapshot, [IntPtr]$MainWindow) {
         if ($current.ProcessId -ne $candidatePid -and -not $current.IsOffscreen -and $isNotificationControl) {
           $pattern = $null
           if ($candidate.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+            $preInvokeSnapshot=Get-ShellNotificationSnapshot
+            if(-not(Test-SameShellNotification $Snapshot $preInvokeSnapshot)){$record.Reason='The exact observed notification identity changed immediately before activation; no stale UIA element was invoked.';return $record}
+            $mainVisibleImmediatelyBeforeInvoke=[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($MainWindow)
+            $record.MainWindowVisibleImmediatelyBeforeInvoke=$mainVisibleImmediatelyBeforeInvoke
+            if($mainVisibleImmediatelyBeforeInvoke){$record.Reason='The candidate main window became visible before the Shell InvokePattern call; this activation cannot prove causality.';return $record}
             $pattern.Invoke()
             $watch = [Diagnostics.Stopwatch]::StartNew()
             while ($watch.Elapsed.TotalSeconds -lt 5 -and -not [EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($MainWindow)) { Start-Sleep -Milliseconds 100 }
@@ -751,9 +760,10 @@ function Invoke-SecondNaturalNotificationSequence([object]$FirstSnapshot, [objec
     $secondRecord.Status='PASS'
     $secondRecord.Reason=$secondShellReason
     $secondShellStatus='PASS'
-    $secondPersistenceWatch=[Diagnostics.Stopwatch]::StartNew();$secondPersisted=$false;$secondChecks=[System.Collections.Generic.List[object]]::new()
-    while($secondPersistenceWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 500;$latestSecond=Get-ShellNotificationSnapshot;$sameSecond=Test-SameShellNotification $secondSnapshot $latestSecond;$secondChecks.Add([pscustomobject]@{Utc=$latestSecond.Utc;SameNotificationIdentity=$sameSecond;CorrelatedContainer=$latestSecond.CorrelatedContainer});if($sameSecond){$secondPersisted=$true}else{break}}
-    $secondPersistence=[pscustomobject]@{Status=if($secondPersisted){'OBSERVED'}else{'NOT OBSERVED'};ObservedForSeconds=[Math]::Round($secondPersistenceWatch.Elapsed.TotalSeconds,2);SameNotificationIdentityChecks=$secondChecks.ToArray();Reason=if($secondPersisted){'The same second Shell window and title/body RuntimeIds remained hit-test visible throughout the observation interval.'}else{'The second Shell notification identity was not preserved through the full observation interval.'}}
+    $secondPersistenceWatch=[Diagnostics.Stopwatch]::StartNew();$secondEveryCheckMatched=$true;$secondChecks=[System.Collections.Generic.List[object]]::new()
+    while($secondPersistenceWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 500;$latestSecond=Get-ShellNotificationSnapshot;$sameSecond=Test-SameShellNotification $secondSnapshot $latestSecond;$secondChecks.Add([pscustomobject]@{Utc=$latestSecond.Utc;SameNotificationIdentity=$sameSecond;CorrelatedContainer=$latestSecond.CorrelatedContainer});if(-not$sameSecond){$secondEveryCheckMatched=$false;break}}
+    $secondPersisted=($secondEveryCheckMatched-and$secondPersistenceWatch.Elapsed.TotalSeconds-ge5-and$secondChecks.Count-ge5)
+    $secondPersistence=[pscustomobject]@{Status=if($secondPersisted){'OBSERVED'}else{'NOT OBSERVED'};ObservedForSeconds=[Math]::Round($secondPersistenceWatch.Elapsed.TotalSeconds,2);SameNotificationIdentityChecks=$secondChecks.ToArray();Reason=if($secondPersisted){'The same second Shell window and title/body RuntimeIds matched at every 500 ms sample across the full five-second observation interval.'}else{'The same second Shell notification identity did not match at every sample across the full five-second observation interval.'}}
     Add-Event 'Observe persistence of the distinct second Shell notification without simulating time' $(if($secondPersisted){'PASS'}else{'NOT TESTED'}) $secondPersistence
 
     $dismissal=Try-DismissShellNotification $secondSnapshot
@@ -1115,9 +1125,10 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   if($firstShellSnapshot){Add-Event 'First Windows Shell notification UIA snapshot' $(if($firstShellSnapshot.SurfaceObserved){'PASS'}else{'NOT TESTED'}) ([pscustomobject]@{Utc=$firstShellSnapshot.Utc;TitleObserved=$firstShellSnapshot.TitleObserved;BodyObserved=$firstShellSnapshot.BodyObserved;CorrelatedContainer=$firstShellSnapshot.CorrelatedContainer;CorrelationFailure=$firstShellSnapshot.CorrelationFailure;Matches=$firstShellSnapshot.Matches;ShellWindows=$firstShellSnapshot.ShellWindows;Error=$firstShellSnapshot.Error})}
 
   if($firstShellSnapshot-and$firstShellSnapshot.SurfaceObserved){
-    $persistenceWatch=[Diagnostics.Stopwatch]::StartNew();$persisted=$false;$identityChecks=[System.Collections.Generic.List[object]]::new()
-    while($persistenceWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 500;$latest=Get-ShellNotificationSnapshot;$same=Test-SameShellNotification $firstShellSnapshot $latest;$identityChecks.Add([pscustomobject]@{Utc=$latest.Utc;SameNotificationIdentity=$same;CorrelatedContainer=$latest.CorrelatedContainer});if($same){$persisted=$true}else{break}}
-    $persistenceRecord=[pscustomobject]@{Status=if($persisted){'OBSERVED'}else{'NOT OBSERVED'};ObservedForSeconds=[Math]::Round($persistenceWatch.Elapsed.TotalSeconds,2);SameNotificationIdentityChecks=$identityChecks.ToArray();Reason=if($persisted){'The same Shell window, title RuntimeId and body RuntimeId remained hit-test visible throughout the observation interval.'}else{'The original Shell notification identity was not preserved through the full observation interval.'}}
+    $persistenceWatch=[Diagnostics.Stopwatch]::StartNew();$everyIdentityCheckMatched=$true;$identityChecks=[System.Collections.Generic.List[object]]::new()
+    while($persistenceWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 500;$latest=Get-ShellNotificationSnapshot;$same=Test-SameShellNotification $firstShellSnapshot $latest;$identityChecks.Add([pscustomobject]@{Utc=$latest.Utc;SameNotificationIdentity=$same;CorrelatedContainer=$latest.CorrelatedContainer});if(-not$same){$everyIdentityCheckMatched=$false;break}}
+    $persisted=($everyIdentityCheckMatched-and$persistenceWatch.Elapsed.TotalSeconds-ge5-and$identityChecks.Count-ge5)
+    $persistenceRecord=[pscustomobject]@{Status=if($persisted){'OBSERVED'}else{'NOT OBSERVED'};ObservedForSeconds=[Math]::Round($persistenceWatch.Elapsed.TotalSeconds,2);SameNotificationIdentityChecks=$identityChecks.ToArray();Reason=if($persisted){'The same Shell window, title RuntimeId and body RuntimeId matched at every 500 ms sample across the full five-second observation interval.'}else{'The original Shell notification identity did not match at every sample across the full five-second observation interval.'}}
     Add-Event 'Observe real Shell notification persistence without simulating time' $(if($persisted){'PASS'}else{'NOT TESTED'}) $persistenceRecord
     $activationRecord=Try-InvokeShellNotification $firstShellSnapshot $candidateMainWindow
     Add-Event 'Attempt activation only through an exposed Windows Shell notification InvokePattern' $activationRecord.Status $activationRecord
