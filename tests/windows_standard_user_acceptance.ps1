@@ -562,6 +562,39 @@ public static class EBR_STD_UIA_CLIENT {
         if(-not$settingsHost){$settingsLaunchErrors.Add('Direct SystemSettings.exe Apps & Features argument did not expose a newly launched Settings window.')}
       }else{$settingsLaunchErrors.Add('Direct SystemSettings.exe Apps & Features argument was skipped because the executable was not present at the standard path.')}
     }
+    if(-not$settingsHost-and$settingsAumidMatches.Count-eq1){
+      try{
+        $knownSettingsAumid='windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel'
+        if([string]$settingsAumid-cne$knownSettingsAumid){throw "The uniquely registered Settings AUMID '$settingsAumid' did not match the expected Windows Settings identity '$knownSettingsAumid'; activation was skipped."}
+        if(-not('EBR_STD_APP_ACTIVATION'-as[type])){
+          Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+[ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface EBR_IApplicationActivationManager {
+  [PreserveSig]
+  int ActivateApplication([MarshalAs(UnmanagedType.LPWStr)] string appUserModelId, [MarshalAs(UnmanagedType.LPWStr)] string arguments, uint options, out uint processId);
+}
+public static class EBR_STD_APP_ACTIVATION {
+  public static int Activate(string appUserModelId, out uint processId) {
+    object manager = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C"), true));
+    try { return ((EBR_IApplicationActivationManager)manager).ActivateApplication(appUserModelId, null, 2, out processId); }
+    finally { if (Marshal.IsComObject(manager)) Marshal.ReleaseComObject(manager); }
+  }
+}
+'@ -ErrorAction Stop
+        }
+        $activationPid=[uint32]0;$activationHResult=[EBR_STD_APP_ACTIVATION]::Activate([string]$knownSettingsAumid,[ref]$activationPid)
+        $activationHResultText='0x{0:X8}'-f([long]$activationHResult-band[long]4294967295)
+        if($activationHResult-ne0){$settingsLaunchErrors.Add("IApplicationActivationManager activation of the unique Settings AUMID failed with HRESULT $activationHResultText (PID $activationPid).")}
+        else{
+          if($activationPid-gt0){[void]$settingsLaunchProcessIds.Add([int]$activationPid)}
+          $settingsLaunchMethods.Add("IApplicationActivationManager.ActivateApplication for the exact registered Windows Settings AUMID: $knownSettingsAumid (AO_NOERRORUI, PID $activationPid, HRESULT $activationHResultText)")
+          $activationWatch=[Diagnostics.Stopwatch]::StartNew();while($activationWatch.Elapsed.TotalSeconds-lt25-and-not$settingsHost){try{$settingsHost=Find-LaunchedSettingsWindow $settingsPreexistingProcessIds $settingsLaunchProcessIds $settingsSessionId;if($settingsHost){$settingsRoot=$settingsHost.Root;$settingsWindowHandle=[IntPtr]$settingsHost.Handle}}catch{};if(-not$settingsHost){Start-Sleep -Milliseconds 250}}
+          if(-not$settingsHost){$settingsLaunchErrors.Add("IApplicationActivationManager returned PID $activationPid but did not expose a newly launched Settings window.")}
+        }
+      }catch{$settingsLaunchErrors.Add("IApplicationActivationManager Settings AUMID activation: $($_.Exception.GetType().FullName): $($_.Exception.Message)")}
+    }
     if(-not$settingsHost){return [pscustomobject]@{Status='NOT TESTED';Reason="A newly launched Settings home window could not be identified: $($settingsLaunchErrors -join '; ')";LaunchMethods=$settingsLaunchMethods.ToArray();LaunchErrors=$settingsLaunchErrors.ToArray()}}
     if($settingsHost){
       $settingsRoot=$null
