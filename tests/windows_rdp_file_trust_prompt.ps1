@@ -146,6 +146,13 @@ public static class EBR_RdpUiNative {
     }
   }
 
+  function Test-EBRUnknownConnectionWarning([string]$JoinedNames) {
+    $warningTextObserved = $JoinedNames -match '(?i)(Caution:\s*Unknown remote connection|We could not verify the publisher of this remote connection)'
+    $unknownPublisherObserved = $JoinedNames -match '(?i)Unknown publisher'
+    $loopbackTargetObserved = $JoinedNames -match '(?<![A-Za-z0-9.])127\.0\.0\.1(?::3389)?(?!\d|:)'
+    return ($warningTextObserved -and $unknownPublisherObserved -and $loopbackTargetObserved)
+  }
+
   function Get-EBRNamedPromptActions($Nodes, [string]$Name, [string]$AutomationId, [int]$ProcessId) {
     $actions = [System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
     foreach ($node in $Nodes) {
@@ -277,8 +284,7 @@ public static class EBR_RdpUiNative {
         continue
       }
 
-      $isUnknownConnectionWarning = $names -match '(?i)Caution:\s*Unknown remote connection' -and
-        $names -match '(?i)Unknown publisher' -and $names -match '(?<![A-Za-z0-9.])127\.0\.0\.1(?::3389)?(?!\d|:)'
+      $isUnknownConnectionWarning = Test-EBRUnknownConnectionWarning $names
       if ($isUnknownConnectionWarning) {
         $checkboxes = @(
           foreach ($node in $nodes) {
@@ -367,7 +373,7 @@ public static class EBR_RdpUiNative {
               Save-EBRPromptEvidence $changed 'rdp-server-certificate-warning-unaccepted'
               throw 'BLOCKED: an RDP server certificate/identity warning appeared; it was captured and no certificate trust action was taken.'
             }
-            if ($changed.JoinedNames -notmatch '(?i)Caution:\s*Unknown remote connection') {
+            if (-not (Test-EBRUnknownConnectionWarning $changed.JoinedNames)) {
               Save-EBRPromptEvidence $changed 'rdp-post-connect-warning-unrecognized'
               $stillOpen = $false
             }
@@ -383,6 +389,10 @@ public static class EBR_RdpUiNative {
         while ($postWatch.Elapsed.TotalSeconds -lt 20) {
           foreach ($possible in @(Get-EBROwnedRdpWindows)) {
             $post = Get-EBRPromptSnapshot $possible
+            if (Test-EBRUnknownConnectionWarning $post.JoinedNames) {
+              Save-EBRPromptEvidence $post 'rdp-connection-security-prompt-still-open'
+              throw 'BLOCKED: the verified localhost publisher warning remained open after Connect; no session is treated as established.'
+            }
             if ($post.JoinedNames -match '(?i)(identity of the remote computer|server certificate|certificate warning|authentication of the server)') {
               Save-EBRPromptEvidence $post 'rdp-server-certificate-warning-unaccepted'
               throw 'BLOCKED: an RDP server certificate/identity warning appeared; it was captured and no certificate trust action was taken.'
