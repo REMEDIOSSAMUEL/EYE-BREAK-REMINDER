@@ -88,14 +88,13 @@ public static class EBR_AUDIO_NATIVE {
   [DllImport("user32.dll",EntryPoint="SendMessageW",SetLastError=true)] static extern IntPtr SendMessageNative(IntPtr hwnd,uint msg,IntPtr wParam,IntPtr lParam);
   [DllImport("user32.dll",EntryPoint="PostMessageW",SetLastError=true)] static extern bool PostMessageNative(IntPtr hwnd,uint msg,IntPtr wParam,IntPtr lParam);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="FindWindowW",SetLastError=true)] static extern IntPtr FindWindowNative(string className,string title);
-  [DllImport("user32.dll",SetLastError=true)] static extern uint GetWindowThreadProcessIdNative(IntPtr hwnd,out uint processId);
   private static string UserObjectName(IntPtr handle){if(handle==IntPtr.Zero)return "<ERROR:0>";var b=new StringBuilder(256);uint needed;if(!GetUserObjectInformation(handle,2,b,(uint)(b.Capacity*2),out needed))return "<ERROR:"+Marshal.GetLastWin32Error().ToString()+">";return b.ToString();}
   public static WtsSession[] EnumerateWtsSessions(){IntPtr buffer=IntPtr.Zero;int count=0;if(!WTSEnumerateSessions(IntPtr.Zero,0,1,out buffer,out count))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"WTSEnumerateSessionsW failed");try{int size=Marshal.SizeOf(typeof(WTS_SESSION_INFO));var rows=new List<WtsSession>(count);for(int i=0;i<count;i++){IntPtr current=IntPtr.Add(buffer,i*size);var row=(WTS_SESSION_INFO)Marshal.PtrToStructure(current,typeof(WTS_SESSION_INFO));rows.Add(new WtsSession{SessionId=row.SessionId,Station=row.Station,State=row.State});}return rows.ToArray();}finally{if(buffer!=IntPtr.Zero)WTSFreeMemory(buffer);}}
   public static string ProcessWindowStationName(){return UserObjectName(GetProcessWindowStation());}
   public static string ThreadDesktopName(){return UserObjectName(GetThreadDesktop(GetCurrentThreadId()));}
   public static string InputDesktopName(){IntPtr desktop=OpenInputDesktop(0,false,1);if(desktop==IntPtr.Zero)return "<ERROR:"+Marshal.GetLastWin32Error().ToString()+">";try{return UserObjectName(desktop);}finally{CloseDesktop(desktop);}}
   public static IntPtr TaskbarWindow(){return FindWindowNative("Shell_TrayWnd",null);}
-  public static int TaskbarProcessId(IntPtr hwnd){if(hwnd==IntPtr.Zero)return 0;uint pid;GetWindowThreadProcessIdNative(hwnd,out pid);return (int)pid;}
+  public static int TaskbarProcessId(IntPtr hwnd){if(hwnd==IntPtr.Zero)return 0;uint pid;GetWindowThreadProcessId(hwnd,out pid);return (int)pid;}
   public static string Text(IntPtr hwnd){var b=new StringBuilder(1024);GetWindowTextNative(hwnd,b,b.Capacity);return b.ToString();}
   public static string ClassName(IntPtr hwnd){var b=new StringBuilder(256);GetClassNameNative(hwnd,b,b.Capacity);return b.ToString();}
   public static int ControlId(IntPtr hwnd){return GetDlgCtrlID(hwnd);}
