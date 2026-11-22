@@ -119,16 +119,16 @@ public enum EBR_AUDIO_DATA_FLOW { Render=0, Capture=1, All=2 }
 public enum EBR_AUDIO_ROLE { Console=0, Multimedia=1, Communications=2 }
 [ComImport,Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 public interface EBR_IMMDeviceEnumerator {
-  [PreserveSig] int EnumAudioEndpoints(EBR_AUDIO_DATA_FLOW flow,uint stateMask,out EBR_IMMDeviceCollection devices);
-  [PreserveSig] int GetDefaultAudioEndpoint(EBR_AUDIO_DATA_FLOW flow,EBR_AUDIO_ROLE role,out EBR_IMMDevice endpoint);
-  [PreserveSig] int GetDevice([MarshalAs(UnmanagedType.LPWStr)]string id,out EBR_IMMDevice endpoint);
+  [PreserveSig] int EnumAudioEndpoints(EBR_AUDIO_DATA_FLOW flow,uint stateMask,[MarshalAs(UnmanagedType.Interface)]out EBR_IMMDeviceCollection devices);
+  [PreserveSig] int GetDefaultAudioEndpoint(EBR_AUDIO_DATA_FLOW flow,EBR_AUDIO_ROLE role,[MarshalAs(UnmanagedType.Interface)]out EBR_IMMDevice endpoint);
+  [PreserveSig] int GetDevice([MarshalAs(UnmanagedType.LPWStr)]string id,[MarshalAs(UnmanagedType.Interface)]out EBR_IMMDevice endpoint);
   [PreserveSig] int RegisterEndpointNotificationCallback(IntPtr callback);
   [PreserveSig] int UnregisterEndpointNotificationCallback(IntPtr callback);
 }
-[ComImport,Guid("0BD7A1BE-7A1A-44DB-8397-C0A6B2F3C5A4"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+[ComImport,Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 public interface EBR_IMMDeviceCollection {
   [PreserveSig] int GetCount(out uint count);
-  [PreserveSig] int Item(uint index,out EBR_IMMDevice device);
+  [PreserveSig] int Item(uint index,[MarshalAs(UnmanagedType.Interface)]out EBR_IMMDevice device);
 }
 [ComImport,Guid("D666063F-1587-4E43-81F1-B948E807363F"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 public interface EBR_IMMDevice {
@@ -367,7 +367,14 @@ function Set-AudioSound([int]$Index){
 function Set-AudioVolume([int]$Value){
   $c=Get-AudioControl 103 'Alarm volume';if($c.Class-notin@('MSTrackBarWndClass','TrackBar','msctls_trackbar32')){throw "Alarm volume control has unexpected class '$($c.Class)'."}
   [void][EBR_AUDIO_NATIVE]::Send($c.Handle,0x0405,[IntPtr]::new(1),[IntPtr]::new($Value));$parent=[EBR_AUDIO_NATIVE]::Parent($c.Handle);$packed=[IntPtr]::new([long](8-bor($Value-shl16)));[void][EBR_AUDIO_NATIVE]::Send($parent,0x0114,$packed,$c.Handle)
-  $label=Get-AudioControl 119 'Alarm volume value';if([EBR_AUDIO_NATIVE]::Text($label.Handle)-cne("$Value%")){throw "Alarm volume label did not update to $Value%."}
+  $position=[EBR_AUDIO_NATIVE]::Send($c.Handle,0x0400,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+  if($position-ne$Value){throw "Alarm volume trackbar returned $position after requesting $Value%."}
+  $settingsPane=[EBR_AUDIO_NATIVE]::Parent($c.Handle)
+  if($settingsPane-eq[IntPtr]::Zero-or[EBR_AUDIO_NATIVE]::OwnerPid($settingsPane)-ne$script:appPid-or[EBR_AUDIO_NATIVE]::ClassName($settingsPane)-ine'EyeBreakReminder.Settings'){throw 'Alarm volume trackbar is not parented by the candidate Settings pane.'}
+  # The candidate gives this label logical ID 119 in its controls model after creation, while its native STATIC HWND retains ID -1. Identify it by its exact Settings-pane parent and live percentage text.
+  $readouts=@(foreach($h in [EBR_AUDIO_NATIVE]::ChildWindows($settingsPane)){if([EBR_AUDIO_NATIVE]::OwnerPid($h)-eq$script:appPid-and[EBR_AUDIO_NATIVE]::Visible($h)-and[EBR_AUDIO_NATIVE]::Parent($h)-eq$settingsPane-and[EBR_AUDIO_NATIVE]::ClassName($h)-ieq'Static'){$text=[EBR_AUDIO_NATIVE]::Text($h);if($text-match'^\d{1,3}%$'){[pscustomobject]@{Handle=$h;Text=$text;Class=[EBR_AUDIO_NATIVE]::ClassName($h);ParentHandle=('0x{0:X}'-f$settingsPane.ToInt64())}}}})
+  if($readouts.Count-ne1){$observed=(@($readouts|ForEach-Object{$_.Text})-join', ');throw "Expected exactly one candidate-owned visible percentage readout in the Alarm Settings pane, found $($readouts.Count) [$observed]."}
+  if($readouts[0].Text-cne("$Value%")){throw "Alarm volume readout shows '$($readouts[0].Text)' after requesting $Value%."}
 }
 function Get-AudioCheck([int]$Id,[string]$Name){$c=Get-AudioControl $Id $Name;return [EBR_AUDIO_NATIVE]::Send($c.Handle,0x00F0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()-eq1}
 function Set-AudioCheck([int]$Id,[bool]$Value,[string]$Name){if((Get-AudioCheck $Id $Name)-ne$Value){Invoke-AudioClick $Id $Name};if((Get-AudioCheck $Id $Name)-ne$Value){throw "Candidate checkbox '$Name' did not reach state $Value."}}
