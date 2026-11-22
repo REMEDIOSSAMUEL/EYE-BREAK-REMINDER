@@ -3,8 +3,8 @@
   "generated_on": "2026-11-22",
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
-  "branch_head": "1bcaac6f9742c955f3828c23117c8a8b8d3da83a",
-  "branch_head_scope": "Latest terminal-tested PR head 1bcaac6f9742c955f3828c23117c8a8b8d3da83a. PR validation 45024492239, update-security 45024492190, and retained-candidate workflows 45024492183 and 45024594830 completed successfully. Run 45024594830 added no acceptance PASS: UN-009 Settings Installed Apps was not reached; REG-008 controls were exercised but there was no WASAPI endpoint; the one-minute Shell candidate break appeared but no Shell notification UI surface was found after quiet time ended; read-only Windows 11 ARM64 capability probes found one display and no sleep state. The exact seven-file production artifact remained identical.",
+  "branch_head": "5e4f06c434c1b917d71413a2601719732e232742",
+  "branch_head_scope": "Latest terminal-tested PR head 5e4f06c434c1b917d71413a2601719732e232742. PR validation 45033961199, update-security 45033961103, and retained-candidate 45033961059 completed successfully. The retained run added zero acceptance PASS: exact artifact 14695418078 was tested on native Server 2025 x64, but Settings did not expose a new window, so Installed Apps was not reached. Supporting wizard install/uninstall and byte-identical test-data retention do not satisfy UN-009. Capability-only artifacts found zero ARM64 render endpoints, one display, and no supported sleep state. The seven production candidate files remained byte-identical.",
   "current_release_candidate": {
     "status": "A seven-file production candidate with an authentic ECDSA P-256/SHA-256 signed update manifest is retained and independently verified. The application and installer are Authenticode NotSigned; this is allowed by the owner's approved v1.4.0 policy. Candidate is ready for separate owner publication approval; it has not been published or merged.",
     "candidate_class": "PRODUCTION-AUTHENTICATED UPDATE CANDIDATE (Authenticode unsigned)",
@@ -2475,7 +2475,7 @@
       "description": "Remove through Windows Installed Apps UI",
       "implementation_status": "IMPLEMENTED IN SOURCE; acceptance status is tracked separately.",
       "required_tests": "Actual Windows Settings UI entry/removal",
-      "actual_verification_evidence": "NOT TESTED for the required Windows Settings > Apps > Installed Apps uninstall. On 2026-11-22, run 45004847610 verified the exact candidate artifact 14695418078 (EXE SHA-256 07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720) on native GitHub-hosted Windows Server 2025 Datacenter x64 build 26100. In a fresh temporary standard-user Console profile, exact-candidate install/uninstall wizard steps and the “Keep my settings and history” retention choice completed, but this direct wizard is supporting behavior only and does not satisfy the Settings requirement. The `ms-settings:` home URI failed with “the system cannot find all the information required”; direct SystemSettings.exe activation did not expose a new Settings window, so Installed Apps and the candidate row were never reached. A separate localhost RDP route verified the displayed server certificate against the configured listener certificate but no interactive test-user session formed. The account/profile/stage were removed with zero cleanup errors. Evidence: https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45004847610/artifacts/14747447381 and https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45004847610/artifacts/14747551651. A distinct hosted Windows 11 ARM64 route was reviewed but not executed for this requirement: installer/setup.nsi aborts the x64 installer unless Windows reports native AMD64, and tests/windows_arm64_emulation_acceptance.ps1 verifies the guard prevents install files and uninstall registration under ARM64 emulation. Therefore a Settings route there would have no genuine installed candidate to remove; no registry fabrication or direct-uninstaller substitution is used. UN-009 still needs an authorized interactive native Windows 11 x64 guest. Status remains NOT TESTED. In run 45007378820, the exact artifact/hash were reverified on native Windows Server 2025 x64 build 26100. The active standard-user Console job again returned NOT TESTED because the Settings home URI could not identify a new Settings window; Installed Apps was not reached, and the temporary account/profile/stage were removed with zero cleanup errors. In RDP artifact 14748586128, the localhost RDP file and displayed listener certificate identity were verified, but the screenshot showed the disconnect message that another connection was made; query user showed only runneradmin at Console and RdpSessionId stayed -1. No Settings page or uninstall occurred. The Windows 11 ARM64 alternative remains unsuitable because the exact x64 installer aborts without native AMD64; status remains NOT TESTED.\n\nLatest run 45010181568, artifact 14749721968, reverified the exact candidate on native Windows Server 2025 x64. The temp standard-user installer finished with “Open Eye Break Reminder” selected; the old harness immediately launched another single-instance process and failed to find its window. Cleanup removed the process/account/profile/stage with zero errors. Settings > Apps > Installed Apps was not reached and no uninstall occurred. A harness correction is prepared but not yet hosted-tested. Status remains NOT TESTED. This route is not native Windows 11 x64.\n\nLatest run 45012815106, artifact 14751220814, tested exact artifact 14695418078 natively on Windows Server 2025 x64 in a temporary standard-user Console session. Installer, per-user installed image/hash, Start Menu target and HKCU uninstall registration passed. Finish Run checkbox was Off; explicit launch from the exact installed path produced no remaining process/window. Settings > Apps > Installed Apps was not reached. The old harness aborted; a focused update captures PID/exit/exception and matching Application Error/WER records while proceeding to the real Settings flow if install registration and candidate identity remain valid. Cleanup reported no errors. Status remains NOT TESTED; this was not Windows 11 x64.\n\nLatest retained-coverage run 45015704745: Artifact 14751737405 tested exact artifact 14695418078, EXE SHA-256 07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720, native AMD64 x64 on GitHub-hosted Windows Server 2025 Datacenter build 26100, active Console session 2, temporary non-administrator user. Per-user installed image/hash, Start Menu target, HKCU registrations, and visible candidate window passed. Settings home URI activation returned “This command cannot be run completely because the system cannot find all the information required”; direct SystemSettings.exe did not expose a new Settings window, so Installed Apps and the candidate row were not reached. A separate standard-user NSIS wizard completed with “Keep my settings and history,” removed the installed image/registration, and preserved seeded settings/history byte-for-byte; this is supporting uninstall-policy evidence only and does not satisfy UN-009. Temporary account/profile/stage cleanup had zero errors. Status remains NOT TESTED. Latest exact-candidate attempt: run 45019153668, artifact 14752744232, Windows Server 2025 Datacenter build 26100, native AMD64, temporary standard-user Console profile. Settings home, documented ms-settings:appsfeatures, and direct SystemSettings.exe routes did not expose a new Settings window (shell reported missing required information); Installed Apps and a Settings-owned uninstall were not reached. The separate NSIS wizard and byte-identical settings/history retention passed as supporting behavior only. Account, profile, and staging cleanup succeeded with zero cleanup errors. Status remains NOT TESTED.\n\nRun 45024594830, artifact 14754673614, 2026-11-22: exact artifact 14695418078 and native AMD64 execution on GitHub-hosted Windows Server 2025 Datacenter build 26100 were reverified in a fresh temporary standard-user active Console profile. The candidate installed and launched; seeded test settings/history were preserved byte-for-byte through the real NSIS uninstaller wizard, and install/HKCU entries were removed. Settings home, AppsFeatures, AppsFolder, direct SystemSettings.exe, and IApplicationActivationManager again failed to expose a new Settings window; Installed Apps and the Settings-owned uninstall were not reached. The Settings result is NOT TESTED, not PASS. Temporary profile and stage cleanup succeeded. A separate active-Console-owned Settings route is prepared in later uncommitted test harness changes and has not yet run.",
+      "actual_verification_evidence": "NOT TESTED for the required Windows Settings > Apps > Installed Apps uninstall. On 2026-11-22, run 45004847610 verified the exact candidate artifact 14695418078 (EXE SHA-256 07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720) on native GitHub-hosted Windows Server 2025 Datacenter x64 build 26100. In a fresh temporary standard-user Console profile, exact-candidate install/uninstall wizard steps and the “Keep my settings and history” retention choice completed, but this direct wizard is supporting behavior only and does not satisfy the Settings requirement. The `ms-settings:` home URI failed with “the system cannot find all the information required”; direct SystemSettings.exe activation did not expose a new Settings window, so Installed Apps and the candidate row were never reached. A separate localhost RDP route verified the displayed server certificate against the configured listener certificate but no interactive test-user session formed. The account/profile/stage were removed with zero cleanup errors. Evidence: https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45004847610/artifacts/14747447381 and https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45004847610/artifacts/14747551651. A distinct hosted Windows 11 ARM64 route was reviewed but not executed for this requirement: installer/setup.nsi aborts the x64 installer unless Windows reports native AMD64, and tests/windows_arm64_emulation_acceptance.ps1 verifies the guard prevents install files and uninstall registration under ARM64 emulation. Therefore a Settings route there would have no genuine installed candidate to remove; no registry fabrication or direct-uninstaller substitution is used. UN-009 still needs an authorized interactive native Windows 11 x64 guest. Status remains NOT TESTED. In run 45007378820, the exact artifact/hash were reverified on native Windows Server 2025 x64 build 26100. The active standard-user Console job again returned NOT TESTED because the Settings home URI could not identify a new Settings window; Installed Apps was not reached, and the temporary account/profile/stage were removed with zero cleanup errors. In RDP artifact 14748586128, the localhost RDP file and displayed listener certificate identity were verified, but the screenshot showed the disconnect message that another connection was made; query user showed only runneradmin at Console and RdpSessionId stayed -1. No Settings page or uninstall occurred. The Windows 11 ARM64 alternative remains unsuitable because the exact x64 installer aborts without native AMD64; status remains NOT TESTED.\n\nLatest run 45010181568, artifact 14749721968, reverified the exact candidate on native Windows Server 2025 x64. The temp standard-user installer finished with “Open Eye Break Reminder” selected; the old harness immediately launched another single-instance process and failed to find its window. Cleanup removed the process/account/profile/stage with zero errors. Settings > Apps > Installed Apps was not reached and no uninstall occurred. A harness correction is prepared but not yet hosted-tested. Status remains NOT TESTED. This route is not native Windows 11 x64.\n\nLatest run 45012815106, artifact 14751220814, tested exact artifact 14695418078 natively on Windows Server 2025 x64 in a temporary standard-user Console session. Installer, per-user installed image/hash, Start Menu target and HKCU uninstall registration passed. Finish Run checkbox was Off; explicit launch from the exact installed path produced no remaining process/window. Settings > Apps > Installed Apps was not reached. The old harness aborted; a focused update captures PID/exit/exception and matching Application Error/WER records while proceeding to the real Settings flow if install registration and candidate identity remain valid. Cleanup reported no errors. Status remains NOT TESTED; this was not Windows 11 x64.\n\nLatest retained-coverage run 45015704745: Artifact 14751737405 tested exact artifact 14695418078, EXE SHA-256 07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720, native AMD64 x64 on GitHub-hosted Windows Server 2025 Datacenter build 26100, active Console session 2, temporary non-administrator user. Per-user installed image/hash, Start Menu target, HKCU registrations, and visible candidate window passed. Settings home URI activation returned “This command cannot be run completely because the system cannot find all the information required”; direct SystemSettings.exe did not expose a new Settings window, so Installed Apps and the candidate row were not reached. A separate standard-user NSIS wizard completed with “Keep my settings and history,” removed the installed image/registration, and preserved seeded settings/history byte-for-byte; this is supporting uninstall-policy evidence only and does not satisfy UN-009. Temporary account/profile/stage cleanup had zero errors. Status remains NOT TESTED. Latest exact-candidate attempt: run 45019153668, artifact 14752744232, Windows Server 2025 Datacenter build 26100, native AMD64, temporary standard-user Console profile. Settings home, documented ms-settings:appsfeatures, and direct SystemSettings.exe routes did not expose a new Settings window (shell reported missing required information); Installed Apps and a Settings-owned uninstall were not reached. The separate NSIS wizard and byte-identical settings/history retention passed as supporting behavior only. Account, profile, and staging cleanup succeeded with zero cleanup errors. Status remains NOT TESTED.\n\nRun 45024594830, artifact 14754673614, 2026-11-22: exact artifact 14695418078 and native AMD64 execution on GitHub-hosted Windows Server 2025 Datacenter build 26100 were reverified in a fresh temporary standard-user active Console profile. The candidate installed and launched; seeded test settings/history were preserved byte-for-byte through the real NSIS uninstaller wizard, and install/HKCU entries were removed. Settings home, AppsFeatures, AppsFolder, direct SystemSettings.exe, and IApplicationActivationManager again failed to expose a new Settings window; Installed Apps and the Settings-owned uninstall were not reached. The Settings result is NOT TESTED, not PASS. Temporary profile and stage cleanup succeeded. A separate active-Console-owned Settings route is prepared in later uncommitted test harness changes and has not yet run. On 2026-11-22, run 45033961059 and artifact 14758419399 reverified the seven files of authoritative candidate artifact 14695418078 on native GitHub-hosted Windows Server 2025 Datacenter x64 build 26100, with an active interactive Console. In the fresh temporary standard-user profile, install, visible launch, seeded settings/history/unrelated file, Keep my settings and history NSIS wizard uninstall, byte-identical data retention, registration removal, and account/profile/stage cleanup passed. The active Console owner route also completed the supporting wizard uninstall and retention checks. In both routes, Settings home URI, AppsFeatures URI, Settings AppsFolder/AUMID, direct SystemSettings.exe, and IApplicationActivationManager did not expose a new Settings window. Installed Apps, the candidate row, and a Settings-owned Uninstall action were not reached. Zero cleanup errors were recorded. The workflow completed successfully but this is native Server 2025 evidence and the Settings criterion remains NOT TESTED. Evidence artifact: https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45033961059/artifacts/14758419399.",
       "environment": "GitHub-hosted disposable Windows Server 2025 Datacenter x64 build 26100, native AMD64, temporary standard-user active Console session; exact artifact 14695418078. Settings UI unavailable on the tested image; no personal profile was used.",
       "tested_source_commit": "491bd2ed29f84f4d434b884fc723144db2d6f294",
       "tested_binary_sha256": "07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720",
@@ -4150,7 +4150,7 @@
     "BLOCKED": 7,
     "NOT APPLICABLE": 2
   },
-  "generated_at_utc": "2026-11-22T14:29:17Z",
+  "generated_at_utc": "2026-11-22T14:57:22Z",
   "latest_validation": {
     "latest_implementation_test_head": "9c19da9884ebd77d7c230c70de6fc5209a815095",
     "candidate_source_commit": "491bd2ed29f84f4d434b884fc723144db2d6f294",
@@ -4191,16 +4191,16 @@
     "production_transaction_artifact_url_latest": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44882543550/artifacts/14698945865"
   },
   "current_campaign_validation": {
-    "tested_pr_head": "1bcaac6f9742c955f3828c23117c8a8b8d3da83a",
-    "required_ci_run_id": 45024492239,
-    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45024492239",
-    "required_ci_status": "PASS: Pull request validation succeeded on 1bcaac6f9742c955f3828c23117c8a8b8d3da83a.",
-    "security_run_id": 45024492190,
-    "security_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45024492190",
-    "security_status": "PASS: Windows update-security checks succeeded on 1bcaac6f9742c955f3828c23117c8a8b8d3da83a.",
-    "remaining_coverage_run_id": 45024594830,
-    "remaining_coverage_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45024594830",
-    "remaining_coverage_status": "Workflow SUCCESS; zero new unique acceptance PASS. Artifact 14754673614: exact native AMD64 Server 2025 candidate installed in a fresh standard-user Console profile, Settings routes did not expose Installed Apps, the NSIS wizard preserved disposable settings/history byte-for-byte and cleaned the app registration. REG-008 exercised sound/volume settings controls (28 PASS, 0 FAIL, 41 NOT TESTED) but had 0 active WASAPI render endpoints (0x80070490); preview playback/capture and natural alarm remained BLOCKED. GUI-016 focus navigation passed in this repeat, but the Speech Recap step was NOT TESTED; the existing independent GUI-016 PASS remains. Artifact 14757317184: after 3,526 seconds Windows notification eligibility became QUNS_ACCEPTS_NOTIFICATIONS and the exact candidate naturally opened its break window; no correlated Shell notification title/body appeared, so ENV-009 remains BLOCKED. Artifacts 14755396906 and 14755382014 are read-only Windows 11 ARM64 capability reports: native ARM64, one DISPLAY1 at 1024x768, no supported sleep/hibernate state or active render endpoint. No lock/unlock, sleep/resume, audio or display acceptance action occurred.",
+    "tested_pr_head": "5e4f06c434c1b917d71413a2601719732e232742",
+    "required_ci_run_id": 45033961199,
+    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45033961199",
+    "required_ci_status": "PASS: Pull request validation succeeded on 5e4f06c434c1b917d71413a2601719732e232742.",
+    "security_run_id": 45033961103,
+    "security_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45033961103",
+    "security_status": "PASS: Windows update-security checks succeeded on 5e4f06c434c1b917d71413a2601719732e232742.",
+    "remaining_coverage_run_id": 45033961059,
+    "remaining_coverage_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45033961059",
+    "remaining_coverage_status": "Workflow SUCCESS; zero new acceptance PASS. Artifact 14758419399 verifies all seven exact candidate files for artifact 14695418078 (EXE SHA-256 07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720) on native GitHub-hosted Windows Server 2025 Datacenter x64 build 26100, active interactive Console. Fresh standard-user and Console-owner routes installed and visibly launched the candidate, seeded isolated settings/history/unrelated-file data, and completed the normal NSIS uninstall with Keep my settings and history; byte-identical retention and registration removal passed. Settings home, AppsFeatures URI, Settings AppsFolder/AUMID, direct SystemSettings.exe, and IApplicationActivationManager did not expose a new Settings window. Installed Apps, candidate row, and Settings-owned Uninstall were not reached; UN-009 remains NOT TESTED. Both temporary account/staging routes cleaned without errors. Artifacts 14759060708, 14758882930, and 14757999074 are capability-only: Server Console desktop available; Windows 11 ARM64 had zero active WASAPI render endpoints, one 1024x768 display, and no supported sleep/hibernate or wake sources. No sleep, display change, audio playback, Shell notification, or Narrator action was performed by these probes.",
     "new_acceptance_passes": 0,
     "candidate_artifact_id": 14695418078,
     "candidate_exe_sha256": "07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720",
@@ -4219,23 +4219,21 @@
       "CandidateLaunched": false
     },
     "remaining_coverage_artifact_ids": [
-      14754673614,
-      14757317184,
-      14755535812,
-      14755396906,
-      14755382014
+      14759060708,
+      14758882930,
+      14758419399,
+      14757999074
     ],
     "console_desktop_preflight": {
       "Requirement": "ENV-004",
       "Status": "CAPABILITY ONLY — NOT AN ACCEPTANCE RESULT",
-      "ArtifactId": 14755535812,
+      "ArtifactId": 14759060708,
       "OS": "Microsoft Windows Server 2025 Datacenter",
       "Build": "26100",
       "OSArchitecture": "X64",
       "ProcessArchitecture": "X64",
       "NativeOrEmulated": "Native AMD64 x64",
       "WTSActiveConsoleSessionId": 2,
-      "ProcessSessionId": 2,
       "WTSConsoleState": "Active",
       "WTSWinStationName": "Console",
       "UserInteractive": true,
@@ -4245,7 +4243,8 @@
       "ExplorerAndTaskbarSameSession": true,
       "ConsoleDesktopConfirmed": true,
       "CandidateLaunched": false,
-      "Limitation": "Read-only Windows Server Console capability evidence; not Windows 11 x64, not an application or power/session test."
+      "Limitation": "Read-only Windows Server Console capability evidence; not Windows 11 x64 and not a lock, sleep, display, or application acceptance test.",
+      "ProcessSessionId": 2
     },
     "matrix_counts_after_current_run": {
       "PASS": 224,
@@ -4253,9 +4252,62 @@
       "NOT TESTED": 1,
       "BLOCKED": 7,
       "NOT APPLICABLE": 2
+    },
+    "arm64_audio_endpoint_preflight": {
+      "Requirement": "REG-008",
+      "ArtifactId": 14758882930,
+      "OS": "Microsoft Windows 11 Enterprise",
+      "OSVersion": "10.0.26200",
+      "OSArchitecture": "ARM64",
+      "ProcessArchitecture": "ARM64",
+      "WinMMDeviceCount": 0,
+      "ActiveWASAPIRenderEndpointCount": 0,
+      "PlaybackAttempted": false,
+      "LoopbackCaptureAttempted": false,
+      "CandidateLaunched": false,
+      "Status": "CAPABILITY ONLY — REG-008 remains BLOCKED"
+    },
+    "arm64_power_display_preflight": {
+      "Requirements": [
+        "ENV-007",
+        "ENV-008"
+      ],
+      "ArtifactId": 14757999074,
+      "OS": "Microsoft Windows 11 Enterprise",
+      "OSVersion": "10.0.26200",
+      "OSArchitecture": "ARM64",
+      "ProcessArchitecture": "ARM64",
+      "CandidateLaunched": false,
+      "VisibleDisplayCount": 1,
+      "Display": "DISPLAY1, 1024x768",
+      "SupportedSleepStates": [],
+      "HibernateAvailable": false,
+      "WakeTimers": 0,
+      "WakeArmedDevices": 0,
+      "SystemConfigurationChanged": false,
+      "Status": "CAPABILITY ONLY — ENV-007/008 remain BLOCKED"
+    },
+    "settings_uninstall_attempt": {
+      "Requirement": "UN-009",
+      "RunId": 45033961059,
+      "ArtifactId": 14758419399,
+      "CandidateArtifactId": 14695418078,
+      "OS": "Microsoft Windows Server 2025 Datacenter",
+      "OSBuild": "26100",
+      "Architecture": "Native AMD64 x64",
+      "Environment": "GitHub-hosted disposable interactive Console; fresh temporary standard-user account plus active Console owner route",
+      "SettingsWindowIdentified": false,
+      "InstalledAppsPageReached": false,
+      "CandidateRowReached": false,
+      "SettingsOwnedUninstallInvoked": false,
+      "SupportingWizardUninstall": "PASS; normal NSIS wizard; keep-settings/history choice",
+      "SettingsHistoryRetention": "PASS; byte-identical seeded files",
+      "TemporaryAccountAndStageCleanup": "PASS; zero cleanup errors",
+      "Result": "NOT TESTED",
+      "Reason": "Settings URI, AppsFeatures URI, Settings AppsFolder/AUMID, direct SystemSettings.exe, and IApplicationActivationManager routes did not expose a new Settings window; actual Installed Apps navigation was not reached."
     }
   },
-  "latest_pr_head_sha": "1bcaac6f9742c955f3828c23117c8a8b8d3da83a",
+  "latest_pr_head_sha": "5e4f06c434c1b917d71413a2601719732e232742",
   "latest_pr_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7",
   "historical_release_candidate_pre_security": {
     "status": "No authoritative production candidate for the signed-manifest source exists. The historical candidate remains valid only for its recorded pre-security tests. Current source is fail-closed because the production trust key is unprovisioned. Current CI and focused security/resource tests pass, and signed test-key transactions pass, but production metadata and a complete final asset set are unavailable.",
@@ -4322,4 +4374,4 @@
     "initial_installer": "May be unsigned under approved policy; bootstrap trust limitation disclosed",
     "separate_publication_approval": "REQUIRED; no merge/tag/release publication occurred"
   }
-}
+}\n
