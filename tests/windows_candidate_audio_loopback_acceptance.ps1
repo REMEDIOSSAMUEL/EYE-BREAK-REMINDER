@@ -23,6 +23,7 @@ $wasapiAvailable=$false
 $controlFailure=$false
 $acousticFailure=$false
 $acousticCoverageMissing=$false
+$naturalAlarmRecord=[pscustomobject]@{Status='NOT TESTED';TimerTransitionStatus='NOT TESTED';AcousticStatus='NOT TESTED';Reason='The natural Work-to-Break alarm trial has not run.'}
 $overallStatus='BLOCKED'
 $overallReason='The runner-only audio acceptance preconditions were not met.'
 $runnerFlavor=$null
@@ -475,6 +476,169 @@ function Get-AudioPreview([int]$Sound,[int]$Volume,[bool]$CaptureEnabled,[string
   $script:captures.Add($record)
   return $record
 }
+function Invoke-NaturalAlarmTrial {
+  $trace=[System.Collections.Generic.List[object]]::new()
+  $timerStatus='NOT TESTED';$timerReason='The real one-minute Work interval has not yet reached Break.'
+  $acousticStatus='NOT TESTED';$acousticReason='No natural-alarm capture has been evaluated.'
+  $timerStartUtc=$null;$timerElapsedSeconds=$null;$initialCountdown=$null;$finalStatusText=$null;$finalCountdownText=$null
+  $breakWindow=[IntPtr]::Zero;$breakScreenshot=$null;$timerScreenshot=$null
+  $recorder=$null;$sessionMeter=$null;$capture=$null;$meterResult=$null
+  $captureStartError=$null;$meterStartError=$null;$captureWave=$null;$captureHash=$null
+  $alarmErrorDialog=$null;$alarmErrorDialogScreenshot=$null
+  $captureStarted=$false;$alarmSettings=$null;$skipResult=$null
+  $endpointMutedOrZero=($script:endpoint-and($script:endpoint.DefaultMuted-or$script:endpoint.DefaultMasterVolume-le0.001))
+
+  try {
+    Set-AudioSound 0
+    Set-AudioVolume 100
+    Set-AudioCheck 32 $true 'Alarm enabled'
+    Set-AudioCheck 107 $false 'Repeat alarm'
+    Invoke-AudioClick 12 'Settings navigation'
+    Invoke-AudioClick 130 'Intervals settings section'
+    $workControl=Get-AudioControl 100 'Work interval'
+    if($workControl.Class-ne'Edit'){throw 'NOT TESTED: the real Work interval control is not an editable field.'}
+    $workElement=[System.Windows.Automation.AutomationElement]::FromHandle($workControl.Handle)
+    $workElement.SetFocus()
+    Start-Sleep -Milliseconds 100
+    $focusedWorkElement=[System.Windows.Automation.AutomationElement]::FocusedElement
+    if($focusedWorkElement.Current.NativeWindowHandle-ne$workControl.Handle.ToInt32()){
+      throw 'NOT TESTED: the real Work interval Edit did not receive keyboard focus.'
+    }
+    [System.Windows.Forms.SendKeys]::SendWait('^a')
+    [System.Windows.Forms.SendKeys]::SendWait('1')
+    [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
+    Start-Sleep -Milliseconds 100
+    $committedWorkControl=Get-AudioControl 100 'Work interval'
+    if($committedWorkControl.Text-cne'1'){throw "NOT TESTED: keyboard input did not leave the candidate Work interval field at '1' (found '$($committedWorkControl.Text)')."}
+    Invoke-AudioClick 10 'Timer navigation'
+    if(-not(Wait-AudioSetting 'workMinutes' '1')){throw 'NOT TESTED: the candidate did not persist the real one-minute Work interval edit.'}
+    $alarmSettings=Read-AudioSettings
+    if([string]$alarmSettings['alarm']-cne'1'-or[string]$alarmSettings['sound']-cne'0'-or[string]$alarmSettings['volume']-cne'100'-or[string]$alarmSettings['repeat']-cne'0'){
+      throw 'NOT TESTED: the persisted alarm settings do not match enabled Gentle, volume 100, repeat off.'
+    }
+    $resetUtc=[DateTime]::UtcNow
+    Invoke-AudioClick 21 'Reset timer'
+    $timerStartUtc=$resetUtc.ToString('o')
+    $initialStatus=Get-AudioControl 41 'Timer status'
+    $initialCountdown=Get-AudioControl 40 'Timer countdown'
+    $initialStatusText=[string]$initialStatus.Text
+    $initialCountdownText=[string]$initialCountdown.Text
+    if($initialStatusText-notmatch'(?i)running'-or$initialCountdownText-notmatch'^\s*(?:01:00|00:5[0-9])\s*$'){
+      throw "NOT TESTED: Reset did not start a natural one-minute Running timer (status='$initialStatusText', countdown='$initialCountdownText')."
+    }
+    $timerScreenshot=Save-WindowScreenshot $script:mainWindow 'natural-alarm-one-minute-running-timer.png'
+    Add-AudioEvent 'Reset the real candidate timer to its validated one-minute minimum' 'PASS' ([pscustomobject]@{WorkMinutes=[string]$alarmSettings['workMinutes'];StatusText=$initialStatusText;CountdownText=$initialCountdownText;ResetUtc=$timerStartUtc;TimerScreenshot=$timerScreenshot;Sound=[string]$alarmSettings['sound'];Volume=[string]$alarmSettings['volume'];AlarmEnabled=[string]$alarmSettings['alarm'];Repeat=[string]$alarmSettings['repeat'];NoClockOrTimerSimulation=$true})
+
+    $timerWatch=[Diagnostics.Stopwatch]::StartNew();$captureWatch=$null;$lastTraceSecond=-1
+    while($timerWatch.Elapsed.TotalSeconds-lt85-and$breakWindow-eq[IntPtr]::Zero){
+      $statusControl=Get-AudioControl 41 'Timer status'
+      $countdownControl=Get-AudioControl 40 'Timer countdown'
+      $finalStatusText=[string]$statusControl.Text;$finalCountdownText=[string]$countdownControl.Text
+      $remainingSeconds=$null
+      if($finalCountdownText-match'^\s*(\d{2}):(\d{2})\s*$'){$remainingSeconds=([int]$Matches[1]*60)+[int]$Matches[2]}
+      $wholeSecond=[int][Math]::Floor($timerWatch.Elapsed.TotalSeconds)
+      if($wholeSecond-ne$lastTraceSecond){
+        $trace.Add([pscustomobject]@{ElapsedSeconds=$wholeSecond;Utc=[DateTime]::UtcNow.ToString('o');StatusText=$finalStatusText;CountdownText=$finalCountdownText;RemainingSeconds=$remainingSeconds})
+        $lastTraceSecond=$wholeSecond
+      }
+      if(-not$captureStarted-and$null-ne$remainingSeconds-and$remainingSeconds-le25-and$remainingSeconds-gt0){
+        $captureStarted=$true;$captureWatch=[Diagnostics.Stopwatch]::StartNew()
+        if($script:wasapiAvailable-and$script:baseline-and$script:baseline.EndpointId){
+          $recorder=[EBR_WASAPI+Recorder]::new();$captureStartError=$recorder.Begin(30000)
+          $sessionMeter=[EBR_WASAPI+SessionMeterRecorder]::new();$meterStartError=$sessionMeter.Begin($script:appPid,30000)
+          Add-AudioEvent 'Arm same-endpoint WASAPI loopback and exact-candidate session-meter capture before the natural alarm deadline' $(if(-not$captureStartError-and-not$meterStartError){'PASS'}else{'NOT TESTED'}) ([pscustomobject]@{RecorderStartError=$captureStartError;SessionMeterStartError=$meterStartError;CandidatePid=$script:appPid;EndpointId=$script:baseline.EndpointId;CaptureDurationMs=30000;CountdownText=$finalCountdownText;RemainingSeconds=$remainingSeconds})
+        }else{
+          $script:acousticCoverageMissing=$true
+          Add-AudioEvent 'Natural alarm audio endpoint and loopback capture are available' 'NOT TESTED' ([pscustomobject]@{Endpoint=$script:endpoint;BaselineEndpointId=if($script:baseline){$script:baseline.EndpointId}else{$null};BaselineLoopbackAvailable=$script:wasapiAvailable;Reason='No functioning same-endpoint WASAPI baseline is available; the genuine timer transition will still be observed.'})
+        }
+      }
+
+      $dialog=Get-AudioErrorDialog
+      if($dialog-ne[IntPtr]::Zero){
+        $alarmErrorDialog=Get-TopWindowNarration $dialog
+        $alarmErrorDialogScreenshot=Save-WindowScreenshot $dialog 'natural-alarm-output-error-dialog.png'
+        $closed=Complete-UnavailableDialog $dialog 'natural-alarm-output-error-dialog'
+        $alarmErrorDialog|Add-Member -NotePropertyName CloseResult -NotePropertyValue $closed -Force
+        $dialogAudioFailure=($script:wasapiAvailable-and-not$endpointMutedOrZero)
+        Add-AudioEvent 'Observe the candidate alarm output result at the real timer deadline' $(if($dialogAudioFailure){'FAIL'}else{'NOT TESTED'}) ([pscustomobject]@{Dialog=$alarmErrorDialog;Screenshot=$alarmErrorDialogScreenshot;NoEndpointAvailable=(-not$script:wasapiAvailable);EndpointMutedOrZero=$endpointMutedOrZero;CloseResult=$closed})
+        if($dialogAudioFailure){$acousticStatus='FAIL';$acousticReason='The exact candidate showed its alarm playback failure dialog despite an available unmuted WASAPI endpoint.';$script:acousticFailure=$true}
+        elseif($endpointMutedOrZero){$acousticStatus='NOT TESTED';$acousticReason='The candidate alarm error dialog appeared, but the default endpoint was muted or its master volume was effectively zero; this environment cannot establish audible output.'}
+        else{$acousticReason='No WASAPI endpoint was available; the candidate alarm error was captured and acknowledged in the disposable runner, so audible output remains unverified.'}
+        if(-not$closed.Closed){throw 'NOT TESTED: the exact candidate alarm-output dialog could not be closed safely.'}
+      }
+
+      foreach($candidateWindow in [EBR_AUDIO_NATIVE]::TopWindowsForProcess($script:appPid)){
+        if([EBR_AUDIO_NATIVE]::ClassName($candidateWindow)-ceq'EyeBreakReminder.Break'){$breakWindow=$candidateWindow;break}
+      }
+      if($breakWindow-ne[IntPtr]::Zero){break}
+      Start-Sleep -Milliseconds 100
+    }
+
+    $timerElapsedSeconds=[Math]::Round($timerWatch.Elapsed.TotalSeconds,2)
+    if($breakWindow-eq[IntPtr]::Zero){
+      if($recorder){try{$capture=$recorder.Finish(40000)}catch{$captureStartError=if($captureStartError){$captureStartError+'; '+$_.Exception.Message}else{$_.Exception.Message}}}
+      if($sessionMeter){try{$meterResult=$sessionMeter.Finish(40000)}catch{$meterStartError=if($meterStartError){$meterStartError+'; '+$_.Exception.Message}else{$_.Exception.Message}}}
+      if($capture){$captureWave=Save-LoopbackWave $capture 'natural-work-break-alarm-loopback.wav';if($captureWave){$captureHash=(Get-FileHash -LiteralPath $captureWave -Algorithm SHA256).Hash.ToLowerInvariant()}}
+      $lastStatus=Get-AudioControl 41 'Timer status';$lastCountdown=Get-AudioControl 40 'Timer countdown'
+      $finalStatusText=[string]$lastStatus.Text;$finalCountdownText=[string]$lastCountdown.Text
+      $timerReason="No visible candidate-owned Break window appeared within 85 seconds after Reset (status='$finalStatusText', countdown='$finalCountdownText')."
+      $timerStatus='FAIL'
+      Test-AudioRequire $false 'The real one-minute Work timer naturally reaches its candidate-owned Break window' ([pscustomobject]@{ResetUtc=$timerStartUtc;ElapsedSeconds=$timerElapsedSeconds;FinalStatus=$finalStatusText;FinalCountdown=$finalCountdownText;Trace=$trace.ToArray()})|Out-Null
+    }else{
+      $breakStatusControl=Get-AudioControl 41 'Timer status';$breakCountdownControl=Get-AudioControl 40 'Timer countdown'
+      $finalStatusText=[string]$breakStatusControl.Text;$finalCountdownText=[string]$breakCountdownControl.Text
+      $dueInRange=($timerElapsedSeconds-ge50-and$timerElapsedSeconds-le85)
+      $timerTransition=($dueInRange-and$finalStatusText-match'(?i)break'-and[EBR_AUDIO_NATIVE]::OwnerPid($breakWindow)-eq$script:appPid)
+      $timerStatus=if($timerTransition){'PASS'}else{'FAIL'}
+      $timerReason=if($timerTransition){'The one-minute Work timer naturally transitioned to Break and created a visible top-level break window owned by the exact candidate process.'}else{'The timer transition or candidate-owned Break window did not satisfy the expected natural one-minute timing/state checks.'}
+      $breakScreenshot=Save-WindowScreenshot $breakWindow 'natural-work-to-break-alarm-window.png'
+      Add-AudioEvent 'The real one-minute Work timer naturally reaches a candidate-owned Break window' $(if($timerTransition){'PASS'}else{'FAIL'}) ([pscustomobject]@{ResetUtc=$timerStartUtc;ElapsedSeconds=$timerElapsedSeconds;ExpectedElapsedSeconds=@(50,85);InitialCountdown=$initialCountdownText;FinalStatus=$finalStatusText;FinalCountdown=$finalCountdownText;BreakWindow=[pscustomobject]@{Handle=('0x{0:X}'-f$breakWindow.ToInt64());Class=[EBR_AUDIO_NATIVE]::ClassName($breakWindow);OwnerProcessId=[EBR_AUDIO_NATIVE]::OwnerPid($breakWindow);Title=[EBR_AUDIO_NATIVE]::Text($breakWindow)};BreakScreenshot=$breakScreenshot;Trace=$trace.ToArray()})
+      if(-not$timerTransition){$script:controlFailure=$true}
+
+      if($recorder){try{$capture=$recorder.Finish(40000)}catch{$captureStartError=if($captureStartError){$captureStartError+'; '+$_.Exception.Message}else{$_.Exception.Message}}}
+      if($sessionMeter){try{$meterResult=$sessionMeter.Finish(40000)}catch{$meterStartError=if($meterStartError){$meterStartError+'; '+$_.Exception.Message}else{$_.Exception.Message}}}
+      if($capture){$captureWave=Save-LoopbackWave $capture 'natural-work-break-alarm-loopback.wav';if($captureWave){$captureHash=(Get-FileHash -LiteralPath $captureWave -Algorithm SHA256).Hash.ToLowerInvariant()}}
+
+      $meterSignal=($meterResult-and$meterResult.ProcessId-eq$script:appPid-and$meterResult.EndpointId-ceq$script:baseline.EndpointId-and$meterResult.ActiveSamples-gt0-and$meterResult.NonZeroSamples-gt0-and$meterResult.Peak-gt0.0001-and-not$meterResult.Error)
+      $loopbackSignal=($capture-and-not$capture.Error-and$capture.Frames-gt0-and$capture.NonZeroSamples-gt100-and$capture.Peak-gt0.003-and$capture.EndpointId-ceq$script:baseline.EndpointId)
+      $endpointSame=($capture-and$meterResult-and$capture.EndpointId-ceq$script:baseline.EndpointId-and$meterResult.EndpointId-ceq$script:baseline.EndpointId)
+      $acousticCaptureErrors=($captureStartError-or$meterStartError-or-not$capture-or-not$meterResult-or$capture.Error-or$meterResult.Error)
+      if(-not$script:wasapiAvailable-or-not$script:baseline-or-not$script:baseline.EndpointId){
+        $script:acousticCoverageMissing=$true;$acousticStatus='NOT TESTED'
+        if(-not$alarmErrorDialog){$acousticReason='The natural timer and Break window were observed, but no functioning WASAPI loopback endpoint existed for same-endpoint alarm evidence.'}
+        Add-AudioEvent 'Natural candidate alarm produces same-endpoint render and candidate-PID samples' 'NOT TESTED' ([pscustomobject]@{Reason=$acousticReason;Endpoint=$script:endpoint;Capture=$capture;SessionMeter=$meterResult;AlarmErrorDialog=$alarmErrorDialog})
+      }elseif($endpointMutedOrZero){
+        $script:acousticCoverageMissing=$true;$acousticStatus='NOT TESTED';$acousticReason='A WASAPI endpoint exists, but it was muted or its master volume was effectively zero; natural-alarm audibility cannot be evaluated in this environment.'
+        Add-AudioEvent 'Natural candidate alarm acoustic evidence is available from an unmuted, nonzero-master endpoint' 'NOT TESTED' ([pscustomobject]@{Reason=$acousticReason;DefaultEndpointId=$script:endpoint.DefaultEndpointId;DefaultMuted=$script:endpoint.DefaultMuted;DefaultMasterVolume=$script:endpoint.DefaultMasterVolume;Capture=$capture;SessionMeter=$meterResult;AlarmErrorDialog=$alarmErrorDialog;TimerTransitionStatus=$timerStatus})
+      }elseif($acousticCaptureErrors){
+        $script:acousticCoverageMissing=$true
+        if($acousticStatus-ne'FAIL'){$acousticStatus='NOT TESTED';$acousticReason='The natural alarm capture or exact-candidate session meter could not complete; acoustic behavior remains unverified.'}
+        Add-AudioEvent 'Natural candidate alarm produces same-endpoint render and candidate-PID samples' $acousticStatus ([pscustomobject]@{Reason=$acousticReason;CaptureStartError=$captureStartError;SessionMeterStartError=$meterStartError;Capture=$capture;SessionMeter=$meterResult;AlarmErrorDialog=$alarmErrorDialog})
+      }else{
+        $acousticPass=($timerTransition-and-not$alarmErrorDialog-and$endpointSame-and$loopbackSignal-and$meterSignal)
+        $acousticStatus=if($acousticPass){'PASS'}else{'FAIL'}
+        $acousticReason=if($acousticPass){'The natural timer alarm produced nonzero WASAPI render samples and nonzero audio-session meter samples attributed to the exact candidate PID on the baseline endpoint.'}else{'The natural timer alarm lacked valid same-endpoint nonzero render samples or an exact-candidate PID session-meter signal.'}
+        Test-AudioAcousticRequire $acousticPass 'Natural timer alarm produces same-endpoint WASAPI output and exact-candidate PID session-meter samples' ([pscustomobject]@{TimerTransition=$timerTransition;EndpointId=$script:baseline.EndpointId;Loopback=[pscustomobject]@{EndpointId=$capture.EndpointId;Frames=$capture.Frames;Packets=$capture.Packets;NonZeroSamples=$capture.NonZeroSamples;Rms=[Math]::Round($capture.Rms,8);Peak=[Math]::Round($capture.Peak,8);WaveFile=$captureWave;WaveSHA256=$captureHash;Error=$capture.Error};CandidateSessionMeter=[pscustomobject]@{ProcessId=$meterResult.ProcessId;EndpointId=$meterResult.EndpointId;ActiveSamples=$meterResult.ActiveSamples;MeterSamples=$meterResult.MeterSamples;NonZeroSamples=$meterResult.NonZeroSamples;Peak=[Math]::Round($meterResult.Peak,8);Error=$meterResult.Error};AlarmErrorDialog=$alarmErrorDialog;Thresholds=[pscustomobject]@{MinimumLoopbackNonZeroSamples=101;MinimumLoopbackPeak=0.003;MinimumCandidateMeterPeak=0.0001}})|Out-Null
+      }
+    }
+
+    if($breakWindow-ne[IntPtr]::Zero-and[EBR_AUDIO_NATIVE]::Visible($breakWindow)){
+      $skipButtons=@(foreach($button in [EBR_AUDIO_NATIVE]::ChildWindows($breakWindow)){if([EBR_AUDIO_NATIVE]::OwnerPid($button)-eq$script:appPid-and[EBR_AUDIO_NATIVE]::ControlId($button)-eq24-and[EBR_AUDIO_NATIVE]::Visible($button)-and[EBR_AUDIO_NATIVE]::Enabled($button)){$button}})
+      if($skipButtons.Count-eq1){$clickResult=[IntPtr]::Zero;$skipClicked=[EBR_AUDIO_NATIVE]::SendBounded($skipButtons[0],0x00F5,[IntPtr]::Zero,[IntPtr]::Zero,5000,[ref]$clickResult);$skipWatch=[Diagnostics.Stopwatch]::StartNew();while([EBR_AUDIO_NATIVE]::Visible($breakWindow)-and$skipWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 50};$skipResult=[pscustomobject]@{UniqueSkipButton=$true;Clicked=$skipClicked;BreakWindowClosed=(-not[EBR_AUDIO_NATIVE]::Visible($breakWindow));Action='Skip (ID 24); do not invoke completed-break alarm.'}}
+      else{$skipResult=[pscustomobject]@{UniqueSkipButton=$false;Clicked=$false;BreakWindowClosed=$false;ObservedSkipButtonCount=$skipButtons.Count;Action='No ambiguous break control was clicked.'}}
+      Add-AudioEvent 'Skip the captured Break without invoking the completed-break alarm' $(if($skipResult.Clicked-and$skipResult.BreakWindowClosed){'PASS'}else{'NOT TESTED'}) $skipResult
+      if(-not$skipResult.Clicked-or-not$skipResult.BreakWindowClosed){$script:acousticCoverageMissing=$true}
+    }
+  } catch {
+    if($_.Exception.Message-match'^PRODUCT DEFECT:'){$timerStatus='FAIL';$timerReason=$_.Exception.Message;$script:controlFailure=$true}
+    elseif($_.Exception.Message-match'^(BLOCKED|NOT TESTED):'){$timerStatus='NOT TESTED';$timerReason=$_.Exception.Message}
+    else{$timerStatus='NOT TESTED';$timerReason=$_.Exception.Message}
+    $script:acousticCoverageMissing=$true
+    Add-AudioEvent 'Natural one-minute Work-to-Break alarm trial' $timerStatus ([pscustomobject]@{Reason=$timerReason;ResetUtc=$timerStartUtc;InitialCountdown=$initialCountdown;FinalStatus=$finalStatusText;FinalCountdown=$finalCountdownText;Trace=$trace.ToArray();CaptureStartError=$captureStartError;SessionMeterStartError=$meterStartError})
+  }
+  $overallTrialStatus=if($timerStatus-eq'FAIL'-or$acousticStatus-eq'FAIL'){'FAIL'}elseif($timerStatus-eq'PASS'-and$acousticStatus-eq'PASS'-and$skipResult-and$skipResult.Clicked-and$skipResult.BreakWindowClosed){'PASS'}else{'BLOCKED'}
+  return [pscustomobject]@{Status=$overallTrialStatus;TimerTransitionStatus=$timerStatus;TimerReason=$timerReason;ResetUtc=$timerStartUtc;ElapsedSeconds=$timerElapsedSeconds;InitialCountdown=$initialCountdown;FinalStatusText=$finalStatusText;FinalCountdownText=$finalCountdownText;CountdownTrace=$trace.ToArray();BreakWindow=if($breakWindow-ne[IntPtr]::Zero){[pscustomobject]@{Handle=('0x{0:X}'-f$breakWindow.ToInt64());Class=[EBR_AUDIO_NATIVE]::ClassName($breakWindow);OwnerProcessId=[EBR_AUDIO_NATIVE]::OwnerPid($breakWindow);Title=[EBR_AUDIO_NATIVE]::Text($breakWindow);Screenshot=$breakScreenshot}}else{$null};TimerScreenshot=$timerScreenshot;AcousticStatus=$acousticStatus;AcousticReason=$acousticReason;Loopback=if($capture){[pscustomobject]@{EndpointId=$capture.EndpointId;StartedUtc=$capture.StartedUtc;CompletedUtc=$capture.CompletedUtc;Frames=$capture.Frames;Packets=$capture.Packets;NonZeroSamples=$capture.NonZeroSamples;Rms=[Math]::Round($capture.Rms,8);Peak=[Math]::Round($capture.Peak,8);Error=$capture.Error;WaveFile=$captureWave;WaveSHA256=$captureHash}}else{$null};CandidateSessionMeter=if($meterResult){[pscustomobject]@{ProcessId=$meterResult.ProcessId;EndpointId=$meterResult.EndpointId;Polls=$meterResult.Polls;ActiveSamples=$meterResult.ActiveSamples;MeterSamples=$meterResult.MeterSamples;NonZeroSamples=$meterResult.NonZeroSamples;Peak=[Math]::Round($meterResult.Peak,8);Error=$meterResult.Error}}else{$null};CaptureStartError=$captureStartError;SessionMeterStartError=$meterStartError;AlarmErrorDialog=$alarmErrorDialog;AlarmErrorDialogScreenshot=$alarmErrorDialogScreenshot;AlarmSettings=$alarmSettings;SkipResult=$skipResult;Reason=if($overallTrialStatus-eq'PASS'){'A natural one-minute Work timer reached Break, and the actual candidate alarm produced same-endpoint render and candidate-PID session-meter evidence; the break was skipped to avoid a completion alarm.'}else{$timerReason+' '+$acousticReason}}
+}
 
 $script:evidenceRoot=[IO.Path]::GetFullPath($EvidenceDirectory)
 try{
@@ -514,7 +678,7 @@ try{
   if($script:appDataExistedBefore){Add-AudioEvent 'Runner profile is fresh for Eye Break Reminder data' 'BLOCKED' ([pscustomobject]@{AppDataPath=$script:appDataPath;AlreadyExisted=$true});throw 'The disposable runner profile already contains Eye Break Reminder data; candidate not launched.'}
   Add-AudioEvent 'Exact production x64 candidate identity verified' 'PASS' ([pscustomobject]@{Requirement='REG-008';ArtifactId=$expectedArtifactId;FinalizerRunId=$expectedRunId;CandidateExecutableSHA256=$actualHash;CandidateProductVersion=$version;PEMachine=('0x{0:X4}'-f$machine);OS=$os.Caption;OSVersion=$os.Version;OSBuild=$os.BuildNumber;OSArchitecture=$osArch;ProcessArchitecture=$procArch;CandidateExecution=$candidateExecution;Environment=$environmentDescription;RunnerFlavor=$runnerFlavor;SessionId=$testSessionId;SessionName=$sessionName;User=$testUser;ExpectedSessionId=if($server2025RdpContext){$ExpectedSessionId}else{$null};ExpectedSessionName=if($server2025RdpContext){$ExpectedSessionName}else{$null};ExpectedUser=if($server2025RdpContext){$ExpectedUser}else{$null};FreshProfile=$true})
   Add-Type -TypeDefinition $nativeSource -ErrorAction Stop
-  Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop;Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop;Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+  Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop;Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop;Add-Type -AssemblyName System.Drawing -ErrorAction Stop;Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
   Prepare-DisposableRunnerDesktop
   $script:ownedProcess=Start-Process -FilePath $script:ExecutablePath -PassThru -ErrorAction Stop;$script:appPid=$script:ownedProcess.Id
   $candidateProcessSession=(Get-Process -Id $script:appPid -ErrorAction Stop).SessionId
@@ -650,12 +814,14 @@ try{
     Set-AudioCheck 32 $true 'Alarm enabled';Test-AudioRequire (Wait-AudioSetting 'alarm' '1') 'Alarm enabled setting is restored after the mute test'|Out-Null
   }
 
-  if($script:mainWindow-ne[IntPtr]::Zero){Add-AudioEvent 'Candidate main window remains responsive after audio sweep' 'PASS' ([pscustomobject]@{WindowVisible=[EBR_AUDIO_NATIVE]::Visible($script:mainWindow);WindowTitle=[EBR_AUDIO_NATIVE]::Text($script:mainWindow);ProcessResponding=(-not$script:ownedProcess.HasExited)})}
-  $script:ownedProcess.Refresh();$audioHandlesAfter=$script:ownedProcess.HandleCount;$handlesReleased=($audioHandlesAfter-le($audioHandlesBefore+2));Test-AudioRequire $handlesReleased 'Repeated preview, Stop, and mute paths release candidate audio handles' ([pscustomobject]@{HandleCountBefore=$audioHandlesBefore;HandleCountAfter=$audioHandlesAfter;AllowedGrowth=2})|Out-Null
+  $naturalAlarmRecord=Invoke-NaturalAlarmTrial
+  if($naturalAlarmRecord.Status-ne'PASS'){$acousticCoverageMissing=$true}
+  if($script:mainWindow-ne[IntPtr]::Zero){Add-AudioEvent 'Candidate main window remains responsive after preview and natural-alarm tests' 'PASS' ([pscustomobject]@{WindowVisible=[EBR_AUDIO_NATIVE]::Visible($script:mainWindow);WindowTitle=[EBR_AUDIO_NATIVE]::Text($script:mainWindow);ProcessResponding=(-not$script:ownedProcess.HasExited);NaturalAlarmStatus=$naturalAlarmRecord.Status})}
+  $script:ownedProcess.Refresh();$audioHandlesAfter=$script:ownedProcess.HandleCount;$handlesReleased=($audioHandlesAfter-le($audioHandlesBefore+2));Test-AudioRequire $handlesReleased 'Preview, Stop, mute, and natural-alarm paths release candidate audio handles' ([pscustomobject]@{HandleCountBefore=$audioHandlesBefore;HandleCountAfter=$audioHandlesAfter;AllowedGrowth=2;NaturalAlarmStatus=$naturalAlarmRecord.Status})|Out-Null
   $waveFiles=@(Get-ChildItem -LiteralPath $script:evidenceRoot -Filter '*.wav' -File -ErrorAction SilentlyContinue|Select-Object Name,Length)
-  if($script:wasapiAvailable-and-not$acousticCoverageMissing-and-not$controlFailure-and-not$acousticFailure){$overallStatus='PASS';$overallReason='Every required candidate sound/volume preview and mute/stop interaction produced valid same-endpoint WASAPI evidence in '+$environmentDescription+'; physical speaker audibility was not verified.'}
+  if($script:wasapiAvailable-and$naturalAlarmRecord.Status-eq'PASS'-and$naturalAlarmRecord.AcousticStatus-eq'PASS'-and-not$acousticCoverageMissing-and-not$controlFailure-and-not$acousticFailure){$overallStatus='PASS';$overallReason='Every required candidate sound/volume preview and mute/stop interaction plus one naturally timed one-minute Work-to-Break alarm produced valid same-endpoint WASAPI and exact-candidate session-meter evidence in '+$environmentDescription+'; physical speaker audibility was not verified.'}
   elseif($controlFailure-or$acousticFailure){$overallStatus='FAIL';$overallReason='One or more real candidate Settings/playback or loopback acoustic assertions failed; inspect the per-event evidence.'}
-  else{$overallStatus='BLOCKED';$overallReason='Settings and preview controls were exercised, but no functioning Windows WASAPI loopback endpoint was available; acoustic output remains unverified.'}
+  else{$overallStatus='BLOCKED';$overallReason=if(-not$script:wasapiAvailable){'Settings, preview controls, and the natural timer transition were exercised, but no functioning Windows WASAPI loopback endpoint was available; acoustic output remains unverified.'}else{'Preview coverage may be available, but the natural timer-alarm or full same-endpoint acoustic assertions did not complete; REG-008 remains blocked.'}}
   Add-AudioEvent 'Physical audible sound from speakers or headphones' 'NOT TESTED' 'The runner has no user-observed physical speaker/headphone check. WASAPI loopback (if available) verifies only audio-engine render samples.'
 }catch{
   if($overallStatus-ne'BLOCKED'){$overallStatus=if($controlFailure){'FAIL'}else{'BLOCKED'};$overallReason=$_.Exception.Message}
@@ -668,7 +834,7 @@ try{
     try{$local=[IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\')+'\';$resolved=[IO.Path]::GetFullPath($script:appDataPath);if(-not$resolved.StartsWith($local,[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($resolved)-cne'EyeBreakReminder'-or([IO.File]::GetAttributes($resolved)-band[IO.FileAttributes]::ReparsePoint)){throw 'Refusing to remove a non-test or reparse-point app-data path.'};if(-not$appExited){throw 'Candidate process is still running; preserving its data path.'};Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop;Add-AudioEvent 'Remove only the fresh candidate app-data folder' 'PASS' ([pscustomobject]@{Path=$resolved;Preexisting=$false;CandidateExited=$appExited})}catch{Add-AudioEvent 'Remove only the fresh candidate app-data folder' 'FAIL' $_.Exception.Message;$overallStatus='FAIL';$overallReason='Test cleanup failed: '+$_.Exception.Message}
   }
   try{
-    $record=[pscustomobject]@{Requirement='REG-008';Status=$overallStatus;Reason=$overallReason;AcousticCoverageComplete=(-not$acousticCoverageMissing);ArtifactId=$expectedArtifactId;FinalizerRunId=$expectedRunId;CandidateExecutableSHA256=$expectedSha256;CandidateArchitecture='AMD64 x64';CandidateExecution=$candidateExecution;Environment=$environmentDescription;RunnerFlavor=$runnerFlavor;SessionId=$testSessionId;SessionName=$sessionName;User=$testUser;ExpectedSessionId=if($server2025RdpContext){$ExpectedSessionId}else{$null};ExpectedSessionName=if($server2025RdpContext){$ExpectedSessionName}else{$null};ExpectedUser=if($server2025RdpContext){$ExpectedUser}else{$null};OperatingSystem=[pscustomobject]@{Caption=$(if($os){$os.Caption}else{$null});Version=$(if($os){$os.Version}else{$null});Build=$(if($os){$os.BuildNumber}else{$null});OSArchitecture=$(if($osArch){$osArch}else{$null});ProcessArchitecture=$(if($procArch){$procArch}else{$null});UserInteractive=[Environment]::UserInteractive};Profile=[pscustomobject]@{AppDataPath=$script:appDataPath;ExistedBefore=$script:appDataExistedBefore;RemovedAfter=(-not(Test-Path -LiteralPath $script:appDataPath))};AudioEndpoint=$script:endpoint;WasapiLoopbackStatus=if($script:wasapiAvailable){'CAPTURED'}else{'NOT AVAILABLE'};Baseline=if($script:baseline){[pscustomobject]@{Frames=$script:baseline.Frames;Packets=$script:baseline.Packets;Rms=[Math]::Round($script:baseline.Rms,8);Peak=[Math]::Round($script:baseline.Peak,8)}}else{$null};PhysicalAudibility='NOT VERIFIED';CaptureFiles=$waveFiles;Captures=$script:captures.ToArray();Events=$script:events.ToArray();AssertionCount=@($script:events|Where-Object{$_.Status-in@('PASS','FAIL')}).Count;PassCount=@($script:events|Where-Object{$_.Status-eq'PASS'}).Count;FailCount=@($script:events|Where-Object{$_.Status-eq'FAIL'}).Count;NotTestedCount=@($script:events|Where-Object{$_.Status-eq'NOT TESTED'}).Count;CompletedUtc=[DateTime]::UtcNow.ToString('o')}
+    $record=[pscustomobject]@{Requirement='REG-008';Status=$overallStatus;Reason=$overallReason;AcousticCoverageComplete=(-not$acousticCoverageMissing);NaturalAlarmTrial=$naturalAlarmRecord;ArtifactId=$expectedArtifactId;FinalizerRunId=$expectedRunId;CandidateExecutableSHA256=$expectedSha256;CandidateArchitecture='AMD64 x64';CandidateExecution=$candidateExecution;Environment=$environmentDescription;RunnerFlavor=$runnerFlavor;SessionId=$testSessionId;SessionName=$sessionName;User=$testUser;ExpectedSessionId=if($server2025RdpContext){$ExpectedSessionId}else{$null};ExpectedSessionName=if($server2025RdpContext){$ExpectedSessionName}else{$null};ExpectedUser=if($server2025RdpContext){$ExpectedUser}else{$null};OperatingSystem=[pscustomobject]@{Caption=$(if($os){$os.Caption}else{$null});Version=$(if($os){$os.Version}else{$null});Build=$(if($os){$os.BuildNumber}else{$null});OSArchitecture=$(if($osArch){$osArch}else{$null});ProcessArchitecture=$(if($procArch){$procArch}else{$null});UserInteractive=[Environment]::UserInteractive};Profile=[pscustomobject]@{AppDataPath=$script:appDataPath;ExistedBefore=$script:appDataExistedBefore;RemovedAfter=(-not(Test-Path -LiteralPath $script:appDataPath))};AudioEndpoint=$script:endpoint;WasapiLoopbackStatus=if($script:wasapiAvailable){'CAPTURED'}else{'NOT AVAILABLE'};Baseline=if($script:baseline){[pscustomobject]@{Frames=$script:baseline.Frames;Packets=$script:baseline.Packets;Rms=[Math]::Round($script:baseline.Rms,8);Peak=[Math]::Round($script:baseline.Peak,8)}}else{$null};PhysicalAudibility='NOT VERIFIED';CaptureFiles=$waveFiles;Captures=$script:captures.ToArray();Events=$script:events.ToArray();AssertionCount=@($script:events|Where-Object{$_.Status-in@('PASS','FAIL')}).Count;PassCount=@($script:events|Where-Object{$_.Status-eq'PASS'}).Count;FailCount=@($script:events|Where-Object{$_.Status-eq'FAIL'}).Count;NotTestedCount=@($script:events|Where-Object{$_.Status-eq'NOT TESTED'}).Count;CompletedUtc=[DateTime]::UtcNow.ToString('o')}
     $record|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $script:evidenceRoot 'reg-008-audio-loopback-results.json') -Encoding UTF8
   }catch{Write-Error "Could not write REG-008 evidence: $($_.Exception.Message)"}
 }
