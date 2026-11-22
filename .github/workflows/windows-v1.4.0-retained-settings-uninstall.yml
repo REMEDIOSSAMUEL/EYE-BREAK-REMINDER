@@ -9,6 +9,10 @@ on:
 # hosted image's first-sign-in OOBE was already observed and blocked the exact
 # candidate. The separate `approve-win11-privacy-oobe-next` label is the only
 # workflow path that passes the explicit OOBE Next opt-in to those probes.
+# The Windows Server localhost RDP Settings and lock/unlock routes repeatedly
+# failed to create a second active user session through run 45007378820. Keep
+# those unchanged routes behind an explicit retry label until the RDP/session
+# environment changes; unrelated active-Console probes continue normally.
 
 permissions:
   actions: read
@@ -540,6 +544,7 @@ jobs:
 
   settings-uninstall-windows-server-x64:
     name: Exact candidate via temporary Windows Server localhost RDP desktop (native x64)
+    if: contains(github.event.pull_request.labels.*.name, 'retry-server-rdp-lock-after-env-change')
     runs-on: windows-2025
     timeout-minutes: 45
     steps:
@@ -838,6 +843,7 @@ jobs:
 
   isolated-lock-unlock-windows-server-x64:
     name: Exact candidate lock/unlock in a separate disposable Windows Server x64 guest
+    if: contains(github.event.pull_request.labels.*.name, 'retry-server-rdp-lock-after-env-change')
     runs-on: windows-2025
     timeout-minutes: 45
     steps:
