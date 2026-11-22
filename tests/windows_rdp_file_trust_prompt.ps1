@@ -156,6 +156,20 @@ public static class EBR_RdpUiNative {
     }
   }
 
+  function Get-EBRNestedCertificateViewerWindows($WarningSnapshot) {
+    $matches = [System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
+    foreach ($node in $WarningSnapshot.Nodes) {
+      try {
+        $current = $node.Current
+        if ($current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and
+            $current.Name -ceq 'Certificate' -and $current.ProcessId -eq $MstscProcessId) {
+          $matches.Add($node)
+        }
+      } catch { }
+    }
+    return $matches.ToArray()
+  }
+
   function Test-EBRUnknownConnectionWarning([string]$JoinedNames) {
     $warningTextObserved = $JoinedNames -match '(?i)(Caution:\s*Unknown remote connection|We could not verify the publisher of this remote connection)'
     $unknownPublisherObserved = $JoinedNames -match '(?i)Unknown publisher'
@@ -405,30 +419,68 @@ public static class EBR_RdpUiNative {
       $owned=@(Get-EBROwnedRdpWindows)
       if($owned.Count-ne1-or[long]$owned[0].Current.NativeWindowHandle-ne$WarningSnapshot.Handle-or-not(Test-EBRForegroundProcessWindow $WarningSnapshot.Handle $MstscProcessId)){throw 'certificate warning is not the unique foreground window owned by this mstsc process.'}
       $listenerBefore=Get-EBRListenerCertificate
+      $freshWarnings=@(Get-EBROwnedRdpWindows|Where-Object{[long]$_.Current.NativeWindowHandle-eq[long]$WarningSnapshot.Handle})
+      if($freshWarnings.Count-ne1-or-not(Test-EBRForegroundProcessWindow $WarningSnapshot.Handle $MstscProcessId)){throw 'certificate warning changed or lost foreground before the View action.'}
+      $WarningSnapshot=Get-EBRPromptSnapshot $freshWarnings[0]
+      if(-not(Test-EBRServerCertificateWarning $WarningSnapshot.JoinedNames)){throw 'refreshed View action parent is no longer the exact server certificate warning.'}
       $view=@(foreach($node in $WarningSnapshot.Nodes){try{$c=$node.Current;if($c.ProcessId-eq$MstscProcessId-and$c.IsEnabled-and-not$c.IsOffscreen-and$c.ControlType-in@([System.Windows.Automation.ControlType]::Button,[System.Windows.Automation.ControlType]::Pane,[System.Windows.Automation.ControlType]::Hyperlink)-and$c.Name-match'(?i)^\s*View certificate\s*\.{0,3}\s*$'){$node}}catch{}})
       if($view.Count-ne1){throw "expected one exact View certificate action; found $($view.Count)."}
       $warningHandle=[long]$WarningSnapshot.Handle
+      $existingNestedViewers=@(Get-EBRNestedCertificateViewerWindows $WarningSnapshot)
+      $existingTopLevelViewers=@(Get-EBRProcessTopLevelWindows|Where-Object{$_.Current.ControlType-eq[System.Windows.Automation.ControlType]::Window-and$_.Current.Name-ceq'Certificate'})
+      if($existingNestedViewers.Count-gt0-or$existingTopLevelViewers.Count-gt0){
+        Save-EBRPromptEvidence $WarningSnapshot 'rdp-server-certificate-viewer-present-before-view-action' ([pscustomobject]@{NestedCertificateWindowCount=$existingNestedViewers.Count;TopLevelCertificateWindowCount=$existingTopLevelViewers.Count;ViewActionAttempted=$false})
+        throw 'a same-process Certificate window was already present before the exact View certificate action; no action was taken.'
+      }
       $oldHandles=@(Get-EBRProcessTopLevelWindows|ForEach-Object{[long]$_.Current.NativeWindowHandle})
       $viewAction=Invoke-EBRViewCertificateAction $view[0] $MstscProcessId $warningHandle ([string]$view[0].Current.AutomationId)
-      $viewer=$null;$watch=[Diagnostics.Stopwatch]::StartNew()
+      $viewer=$null;$viewerSource=$null;$watch=[Diagnostics.Stopwatch]::StartNew()
       while($watch.Elapsed.TotalSeconds-lt10-and-not$viewer){
-        $candidates=@(Get-EBRProcessTopLevelWindows|Where-Object{[long]$_.Current.NativeWindowHandle-notin$oldHandles})
-        if($candidates.Count-gt1){foreach($candidate in $candidates){Save-EBRPromptEvidence (Get-EBRPromptSnapshot $candidate) 'rdp-server-certificate-viewer-ambiguous'};throw 'View certificate opened multiple new mstsc windows.'}
-        if($candidates.Count-eq1){$viewer=$candidates[0]}else{Start-Sleep -Milliseconds 100}
+        $viewerCandidates=@{}
+        $topLevelCandidates=@(Get-EBRProcessTopLevelWindows|Where-Object{[long]$_.Current.NativeWindowHandle-notin$oldHandles})
+        foreach($candidate in $topLevelCandidates){
+          $candidateHandle=[long]$candidate.Current.NativeWindowHandle
+          $viewerCandidates[[string]$candidateHandle]=[pscustomobject]@{Element=$candidate;Source='NewSameProcessTopLevel';Handle=$candidateHandle}
+        }
+        $warningRoots=@(Get-EBROwnedRdpWindows|Where-Object{[long]$_.Current.NativeWindowHandle-eq$warningHandle})
+        if($warningRoots.Count-gt1){throw 'original mstsc certificate warning became ambiguous while observing the Certificate window.'}
+        if($warningRoots.Count-eq1){
+          $freshWarning=Get-EBRPromptSnapshot $warningRoots[0]
+          if(-not(Test-EBRServerCertificateWarning $freshWarning.JoinedNames)){throw 'the original warning changed while waiting for its Certificate viewer.'}
+          $nestedViewers=@(Get-EBRNestedCertificateViewerWindows $freshWarning)
+          $nestedIndex=0
+          foreach($candidate in $nestedViewers){
+            $nestedIndex++
+            $candidateHandle=[long]$candidate.Current.NativeWindowHandle
+            $key=if($candidateHandle-ne0){[string]$candidateHandle}else{"nested-without-hwnd-$nestedIndex"}
+            $viewerCandidates[$key]=[pscustomobject]@{Element=$candidate;Source='NestedDescendantOfVerifiedWarning';Handle=$candidateHandle;ParentSnapshot=$freshWarning}
+          }
+        }
+        if($viewerCandidates.Count-gt1){
+          foreach($candidate in $viewerCandidates.Values){try{Save-EBRPromptEvidence (Get-EBRPromptSnapshot $candidate.Element) 'rdp-server-certificate-viewer-ambiguous' ([pscustomobject]@{CandidateSource=$candidate.Source;Handle=$candidate.Handle})}catch{}}
+          throw 'View certificate produced multiple same-process viewer-window candidates.'
+        }
+        if($viewerCandidates.Count-eq1){foreach($observed in $viewerCandidates.Values){break};$viewer=$observed.Element;$viewerSource=$observed.Source}
+        else{Start-Sleep -Milliseconds 100}
       }
       if(-not$viewer){
         $remaining=@(Get-EBRProcessTopLevelWindows|Where-Object{[long]$_.Current.NativeWindowHandle-eq$warningHandle})
         $evidenceSnapshot=if($remaining.Count-eq1){Get-EBRPromptSnapshot $remaining[0]}else{$WarningSnapshot}
         $afterWindows=@(Get-EBRProcessTopLevelWindows|ForEach-Object{[pscustomobject]@{Title=[string]$_.Current.Name;Handle=[long]$_.Current.NativeWindowHandle}})
-        Save-EBRPromptEvidence $evidenceSnapshot 'rdp-server-certificate-viewer-not-opened' ([pscustomobject]@{ViewAction=$viewAction;NewSameProcessCertificateWindowObserved=$false;WarningWindowStillPresent=($remaining.Count-eq1);SameProcessTopLevelWindows=$afterWindows})
+        $nestedAfter=@(Get-EBRNestedCertificateViewerWindows $evidenceSnapshot)
+        Save-EBRPromptEvidence $evidenceSnapshot 'rdp-server-certificate-viewer-not-opened' ([pscustomobject]@{ViewAction=$viewAction;NewSameProcessCertificateWindowObserved=$false;NestedCertificateWindowCount=$nestedAfter.Count;WarningWindowStillPresent=($remaining.Count-eq1);SameProcessTopLevelWindows=$afterWindows})
         throw 'View certificate did not open one new same-process certificate window; captured post-action UIA and screenshot evidence.'
       }
       $viewerSnapshot=Get-EBRPromptSnapshot $viewer
-      if($viewerSnapshot.Window.Current.Name-notmatch'(?i)certificate'){
-        Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-viewer-unrecognized' ([pscustomobject]@{ViewAction=$viewAction;Title=$viewerSnapshot.Window.Current.Name})
-        throw 'View certificate opened an unrecognized window; captured its UIA tree and blocked.'
+      $viewerCurrent=$viewerSnapshot.Window.Current
+      $viewerHandle=[long]$viewerCurrent.NativeWindowHandle
+      $viewerOwner=[uint32]0
+      if($viewerHandle-ne0){[void][EBR_RdpUiNative]::GetWindowThreadProcessId([IntPtr]$viewerHandle,[ref]$viewerOwner)}
+      if($viewerCurrent.ControlType-ne[System.Windows.Automation.ControlType]::Window-or$viewerCurrent.Name-cne'Certificate'-or$viewerCurrent.ProcessId-ne$MstscProcessId-or$viewerHandle-eq0-or$viewerHandle-eq$warningHandle-or$viewerCurrent.ClassName-cne'#32770'-or-not$viewerCurrent.IsEnabled-or$viewerCurrent.IsOffscreen-or$viewerOwner-ne[uint32]$MstscProcessId-or-not[EBR_RdpUiNative]::IsWindowVisible([IntPtr]$viewerHandle)-or-not[EBR_RdpUiNative]::IsWindowEnabled([IntPtr]$viewerHandle)){
+        Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-viewer-unrecognized' ([pscustomobject]@{ViewAction=$viewAction;Source=$viewerSource;Title=$viewerCurrent.Name;ControlType=[string]$viewerCurrent.ControlType.ProgrammaticName;ProcessId=$viewerCurrent.ProcessId;OwnerProcessId=$viewerOwner;Handle=$viewerHandle;ClassName=$viewerCurrent.ClassName;Enabled=$viewerCurrent.IsEnabled;Offscreen=$viewerCurrent.IsOffscreen})
+        throw 'View certificate did not produce one visible, enabled, distinct same-process Certificate #32770 window; captured its UIA tree and blocked.'
       }
-      Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-viewer-before-thumbprint' ([pscustomobject]@{ViewAction=$viewAction;ListenerCertificate=$listenerBefore})
+      Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-viewer-before-thumbprint' ([pscustomobject]@{ViewAction=$viewAction;Source=$viewerSource;ListenerCertificate=$listenerBefore})
       if(-not(Test-EBRForegroundProcessWindow $viewerSnapshot.Handle $MstscProcessId)){throw 'certificate viewer is not the foreground mstsc window.'}
       $tabs=@(foreach($node in $viewerSnapshot.Nodes){try{$c=$node.Current;if($c.ControlType-eq[System.Windows.Automation.ControlType]::TabItem-and$c.ProcessId-eq$MstscProcessId-and$c.Name-ceq'Details'-and$c.IsEnabled-and-not$c.IsOffscreen){$node}}catch{}})
       if($tabs.Count-ne1){throw "expected one exact Details tab; found $($tabs.Count)."}

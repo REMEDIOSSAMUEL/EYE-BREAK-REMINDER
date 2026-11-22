@@ -553,6 +553,8 @@ jobs:
       - name: Create a loopback-only interactive RDP session and use Windows Settings > Apps > Installed Apps
         id: settings-uninstall
         shell: pwsh
+        env:
+          EBR_RUNNER_ENVIRONMENT_CONTEXT: ${{ runner.environment }}
         run: |
           $ErrorActionPreference = 'Stop'
           $release = Join-Path $PWD 'production-candidate-artifact/final-candidate'

@@ -547,17 +547,35 @@ public static class EBR_STD_UIA_CLIENT {
   }
   try{
     $identity=[Security.Principal.WindowsIdentity]::GetCurrent();$userProfileInfo=Get-CimInstance Win32_UserProfile -Filter "SID='$($identity.User.Value)'" -ErrorAction Stop|Where-Object{-not$_.Special}|Select-Object -First 1
-    if(-not$userProfileInfo-or-not(Test-Path -LiteralPath $userProfileInfo.LocalPath)){throw 'The disposable standard-user profile could not be resolved for its verified Windows SID.'}
+    $userProfilePath=$null;$userProfilePathSource=$null
+    if($userProfileInfo-and-not[string]::IsNullOrWhiteSpace([string]$userProfileInfo.LocalPath)){
+      $userProfilePath=[Environment]::ExpandEnvironmentVariables([string]$userProfileInfo.LocalPath)
+      $userProfilePathSource='Win32_UserProfile.LocalPath'
+    }
+    if([string]::IsNullOrWhiteSpace($userProfilePath)){
+      $profileListKey="HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($identity.User.Value)"
+      $profileListEntry=Get-ItemProperty -LiteralPath $profileListKey -ErrorAction SilentlyContinue
+      if($profileListEntry-and-not[string]::IsNullOrWhiteSpace([string]$profileListEntry.ProfileImagePath)){
+        $userProfilePath=[Environment]::ExpandEnvironmentVariables([string]$profileListEntry.ProfileImagePath)
+        $userProfilePathSource='SID-matched ProfileList.ProfileImagePath'
+      }
+    }
+    if([string]::IsNullOrWhiteSpace($userProfilePath)-or-not(Test-Path -LiteralPath $userProfilePath -PathType Container)){
+      throw "The disposable standard-user profile path could not be resolved from the verified SID (WMI path '$($userProfileInfo.LocalPath)', ProfileList path '$($profileListEntry.ProfileImagePath)')."
+    }
+    $userProfilePath=[IO.Path]::GetFullPath($userProfilePath)
+    $expectedProfileName=if($ExpectedUserName){($ExpectedUserName -split '\\')[-1]}else{$null}
+    if(-not$expectedProfileName-or[IO.Path]::GetFileName($userProfilePath)-ine$expectedProfileName){throw "Resolved profile '$userProfilePath' does not belong to the expected disposable user '$ExpectedUserName'."}
     # CreateProcessWithLogon can inherit the launching administrator's environment block. Use the loaded
     # standard user's actual profile for per-user paths and for child installers launched by this process.
-    $env:USERPROFILE=[IO.Path]::GetFullPath($userProfileInfo.LocalPath);$env:LOCALAPPDATA=Join-Path $env:USERPROFILE 'AppData\Local';$env:APPDATA=Join-Path $env:USERPROFILE 'AppData\Roaming'
+    $env:USERPROFILE=$userProfilePath;$env:LOCALAPPDATA=Join-Path $env:USERPROFILE 'AppData\Local';$env:APPDATA=Join-Path $env:USERPROFILE 'AppData\Roaming'
     $env:TEMP=Join-Path $env:LOCALAPPDATA 'Temp';$env:TMP=$env:TEMP
     if(-not(Test-Path -LiteralPath $env:LOCALAPPDATA)){[void][IO.Directory]::CreateDirectory($env:LOCALAPPDATA)}
     if(-not(Test-Path -LiteralPath $env:TEMP)){[void][IO.Directory]::CreateDirectory($env:TEMP)}
     $principal=[Security.Principal.WindowsPrincipal]::new($identity)
     $isAdministrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if($isAdministrator){throw 'The disposable test account unexpectedly has administrator membership.'}
-    $events.Add([pscustomobject]@{Name='Child process has a standard Windows user token';Status='PASS';User=$identity.Name;Sid=$identity.User.Value;IsAdministrator=$false})
+    $events.Add([pscustomobject]@{Name='Child process has a standard Windows user token';Status='PASS';User=$identity.Name;Sid=$identity.User.Value;IsAdministrator=$false;ProfilePathSource=$userProfilePathSource;ProfilePath=$env:USERPROFILE})
     $installer=(Resolve-Path -LiteralPath $InstallerPath).Path;$candidate=(Resolve-Path -LiteralPath $ExecutablePath).Path
     $expectedHash=(Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
     $script:capabilityProbeResults=[System.Collections.Generic.List[object]]::new();$script:capabilityProbeChainClean=$true
