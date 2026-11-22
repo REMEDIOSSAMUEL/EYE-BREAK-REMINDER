@@ -733,7 +733,7 @@ public static class EBR_RdpUiNative {
       Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-viewer-thumbprint' ([pscustomobject]@{DetailsTabSelected=$true;DisplayedThumbprintSHA1=$displayed;SelectedPropertyRow=$propertyEvidence;ListenerCertificate=$listenerBefore})
       if($displayed-cne$listenerBefore.ThumbprintSHA1){throw 'displayed RDP certificate thumbprint does not match the configured listener certificate.'}
       if(-not(Test-EBRForegroundProcessWindow $viewerSnapshot.Handle $MstscProcessId)){throw 'certificate viewer lost foreground before close.'}
-      $close=@(foreach($node in $viewerSnapshot.Nodes){try{$c=$node.Current;if($c.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$c.ProcessId-eq$MstscProcessId-and$c.IsEnabled-and-not$c.IsOffscreen-and$c.Name-cin@('Close','OK')){$node}}catch{}})
+      $close=@(foreach($node in $viewerSnapshot.Nodes){try{$c=$node.Current;$isAccessibleButton=$c.ControlType-eq[System.Windows.Automation.ControlType]::Button;$isExactNativeOkPane=$c.ControlType-eq[System.Windows.Automation.ControlType]::Pane-and$c.ClassName-ceq'Button'-and$c.AutomationId-ceq'1'-and$c.NativeWindowHandle-ne0;if(($isAccessibleButton-or$isExactNativeOkPane)-and$c.ProcessId-eq$MstscProcessId-and$c.IsEnabled-and-not$c.IsOffscreen-and$c.Name-cin@('Close','OK')){$node}}catch{}})
       if($close.Count-ne1){throw "expected one safe certificate viewer Close/OK button; found $($close.Count)."}
       [void](Invoke-EBRNamedPromptAction $close[0] ([string]$close[0].Current.Name) $MstscProcessId $viewerSnapshot.Handle ([string]$close[0].Current.AutomationId))
       $wait=[Diagnostics.Stopwatch]::StartNew();$open=$true
