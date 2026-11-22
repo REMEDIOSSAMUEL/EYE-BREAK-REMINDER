@@ -63,6 +63,7 @@ function Resolve-EBRTestRdpFileTrustPrompt {
   $educationAcknowledged = $false
   $connectionAcknowledged = $false
   $audioPlaybackAuthorized = $false
+  $promptActionMethods = [System.Collections.Generic.List[string]]::new()
   $watch = [Diagnostics.Stopwatch]::StartNew()
 
   function Get-EBROwnedRdpWindows {
@@ -107,6 +108,47 @@ function Resolve-EBRTestRdpFileTrustPrompt {
       Nodes = $nodes
       JoinedNames = $names -join [Environment]::NewLine
     }
+  }
+
+  function Get-EBRNamedPromptActions($Nodes, [string]$Name, [string]$AutomationId = '') {
+    $actions = [System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
+    foreach ($node in $Nodes) {
+      try {
+        $current = $node.Current
+        $isActionControl = $current.ControlType -eq [System.Windows.Automation.ControlType]::Button -or
+          $current.ControlType -eq [System.Windows.Automation.ControlType]::Pane
+        $automationIdMatches = [string]::IsNullOrEmpty($AutomationId) -or $current.AutomationId -ceq $AutomationId
+        if ($isActionControl -and $current.Name -ceq $Name -and $automationIdMatches -and -not $current.IsOffscreen) { $actions.Add($node) }
+      } catch { }
+    }
+    return $actions.ToArray()
+  }
+
+  function Invoke-EBRNamedPromptAction($Element, [string]$Name) {
+    $current = $Element.Current
+    $isActionControl = $current.ControlType -eq [System.Windows.Automation.ControlType]::Button -or
+      $current.ControlType -eq [System.Windows.Automation.ControlType]::Pane
+    if (-not $isActionControl -or $current.Name -cne $Name -or -not $current.IsEnabled -or $current.IsOffscreen) {
+      throw "BLOCKED: refusing to invoke an unverified '$Name' RDP prompt action."
+    }
+
+    $pattern = $null
+    if ($Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+      ([System.Windows.Automation.InvokePattern]$pattern).Invoke()
+      return 'InvokePattern'
+    }
+    $legacyPattern = $null
+    if ($Element.TryGetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern, [ref]$legacyPattern)) {
+      $legacy = [System.Windows.Automation.LegacyIAccessiblePattern]$legacyPattern
+      $legacyCurrent = $legacy.Current
+      $pushButtonRole = 43 # ROLE_SYSTEM_PUSHBUTTON from oleacc.h
+      if ([int]$legacyCurrent.Role -ne $pushButtonRole -or [string]::IsNullOrWhiteSpace([string]$legacyCurrent.DefaultAction)) {
+        throw "BLOCKED: the exact '$Name' control's legacy action is not a verified push button with a default action."
+      }
+      $legacy.DoDefaultAction()
+      return "LegacyIAccessiblePattern(role=$pushButtonRole; defaultAction=$([string]$legacyCurrent.DefaultAction))"
+    }
+    throw "BLOCKED: the exact '$Name' RDP prompt action exposed neither Invoke nor LegacyIAccessible action support."
   }
 
   function Save-EBRPromptEvidence($Snapshot, [string]$BaseName, $Extra = $null) {
@@ -158,16 +200,8 @@ function Resolve-EBRTestRdpFileTrustPrompt {
       )
       if ($names -match '(?is)You\s+are\s+opening\s+an\s+RDP\s+file\s+which\s+will\s+establish\s+a\s+connection\s+to\s+another\s+computer' -and
           $names -match [regex]::Escape($educationHeading) -and $educationCheckboxes.Count -eq 1) {
-        $okButtons = @(
-          foreach ($node in $nodes) {
-            try { $current = $node.Current; if ($current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $current.Name -ceq 'OK' -and -not $current.IsOffscreen) { $node } } catch { }
-          }
-        )
-        $cancelButtons = @(
-          foreach ($node in $nodes) {
-            try { $current = $node.Current; if ($current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $current.Name -ceq 'Cancel' -and $current.IsEnabled -and -not $current.IsOffscreen) { $node } } catch { }
-          }
-        )
+        $okButtons = @(Get-EBRNamedPromptActions $nodes 'OK' 'CommandButton_1')
+        $cancelButtons = @(Get-EBRNamedPromptActions $nodes 'Cancel' 'CommandButton_2' | Where-Object { $_.Current.IsEnabled })
         if ($okButtons.Count -ne 1 -or $cancelButtons.Count -ne 1) {
           Save-EBRPromptEvidence $snapshot 'rdp-file-education-prompt-unrecognized'
           throw 'BLOCKED: the exact educational RDP-file prompt did not expose unique OK and Cancel actions.'
@@ -182,7 +216,8 @@ function Resolve-EBRTestRdpFileTrustPrompt {
         }
         Save-EBRPromptEvidence $snapshot 'rdp-file-education-prompt-before-acknowledgement' ([pscustomobject]@{Checkbox=$educationCheckboxName;Before=$before;After=$after;Action='OK'})
         $handle = $snapshot.Handle
-        ([System.Windows.Automation.InvokePattern]$okButtons[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+        $actionPattern = Invoke-EBRNamedPromptAction $okButtons[0] 'OK'
+        $promptActionMethods.Add("Education OK: $actionPattern")
         $educationAcknowledged = $true
         $closeWatch = [Diagnostics.Stopwatch]::StartNew()
         do {
@@ -190,6 +225,7 @@ function Resolve-EBRTestRdpFileTrustPrompt {
           $stillOpen = @($desktop.FindAll([System.Windows.Automation.TreeScope]::Children, $trueCondition) | Where-Object { try { [long]$_.Current.NativeWindowHandle -eq $handle } catch { $false } }).Count -gt 0
         } while ($stillOpen -and $closeWatch.Elapsed.TotalSeconds -lt 8)
         if ($stillOpen) { throw 'BLOCKED: the exact RDP-file education prompt remained open after acknowledgement.' }
+        Save-EBRPromptEvidence $snapshot 'rdp-file-education-prompt-acknowledged' ([pscustomobject]@{Checkbox=$educationCheckboxName;Before=$before;After=$after;Action='OK';ActionPattern=$actionPattern;PromptClosed=$true})
         continue
       }
 
@@ -201,16 +237,8 @@ function Resolve-EBRTestRdpFileTrustPrompt {
             try { $current = $node.Current; if ($current.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and -not $current.IsOffscreen) { $node } } catch { }
           }
         )
-        $connectButtons = @(
-          foreach ($node in $nodes) {
-            try { $current = $node.Current; if ($current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $current.Name -ceq 'Connect' -and -not $current.IsOffscreen) { $node } } catch { }
-          }
-        )
-        $cancelButtons = @(
-          foreach ($node in $nodes) {
-            try { $current = $node.Current; if ($current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $current.Name -ceq 'Cancel' -and -not $current.IsOffscreen) { $node } } catch { }
-          }
-        )
+        $connectButtons = @(Get-EBRNamedPromptActions $nodes 'Connect')
+        $cancelButtons = @(Get-EBRNamedPromptActions $nodes 'Cancel' | Where-Object { $_.Current.IsEnabled })
         if ($checkboxes.Count -eq 0 -or $connectButtons.Count -ne 1 -or $cancelButtons.Count -ne 1) {
           Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-unrecognized'
           throw 'BLOCKED: the exact localhost connection warning lacked uniquely verifiable resource controls or Connect/Cancel actions.'
@@ -258,7 +286,8 @@ function Resolve-EBRTestRdpFileTrustPrompt {
         }
         if (-not $connectButtons[0].Current.IsEnabled) { throw 'BLOCKED: the exact localhost Connect action is disabled.' }
         $buttonHandle = $snapshot.Handle
-        ([System.Windows.Automation.InvokePattern]$connectButtons[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+        $actionPattern = Invoke-EBRNamedPromptAction $connectButtons[0] 'Connect'
+        $promptActionMethods.Add("Connection Connect: $actionPattern")
         $connectionAcknowledged = $true
         $closeWatch = [Diagnostics.Stopwatch]::StartNew()
         $stillOpen = $true
@@ -290,7 +319,7 @@ function Resolve-EBRTestRdpFileTrustPrompt {
           Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-did-not-close' ([pscustomobject]@{CheckboxStatesBefore=@($statesBefore);AudioPlaybackAfter=$audioState})
           throw 'BLOCKED: the exact localhost connection security dialog remained open after the scoped action.'
         }
-        $after = [pscustomobject]@{CheckboxStatesBefore=@($statesBefore);AudioPlaybackAfter=$audioState;ConnectInvoked=$true;AudioOnlyWhenRequested=[bool]$AllowAudioPlayback}
+        $after = [pscustomobject]@{CheckboxStatesBefore=@($statesBefore);AudioPlaybackAfter=$audioState;ConnectInvoked=$true;ActionPattern=$actionPattern;AudioOnlyWhenRequested=[bool]$AllowAudioPlayback}
         Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-after-scoped-selection' $after
         $postWatch = [Diagnostics.Stopwatch]::StartNew()
         while ($postWatch.Elapsed.TotalSeconds -lt 20) {
@@ -311,6 +340,7 @@ function Resolve-EBRTestRdpFileTrustPrompt {
           Target = '127.0.0.1:3389'
           EducationalPromptAcknowledged = $educationAcknowledged
           ConnectionSecurityAcknowledged = $connectionAcknowledged
+          PromptActionMethods = @($promptActionMethods.ToArray())
           AudioPlaybackRequested = [bool]$AllowAudioPlayback
           AudioPlaybackAuthorized = $audioPlaybackAuthorized
           ResourceRedirections = 'All visible resource checkboxes remained off except the exact Audio playback checkbox when explicitly requested by the RDP file and caller.'
@@ -340,6 +370,7 @@ function Resolve-EBRTestRdpFileTrustPrompt {
       Target = '127.0.0.1:3389'
       EducationalPromptAcknowledged = $educationAcknowledged
       ConnectionSecurityAcknowledged = $connectionAcknowledged
+      PromptActionMethods = @($promptActionMethods.ToArray())
       AudioPlaybackRequested = [bool]$AllowAudioPlayback
       AudioPlaybackAuthorized = $audioPlaybackAuthorized
       CertificatePromptAccepted = $false

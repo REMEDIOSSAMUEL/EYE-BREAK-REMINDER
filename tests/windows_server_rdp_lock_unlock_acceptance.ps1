@@ -656,8 +656,14 @@ function Initialize-DisposableRunnerFirewall {
     Set-NetFirewallProfile -Profile $profile.Name -Enabled True -DefaultInboundAction Block -ErrorAction Stop | Out-Null
   }
   foreach($entry in $script:FirewallLocalAllowsSnapshot) {
+    $current=@(Get-ActiveFirewallRules | Where-Object {
+      $_.Name -ceq $entry.Name -and $_.PolicyStoreSourceType -eq 'Local' -and
+      [string]$_.PolicyStoreSource -ceq $entry.Source -and $_.Direction -eq 'Inbound' -and
+      $_.Action -eq 'Allow' -and $_.Enabled -eq 'True'
+    })
+    if ($current.Count -ne 1) { throw "BLOCKED: could not re-identify exactly one live local inbound Allow rule '$($entry.Name)' after firewall profile isolation." }
     $script:FirewallLocalAllowsChanged.Add($entry)
-    Disable-NetFirewallRule -InputObject $entry.Rule -ErrorAction Stop | Out-Null
+    Disable-NetFirewallRule -InputObject $current[0] -ErrorAction Stop | Out-Null
   }
   $verifiedProfiles=@(Get-NetFirewallProfile -ErrorAction Stop)
   foreach($profile in $verifiedProfiles) {
