@@ -4,6 +4,7 @@ param(
   [Parameter()][int]$ExpectedSessionId=-1,
   [Parameter()][string]$ExpectedSessionName,
   [Parameter()][string]$ExpectedUser,
+  [Parameter()][switch]$ServerConsoleSession,
   [Parameter()][switch]$AllowExactPrivacyOobeNext
 )
 $ErrorActionPreference='Stop'
@@ -30,6 +31,9 @@ $runnerFlavor=$null
 $candidateExecution=$null
 $environmentDescription=$null
 $sessionName=$null
+$server2025ConsoleContext=$false
+$consoleDesktopRecord=$null
+$nativeTypeLoaded=$false
 
 function Add-AudioEvent([string]$Name,[string]$Status,$Details=$null){$script:events.Add([pscustomobject]@{Name=$Name;Status=$Status;Details=$Details;Utc=[DateTime]::UtcNow.ToString('o')})}
 function Test-AudioRequire([bool]$Condition,[string]$Name,$Details=$null){
@@ -52,8 +56,19 @@ using System.Threading.Tasks;
 
 public static class EBR_AUDIO_NATIVE {
   public delegate bool EnumWindowCallback(IntPtr hwnd,IntPtr data);
+  public sealed class WtsSession { public int SessionId; public string Station; public int State; }
+  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] private struct WTS_SESSION_INFO { public int SessionId; [MarshalAs(UnmanagedType.LPWStr)] public string Station; public int State; }
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left,Top,Right,Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X,Y; }
+  [DllImport("kernel32.dll",SetLastError=true)] public static extern uint WTSGetActiveConsoleSessionId();
+  [DllImport("wtsapi32.dll",EntryPoint="WTSEnumerateSessionsW",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool WTSEnumerateSessions(IntPtr server,int reserved,int version,out IntPtr sessions,out int count);
+  [DllImport("wtsapi32.dll")] static extern void WTSFreeMemory(IntPtr memory);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll",SetLastError=true)] static extern IntPtr GetProcessWindowStation();
+  [DllImport("user32.dll",SetLastError=true)] static extern IntPtr GetThreadDesktop(uint threadId);
+  [DllImport("user32.dll",EntryPoint="OpenInputDesktop",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr OpenInputDesktop(uint flags,bool inherit,uint desiredAccess);
+  [DllImport("user32.dll",SetLastError=true)] static extern bool CloseDesktop(IntPtr desktop);
+  [DllImport("user32.dll",EntryPoint="GetUserObjectInformationW",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool GetUserObjectInformation(IntPtr handle,int index,StringBuilder buffer,uint length,out uint needed);
   [DllImport("user32.dll",SetLastError=true)] static extern bool EnumWindows(EnumWindowCallback callback,IntPtr data);
   [DllImport("user32.dll",SetLastError=true)] static extern bool EnumChildWindows(IntPtr parent,EnumWindowCallback callback,IntPtr data);
   [DllImport("user32.dll",SetLastError=true)] static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint processId);
@@ -72,6 +87,15 @@ public static class EBR_AUDIO_NATIVE {
   [DllImport("user32.dll",EntryPoint="SendMessageTimeoutW",SetLastError=true)] static extern IntPtr SendMessageTimeoutNative(IntPtr hwnd,uint msg,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out IntPtr result);
   [DllImport("user32.dll",EntryPoint="SendMessageW",SetLastError=true)] static extern IntPtr SendMessageNative(IntPtr hwnd,uint msg,IntPtr wParam,IntPtr lParam);
   [DllImport("user32.dll",EntryPoint="PostMessageW",SetLastError=true)] static extern bool PostMessageNative(IntPtr hwnd,uint msg,IntPtr wParam,IntPtr lParam);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="FindWindowW",SetLastError=true)] static extern IntPtr FindWindowNative(string className,string title);
+  [DllImport("user32.dll",SetLastError=true)] static extern uint GetWindowThreadProcessIdNative(IntPtr hwnd,out uint processId);
+  private static string UserObjectName(IntPtr handle){if(handle==IntPtr.Zero)return "<ERROR:0>";var b=new StringBuilder(256);uint needed;if(!GetUserObjectInformation(handle,2,b,(uint)(b.Capacity*2),out needed))return "<ERROR:"+Marshal.GetLastWin32Error().ToString()+">";return b.ToString();}
+  public static WtsSession[] EnumerateWtsSessions(){IntPtr buffer=IntPtr.Zero;int count=0;if(!WTSEnumerateSessions(IntPtr.Zero,0,1,out buffer,out count))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"WTSEnumerateSessionsW failed");try{int size=Marshal.SizeOf(typeof(WTS_SESSION_INFO));var rows=new List<WtsSession>(count);for(int i=0;i<count;i++){IntPtr current=IntPtr.Add(buffer,i*size);var row=(WTS_SESSION_INFO)Marshal.PtrToStructure(current,typeof(WTS_SESSION_INFO));rows.Add(new WtsSession{SessionId=row.SessionId,Station=row.Station,State=row.State});}return rows.ToArray();}finally{if(buffer!=IntPtr.Zero)WTSFreeMemory(buffer);}}
+  public static string ProcessWindowStationName(){return UserObjectName(GetProcessWindowStation());}
+  public static string ThreadDesktopName(){return UserObjectName(GetThreadDesktop(GetCurrentThreadId()));}
+  public static string InputDesktopName(){IntPtr desktop=OpenInputDesktop(0,false,1);if(desktop==IntPtr.Zero)return "<ERROR:"+Marshal.GetLastWin32Error().ToString()+">";try{return UserObjectName(desktop);}finally{CloseDesktop(desktop);}}
+  public static IntPtr TaskbarWindow(){return FindWindowNative("Shell_TrayWnd",null);}
+  public static int TaskbarProcessId(IntPtr hwnd){if(hwnd==IntPtr.Zero)return 0;uint pid;GetWindowThreadProcessIdNative(hwnd,out pid);return (int)pid;}
   public static string Text(IntPtr hwnd){var b=new StringBuilder(1024);GetWindowTextNative(hwnd,b,b.Capacity);return b.ToString();}
   public static string ClassName(IntPtr hwnd){var b=new StringBuilder(256);GetClassNameNative(hwnd,b,b.Capacity);return b.ToString();}
   public static int ControlId(IntPtr hwnd){return GetDlgCtrlID(hwnd);}
@@ -649,15 +673,19 @@ try{
   $sessionName=[string]$env:SESSIONNAME
   $testSessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId
   $testUser=[Security.Principal.WindowsIdentity]::GetCurrent().Name
+  $nativeProcessorCodes=@()
   $commonGitHubGate=($env:GITHUB_ACTIONS -ceq 'true' -and $env:RUNNER_ENVIRONMENT -ceq 'github-hosted' -and $env:RUNNER_OS -ceq 'Windows' -and $env:GITHUB_SERVER_URL -ceq 'https://github.com' -and $env:GITHUB_REPOSITORY -ieq 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER' -and [bool]$env:RUNNER_NAME -and [Environment]::UserInteractive)
-  $arm64Context=($commonGitHubGate -and $env:RUNNER_ARCH -ieq 'ARM64' -and $os.Caption -match 'Windows 11' -and $os.Caption -notmatch 'Server' -and $osArch -ieq 'Arm64' -and $procArch -ieq 'Arm64')
-  $server2025RdpContext=($commonGitHubGate -and $env:RUNNER_ARCH -ieq 'X64' -and $os.Caption -match 'Windows Server 2025' -and $osArch -ieq 'X64' -and $procArch -ieq 'X64' -and $sessionName -match '^RDP-Tcp#\d+$')
+  if($ServerConsoleSession-and$commonGitHubGate-and$env:RUNNER_ARCH -ieq'X64'-and$os.Caption -match'Windows Server 2025'-and$osArch -ieq'X64'-and$procArch -ieq'X64'){$nativeProcessorCodes=@(Get-CimInstance Win32_Processor -ErrorAction Stop|Select-Object -ExpandProperty Architecture -Unique)}
+  $arm64Context=(-not$ServerConsoleSession-and$commonGitHubGate -and $env:RUNNER_ARCH -ieq 'ARM64' -and $os.Caption -match 'Windows 11' -and $os.Caption -notmatch 'Server' -and $osArch -ieq 'Arm64' -and $procArch -ieq 'Arm64')
+  $server2025RdpContext=(-not$ServerConsoleSession-and$commonGitHubGate -and $env:RUNNER_ARCH -ieq 'X64' -and $os.Caption -match 'Windows Server 2025' -and $osArch -ieq 'X64' -and $procArch -ieq 'X64' -and $sessionName -match '^RDP-Tcp#\d+$')
+  $server2025ConsoleContext=($ServerConsoleSession-and$commonGitHubGate-and$env:RUNNER_ARCH -ieq 'X64'-and$os.Caption -match 'Windows Server 2025'-and$osArch -ieq 'X64'-and$procArch -ieq 'X64'-and 9 -in $nativeProcessorCodes)
   if($arm64Context){$runnerFlavor='Windows11Arm64';$candidateExecution='x64 emulation on native Windows 11 ARM64';$environmentDescription='Fresh GitHub-hosted interactive Windows 11 ARM64 runner'}
   elseif($server2025RdpContext){$runnerFlavor='Server2025RdpX64';$candidateExecution='native AMD64 x64 on Windows Server 2025 x64';$environmentDescription='Fresh GitHub-hosted Windows Server 2025 x64 runner in interactive localhost RDP session '+$sessionName}
+  elseif($server2025ConsoleContext){$runnerFlavor='Server2025ConsoleX64';$candidateExecution='native AMD64 x64 on Windows Server 2025 x64';$environmentDescription='Fresh GitHub-hosted Windows Server 2025 x64 active Console session (native AMD64)'}
   else{
     $overallStatus='BLOCKED'
     $overallReason='Runner environment gates were not met; no application was launched.'
-    Add-AudioEvent 'Runner must match either supported isolated audio-test context' 'BLOCKED' ([pscustomobject]@{GitHubActions=$env:GITHUB_ACTIONS;RunnerEnvironment=$env:RUNNER_ENVIRONMENT;RunnerOS=$env:RUNNER_OS;RunnerArchitecture=$env:RUNNER_ARCH;RunnerName=$env:RUNNER_NAME;Repository=$env:GITHUB_REPOSITORY;OS=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;OSArchitecture=$osArch;ProcessArchitecture=$procArch;SessionName=$sessionName;UserInteractive=[Environment]::UserInteractive;Windows11Arm64Context=$arm64Context;WindowsServer2025RdpX64Context=$server2025RdpContext;RequiredContexts=@('GitHub-hosted interactive Windows 11 ARM64 x64-emulation runner','GitHub-hosted Windows Server 2025 x64 interactive localhost RDP session with SESSIONNAME=RDP-Tcp#n')})
+    Add-AudioEvent 'Runner must match a supported isolated audio-test context' 'BLOCKED' ([pscustomobject]@{GitHubActions=$env:GITHUB_ACTIONS;RunnerEnvironment=$env:RUNNER_ENVIRONMENT;RunnerOS=$env:RUNNER_OS;RunnerArchitecture=$env:RUNNER_ARCH;RunnerName=$env:RUNNER_NAME;Repository=$env:GITHUB_REPOSITORY;OS=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;OSArchitecture=$osArch;ProcessArchitecture=$procArch;NativeProcessorArchitectureCodes=$nativeProcessorCodes;SessionName=$sessionName;UserInteractive=[Environment]::UserInteractive;Windows11Arm64Context=$arm64Context;WindowsServer2025RdpX64Context=$server2025RdpContext;WindowsServer2025ConsoleRequested=[bool]$ServerConsoleSession;WindowsServer2025ConsoleX64Context=$server2025ConsoleContext;RequiredContexts=@('GitHub-hosted interactive Windows 11 ARM64 x64-emulation runner','GitHub-hosted Windows Server 2025 x64 interactive localhost RDP session','GitHub-hosted Windows Server 2025 x64 active WTS Console session with native AMD64 code 9')})
     throw 'Audio acceptance environment gate failed.'
   }
   if($server2025RdpContext){
@@ -666,7 +694,30 @@ try{
     $identityMatches=($testSessionId-eq$ExpectedSessionId-and$sessionName-ieq$ExpectedSessionName-and$testUser-ieq$ExpectedUser-and-not$isAdministrator)
     Add-AudioEvent 'Audio probe runs as the expected temporary standard user in the controller-validated RDP session' $(if($identityMatches){'PASS'}else{'BLOCKED'}) ([pscustomobject]@{ProcessSessionId=$testSessionId;ExpectedSessionId=$ExpectedSessionId;SessionName=$sessionName;ExpectedSessionName=$ExpectedSessionName;User=$testUser;ExpectedUser=$ExpectedUser;IsAdministrator=$isAdministrator;UserInteractive=[Environment]::UserInteractive})
     if(-not$identityMatches){throw 'Audio acceptance probe identity does not match the expected temporary standard-user RDP session.'}
-  }elseif($ExpectedSessionId-ne-1-or$ExpectedSessionName-or$ExpectedUser){Add-AudioEvent 'Windows 11 ARM64 audio probe does not accept Server RDP identity overrides' 'BLOCKED' 'Server-session identity arguments were supplied to the Windows 11 ARM64 path.';throw 'Audio acceptance identity arguments conflict with the Windows 11 ARM64 path.'}
+  }elseif($server2025ConsoleContext){
+    if($ExpectedSessionId-le0-or$ExpectedSessionName-ine'Console'-or[string]::IsNullOrWhiteSpace($ExpectedUser)){Add-AudioEvent 'Audio probe receives the exact controller-validated Server Console identity' 'BLOCKED' 'Expected session ID, the exact Console station name, and temporary standard-user identity are mandatory.';throw 'Audio acceptance Server Console identity inputs are incomplete.'}
+    Add-Type -TypeDefinition $nativeSource -ErrorAction Stop;$nativeTypeLoaded=$true
+    $isAdministrator=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    $identityMatches=($testSessionId-eq$ExpectedSessionId-and$testUser-ieq$ExpectedUser-and-not$isAdministrator)
+    $rawSessionNameMatches=($sessionName-eq''-or$sessionName-ieq'Console')
+    $activeConsoleId=[EBR_AUDIO_NATIVE]::WTSGetActiveConsoleSessionId()
+    $wtsRows=@([EBR_AUDIO_NATIVE]::EnumerateWtsSessions())
+    $consoleRows=@($wtsRows|Where-Object{$_.SessionId-eq$ExpectedSessionId-and$_.Station-ieq'Console'})
+    $activeConsoleMatches=($activeConsoleId-eq$ExpectedSessionId-and$testSessionId-eq$ExpectedSessionId-and$consoleRows.Count-eq1-and$consoleRows[0].State-eq0)
+    $processWindowStation=[EBR_AUDIO_NATIVE]::ProcessWindowStationName()
+    $threadDesktop=[EBR_AUDIO_NATIVE]::ThreadDesktopName()
+    $inputDesktop=[EBR_AUDIO_NATIVE]::InputDesktopName()
+    $desktopMatches=($processWindowStation-ceq'WinSta0'-and$threadDesktop-ceq'Default'-and$inputDesktop-ceq'Default')
+    $explorerProcesses=@(Get-Process -Name explorer -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq$ExpectedSessionId}|Select-Object Id,SessionId,ProcessName)
+    $taskbar=[EBR_AUDIO_NATIVE]::TaskbarWindow();$taskbarPid=[EBR_AUDIO_NATIVE]::TaskbarProcessId($taskbar)
+    $taskbarProcess=if($taskbarPid-gt0){Get-Process -Id $taskbarPid -ErrorAction SilentlyContinue}else{$null}
+    $taskbarOwnerIsExplorer=($taskbarProcess-and$taskbarProcess.ProcessName-ieq'explorer')
+    $shellMatches=($taskbar-ne[IntPtr]::Zero-and$taskbarOwnerIsExplorer-and$taskbarProcess.SessionId-eq$ExpectedSessionId-and$explorerProcesses.Count-gt0)
+    $consoleDesktopRecord=[pscustomobject]@{RunnerContext='GitHub-hosted Windows Server 2025 x64';OS=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;OSArchitecture=$osArch;ProcessArchitecture=$procArch;NativeProcessorArchitectureCodes=$nativeProcessorCodes;ExpectedSessionId=$ExpectedSessionId;ProcessSessionId=$testSessionId;ActiveConsoleSessionId=$activeConsoleId;WtsSessions=$wtsRows;MatchingConsoleSessions=$consoleRows;ExpectedSessionName=$ExpectedSessionName;RawSessionName=$sessionName;RawSessionNameAccepted=$rawSessionNameMatches;ExpectedUser=$ExpectedUser;CurrentUser=$testUser;IsAdministrator=$isAdministrator;UserInteractive=[Environment]::UserInteractive;ProcessWindowStation=$processWindowStation;ThreadDesktop=$threadDesktop;InputDesktop=$inputDesktop;ExplorerProcesses=$explorerProcesses;TaskbarHandle=if($taskbar-ne[IntPtr]::Zero){'0x{0:X}'-f$taskbar.ToInt64()}else{$null};TaskbarProcessId=$taskbarPid;TaskbarProcessName=if($taskbarProcess){$taskbarProcess.ProcessName}else{$null};TaskbarProcessSessionId=if($taskbarProcess){$taskbarProcess.SessionId}else{$null};Checks=[pscustomobject]@{Identity=$identityMatches;RawSessionName=$rawSessionNameMatches;ActiveConsoleSession=$activeConsoleMatches;Desktop=$desktopMatches;TaskbarOwnedByExplorer=$taskbarOwnerIsExplorer;Shell=$shellMatches}}
+    $consoleSessionValid=($identityMatches-and$rawSessionNameMatches-and$activeConsoleMatches-and$desktopMatches-and$shellMatches-and[Environment]::UserInteractive)
+    Add-AudioEvent 'Server Console process has verified active WTS Console, standard-user identity, WinSta0/Default desktop, and same-session Explorer/taskbar' $(if($consoleSessionValid){'PASS'}else{'BLOCKED'}) $consoleDesktopRecord
+    if(-not$consoleSessionValid){throw 'Audio acceptance Server Console proof failed; candidate not launched.'}
+  }elseif($ExpectedSessionId-ne-1-or$ExpectedSessionName-or$ExpectedUser){Add-AudioEvent 'Windows 11 ARM64 audio probe does not accept Server session identity overrides' 'BLOCKED' 'Server-session identity arguments were supplied outside Server RDP/Console mode.';throw 'Audio acceptance identity arguments conflict with the Windows 11 ARM64 path.'}
   if(-not(Test-Path -LiteralPath $script:ExecutablePath -PathType Leaf)){Add-AudioEvent 'Exact production candidate executable is available' 'BLOCKED' $script:ExecutablePath;throw 'Exact production executable is missing.'}
   $actualHash=(Get-FileHash -LiteralPath $script:ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()
   if($actualHash-cne$expectedSha256){Add-AudioEvent 'Exact production candidate SHA-256 matches artifact 14695418078' 'BLOCKED' ([pscustomobject]@{Expected=$expectedSha256;Actual=$actualHash});throw 'Candidate hash does not match the authoritative production candidate.'}
@@ -676,15 +727,15 @@ try{
   if($machine-ne0x8664-or$version-notmatch'^1\.4\.0(\.0)?$'){Add-AudioEvent 'Exact candidate is the signed release x64 version 1.4.0 payload' 'BLOCKED' ([pscustomobject]@{ArtifactId=$expectedArtifactId;PEMachine=('0x{0:X4}'-f$machine);ProductVersion=$version;SHA256=$actualHash});throw 'Candidate PE architecture or version does not match the acceptance identity.'}
   $script:appDataPath=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder';$script:appDataExistedBefore=Test-Path -LiteralPath $script:appDataPath
   if($script:appDataExistedBefore){Add-AudioEvent 'Runner profile is fresh for Eye Break Reminder data' 'BLOCKED' ([pscustomobject]@{AppDataPath=$script:appDataPath;AlreadyExisted=$true});throw 'The disposable runner profile already contains Eye Break Reminder data; candidate not launched.'}
-  Add-AudioEvent 'Exact production x64 candidate identity verified' 'PASS' ([pscustomobject]@{Requirement='REG-008';ArtifactId=$expectedArtifactId;FinalizerRunId=$expectedRunId;CandidateExecutableSHA256=$actualHash;CandidateProductVersion=$version;PEMachine=('0x{0:X4}'-f$machine);OS=$os.Caption;OSVersion=$os.Version;OSBuild=$os.BuildNumber;OSArchitecture=$osArch;ProcessArchitecture=$procArch;CandidateExecution=$candidateExecution;Environment=$environmentDescription;RunnerFlavor=$runnerFlavor;SessionId=$testSessionId;SessionName=$sessionName;User=$testUser;ExpectedSessionId=if($server2025RdpContext){$ExpectedSessionId}else{$null};ExpectedSessionName=if($server2025RdpContext){$ExpectedSessionName}else{$null};ExpectedUser=if($server2025RdpContext){$ExpectedUser}else{$null};FreshProfile=$true})
-  Add-Type -TypeDefinition $nativeSource -ErrorAction Stop
+  Add-AudioEvent 'Exact production x64 candidate identity verified' 'PASS' ([pscustomobject]@{Requirement='REG-008';ArtifactId=$expectedArtifactId;FinalizerRunId=$expectedRunId;CandidateExecutableSHA256=$actualHash;CandidateProductVersion=$version;PEMachine=('0x{0:X4}'-f$machine);OS=$os.Caption;OSVersion=$os.Version;OSBuild=$os.BuildNumber;OSArchitecture=$osArch;ProcessArchitecture=$procArch;NativeProcessorArchitectureCodes=$nativeProcessorCodes;CandidateExecution=$candidateExecution;Environment=$environmentDescription;RunnerFlavor=$runnerFlavor;SessionId=$testSessionId;SessionName=$sessionName;ExpectedSessionId=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedSessionId}else{$null};ExpectedSessionName=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedSessionName}else{$null};ExpectedUser=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedUser}else{$null};ConsoleDesktop=$consoleDesktopRecord;FreshProfile=$true})
+  if(-not$nativeTypeLoaded){Add-Type -TypeDefinition $nativeSource -ErrorAction Stop;$nativeTypeLoaded=$true}
   Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop;Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop;Add-Type -AssemblyName System.Drawing -ErrorAction Stop;Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
   Prepare-DisposableRunnerDesktop
   $script:ownedProcess=Start-Process -FilePath $script:ExecutablePath -PassThru -ErrorAction Stop;$script:appPid=$script:ownedProcess.Id
   $candidateProcessSession=(Get-Process -Id $script:appPid -ErrorAction Stop).SessionId
   $candidateSessionValid=($candidateProcessSession-eq$testSessionId)
   Add-AudioEvent 'Exact candidate process is in the verified audio-test session' $(if($candidateSessionValid){'PASS'}else{'BLOCKED'}) ([pscustomobject]@{CandidatePid=$script:appPid;CandidateSessionId=$candidateProcessSession;ExpectedSessionId=$testSessionId;CandidateExecution=$candidateExecution;User=$testUser})
-  if(-not$candidateSessionValid){throw 'Exact candidate process did not start in the same audio-test RDP session.'}
+  if(-not$candidateSessionValid){throw 'Exact candidate process did not start in the same verified audio-test session.'}
   $windowWatch=[Diagnostics.Stopwatch]::StartNew()
   while($windowWatch.Elapsed.TotalSeconds-lt20-and$script:mainWindow-eq[IntPtr]::Zero){foreach($h in [EBR_AUDIO_NATIVE]::TopWindowsForProcess($script:appPid)){if([EBR_AUDIO_NATIVE]::ClassName($h)-eq'EyeBreakReminder.Native'){$script:mainWindow=$h;break}};if($script:mainWindow-eq[IntPtr]::Zero){Start-Sleep -Milliseconds 50}}
   if($script:mainWindow-eq[IntPtr]::Zero){$controlFailure=$true;Add-AudioEvent 'Exact candidate creates its native main window in the verified test context' 'FAIL' ([pscustomobject]@{Pid=$script:appPid;Exited=$script:ownedProcess.HasExited;ExitCode=$(if($script:ownedProcess.HasExited){$script:ownedProcess.ExitCode}else{$null});CandidateExecution=$candidateExecution;Environment=$environmentDescription});throw 'Candidate did not create a visible native app window.'}
@@ -834,7 +885,7 @@ try{
     try{$local=[IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\')+'\';$resolved=[IO.Path]::GetFullPath($script:appDataPath);if(-not$resolved.StartsWith($local,[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($resolved)-cne'EyeBreakReminder'-or([IO.File]::GetAttributes($resolved)-band[IO.FileAttributes]::ReparsePoint)){throw 'Refusing to remove a non-test or reparse-point app-data path.'};if(-not$appExited){throw 'Candidate process is still running; preserving its data path.'};Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop;Add-AudioEvent 'Remove only the fresh candidate app-data folder' 'PASS' ([pscustomobject]@{Path=$resolved;Preexisting=$false;CandidateExited=$appExited})}catch{Add-AudioEvent 'Remove only the fresh candidate app-data folder' 'FAIL' $_.Exception.Message;$overallStatus='FAIL';$overallReason='Test cleanup failed: '+$_.Exception.Message}
   }
   try{
-    $record=[pscustomobject]@{Requirement='REG-008';Status=$overallStatus;Reason=$overallReason;AcousticCoverageComplete=(-not$acousticCoverageMissing);NaturalAlarmTrial=$naturalAlarmRecord;ArtifactId=$expectedArtifactId;FinalizerRunId=$expectedRunId;CandidateExecutableSHA256=$expectedSha256;CandidateArchitecture='AMD64 x64';CandidateExecution=$candidateExecution;Environment=$environmentDescription;RunnerFlavor=$runnerFlavor;SessionId=$testSessionId;SessionName=$sessionName;User=$testUser;ExpectedSessionId=if($server2025RdpContext){$ExpectedSessionId}else{$null};ExpectedSessionName=if($server2025RdpContext){$ExpectedSessionName}else{$null};ExpectedUser=if($server2025RdpContext){$ExpectedUser}else{$null};OperatingSystem=[pscustomobject]@{Caption=$(if($os){$os.Caption}else{$null});Version=$(if($os){$os.Version}else{$null});Build=$(if($os){$os.BuildNumber}else{$null});OSArchitecture=$(if($osArch){$osArch}else{$null});ProcessArchitecture=$(if($procArch){$procArch}else{$null});UserInteractive=[Environment]::UserInteractive};Profile=[pscustomobject]@{AppDataPath=$script:appDataPath;ExistedBefore=$script:appDataExistedBefore;RemovedAfter=(-not(Test-Path -LiteralPath $script:appDataPath))};AudioEndpoint=$script:endpoint;WasapiLoopbackStatus=if($script:wasapiAvailable){'CAPTURED'}else{'NOT AVAILABLE'};Baseline=if($script:baseline){[pscustomobject]@{Frames=$script:baseline.Frames;Packets=$script:baseline.Packets;Rms=[Math]::Round($script:baseline.Rms,8);Peak=[Math]::Round($script:baseline.Peak,8)}}else{$null};PhysicalAudibility='NOT VERIFIED';CaptureFiles=$waveFiles;Captures=$script:captures.ToArray();Events=$script:events.ToArray();AssertionCount=@($script:events|Where-Object{$_.Status-in@('PASS','FAIL')}).Count;PassCount=@($script:events|Where-Object{$_.Status-eq'PASS'}).Count;FailCount=@($script:events|Where-Object{$_.Status-eq'FAIL'}).Count;NotTestedCount=@($script:events|Where-Object{$_.Status-eq'NOT TESTED'}).Count;CompletedUtc=[DateTime]::UtcNow.ToString('o')}
+    $record=[pscustomobject]@{Requirement='REG-008';Status=$overallStatus;Reason=$overallReason;AcousticCoverageComplete=(-not$acousticCoverageMissing);NaturalAlarmTrial=$naturalAlarmRecord;ArtifactId=$expectedArtifactId;FinalizerRunId=$expectedRunId;CandidateExecutableSHA256=$expectedSha256;CandidateArchitecture='AMD64 x64';CandidateExecution=$candidateExecution;Environment=$environmentDescription;RunnerFlavor=$runnerFlavor;SessionId=$testSessionId;SessionName=$sessionName;User=$testUser;ExpectedSessionId=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedSessionId}else{$null};ExpectedSessionName=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedSessionName}else{$null};ExpectedUser=if($server2025RdpContext-or$server2025ConsoleContext){$ExpectedUser}else{$null};ConsoleDesktop=$consoleDesktopRecord;OperatingSystem=[pscustomobject]@{Caption=$(if($os){$os.Caption}else{$null});Version=$(if($os){$os.Version}else{$null});Build=$(if($os){$os.BuildNumber}else{$null});OSArchitecture=$(if($osArch){$osArch}else{$null});ProcessArchitecture=$(if($procArch){$procArch}else{$null});UserInteractive=[Environment]::UserInteractive};Profile=[pscustomobject]@{AppDataPath=$script:appDataPath;ExistedBefore=$script:appDataExistedBefore;RemovedAfter=(-not(Test-Path -LiteralPath $script:appDataPath))};AudioEndpoint=$script:endpoint;WasapiLoopbackStatus=if($script:wasapiAvailable){'CAPTURED'}else{'NOT AVAILABLE'};Baseline=if($script:baseline){[pscustomobject]@{Frames=$script:baseline.Frames;Packets=$script:baseline.Packets;Rms=[Math]::Round($script:baseline.Rms,8);Peak=[Math]::Round($script:baseline.Peak,8)}}else{$null};PhysicalAudibility='NOT VERIFIED';CaptureFiles=$waveFiles;Captures=$script:captures.ToArray();Events=$script:events.ToArray();AssertionCount=@($script:events|Where-Object{$_.Status-in@('PASS','FAIL')}).Count;PassCount=@($script:events|Where-Object{$_.Status-eq'PASS'}).Count;FailCount=@($script:events|Where-Object{$_.Status-eq'FAIL'}).Count;NotTestedCount=@($script:events|Where-Object{$_.Status-eq'NOT TESTED'}).Count;CompletedUtc=[DateTime]::UtcNow.ToString('o')}
     $record|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $script:evidenceRoot 'reg-008-audio-loopback-results.json') -Encoding UTF8
   }catch{Write-Error "Could not write REG-008 evidence: $($_.Exception.Message)"}
 }

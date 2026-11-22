@@ -2,6 +2,7 @@ param(
   [Parameter(Mandatory=$true)][string]$ExecutablePath,
   [Parameter(Mandatory=$true)][string]$EvidenceDirectory,
   [switch]$ServerRdpSession,
+  [switch]$ServerConsoleSession,
   [switch]$AllowPrivacyOobeNext,
   [int]$ExpectedSessionId = -1,
   [string]$ExpectedSessionName,
@@ -17,10 +18,11 @@ $expectedNotificationTitle = 'Time to rest your eyes'
 $expectedNotificationBodyPattern = 'Look 20 feet / 6 metres away for 20 seconds'
 
 # Default mode remains the disposable Windows 11 ARM64 runner with the x64
-# candidate under emulation. The opt-in Server mode is restricted to the
-# temporary standard-user localhost-RDP session on the hosted Server runner.
-$requiredRunnerArchitecture = if ($ServerRdpSession) { 'X64' } else { 'ARM64' }
-$runnerDescription = if ($ServerRdpSession) { 'GitHub-hosted Windows Server 2025 x64 temporary localhost-RDP session' } else { 'GitHub-hosted Windows 11 ARM64 runner' }
+# candidate under emulation. Server RDP and active-Console modes are explicit
+# opt-ins and require independently verified standard-user desktops.
+if ($ServerRdpSession -and $ServerConsoleSession) { throw 'BLOCKED: choose exactly one Server session mode.' }
+$requiredRunnerArchitecture = if ($ServerRdpSession -or $ServerConsoleSession) { 'X64' } else { 'ARM64' }
+$runnerDescription = if ($ServerRdpSession) { 'GitHub-hosted Windows Server 2025 x64 temporary localhost-RDP session' } elseif ($ServerConsoleSession) { 'GitHub-hosted Windows Server 2025 x64 active standard-user Console session' } else { 'GitHub-hosted Windows 11 ARM64 runner' }
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne $requiredRunnerArchitecture) {
   throw "BLOCKED: this Shell notification probe may run only on a $runnerDescription."
 }
@@ -81,7 +83,8 @@ $shellRecord = $null
 $sessionId = $null
 $currentSessionName = $null
 $currentUserIdentity = $null
-$executionMode = if ($ServerRdpSession) { 'native x64 on Windows Server 2025 in a temporary interactive localhost-RDP session' } else { 'x64 emulation on native Windows 11 ARM64' }
+$consoleDesktopEvidence = $null
+$executionMode = if ($ServerRdpSession) { 'native x64 on Windows Server 2025 in a temporary interactive localhost-RDP session' } elseif ($ServerConsoleSession) { 'native AMD64 x64 on Windows Server 2025 in the verified active standard-user Console session' } else { 'x64 emulation on native Windows 11 ARM64' }
 $candidateMainWindow = [IntPtr]::Zero
 $candidateBreakWindow = [IntPtr]::Zero
 $desktopScreenshotPath = $null
@@ -785,7 +788,7 @@ function Save-Result([string]$FinalStatus, [string]$FinalReason) {
     Requirement='ENV-009'; Status=$FinalStatus; Reason=$FinalReason
     Candidate=[pscustomobject]@{ArtifactId=$candidateArtifactId;FinalizerRunId=$candidateRunId;SourceCommit=$candidateSourceCommit;ExecutablePath=$ExecutablePath;SHA256=$expectedSha256;Identity=$candidateIdentity;Execution=$executionMode;InstallerLaunched=$false}
     OperatingSystem=$osRecord
-    Environment=[pscustomobject]@{Provider=if($ServerRdpSession){'GitHub-hosted disposable Windows Server 2025 runner'}else{'GitHub-hosted Actions runner'};ImageOS=$env:ImageOS;ImageVersion=$env:ImageVersion;RunnerOS=$env:RUNNER_OS;RunnerArchitecture=$env:RUNNER_ARCH;ProcessSessionId=$sessionId;SessionName=$currentSessionName;User=$currentUserIdentity;ExpectedRdpSessionId=if($ServerRdpSession){$ExpectedSessionId}else{$null};ExpectedRdpSessionName=if($ServerRdpSession){$ExpectedSessionName}else{$null};ExpectedRdpUser=if($ServerRdpSession){$ExpectedUser}else{$null};UserInteractive=[Environment]::UserInteractive;Execution=$executionMode}
+    Environment=[pscustomobject]@{Provider=if($ServerRdpSession-or$ServerConsoleSession){'GitHub-hosted disposable Windows Server 2025 runner'}else{'GitHub-hosted Actions runner'};ImageOS=$env:ImageOS;ImageVersion=$env:ImageVersion;RunnerOS=$env:RUNNER_OS;RunnerArchitecture=$env:RUNNER_ARCH;ProcessSessionId=$sessionId;SessionName=$currentSessionName;RawSessionName=$currentSessionName;User=$currentUserIdentity;ServerSessionMode=if($ServerRdpSession){'RDP'}elseif($ServerConsoleSession){'ActiveConsole'}else{$null};ExpectedSessionId=if($ServerRdpSession-or$ServerConsoleSession){$ExpectedSessionId}else{$null};ExpectedSessionName=if($ServerRdpSession-or$ServerConsoleSession){$ExpectedSessionName}else{$null};ExpectedUser=if($ServerRdpSession-or$ServerConsoleSession){$ExpectedUser}else{$null};ExpectedRdpSessionId=if($ServerRdpSession){$ExpectedSessionId}else{$null};ExpectedRdpSessionName=if($ServerRdpSession){$ExpectedSessionName}else{$null};ExpectedRdpUser=if($ServerRdpSession){$ExpectedUser}else{$null};UserInteractive=[Environment]::UserInteractive;Execution=$executionMode;ConsoleDesktopEvidence=$consoleDesktopEvidence}
     Profile=[pscustomobject]@{LocalAppData=$env:LOCALAPPDATA;AppDataPath=$dataDirectory;AppDataAbsentBeforeTest=(-not $dataExistedBefore);TestDataCreatedByHarness=$dataCreatedByHarness;TestDataRemoved=$dataRemoved;User=$currentUserIdentity;SessionId=$sessionId}
     Timer=$timerRecord;FirstRunOobe=$oobeRecord;WindowsShell=$shellRecord;ShellNotificationVisibilityStatus=$shellVisibilityStatus;ShellNotificationVisibilityReason=$shellVisibilityReason
     NotificationActivation=$activationRecord;NotificationDismissal=$dismissalRecord;NotificationPersistence=$persistenceRecord;NotificationActionSequence=$secondActionSequenceRecord
@@ -797,7 +800,7 @@ function Save-Result([string]$FinalStatus, [string]$FinalReason) {
     Screenshots=@(@($desktopScreenshotPath,$shellNotificationScreenshotPath,$breakScreenshotPath,$activationDesktopScreenshotPath,$secondBreakScreenshotPath,$secondDesktopScreenshotPath,$secondShellNotificationScreenshotPath,$postDismissalScreenshotPath) + @($oobeRecord.Screenshots) | Where-Object { $_ })
     LogFile=$logPath
     Cleanup=[pscustomobject]@{CandidateProcessStopped=$candidateStopped;AppDataRemoved=$dataRemoved;Errors=@($cleanupErrors)}
-    Limitations=if($ServerRdpSession){@('Windows Server 2025 x64 interactive localhost-RDP session; this is not Windows 11.','The exact x64 candidate ran natively on x64; no architecture emulation was used.','ENV-009 aggregate status remains BLOCKED because audio and physical audibility were not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer or updater was exercised.')}else{@('Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.','ENV-009 aggregate status remains BLOCKED because audio was not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer, updater, or physical speaker path was exercised.')}
+    Limitations=if($ServerRdpSession){@('Windows Server 2025 x64 interactive localhost-RDP session; this is not Windows 11.','The exact x64 candidate ran natively on x64; no architecture emulation was used.','ENV-009 aggregate status remains BLOCKED because audio and physical audibility were not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer or updater was exercised.')}elseif($ServerConsoleSession){@('Windows Server 2025 x64 interactive active Console session; this is not Windows 11.','The exact x64 candidate ran natively on AMD64 x64; no architecture emulation was used.','ENV-009 aggregate status remains BLOCKED because notification audio and physical audibility were not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer or updater was exercised.')}else{@('Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.','ENV-009 aggregate status remains BLOCKED because audio was not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer, updater, or physical speaker path was exercised.')}
     ObservedUtc=[DateTime]::UtcNow.ToString('o')
   }
   $result | ConvertTo-Json -Depth 14 | Set-Content -LiteralPath $resultPath -Encoding utf8
@@ -817,10 +820,21 @@ using System.Text;
 [StructLayout(LayoutKind.Sequential)] public struct EBR_SHELL_NOTIFY_POINT { public int X, Y; }
 [StructLayout(LayoutKind.Sequential)] public struct EBR_SHELL_NOTIFY_ICON_IDENTIFIER { public uint cbSize; public IntPtr hWnd; public uint uID; public Guid guidItem; }
 [StructLayout(LayoutKind.Sequential)] public struct EBR_SHELL_SYSTEM_INFO { public ushort ProcessorArchitecture; public ushort Reserved; public uint PageSize; public IntPtr MinimumApplicationAddress; public IntPtr MaximumApplicationAddress; public UIntPtr ActiveProcessorMask; public uint NumberOfProcessors; public uint ProcessorType; public uint AllocationGranularity; public ushort ProcessorLevel; public ushort ProcessorRevision; }
+public sealed class EBR_SHELL_WTS_SESSION { public int SessionId; public string Station; public int State; }
 
 public static class EBR_SHELL_NOTIFY_NATIVE {
+  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] private struct WTS_SESSION_INFO { public int SessionId; [MarshalAs(UnmanagedType.LPWStr)] public string Station; public int State; }
   private delegate bool EnumProc(IntPtr hwnd, IntPtr data);
   [DllImport("kernel32.dll")] private static extern void GetNativeSystemInfo(out EBR_SHELL_SYSTEM_INFO info);
+  [DllImport("kernel32.dll",SetLastError=true)] public static extern uint WTSGetActiveConsoleSessionId();
+  [DllImport("wtsapi32.dll",EntryPoint="WTSEnumerateSessionsW",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool WTSEnumerateSessions(IntPtr server,int reserved,int version,out IntPtr sessions,out int count);
+  [DllImport("wtsapi32.dll")] private static extern void WTSFreeMemory(IntPtr memory);
+  [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr GetProcessWindowStation();
+  [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr GetThreadDesktop(uint threadId);
+  [DllImport("user32.dll",EntryPoint="OpenInputDesktop",CharSet=CharSet.Unicode,SetLastError=true)] private static extern IntPtr OpenInputDesktop(uint flags,bool inherit,uint desiredAccess);
+  [DllImport("user32.dll",SetLastError=true)] private static extern bool CloseDesktop(IntPtr desktop);
+  [DllImport("user32.dll",EntryPoint="GetUserObjectInformationW",CharSet=CharSet.Unicode,SetLastError=true)] private static extern bool GetUserObjectInformation(IntPtr handle,int index,StringBuilder buffer,uint length,out uint needed);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool EnumWindows(EnumProc callback, IntPtr data);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool EnumChildWindows(IntPtr parent, EnumProc callback, IntPtr data);
   [DllImport("user32.dll", SetLastError=true)] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
@@ -843,6 +857,11 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   [DllImport("shell32.dll", SetLastError=true)] private static extern int SHQueryUserNotificationState(out int state);
 
   public static ushort NativeArchitecture() { EBR_SHELL_SYSTEM_INFO i; GetNativeSystemInfo(out i); return i.ProcessorArchitecture; }
+  public static EBR_SHELL_WTS_SESSION[] EnumerateWtsSessions() { IntPtr buffer=IntPtr.Zero;int count=0;if(!WTSEnumerateSessions(IntPtr.Zero,0,1,out buffer,out count))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"WTSEnumerateSessionsW failed");try{int size=Marshal.SizeOf(typeof(WTS_SESSION_INFO));var rows=new List<EBR_SHELL_WTS_SESSION>(count);for(int i=0;i<count;i++){IntPtr current=IntPtr.Add(buffer,i*size);var row=(WTS_SESSION_INFO)Marshal.PtrToStructure(current,typeof(WTS_SESSION_INFO));rows.Add(new EBR_SHELL_WTS_SESSION{SessionId=row.SessionId,Station=row.Station,State=row.State});}return rows.ToArray();}finally{if(buffer!=IntPtr.Zero)WTSFreeMemory(buffer);} }
+  private static string UserObjectName(IntPtr handle) { if(handle==IntPtr.Zero)return "<ERROR:0>";var buffer=new StringBuilder(256);uint needed;if(!GetUserObjectInformation(handle,2,buffer,(uint)(buffer.Capacity*2),out needed))return "<ERROR:"+Marshal.GetLastWin32Error().ToString()+">";return buffer.ToString(); }
+  public static string ProcessWindowStationName() { return UserObjectName(GetProcessWindowStation()); }
+  public static string ThreadDesktopName() { return UserObjectName(GetThreadDesktop(GetCurrentThreadId())); }
+  public static string InputDesktopName() { IntPtr desktop=OpenInputDesktop(0,false,1);if(desktop==IntPtr.Zero)return "<ERROR:"+Marshal.GetLastWin32Error().ToString()+">";try{return UserObjectName(desktop);}finally{CloseDesktop(desktop);} }
   public static string[] VisibleTopLevelWindows() {
     var found=new List<string>();
     EnumWindows((hwnd,data)=>{if(IsWindowVisible(hwnd))found.Add(hwnd.ToInt64().ToString());return true;},IntPtr.Zero);
@@ -892,7 +911,36 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   $sessionId = $currentProcess.SessionId
   $currentSessionName = [string]$env:SESSIONNAME
   $currentUserIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-  if ($ServerRdpSession) {
+  if ($ServerConsoleSession) {
+    if ($ExpectedSessionId -le 0 -or $ExpectedSessionName -ine 'Console' -or [string]::IsNullOrWhiteSpace($ExpectedUser)) {
+      throw 'BLOCKED: Server Console mode requires the expected active Console session ID and exact temporary standard-user identity.'
+    }
+    $isAdministrator = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    $processorArchitectureCodes = @(Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -ExpandProperty Architecture -Unique)
+    $osValid = ($os.Caption -match 'Windows Server 2025' -and $osArchitecture -eq 'X64' -and $processArchitecture -eq 'X64' -and $nativeCpuArchitecture -eq 9 -and 9 -in $processorArchitectureCodes)
+    Add-Assertion 'Console runner is native Windows Server 2025 x64/AMD64 with x64 PowerShell' $osValid ([pscustomobject]@{OS=$osRecord;ProcessorArchitectureCodes=$processorArchitectureCodes})
+    if (-not $osValid) { throw 'BLOCKED: Server Console mode requires native Windows Server 2025 x64 and AMD64 processor code 9.' }
+    $currentProcessIsExpected=($sessionId -eq $ExpectedSessionId -and $currentUserIdentity -ieq $ExpectedUser -and -not $isAdministrator)
+    $rawSessionNameAccepted=($currentSessionName -eq '' -or $currentSessionName -ieq 'Console')
+    $activeConsoleSessionId=[EBR_SHELL_NOTIFY_NATIVE]::WTSGetActiveConsoleSessionId()
+    $wtsSessions=@([EBR_SHELL_NOTIFY_NATIVE]::EnumerateWtsSessions())
+    $matchingConsoleSessions=@($wtsSessions | Where-Object { $_.SessionId -eq $ExpectedSessionId -and $_.Station -ieq 'Console' })
+    $wtsActiveConsole=($activeConsoleSessionId -eq $ExpectedSessionId -and $matchingConsoleSessions.Count -eq 1 -and $matchingConsoleSessions[0].State -eq 0)
+    $processWindowStation=[EBR_SHELL_NOTIFY_NATIVE]::ProcessWindowStationName()
+    $threadDesktop=[EBR_SHELL_NOTIFY_NATIVE]::ThreadDesktopName()
+    $inputDesktop=[EBR_SHELL_NOTIFY_NATIVE]::InputDesktopName()
+    $desktopValid=($processWindowStation -ceq 'WinSta0' -and $threadDesktop -ceq 'Default' -and $inputDesktop -ceq 'Default')
+    $taskbar=[EBR_SHELL_NOTIFY_NATIVE]::TaskbarWindow()
+    $taskbarPid=if($taskbar -ne [IntPtr]::Zero){[EBR_SHELL_NOTIFY_NATIVE]::OwnerProcessId($taskbar)}else{0}
+    $taskbarProcess=if($taskbarPid -gt 0){Get-Process -Id $taskbarPid -ErrorAction SilentlyContinue}else{$null}
+    $explorer=@(Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $ExpectedSessionId } | Select-Object Id,SessionId,ProcessName)
+    $taskbarOwnerIsExplorer=($taskbarProcess -and $taskbarProcess.ProcessName -ieq 'explorer')
+    $shellValid=($taskbar -ne [IntPtr]::Zero -and $taskbarOwnerIsExplorer -and $taskbarProcess.SessionId -eq $ExpectedSessionId -and $explorer.Count -gt 0)
+    $consoleValid=($currentProcessIsExpected -and $rawSessionNameAccepted -and [Environment]::UserInteractive -and $wtsActiveConsole -and $desktopValid -and $shellValid)
+    $consoleDesktopEvidence=[pscustomobject]@{Mode='GitHub-hosted Windows Server 2025 active Console';OS=$os.Caption;OSVersion=$os.Version;OSBuild=$os.BuildNumber;OSArchitecture=$osArchitecture;ProcessArchitecture=$processArchitecture;NativeProcessorArchitectureCode=$nativeCpuArchitecture;ProcessorArchitectureCodes=$processorArchitectureCodes;ExpectedSessionId=$ExpectedSessionId;ProcessSessionId=$sessionId;ActiveConsoleSessionId=$activeConsoleSessionId;WtsSessions=$wtsSessions;MatchingConsoleSessions=$matchingConsoleSessions;ExpectedSessionName=$ExpectedSessionName;RawSessionName=$currentSessionName;RawSessionNameAccepted=$rawSessionNameAccepted;ExpectedUser=$ExpectedUser;CurrentUser=$currentUserIdentity;IsAdministrator=$isAdministrator;UserInteractive=[Environment]::UserInteractive;ProcessWindowStation=$processWindowStation;ThreadDesktop=$threadDesktop;InputDesktop=$inputDesktop;ExplorerProcesses=$explorer;TaskbarHandle=if($taskbar-ne[IntPtr]::Zero){'0x{0:X}'-f$taskbar.ToInt64()}else{$null};TaskbarProcessId=$taskbarPid;TaskbarProcessName=if($taskbarProcess){$taskbarProcess.ProcessName}else{$null};TaskbarProcessSessionId=if($taskbarProcess){$taskbarProcess.SessionId}else{$null};Checks=[pscustomobject]@{ExpectedStandardUser=$currentProcessIsExpected;ActiveWtsConsole=$wtsActiveConsole;Interactive=[Environment]::UserInteractive;Desktop=$desktopValid;TaskbarOwnedByExplorer=$taskbarOwnerIsExplorer;Shell=$shellValid}}
+    Add-Assertion 'Process is the expected standard user on the verified active WTS Console desktop with same-session Explorer/taskbar' $consoleValid $consoleDesktopEvidence
+    if (-not $consoleValid) { throw 'BLOCKED: Server Console WTS/session/desktop/Shell proof did not match the expected active standard-user Console session.' }
+  } elseif ($ServerRdpSession) {
     if ($ExpectedSessionId -le 0 -or [string]::IsNullOrWhiteSpace($ExpectedSessionName) -or [string]::IsNullOrWhiteSpace($ExpectedUser)) {
       throw 'BLOCKED: Server RDP mode requires the expected active session ID, exact rdp-tcp session name, and temporary user identity.'
     }
@@ -915,11 +963,11 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
     Add-Assertion 'Windows runner has a genuinely interactive user session' $true ([pscustomobject]@{SessionId=$sessionId;UserInteractive=[Environment]::UserInteractive;RunnerImage=$env:ImageOS})
   }
   if (-not [Environment]::UserInteractive) { throw 'BLOCKED: no genuinely interactive Windows user session is available.' }
-  $executionMode = if ($ServerRdpSession) { 'native x64 on Windows Server 2025 in a temporary interactive localhost-RDP session' } else { 'x64 emulation on native Windows 11 ARM64' }
+  $executionMode = if ($ServerRdpSession) { 'native x64 on Windows Server 2025 in a temporary interactive localhost-RDP session' } elseif ($ServerConsoleSession) { 'native AMD64 x64 on Windows Server 2025 in the verified active standard-user Console session' } else { 'x64 emulation on native Windows 11 ARM64' }
   $taskbar = [EBR_SHELL_NOTIFY_NATIVE]::TaskbarWindow()
   $explorer = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId })
   $shellAvailable = ($taskbar -ne [IntPtr]::Zero -and $explorer.Count -gt 0)
-  $shellRecord = [pscustomobject]@{TaskbarWindow=if($taskbar-ne[IntPtr]::Zero){'0x{0:X}'-f$taskbar.ToInt64()}else{$null};ExplorerProcesses=@($explorer|ForEach-Object{[pscustomobject]@{Id=$_.Id;SessionId=$_.SessionId}});InteractiveShellAvailable=$shellAvailable}
+  $shellRecord = [pscustomobject]@{TaskbarWindow=if($taskbar-ne[IntPtr]::Zero){'0x{0:X}'-f$taskbar.ToInt64()}else{$null};ExplorerProcesses=@($explorer|ForEach-Object{[pscustomobject]@{Id=$_.Id;SessionId=$_.SessionId}});InteractiveShellAvailable=$shellAvailable;ConsoleDesktopEvidence=$consoleDesktopEvidence}
   Add-Assertion 'Interactive Windows Shell and Explorer taskbar are present in the verified test session' $shellAvailable $shellRecord
   if (-not $shellAvailable) { throw 'NOT TESTED: the runner has no interactive Explorer taskbar for Shell notification display.' }
 

@@ -4,6 +4,7 @@ param(
   [Parameter()][int]$ExpectedSessionId,
   [Parameter()][string]$ExpectedSessionName,
   [Parameter()][string]$ExpectedUser,
+  [Parameter()][switch]$ServerConsoleSession,
   [Parameter()][switch]$AllowExactPrivacyOobeNext
 )
 
@@ -14,15 +15,28 @@ $candidateRunId = '44875679345'
 $candidateSourceCommit = '491bd2ed29f84f4d434b884fc723144db2d6f294'
 
 # The default path remains the fresh GitHub-hosted Windows 11 ARM64 runner.
-# Server 2025 is accepted only when the RDP controller supplies all three
-# expected identity values and this process independently verifies them below.
+# Server 2025 has separate, explicitly selected RDP and active-Console modes.
 $serverRdpParameters = @('ExpectedSessionId','ExpectedSessionName','ExpectedUser')
 $serverRdpParametersSupplied = @($serverRdpParameters | Where-Object { $PSBoundParameters.ContainsKey($_) }).Count
-$serverRdpMode = ($serverRdpParametersSupplied -gt 0)
-if ($serverRdpMode -and $serverRdpParametersSupplied -ne $serverRdpParameters.Count) {
-  throw 'BLOCKED: Server RDP mode requires ExpectedSessionId, ExpectedSessionName, and ExpectedUser together.'
-}
-if ($serverRdpMode) {
+$serverConsoleMode = [bool]$ServerConsoleSession
+$serverRdpMode = (-not $serverConsoleMode -and $serverRdpParametersSupplied -gt 0)
+if ($serverConsoleMode) {
+  if (-not $PSBoundParameters.ContainsKey('ExpectedSessionId') -or -not $PSBoundParameters.ContainsKey('ExpectedUser') -or $PSBoundParameters.ContainsKey('ExpectedSessionName')) {
+    throw 'BLOCKED: Server Console mode requires ExpectedSessionId and ExpectedUser, and does not accept an RDP session name.'
+  }
+  if ($ExpectedSessionId -le 0 -or [string]::IsNullOrWhiteSpace($ExpectedUser)) {
+    throw 'BLOCKED: expected active Console session ID and temporary standard-user identity are invalid.'
+  }
+  if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:EBR_RUNNER_ENVIRONMENT_CONTEXT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or $env:GITHUB_SERVER_URL -cne 'https://github.com' -or $env:GITHUB_REPOSITORY -ine 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER' -or -not $env:RUNNER_NAME) {
+    throw 'BLOCKED: Server Console Narrator mode requires the validated GitHub-hosted Windows x64 runner context.'
+  }
+  if (-not [string]::IsNullOrEmpty($env:SESSIONNAME) -and $env:SESSIONNAME -cne 'Console') {
+    throw 'BLOCKED: Server Console mode accepts only an empty SESSIONNAME or literal Console; RDP and other sessions are rejected.'
+  }
+} elseif ($serverRdpMode) {
+  if ($serverRdpParametersSupplied -ne $serverRdpParameters.Count) {
+    throw 'BLOCKED: Server RDP mode requires ExpectedSessionId, ExpectedSessionName, and ExpectedUser together.'
+  }
   if ($ExpectedSessionId -le 0 -or $ExpectedSessionName -notmatch '^rdp-tcp#\d+$' -or [string]::IsNullOrWhiteSpace($ExpectedUser)) {
     throw 'BLOCKED: expected Server RDP session ID, rdp-tcp#N session name, and temporary user are invalid.'
   }
@@ -36,6 +50,9 @@ if ($serverRdpMode) {
   # This probe is deliberately restricted to the fresh, disposable GitHub-hosted
   # Windows 11 ARM64 runner. It never installs the candidate and never edits a
   # pre-existing EyeBreakReminder profile.
+  if ($serverRdpParametersSupplied -gt 0) {
+    throw 'BLOCKED: Server RDP expected-session parameters cannot be used without the explicit ServerConsoleSession switch or the complete RDP tuple.'
+  }
   if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'ARM64' -or $env:GITHUB_SERVER_URL -cne 'https://github.com' -or $env:GITHUB_REPOSITORY -ine 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER' -or -not $env:RUNNER_NAME) {
     throw 'BLOCKED: this Narrator probe may run only on a GitHub-hosted Windows 11 ARM64 runner.'
   }
@@ -44,10 +61,11 @@ if (-not $env:GITHUB_WORKSPACE -or -not $env:RUNNER_TEMP -or -not [Environment]:
   throw 'BLOCKED: GitHub workspace and runner temporary roots are required.'
 }
 
-$candidateExecution = if ($serverRdpMode) { 'native AMD64 x64 on Windows Server 2025 x64' } else { 'x64 candidate under Windows 11 ARM64 x64 emulation' }
-$candidateIdentityExecution = if ($serverRdpMode) { 'native AMD64 x64 on Windows Server 2025 x64' } else { 'x64 emulation on native Windows 11 ARM64' }
-$candidateArchitectureDescription = if ($serverRdpMode) { 'native AMD64 x64 on Windows Server 2025 x64' } else { 'x64 emulation on Windows 11 ARM64' }
-$environmentDescription = if ($serverRdpMode) { 'GitHub-hosted Windows Server 2025 x64 in the validated temporary localhost RDP user session' } else { 'GitHub-hosted interactive Windows 11 ARM64 runner' }
+$serverMode = ($serverRdpMode -or $serverConsoleMode)
+$candidateExecution = if ($serverMode) { 'native AMD64 x64 on Windows Server 2025 x64' } else { 'x64 candidate under Windows 11 ARM64 x64 emulation' }
+$candidateIdentityExecution = if ($serverMode) { 'native AMD64 x64 on Windows Server 2025 x64' } else { 'x64 emulation on native Windows 11 ARM64' }
+$candidateArchitectureDescription = if ($serverMode) { 'native AMD64 x64 on Windows Server 2025 x64' } else { 'x64 emulation on Windows 11 ARM64' }
+$environmentDescription = if ($serverRdpMode) { 'GitHub-hosted Windows Server 2025 x64 in the validated temporary localhost RDP user session' } elseif ($serverConsoleMode) { 'GitHub-hosted Windows Server 2025 x64 in the verified active Console session as a temporary standard user' } else { 'GitHub-hosted interactive Windows 11 ARM64 runner' }
 
 $workspaceRoot = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd('\') + '\'
 $runnerTempRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\'
@@ -92,6 +110,7 @@ $osRecord = $null
 $nativeCpuArchitecture = $null
 $sessionId = $null
 $testUser = $null
+$consoleSessionEvidence = $null
 $candidateIdentity = $null
 $narratorRecord = $null
 $physicalAudioVerified = $false
@@ -352,14 +371,14 @@ function Save-Result([string]$FinalStatus, [string]$FinalReason) {
       Execution=$candidateExecution; InstallerLaunched=$false
     }
     OperatingSystem=$osRecord; NativeCPUArchitecture=$nativeCpuArchitecture
-    Environment=[pscustomobject]@{ Provider='GitHub-hosted Actions runner'; Description=$environmentDescription; ImageOS=$env:ImageOS; ImageVersion=$env:ImageVersion; RunnerOS=$env:RUNNER_OS; RunnerArchitecture=$env:RUNNER_ARCH; ProcessSessionId=$sessionId; SessionName=$env:SESSIONNAME; User=$testUser; ExpectedSessionId=if($serverRdpMode){$ExpectedSessionId}else{$null};ExpectedSessionName=if($serverRdpMode){$ExpectedSessionName}else{$null};ExpectedUser=if($serverRdpMode){$ExpectedUser}else{$null};UserInteractive=[Environment]::UserInteractive }
+    Environment=[pscustomobject]@{ Provider='GitHub-hosted Actions runner'; Description=$environmentDescription; ImageOS=$env:ImageOS; ImageVersion=$env:ImageVersion; RunnerOS=$env:RUNNER_OS; RunnerArchitecture=$env:RUNNER_ARCH; ProcessSessionId=$sessionId; SessionName=$env:SESSIONNAME; User=$testUser; ExpectedSessionId=if($serverMode){$ExpectedSessionId}else{$null};ExpectedSessionName=if($serverRdpMode){$ExpectedSessionName}elseif($serverConsoleMode){'Console'}else{$null};ExpectedUser=if($serverMode){$ExpectedUser}else{$null};UserInteractive=[Environment]::UserInteractive;ConsoleSessionEvidence=$consoleSessionEvidence }
     Profile=[pscustomobject]@{ LocalAppData=$env:LOCALAPPDATA; AppDataPath=$dataDirectory; AppDataAbsentBeforeTest=(-not $dataExistedBefore); TestDataCreatedByHarness=$dataCreatedByHarness; TestDataRemoved=$dataRemoved }
     Narrator=[pscustomobject]@{ ProcessId=$narratorPid; StartedByHarness=$narratorOwned; Version=if($narratorRecord){$narratorRecord.Version}else{$null}; SessionId=if($narratorRecord){$narratorRecord.SessionId}else{$null}; RecapMethod='Insert+Ctrl+X Copy Last Phrase'; Captures=@($speechCaptures); PhysicalAudioVerified=$physicalAudioVerified }
     OOBEActions=@($oobeActions); FocusTrace=@($focusTrace); Assertions=@($assertions); Events=@($events)
      AssertionCounts=[pscustomobject]@{Total=$assertions.Count;Passed=@($assertions|Where-Object{$_.Status -eq 'PASS'}).Count;Fail=@($assertions|Where-Object{$_.Status -eq 'FAIL'}).Count;NotTested=@($assertions|Where-Object{$_.Status -eq 'NOT TESTED'}).Count}
     Screenshots=@($screenshots); TranscriptFile=$transcriptPath; LogFile=$logPath
     Cleanup=[pscustomobject]@{CandidateProcessStopped=$candidateStoppedByHarness;NarratorProcessStopped=$narratorStoppedByHarness;AppDataRemoved=$dataRemoved;Errors=@($cleanupErrors)}
-    Limitations=@($(if($serverRdpMode){'Windows Server 2025 x64 host; this is not Windows 11 evidence.'}else{'Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.'}),'Speech Recap text verifies Narrator speech content only; physical audio rendering and audibility were not tested.','The standalone candidate was launched; no installer or updater was run.')
+    Limitations=@($(if($serverMode){'Windows Server 2025 x64 host; this is not Windows 11 evidence.'}else{'Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.'}),'Speech Recap text verifies Narrator speech content only; physical audio rendering and audibility were not tested.','The standalone candidate was launched; no installer or updater was run.')
     ObservedUtc=[DateTime]::UtcNow.ToString('o')
   }
   $result | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $resultPath -Encoding utf8
@@ -416,7 +435,27 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
   [DllImport("user32.dll", SetLastError=true)] private static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
   [DllImport("user32.dll", SetLastError=true)] private static extern uint SendInput(uint count, [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex=0)] EBR_NARRATOR_INPUT[] inputs, int inputSize);
+  [DllImport("kernel32.dll", SetLastError=true)] private static extern uint WTSGetActiveConsoleSessionId();
+  [DllImport("wtsapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern bool WTSQuerySessionInformationW(IntPtr server, uint sessionId, int infoClass, out IntPtr buffer, out uint bytesReturned);
+  [DllImport("wtsapi32.dll")] private static extern void WTSFreeMemory(IntPtr buffer);
+  [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr GetProcessWindowStation();
+  [DllImport("kernel32.dll", SetLastError=true)] private static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr GetThreadDesktop(uint threadId);
+  [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint desiredAccess);
+  [DllImport("user32.dll", SetLastError=true)] private static extern bool CloseDesktop(IntPtr desktop);
+  [DllImport("user32.dll", SetLastError=true)] private static extern bool GetUserObjectInformationW(IntPtr handle, int index, IntPtr info, uint length, out uint needed);
   [StructLayout(LayoutKind.Sequential)] private struct EBR_NARRATOR_RECT { public int Left, Top, Right, Bottom; }
+  private static string UserObjectName(IntPtr handle) {
+    if (handle == IntPtr.Zero) return null;
+    uint needed;
+    GetUserObjectInformationW(handle, 2, IntPtr.Zero, 0, out needed); // UOI_NAME
+    if (needed == 0) return null;
+    IntPtr buffer = Marshal.AllocHGlobal((int)needed);
+    try {
+      if (!GetUserObjectInformationW(handle, 2, buffer, needed, out needed)) return null;
+      return Marshal.PtrToStringUni(buffer);
+    } finally { Marshal.FreeHGlobal(buffer); }
+  }
   private static EBR_NARRATOR_INPUT KeyboardInput(byte key, bool keyUp) {
     uint flags = key == 0x2D ? 0x0001u : 0u; // VK_INSERT is an E0-prefixed extended key.
     if (keyUp) flags |= 0x0002u;
@@ -452,6 +491,27 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
     return (int)sent;
   }
   public static ushort NativeArchitecture() { EBR_NARRATOR_SYSTEM_INFO i; GetNativeSystemInfo(out i); return i.ProcessorArchitecture; }
+  public static uint ActiveConsoleSessionId() { return WTSGetActiveConsoleSessionId(); }
+  public static bool TryGetWtsSessionString(uint sessionId, int infoClass, out string value) {
+    IntPtr buffer; uint bytes;
+    if (!WTSQuerySessionInformationW(IntPtr.Zero, sessionId, infoClass, out buffer, out bytes) || buffer == IntPtr.Zero) { value = null; return false; }
+    try { value = Marshal.PtrToStringUni(buffer); return !String.IsNullOrEmpty(value); }
+    finally { WTSFreeMemory(buffer); }
+  }
+  public static bool TryGetWtsConnectState(uint sessionId, out int state) {
+    IntPtr buffer; uint bytes;
+    if (!WTSQuerySessionInformationW(IntPtr.Zero, sessionId, 8, out buffer, out bytes) || buffer == IntPtr.Zero || bytes < 4) { state = -1; if (buffer != IntPtr.Zero) WTSFreeMemory(buffer); return false; }
+    try { state = Marshal.ReadInt32(buffer); return true; }
+    finally { WTSFreeMemory(buffer); }
+  }
+  public static string ProcessWindowStationName() { return UserObjectName(GetProcessWindowStation()); }
+  public static string CurrentThreadDesktopName() { return UserObjectName(GetThreadDesktop(GetCurrentThreadId())); }
+  public static string InputDesktopName() {
+    IntPtr desktop = OpenInputDesktop(0, false, 0x0001); // DESKTOP_READOBJECTS
+    if (desktop == IntPtr.Zero) return null;
+    try { return UserObjectName(desktop); }
+    finally { CloseDesktop(desktop); }
+  }
   public static string[] WindowsForProcess(int expectedPid) {
     var found = new List<IntPtr>();
     EnumWindows((hwnd, data) => { uint pid; GetWindowThreadProcessId(hwnd, out pid); if (pid == (uint)expectedPid && IsWindowVisible(hwnd)) found.Add(hwnd); return true; }, IntPtr.Zero);
@@ -484,7 +544,7 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
   $nativeCpuArchitectureName = if($nativeCpuArchitecture -eq 12){'ARM64'}elseif($nativeCpuArchitecture -eq 9){'AMD64'}else{"Unknown ($nativeCpuArchitecture)"}
   $osRecord = [pscustomobject]@{ Caption=$os.Caption; Version=$os.Version; Build=$os.BuildNumber; OSArchitecture=$osArchitecture; ProcessArchitecture=$processArchitecture; NativeProcessorArchitectureCode=$nativeCpuArchitecture; NativeProcessorArchitecture=$nativeCpuArchitectureName }
   $sessionId = (Get-Process -Id $PID -ErrorAction Stop).SessionId
-  if ($serverRdpMode) {
+  if ($serverMode) {
     $osValid = ($os.Caption -match 'Windows Server 2025' -and $osArchitecture -eq 'X64' -and $processArchitecture -eq 'X64' -and $nativeCpuArchitecture -eq 9)
     Add-Assertion 'Runner is Windows Server 2025 with native AMD64 OS, CPU, and x64 PowerShell process' $osValid $osRecord
     if (-not $osValid) { throw 'BLOCKED: the runner is not a native Windows Server 2025 x64 environment.' }
@@ -500,6 +560,59 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
     $userMatches = ($testUser -ieq $ExpectedUser)
     Add-Assertion 'Server probe runs as the expected temporary user in the expected active RDP session' ($sessionMatches -and $userMatches) ([pscustomobject]@{ProcessSessionId=$sessionId;ExpectedSessionId=$ExpectedSessionId;SessionName=$env:SESSIONNAME;ExpectedSessionName=$ExpectedSessionName;User=$testUser;ExpectedUser=$ExpectedUser;UserInteractive=[Environment]::UserInteractive})
     if (-not $sessionMatches -or -not $userMatches) { throw 'BLOCKED: the Narrator probe identity or session differs from the controller-validated temporary RDP user session.' }
+  } elseif ($serverConsoleMode) {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $testUser = $identity.Name
+    $identitySid = if ($identity.User) { $identity.User.Value } else { $null }
+    $expectedLocalPrefix = [string]$env:COMPUTERNAME + '\'
+    $isLocalUser = $ExpectedUser.StartsWith($expectedLocalPrefix, [StringComparison]::OrdinalIgnoreCase)
+    $userMatches = ($testUser -ieq $ExpectedUser -and $isLocalUser)
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    $adminSidPresent = @($identity.Groups | Where-Object { $_.Value -ceq 'S-1-5-32-544' }).Count -gt 0
+    $isAdministrator = ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -or $adminSidPresent)
+
+    $activeConsoleSessionId = [EBR_NARRATOR_NATIVE]::ActiveConsoleSessionId()
+    $wtsState = -1
+    $wtsStateReadable = [EBR_NARRATOR_NATIVE]::TryGetWtsConnectState([uint32]$sessionId, [ref]$wtsState)
+    $wtsStationName = $null
+    $wtsStationNameReadable = [EBR_NARRATOR_NATIVE]::TryGetWtsSessionString([uint32]$sessionId, 6, [ref]$wtsStationName) # WTSWinStationName
+    $windowStationName = [EBR_NARRATOR_NATIVE]::ProcessWindowStationName()
+    $threadDesktopName = [EBR_NARRATOR_NATIVE]::CurrentThreadDesktopName()
+    $inputDesktopName = [EBR_NARRATOR_NATIVE]::InputDesktopName()
+    $sessionNameAllowed = ([string]::IsNullOrEmpty($env:SESSIONNAME) -or $env:SESSIONNAME -ceq 'Console')
+    $consoleSessionMatches = ($sessionId -eq $ExpectedSessionId -and $activeConsoleSessionId -eq [uint32]$ExpectedSessionId -and $activeConsoleSessionId -eq [uint32]$sessionId)
+    $consoleStateValid = ($wtsStateReadable -and $wtsState -eq 0 -and $wtsStationNameReadable -and $wtsStationName -ceq 'Console' -and $sessionNameAllowed)
+    $desktopValid = ($windowStationName -ceq 'WinSta0' -and $threadDesktopName -ceq 'Default' -and $inputDesktopName -ceq 'Default')
+    $interactiveValid = [Environment]::UserInteractive
+
+    $explorerProcesses = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId })
+    $taskbarWindows = @(
+      foreach ($explorerProcess in $explorerProcesses) {
+        foreach ($handleText in [EBR_NARRATOR_NATIVE]::WindowsForProcess($explorerProcess.Id)) {
+          $handle = [IntPtr]::new([long]$handleText)
+          if ([EBR_NARRATOR_NATIVE]::WindowClass($handle) -ceq 'Shell_TrayWnd' -and [EBR_NARRATOR_NATIVE]::OwnerProcessId($handle) -eq $explorerProcess.Id) {
+            [pscustomobject]@{ProcessId=$explorerProcess.Id;SessionId=$explorerProcess.SessionId;Handle=('0x{0:X}' -f $handle.ToInt64());Class='Shell_TrayWnd'}
+          }
+        }
+      }
+    )
+    $shellValid = ($explorerProcesses.Count -ge 1 -and $taskbarWindows.Count -ge 1)
+    $standardUserValid = ($userMatches -and -not $isAdministrator)
+    $consoleSessionEvidence = [pscustomobject]@{
+      ExpectedUser=$ExpectedUser;ObservedUser=$testUser;UserSid=$identitySid;LocalAccount=$isLocalUser;ExpectedSessionId=$ExpectedSessionId;ProcessSessionId=$sessionId
+      WTSActiveConsoleSessionId=$activeConsoleSessionId;WTSConnectState=if($wtsStateReadable){$wtsState}else{$null};WTSConnectStateName=if($wtsStateReadable-and$wtsState-eq0){'Active'}elseif($wtsStateReadable){"Other($wtsState)"}else{'Unreadable'}
+      WTSWinStationName=$wtsStationName;WTSWinStationNameReadable=$wtsStationNameReadable;SessionNameEnvironment=$env:SESSIONNAME;SessionNameAccepted=$sessionNameAllowed
+      UserInteractive=$interactiveValid;WindowStation=$windowStationName;ThreadDesktop=$threadDesktopName;InputDesktop=$inputDesktopName;ExplorerProcessIds=@($explorerProcesses.Id);TaskbarWindows=$taskbarWindows
+      AdministratorRole=$isAdministrator;AdministratorSidPresent=$adminSidPresent
+    }
+    Add-Assertion 'Server Console probe runs as the expected local temporary non-administrator user' $standardUserValid ([pscustomobject]@{ExpectedUser=$ExpectedUser;ObservedUser=$testUser;UserSid=$identitySid;LocalAccount=$isLocalUser;IsAdministrator=$isAdministrator;AdministratorSidPresent=$adminSidPresent})
+    Add-Assertion 'Server Console process matches the expected active WTS Console session' $consoleSessionMatches ([pscustomobject]@{ProcessSessionId=$sessionId;ExpectedSessionId=$ExpectedSessionId;WTSActiveConsoleSessionId=$activeConsoleSessionId})
+    Add-Assertion 'Server Console WTS state is Active and the station is Console' $consoleStateValid ([pscustomobject]@{WTSConnectState=if($wtsStateReadable){$wtsState}else{$null};WTSConnectStateReadable=$wtsStateReadable;WTSWinStationName=$wtsStationName;WTSWinStationNameReadable=$wtsStationNameReadable;SessionNameEnvironment=$env:SESSIONNAME;SessionNameAccepted=$sessionNameAllowed})
+    Add-Assertion 'Server Console uses interactive WinSta0 Default and input Default desktops' ($interactiveValid -and $desktopValid) ([pscustomobject]@{UserInteractive=$interactiveValid;WindowStation=$windowStationName;ThreadDesktop=$threadDesktopName;InputDesktop=$inputDesktopName})
+    Add-Assertion 'Explorer and the Windows taskbar are present in the same Server Console session' $shellValid ([pscustomobject]@{ProcessSessionId=$sessionId;ExplorerProcessIds=@($explorerProcesses.Id);TaskbarWindows=$taskbarWindows})
+    if (-not $standardUserValid -or -not $consoleSessionMatches -or -not $consoleStateValid -or -not $desktopValid -or -not $interactiveValid -or -not $shellValid) {
+      throw 'BLOCKED: the temporary standard-user process did not prove the active Server Console session, desktops, and same-session Explorer/taskbar.'
+    }
   } else {
     $testUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
   }

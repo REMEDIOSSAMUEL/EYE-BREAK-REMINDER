@@ -217,6 +217,67 @@ public static class EBR_RdpUiNative {
     return "NativeBM_CLICK: class=Button; process=$ownerProcessId; automationId=$([string]$current.AutomationId); foregroundPromptVerified=True"
   }
 
+  function Invoke-EBRViewCertificateAction($Element, [int]$ExpectedProcessId, [long]$PromptWindowHandle, [string]$ExpectedAutomationId) {
+    $current = $Element.Current
+    $isViewControl = $current.ControlType -in @([System.Windows.Automation.ControlType]::Button, [System.Windows.Automation.ControlType]::Pane, [System.Windows.Automation.ControlType]::Hyperlink)
+    $nameMatches = $current.Name -match '(?i)^\s*View certificate\s*\.{0,3}\s*$'
+    if (-not $isViewControl -or $current.ProcessId -ne $ExpectedProcessId -or -not $nameMatches -or
+        $current.AutomationId -cne $ExpectedAutomationId -or -not $current.IsEnabled -or $current.IsOffscreen) {
+      throw 'BLOCKED: refusing to invoke an unverified View certificate action.'
+    }
+
+    $pattern = $null
+    if ($Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+      ([System.Windows.Automation.InvokePattern]$pattern).Invoke()
+      return 'InvokePattern'
+    }
+
+    # Some Server UIA providers expose the legacy pattern without a loadable
+    # LegacyIAccessiblePattern .NET type. Discover it by its UIA pattern ID and
+    # call DoDefaultAction only when the provider actually supplies that method.
+    $legacyPatternId = [System.Windows.Automation.AutomationPattern]::LookupById(10018)
+    if ($null -ne $legacyPatternId) {
+      $legacy = $null
+      if ($Element.TryGetCurrentPattern($legacyPatternId, [ref]$legacy)) {
+        $defaultAction = $legacy.GetType().GetMethod('DoDefaultAction', [type[]]@())
+        if ($null -ne $defaultAction) {
+          [void]$defaultAction.Invoke($legacy, [object[]]@())
+          return 'LegacyIAccessible.DoDefaultAction'
+        }
+      }
+    }
+
+    # Last resort: exactly one native click, tightly scoped to the verified
+    # child Button. A failed/indeterminate result is never retried.
+    $rootHandle = [IntPtr]$PromptWindowHandle
+    $controlHandle = [IntPtr]$current.NativeWindowHandle
+    if ($rootHandle -eq [IntPtr]::Zero -or $controlHandle -eq [IntPtr]::Zero -or
+        -not [EBR_RdpUiNative]::IsChild($rootHandle, $controlHandle)) {
+      throw 'BLOCKED: the exact View certificate control did not expose a child HWND owned by its verified RDP prompt.'
+    }
+    $rootProcessId = [uint32]0
+    $controlProcessId = [uint32]0
+    [void][EBR_RdpUiNative]::GetWindowThreadProcessId($rootHandle, [ref]$rootProcessId)
+    [void][EBR_RdpUiNative]::GetWindowThreadProcessId($controlHandle, [ref]$controlProcessId)
+    if ($rootProcessId -ne [uint32]$ExpectedProcessId -or $controlProcessId -ne [uint32]$ExpectedProcessId -or
+        -not [EBR_RdpUiNative]::IsWindowVisible($rootHandle) -or -not [EBR_RdpUiNative]::IsWindowEnabled($rootHandle) -or
+        -not [EBR_RdpUiNative]::IsWindowVisible($controlHandle) -or -not [EBR_RdpUiNative]::IsWindowEnabled($controlHandle) -or
+        [EBR_RdpUiNative]::GetForegroundWindow() -ne $rootHandle) {
+      throw 'BLOCKED: refusing the native View certificate action because process, visibility, enabled-state, or foreground checks failed.'
+    }
+    $className = [Text.StringBuilder]::new(128)
+    if ([EBR_RdpUiNative]::GetClassName($controlHandle, $className, $className.Capacity) -le 0 -or $className.ToString() -cne 'Button') {
+      throw 'BLOCKED: the exact View certificate control native class is not Button.'
+    }
+    $messageResult = [IntPtr]::Zero
+    $sendStatus = [EBR_RdpUiNative]::SendMessageTimeout($controlHandle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero, 0x0002, 3000, [ref]$messageResult)
+    if ($sendStatus -eq [IntPtr]::Zero) {
+      $nativeError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+      return "NativeBM_CLICK: class=Button; process=$controlProcessId; automationId=$([string]$current.AutomationId); foregroundPromptVerified=True; singleAttempt=True; result=TimedOutOrIndeterminate; win32Error=$nativeError; observeOnly=True; noRetry=True"
+    }
+    return "NativeBM_CLICK: class=Button; process=$controlProcessId; automationId=$([string]$current.AutomationId); foregroundPromptVerified=True; singleAttempt=True; result=SendMessageReturned; observeOnly=True; noRetry=True"
+  }
+
   function Save-EBRPromptEvidence($Snapshot, [string]$BaseName, $Extra = $null) {
     [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
     $record = [pscustomobject]@{
@@ -348,14 +409,20 @@ public static class EBR_RdpUiNative {
       if($view.Count-ne1){throw "expected one exact View certificate action; found $($view.Count)."}
       $warningHandle=[long]$WarningSnapshot.Handle
       $oldHandles=@(Get-EBRProcessTopLevelWindows|ForEach-Object{[long]$_.Current.NativeWindowHandle})
-      $viewAction=Invoke-EBRNamedPromptAction $view[0] ([string]$view[0].Current.Name) $MstscProcessId $warningHandle ([string]$view[0].Current.AutomationId)
+      $viewAction=Invoke-EBRViewCertificateAction $view[0] $MstscProcessId $warningHandle ([string]$view[0].Current.AutomationId)
       $viewer=$null;$watch=[Diagnostics.Stopwatch]::StartNew()
       while($watch.Elapsed.TotalSeconds-lt10-and-not$viewer){
         $candidates=@(Get-EBRProcessTopLevelWindows|Where-Object{[long]$_.Current.NativeWindowHandle-notin$oldHandles})
         if($candidates.Count-gt1){foreach($candidate in $candidates){Save-EBRPromptEvidence (Get-EBRPromptSnapshot $candidate) 'rdp-server-certificate-viewer-ambiguous'};throw 'View certificate opened multiple new mstsc windows.'}
         if($candidates.Count-eq1){$viewer=$candidates[0]}else{Start-Sleep -Milliseconds 100}
       }
-      if(-not$viewer){throw 'View certificate did not open one new same-process certificate window.'}
+      if(-not$viewer){
+        $remaining=@(Get-EBRProcessTopLevelWindows|Where-Object{[long]$_.Current.NativeWindowHandle-eq$warningHandle})
+        $evidenceSnapshot=if($remaining.Count-eq1){Get-EBRPromptSnapshot $remaining[0]}else{$WarningSnapshot}
+        $afterWindows=@(Get-EBRProcessTopLevelWindows|ForEach-Object{[pscustomobject]@{Title=[string]$_.Current.Name;Handle=[long]$_.Current.NativeWindowHandle}})
+        Save-EBRPromptEvidence $evidenceSnapshot 'rdp-server-certificate-viewer-not-opened' ([pscustomobject]@{ViewAction=$viewAction;NewSameProcessCertificateWindowObserved=$false;WarningWindowStillPresent=($remaining.Count-eq1);SameProcessTopLevelWindows=$afterWindows})
+        throw 'View certificate did not open one new same-process certificate window; captured post-action UIA and screenshot evidence.'
+      }
       $viewerSnapshot=Get-EBRPromptSnapshot $viewer
       if($viewerSnapshot.Window.Current.Name-notmatch'(?i)certificate'){
         Save-EBRPromptEvidence $viewerSnapshot 'rdp-server-certificate-viewer-unrecognized' ([pscustomobject]@{ViewAction=$viewAction;Title=$viewerSnapshot.Window.Current.Name})

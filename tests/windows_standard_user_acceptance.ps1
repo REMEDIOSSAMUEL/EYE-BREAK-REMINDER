@@ -4,7 +4,11 @@ param(
   [Parameter(Mandatory)][string]$EvidenceDirectory,
   [switch]$Child,
   [string]$ChildResultPath,
-  [switch]$DisableWholeDesktopCaptures
+  [switch]$DisableWholeDesktopCaptures,
+  [string]$ExpectedUserSid,
+  [string]$ExpectedUserName,
+  [string]$RunnerEnvironmentContext,
+  [string]$RunnerContextPath
 )
 $ErrorActionPreference='Stop'
 
@@ -15,6 +19,19 @@ function Save-StandardUserResult([string]$Path,$Result){
 }
 
 if($Child){
+  $runnerContextFromParent=$null;$runnerContextLoadError=$null
+  try{
+    if([string]::IsNullOrWhiteSpace($RunnerContextPath)){throw 'Parent runner-context JSON path was not provided.'}
+    $runnerContextPathResolved=[IO.Path]::GetFullPath($RunnerContextPath)
+    $runnerContextFromParent=Get-Content -LiteralPath $runnerContextPathResolved -Raw -ErrorAction Stop|ConvertFrom-Json -ErrorAction Stop
+    $contextTempRoot=[IO.Path]::GetFullPath([string]$runnerContextFromParent.RUNNER_TEMP).TrimEnd('\')+'\'
+    if(-not$runnerContextPathResolved.StartsWith($contextTempRoot,[StringComparison]::OrdinalIgnoreCase)){throw 'Runner-context JSON is outside the parent-provided RUNNER_TEMP.'}
+    foreach($name in @('GITHUB_ACTIONS','GITHUB_SERVER_URL','GITHUB_REPOSITORY','GITHUB_RUN_ID','GITHUB_WORKSPACE','RUNNER_ENVIRONMENT','RUNNER_OS','RUNNER_ARCH','RUNNER_NAME','RUNNER_TEMP','ImageOS','ImageVersion','EBR_RUNNER_ENVIRONMENT_CONTEXT')){
+      $property=$runnerContextFromParent.PSObject.Properties[$name]
+      if($property){[Environment]::SetEnvironmentVariable($name,[string]$property.Value,'Process')}
+    }
+    $RunnerEnvironmentContext=[string]$runnerContextFromParent.EBR_RUNNER_ENVIRONMENT_CONTEXT
+  }catch{$runnerContextLoadError=$_.Exception.Message}
   $native=@'
 using System;
 using System.Collections.Generic;
@@ -48,6 +65,94 @@ public static class EBR_STD_NATIVE {
 }
 '@
   Add-Type -TypeDefinition $native -ErrorAction Stop
+  $sessionNative=@'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+public enum EBR_STD_WTS_CONNECT_STATE { Active=0, Connected=1, ConnectQuery=2, Shadow=3, Disconnected=4, Idle=5, Listen=6, Reset=7, Down=8, Init=9 }
+public sealed class EBR_STD_WTS_SESSION { public int SessionId; public string Station; public string State; }
+public static class EBR_STD_SESSION_NATIVE {
+  private const int UOI_NAME=2;
+  private const uint DESKTOP_READOBJECTS=0x0001;
+  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] private struct WTS_SESSION_INFO { public int SessionId; [MarshalAs(UnmanagedType.LPWStr)] public string Station; public EBR_STD_WTS_CONNECT_STATE State; }
+  [DllImport("kernel32.dll",SetLastError=true)] public static extern uint WTSGetActiveConsoleSessionId();
+  [DllImport("wtsapi32.dll",EntryPoint="WTSEnumerateSessionsW",SetLastError=true,CharSet=CharSet.Unicode)] private static extern bool WTSEnumerateSessions(IntPtr server,int reserved,int version,out IntPtr sessions,out int count);
+  [DllImport("wtsapi32.dll")] private static extern void WTSFreeMemory(IntPtr memory);
+  public static EBR_STD_WTS_SESSION[] EnumerateSessions(){
+    IntPtr buffer=IntPtr.Zero; int count=0;
+    if(!WTSEnumerateSessions(IntPtr.Zero,0,1,out buffer,out count)) throw new Win32Exception(Marshal.GetLastWin32Error(),"WTSEnumerateSessions failed");
+    try { int size=Marshal.SizeOf(typeof(WTS_SESSION_INFO)); var rows=new List<EBR_STD_WTS_SESSION>(count); for(int i=0;i<count;i++){var row=(WTS_SESSION_INFO)Marshal.PtrToStructure(IntPtr.Add(buffer,i*size),typeof(WTS_SESSION_INFO)); rows.Add(new EBR_STD_WTS_SESSION{SessionId=row.SessionId,Station=row.Station,State=row.State.ToString()});} return rows.ToArray(); }
+    finally { if(buffer!=IntPtr.Zero) WTSFreeMemory(buffer); }
+  }
+  [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr GetProcessWindowStation();
+  [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr GetThreadDesktop(uint threadId);
+  [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll",EntryPoint="OpenInputDesktop",SetLastError=true,CharSet=CharSet.Unicode)] private static extern IntPtr OpenInputDesktop(uint flags,bool inherit,uint desiredAccess);
+  [DllImport("user32.dll",SetLastError=true)] private static extern bool CloseDesktop(IntPtr desktop);
+  [DllImport("user32.dll",EntryPoint="GetUserObjectInformationW",SetLastError=true,CharSet=CharSet.Unicode)] private static extern bool GetUserObjectInformation(IntPtr handle,int index,StringBuilder buffer,uint length,out uint needed);
+  private static string ObjectName(IntPtr handle){if(handle==IntPtr.Zero)return null;var buffer=new StringBuilder(256);uint needed;if(!GetUserObjectInformation(handle,UOI_NAME,buffer,(uint)(buffer.Capacity*2),out needed))return "<ERROR:"+Marshal.GetLastWin32Error().ToString()+">";return buffer.ToString();}
+  public static string ProcessWindowStationName(){return ObjectName(GetProcessWindowStation());}
+  public static string ThreadDesktopName(){return ObjectName(GetThreadDesktop(GetCurrentThreadId()));}
+  public static string InputDesktopName(){IntPtr desktop=OpenInputDesktop(0,false,DESKTOP_READOBJECTS);if(desktop==IntPtr.Zero)return "<ERROR:"+Marshal.GetLastWin32Error().ToString()+">";try{return ObjectName(desktop);}finally{CloseDesktop(desktop);}}
+  [DllImport("user32.dll",EntryPoint="FindWindowW",SetLastError=true,CharSet=CharSet.Unicode)] private static extern IntPtr FindWindow(string className,string windowName);
+  [DllImport("user32.dll",SetLastError=true)] private static extern uint GetWindowThreadProcessId(IntPtr window,out uint processId);
+  public static IntPtr TaskbarWindow(){return FindWindow("Shell_TrayWnd",null);}
+  public static uint TaskbarProcessId(IntPtr window){if(window==IntPtr.Zero)return 0;uint processId;GetWindowThreadProcessId(window,out processId);return processId;}
+}
+'@
+  Add-Type -TypeDefinition $sessionNative -ErrorAction Stop
+  $guardFailures=[System.Collections.Generic.List[string]]::new()
+  $runnerContextValid=($null-ne$runnerContextFromParent-and$env:GITHUB_ACTIONS-ceq'true'-and$env:RUNNER_ENVIRONMENT-ceq'github-hosted'-and$env:RUNNER_OS-ceq'Windows'-and$env:RUNNER_ARCH-ceq'X64'-and$env:RUNNER_NAME-and$env:GITHUB_SERVER_URL-ceq'https://github.com'-and$env:GITHUB_REPOSITORY-ieq'REMEDIOSSAMUEL/EYE-BREAK-REMINDER'-and$env:GITHUB_RUN_ID-and$env:GITHUB_WORKSPACE-and$env:RUNNER_TEMP-and$env:EBR_RUNNER_ENVIRONMENT_CONTEXT-ceq'github-hosted')
+  if($runnerContextLoadError){$guardFailures.Add("Parent runner context could not be loaded: $runnerContextLoadError")}
+  if(-not$runnerContextValid){$guardFailures.Add('Child did not receive the validated GitHub-hosted Windows x64 runner context from its parent.')}
+  $guardSessionId=-1;$guardSessionName=[string]$env:SESSIONNAME;$guardIdentity=$null;$guardIsAdministrator=$true;$guardUserInteractive=$false
+  $guardActiveConsoleSessionId=[uint32]::MaxValue;$guardSessions=@();$guardConsoleSession=$null
+  $guardWindowStation=$null;$guardThreadDesktop=$null;$guardInputDesktop=$null;$guardExplorer=@();$guardTaskbarHandle=[IntPtr]::Zero;$guardTaskbarProcessId=0;$guardTaskbarProcess=$null
+  try {
+    $guardProcess=[Diagnostics.Process]::GetCurrentProcess();$guardSessionId=[int]$guardProcess.SessionId
+    $guardIdentity=[Security.Principal.WindowsIdentity]::GetCurrent();$guardPrincipal=[Security.Principal.WindowsPrincipal]::new($guardIdentity)
+    $guardIsAdministrator=$guardPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    $guardUserInteractive=[Environment]::UserInteractive
+    $guardActiveConsoleSessionId=[EBR_STD_SESSION_NATIVE]::WTSGetActiveConsoleSessionId()
+    $guardSessions=@([EBR_STD_SESSION_NATIVE]::EnumerateSessions()|ForEach-Object{[pscustomobject]@{SessionId=$_.SessionId;Station=$_.Station;State=$_.State}})
+    $guardConsoleSession=@($guardSessions|Where-Object{[uint32]$_.SessionId-eq$guardActiveConsoleSessionId-and$_.Station-ieq'Console'}|Select-Object -First 1)
+    if($guardConsoleSession.Count){$guardConsoleSession=$guardConsoleSession[0]}else{$guardConsoleSession=$null}
+    $guardWindowStation=[EBR_STD_SESSION_NATIVE]::ProcessWindowStationName()
+    $guardThreadDesktop=[EBR_STD_SESSION_NATIVE]::ThreadDesktopName()
+    $guardInputDesktop=[EBR_STD_SESSION_NATIVE]::InputDesktopName()
+    $guardExplorer=@(Get-Process -Name explorer -ErrorAction SilentlyContinue|Where-Object{$_.SessionId-eq$guardSessionId}|Select-Object Id,SessionId,ProcessName)
+    $guardTaskbarHandle=[EBR_STD_SESSION_NATIVE]::TaskbarWindow()
+    $guardTaskbarProcessId=[EBR_STD_SESSION_NATIVE]::TaskbarProcessId($guardTaskbarHandle)
+    if($guardTaskbarProcessId){$guardTaskbarProcess=Get-Process -Id ([int]$guardTaskbarProcessId) -ErrorAction SilentlyContinue}
+  } catch { $guardFailures.Add("Child console prelaunch probe failed: $($_.Exception.Message)") }
+  $guardActiveConsoleSession=$null-ne$guardConsoleSession-and$guardConsoleSession.State-eq'Active'
+  $guardProcessInActiveConsole=($guardActiveConsoleSession-and$guardSessionId-ge0-and[int64]$guardSessionId-eq[int64]$guardActiveConsoleSessionId)
+  $guardWindowStationConfirmed=$guardWindowStation-ieq'WinSta0'
+  $guardThreadDesktopConfirmed=$guardThreadDesktop-ieq'Default'
+  $guardInputDesktopConfirmed=$guardInputDesktop-ieq'Default'
+  $guardTaskbarSameSession=($guardTaskbarHandle-ne[IntPtr]::Zero-and$guardTaskbarProcess-and$guardTaskbarProcess.SessionId-eq$guardSessionId-and$guardTaskbarProcess.ProcessName-ieq'explorer')
+  $guardShellSameSession=($guardExplorer.Count-gt0-and$guardTaskbarSameSession)
+  if(-not$guardIdentity){$guardFailures.Add('Child Windows identity could not be established.')}
+  if(-not$ExpectedUserSid){$guardFailures.Add('Parent did not pass the SID of its generated disposable account.')}
+  elseif($guardIdentity-and$guardIdentity.User.Value-cne$ExpectedUserSid){$guardFailures.Add("Child SID '$($guardIdentity.User.Value)' does not match generated disposable SID '$ExpectedUserSid'.")}
+  if([string]::IsNullOrWhiteSpace($ExpectedUserName)){$guardFailures.Add('Parent did not pass the generated local principal name.')}
+  elseif($guardIdentity-and$guardIdentity.Name-ine$ExpectedUserName){$guardFailures.Add("Child identity '$($guardIdentity.Name)' does not match generated local principal '$ExpectedUserName'.")}
+  if($guardIsAdministrator){$guardFailures.Add('Child token is an administrator.')}
+  if(-not$guardActiveConsoleSession){$guardFailures.Add('The WTS active console session is not enumerated as Console/Active.')}
+  if(-not$guardProcessInActiveConsole){$guardFailures.Add("Child session $guardSessionId does not match active WTS console session $guardActiveConsoleSessionId.")}
+  if(-not$guardUserInteractive){$guardFailures.Add('Child Environment.UserInteractive is false.')}
+  if(-not$guardWindowStationConfirmed){$guardFailures.Add("Child process window station is '$guardWindowStation', expected WinSta0.")}
+  if(-not$guardThreadDesktopConfirmed){$guardFailures.Add("Child thread desktop is '$guardThreadDesktop', expected Default.")}
+  if(-not$guardInputDesktopConfirmed){$guardFailures.Add("OpenInputDesktop returned '$guardInputDesktop', expected accessible Default.")}
+  if(-not$guardShellSameSession){$guardFailures.Add('Explorer and the Shell_TrayWnd taskbar were not both confirmed in the child session.')}
+  $childDesktopGuard=[pscustomobject]@{Status=if($guardFailures.Count){'BLOCKED'}else{'PASS'};CandidateLaunchPrevented=([bool]$guardFailures.Count);ProcessSessionId=$guardSessionId;SessionName=$guardSessionName;User=if($guardIdentity){$guardIdentity.Name}else{$null};UserSid=if($guardIdentity){$guardIdentity.User.Value}else{$null};ExpectedUserSid=$ExpectedUserSid;ExpectedUserName=$ExpectedUserName;ExpectedUserIdentityMatches=([bool]($guardIdentity-and$ExpectedUserName-and$guardIdentity.Name-ieq$ExpectedUserName));RunnerEnvironmentContext=$RunnerEnvironmentContext;RunnerContextValid=$runnerContextValid;RunnerContext=$runnerContextFromParent;RunnerContextLoadError=$runnerContextLoadError;IsAdministrator=$guardIsAdministrator;UserInteractive=$guardUserInteractive;ActiveConsoleSessionId=$guardActiveConsoleSessionId;WtsSessions=$guardSessions;MatchingConsoleSession=$guardConsoleSession;ActiveConsoleSession=$guardActiveConsoleSession;ProcessMatchesActiveConsole=$guardProcessInActiveConsole;WindowStation=$guardWindowStation;ThreadDesktop=$guardThreadDesktop;InputDesktop=$guardInputDesktop;ExplorerProcesses=$guardExplorer;TaskbarWindowHandle=if($guardTaskbarHandle-ne[IntPtr]::Zero){'0x{0:X}'-f$guardTaskbarHandle.ToInt64()}else{$null};TaskbarProcessId=$guardTaskbarProcessId;TaskbarProcessName=if($guardTaskbarProcess){$guardTaskbarProcess.ProcessName}else{$null};TaskbarProcessSessionId=if($guardTaskbarProcess){$guardTaskbarProcess.SessionId}else{$null};ExplorerAndTaskbarInChildSession=$guardShellSameSession;Failures=$guardFailures.ToArray();ObservedUtc=[DateTime]::UtcNow.ToString('o')}
+  if($guardFailures.Count){
+    if(-not$ChildResultPath){throw "Fail-closed console guard blocked candidate execution: $($guardFailures -join '; ')"}
+    Save-StandardUserResult $ChildResultPath ([pscustomobject]@{Status='BLOCKED';Failure=$guardFailures -join '; ';CandidateExecutionStarted=$false;User=if($guardIdentity){$guardIdentity.Name}else{$null};DesktopGuard=$childDesktopGuard;Events=@([pscustomobject]@{Name='Child active-console prelaunch guard';Status='BLOCKED';Details=$childDesktopGuard});CompletedUtc=[DateTime]::UtcNow.ToString('o')})
+    exit 2
+  }
   Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
   Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
   $uiaClientAssembly=[System.Windows.Automation.AutomationElement].Assembly.Location
@@ -71,6 +176,7 @@ public static class EBR_STD_UIA_CLIENT {
   $uiaProviderBootstrap=[EBR_STD_UIA_CLIENT]::InitializeNativeProviders()
   if($uiaProviderBootstrap-cne'ControlType.Button'){throw "UI Automation provider bootstrap returned '$uiaProviderBootstrap', expected ControlType.Button."}
   $events=[System.Collections.Generic.List[object]]::new();$appProcess=$null;$status='FAIL';$failure=''
+  $events.Add([pscustomobject]@{Name='Child active-console prelaunch guard';Status='PASS';Details=$childDesktopGuard})
   $events.Add([pscustomobject]@{Name='UI Automation client initializes the standard native Button provider';Status='PASS';Details=$uiaProviderBootstrap})
   function Test-StandardUserNsisTemporaryProcess($ProcessRow){
     try{
@@ -361,6 +467,84 @@ public static class EBR_STD_UIA_CLIENT {
       if($settingsProcess){try{$settingsProcess.Refresh();if(-not$settingsProcess.HasExited-and$settingsProcess.MainWindowTitle-match'(?i)Settings'){[void]$settingsProcess.CloseMainWindow()}}catch{}}
     }
   }
+  function Get-StandardUserCandidateProcesses{
+    $expectedCandidate=[IO.Path]::GetFullPath($candidate)
+    @(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{
+      [int]$_.SessionId-eq$guardSessionId-and
+      [IO.Path]::GetFileName([string]$_.Name)-ieq'EyeBreakReminder.exe'-and
+      $_.ExecutablePath-and[IO.Path]::GetFullPath([string]$_.ExecutablePath)-ieq$expectedCandidate
+    })
+  }
+  function Remove-StandardUserFreshCandidateProfile{
+    $appDataPath=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'
+    if(-not(Test-Path -LiteralPath $appDataPath)){return $true}
+    try{
+      if((Get-StandardUserCandidateProcesses).Count){return $false}
+      $localRoot=[IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\')+'\'
+      $resolved=[IO.Path]::GetFullPath($appDataPath)
+      if(-not$resolved.StartsWith($localRoot,[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($resolved)-cne'EyeBreakReminder'-or([IO.File]::GetAttributes($resolved)-band[IO.FileAttributes]::ReparsePoint)){return $false}
+      Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop
+      return (-not(Test-Path -LiteralPath $resolved))
+    }catch{return $false}
+  }
+  function Invoke-StandardUserCapabilityProbe([string]$Requirement,[string]$ScriptName,[string]$ReportName,[bool]$NeedsConsoleStation,[int]$TimeoutSeconds=480){
+    $probeEvidence=Join-Path (Join-Path $EvidenceDirectory 'capability-probes') $Requirement
+    [void][IO.Directory]::CreateDirectory($probeEvidence)
+    $stdoutPath=Join-Path $probeEvidence ($Requirement.ToLowerInvariant()+'-stdout.log')
+    $stderrPath=Join-Path $probeEvidence ($Requirement.ToLowerInvariant()+'-stderr.log')
+    $reportPath=Join-Path $probeEvidence $ReportName
+    $resultStatus='BLOCKED';$reason='';$exitCode=$null;$report=$null;$processTreeExited=$true
+    $appDataPath=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'
+    $profileAbsentBeforeProbe=(-not(Test-Path -LiteralPath $appDataPath))
+    $preexistingCandidate=@(Get-StandardUserCandidateProcesses)
+    if(-not$script:capabilityProbeChainClean){$reason='A previous optional probe left an app profile or candidate process; this probe was not launched.'}
+    elseif(Test-Path -LiteralPath $appDataPath){$reason='Fresh standard-user app-data profile was not empty before this probe.';$script:capabilityProbeChainClean=$false}
+    elseif($preexistingCandidate.Count){$reason='An exact-candidate process already existed in the validated user session before this probe.';$script:capabilityProbeChainClean=$false}
+    else{
+      $probeScript=Join-Path (Join-Path $stageRoot 'probes') $ScriptName
+      if(-not(Test-Path -LiteralPath $probeScript -PathType Leaf)){$reason='Staged optional probe script is missing.'}
+      else{
+        $arguments=[Collections.Generic.List[string]]::new()
+        foreach($argument in @('-NoProfile','-ExecutionPolicy','Bypass','-File',$probeScript,'-ExecutablePath',$candidate,'-EvidenceDirectory',$probeEvidence,'-ServerConsoleSession','-ExpectedSessionId',[string]$guardSessionId,'-ExpectedUser',[string]$guardIdentity.Name)){$arguments.Add($argument)}
+        if($NeedsConsoleStation){$arguments.Add('-ExpectedSessionName');$arguments.Add('Console')}
+        $psi=[Diagnostics.ProcessStartInfo]::new();$psi.FileName=Join-Path $PSHOME 'pwsh.exe';$psi.WorkingDirectory=$stageRoot;$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+        foreach($argument in $arguments){$psi.ArgumentList.Add($argument)}
+        $probeProcess=[Diagnostics.Process]::new();$probeProcess.StartInfo=$psi
+        try{
+          if(-not$probeProcess.Start()){throw 'Could not start the separate optional probe process.'}
+          $stdoutTask=$probeProcess.StandardOutput.ReadToEndAsync();$stderrTask=$probeProcess.StandardError.ReadToEndAsync()
+          if(-not$probeProcess.WaitForExit($TimeoutSeconds*1000)){
+            try{$probeProcess.Kill($true)}catch{}
+            [void]$probeProcess.WaitForExit(10000);$processTreeExited=$probeProcess.HasExited
+            $reason="Probe exceeded its $TimeoutSeconds-second limit; its owned process tree was terminated."
+          }else{$exitCode=$probeProcess.ExitCode}
+          $stdoutText=$stdoutTask.GetAwaiter().GetResult();$stderrText=$stderrTask.GetAwaiter().GetResult()
+          [IO.File]::WriteAllText($stdoutPath,$stdoutText,[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText($stderrPath,$stderrText,[Text.UTF8Encoding]::new($false))
+          if(Test-Path -LiteralPath $reportPath){try{$report=Get-Content -LiteralPath $reportPath -Raw -ErrorAction Stop|ConvertFrom-Json -ErrorAction Stop}catch{$reason="Probe report was not valid JSON: $($_.Exception.Message)"}}
+          if($processTreeExited-and$null-ne$report-and$report.Status-in@('PASS','FAIL','BLOCKED','NOT TESTED')){
+            $resultStatus=[string]$report.Status
+            if($exitCode-ne0-and$resultStatus-eq'PASS'){$resultStatus='FAIL';$reason='Probe report claimed PASS but its process returned a nonzero exit code.'}
+            elseif($exitCode-eq0-and$resultStatus-ne'PASS'){$reason='Probe completed without an acceptance PASS; see the report for its actual status.'}
+          }elseif(-not$reason){$reason='Probe did not produce a recognized JSON result and exit status.'}
+        }catch{$reason="Probe process could not be completed: $($_.Exception.Message)"}
+        finally{if($probeProcess){$probeProcess.Dispose()}}
+      }
+    }
+    $postProcesses=@();try{$postProcesses=@(Get-StandardUserCandidateProcesses)}catch{$processTreeExited=$false;$reason=if($reason){$reason+'; '}else{''}+'could not verify exact-candidate process cleanup: '+$_.Exception.Message}
+    $profilePresent=Test-Path -LiteralPath $appDataPath
+    $script:capabilityProbeChainClean=($processTreeExited-and$postProcesses.Count-eq0-and-not$profilePresent)
+    if(-not$script:capabilityProbeChainClean){
+      if($postProcesses.Count){
+        foreach($row in $postProcesses){try{Stop-Process -Id ([int]$row.ProcessId) -Force -ErrorAction Stop}catch{}}
+        Start-Sleep -Milliseconds 250
+      }
+      $profileRemoved=Remove-StandardUserFreshCandidateProfile
+      $remainingProcesses=@();try{$remainingProcesses=@(Get-StandardUserCandidateProcesses)}catch{}
+      if(-not$profileRemoved-or$remainingProcesses.Count-or-not$processTreeExited){$reason=if($reason){$reason+'; '}else{''}+'probe cleanup left an exact-candidate process or fresh profile that could not be safely cleared.';$resultStatus='FAIL'}
+      else{$reason=if($reason){$reason+'; '}else{''}+'probe cleanup left residual state; it was safely removed and later probes were skipped to preserve fresh-profile guarantees.';if($resultStatus-eq'PASS'){$resultStatus='FAIL'}}
+    }
+    $script:capabilityProbeResults.Add([pscustomobject]@{Requirement=$Requirement;Status=$resultStatus;Reason=$reason;Script=$ScriptName;ReportPath=$reportPath;ReportStatus=if($report){$report.Status}else{$null};ExitCode=$exitCode;TimedOut=($reason-match'exceeded its .* limit');SeparateProcessExited=$processTreeExited;FreshProfileBeforeLaunch=$profileAbsentBeforeProbe;NoExactCandidateProcessBeforeLaunch=(-not$preexistingCandidate.Count);CandidateProcessesAfter=@($postProcesses|Select-Object ProcessId,Name,ExecutablePath,SessionId);ProfileAbsentAfterCleanup=(-not(Test-Path -LiteralPath $appDataPath));EvidenceDirectory=$probeEvidence})
+  }
   try{
     $identity=[Security.Principal.WindowsIdentity]::GetCurrent();$userProfileInfo=Get-CimInstance Win32_UserProfile -Filter "SID='$($identity.User.Value)'" -ErrorAction Stop|Where-Object{-not$_.Special}|Select-Object -First 1
     if(-not$userProfileInfo-or-not(Test-Path -LiteralPath $userProfileInfo.LocalPath)){throw 'The disposable standard-user profile could not be resolved for its verified Windows SID.'}
@@ -376,6 +560,15 @@ public static class EBR_STD_UIA_CLIENT {
     $events.Add([pscustomobject]@{Name='Child process has a standard Windows user token';Status='PASS';User=$identity.Name;Sid=$identity.User.Value;IsAdministrator=$false})
     $installer=(Resolve-Path -LiteralPath $InstallerPath).Path;$candidate=(Resolve-Path -LiteralPath $ExecutablePath).Path
     $expectedHash=(Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+    $script:capabilityProbeResults=[System.Collections.Generic.List[object]]::new();$script:capabilityProbeChainClean=$true
+    Invoke-StandardUserCapabilityProbe 'REG-008' 'windows_candidate_audio_loopback_acceptance.ps1' 'reg-008-audio-loopback-results.json' $true 480
+    Invoke-StandardUserCapabilityProbe 'GUI-016' 'windows_narrator_speech_recap_acceptance.ps1' 'gui-016-narrator-speech-recap.json' $false 480
+    Invoke-StandardUserCapabilityProbe 'ENV-009' 'windows_shell_notification_acceptance.ps1' 'env-009-shell-notification-results.json' $true 480
+    foreach($probeResult in $script:capabilityProbeResults){$events.Add([pscustomobject]@{Name="Optional pre-install capability probe $($probeResult.Requirement)";Status=$probeResult.Status;Details=$probeResult})}
+    if((Get-StandardUserCandidateProcesses).Count-or(Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'))){
+      if(-not(Remove-StandardUserFreshCandidateProfile)-or(Get-StandardUserCandidateProcesses).Count){throw 'Optional probe cleanup could not restore a fresh standard-user profile before the Settings uninstall acceptance.'}
+      $events.Add([pscustomobject]@{Name='Optional probes restore clean candidate process and profile state before Settings uninstall';Status='PASS';Details='Residual data from pre-install probes was removed only from the newly created standard-user EyeBreakReminder profile after verifying the staged candidate had exited.'})
+    }else{$events.Add([pscustomobject]@{Name='Optional probes restore clean candidate process and profile state before Settings uninstall';Status='PASS';Details='No exact staged-candidate process or EyeBreakReminder profile remained after the probes.'})}
     $installDir=Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder';$installed=Join-Path $installDir 'EyeBreakReminder.exe';$uninstaller=Join-Path $installDir 'Uninstall.exe'
     $wizardInstall=Invoke-StandardUserWizard $installer 'standard-user interactive install wizard'
     $events.Add([pscustomobject]@{Name='Standard-user interactive installer wizard';Status=$wizardInstall.Status;Details=$wizardInstall;TokenAdministrator=$false})
@@ -489,6 +682,10 @@ $evidenceRoot=[IO.Path]::GetFullPath($EvidenceDirectory);$userCreated=$false;$te
 [void][IO.Directory]::CreateDirectory($evidenceRoot)
 try{
   try{
+    $runnerEnvironmentContext=[string]$env:EBR_RUNNER_ENVIRONMENT_CONTEXT
+    $runnerOs=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+    $runnerContextValid=($env:GITHUB_ACTIONS-ceq'true'-and$env:RUNNER_ENVIRONMENT-ceq'github-hosted'-and$runnerEnvironmentContext-ceq'github-hosted'-and$env:RUNNER_OS-ceq'Windows'-and$env:RUNNER_ARCH-ceq'X64'-and$env:GITHUB_SERVER_URL-ceq'https://github.com'-and$env:GITHUB_REPOSITORY-ieq'REMEDIOSSAMUEL/EYE-BREAK-REMINDER'-and$env:GITHUB_RUN_ID-and$env:RUNNER_NAME-and$env:GITHUB_WORKSPACE-and$env:RUNNER_TEMP-and$runnerOs.Caption-match'Windows Server 2025'-and[Runtime.InteropServices.RuntimeInformation]::OSArchitecture-eq[Runtime.InteropServices.Architecture]::X64-and[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture-eq[Runtime.InteropServices.Architecture]::X64)
+    if(-not$runnerContextValid){throw 'The standard-user console acceptance harness requires the validated GitHub-hosted Windows Server 2025 x64 runner context.'}
     $bytes=[byte[]]::new(48);[Security.Cryptography.RandomNumberGenerator]::Fill($bytes);$passwordText=[Convert]::ToBase64String($bytes)+'aA9!';[Array]::Clear($bytes,0,$bytes.Length)
     $securePassword=ConvertTo-SecureString -String $passwordText -AsPlainText -Force;$passwordText=$null
     New-LocalUser -Name $userName -Password $securePassword -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -ErrorAction Stop|Out-Null
@@ -502,27 +699,47 @@ try{
     $status='FAIL'
     $reason=''
     [void][IO.Directory]::CreateDirectory($stageRoot)
+    $runnerContextFile=Join-Path $stageRoot 'runner-context.json'
+    $runnerContext=[ordered]@{GITHUB_ACTIONS=[string]$env:GITHUB_ACTIONS;GITHUB_SERVER_URL=[string]$env:GITHUB_SERVER_URL;GITHUB_REPOSITORY=[string]$env:GITHUB_REPOSITORY;GITHUB_RUN_ID=[string]$env:GITHUB_RUN_ID;GITHUB_WORKSPACE=[string]$env:GITHUB_WORKSPACE;RUNNER_ENVIRONMENT=[string]$env:RUNNER_ENVIRONMENT;RUNNER_OS=[string]$env:RUNNER_OS;RUNNER_ARCH=[string]$env:RUNNER_ARCH;RUNNER_NAME=[string]$env:RUNNER_NAME;RUNNER_TEMP=[string]$env:RUNNER_TEMP;ImageOS=[string]$env:ImageOS;ImageVersion=[string]$env:ImageVersion;EBR_RUNNER_ENVIRONMENT_CONTEXT=$runnerEnvironmentContext}
+    $runnerContext|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $runnerContextFile -Encoding utf8
     $stageEvidence=Join-Path $stageRoot 'evidence';[void][IO.Directory]::CreateDirectory($stageEvidence)
     Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $stageRoot 'windows_standard_user_acceptance.ps1') -Force
     Copy-Item -LiteralPath $InstallerPath -Destination (Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe') -Force
     Copy-Item -LiteralPath $ExecutablePath -Destination (Join-Path $stageRoot 'EyeBreakReminder.exe') -Force
     $principal="$env:COMPUTERNAME\${userName}"
+    $probeStage=Join-Path $stageRoot 'probes';[void][IO.Directory]::CreateDirectory($probeStage)
+    foreach($probeScriptName in @('windows_candidate_audio_loopback_acceptance.ps1','windows_narrator_speech_recap_acceptance.ps1','windows_shell_notification_acceptance.ps1')){
+      $probeSource=Join-Path $PSScriptRoot $probeScriptName
+      if(-not(Test-Path -LiteralPath $probeSource -PathType Leaf)){throw "Required optional capability probe '$probeScriptName' is missing from the workspace."}
+      Copy-Item -LiteralPath $probeSource -Destination (Join-Path $probeStage $probeScriptName) -Force
+    }
     & icacls.exe $stageRoot /grant "${principal}:(OI)(CI)M" /T /C|Out-Null
     if($LASTEXITCODE-ne0){throw "Could not grant the disposable standard user access to its isolated staging folder (icacls $LASTEXITCODE)."}
     $pwsh=Join-Path $PSHOME 'pwsh.exe';$childScript=Join-Path $stageRoot 'windows_standard_user_acceptance.ps1'
     $safeCaptureArgument=if($DisableWholeDesktopCaptures){' -DisableWholeDesktopCaptures'}else{''}
-    $arguments="-NoProfile -ExecutionPolicy Bypass -File `"$childScript`" -Child -InstallerPath `"$(Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe')`" -ExecutablePath `"$(Join-Path $stageRoot 'EyeBreakReminder.exe')`" -EvidenceDirectory `"$stageEvidence`" -ChildResultPath `"$childResult`"$safeCaptureArgument"
+    $expectedUserSid=[string]$user.SID.Value
+    $runnerEnvironmentContext=if($RunnerEnvironmentContext){$RunnerEnvironmentContext}else{[string]$env:EBR_RUNNER_ENVIRONMENT_CONTEXT}
+    if($expectedUserSid-notmatch'^S-\d+(?:-\d+)+$'){throw 'Generated disposable account SID did not match the expected Windows SID format.'}
+    if($principal-notmatch'^[A-Za-z0-9_.-]+\\[A-Za-z0-9_.-]+$'){throw 'Generated disposable local principal did not match the safe computer-name\user-name format.'}
+    if($runnerEnvironmentContext-and$runnerEnvironmentContext-notmatch'^[A-Za-z0-9_-]+$'){throw 'Runner environment context contains characters that cannot be safely forwarded to the child.'}
+    $expectedUserArgument=" -ExpectedUserSid `"$expectedUserSid`""
+    $expectedPrincipalArgument=" -ExpectedUserName `"$principal`""
+    $runnerEnvironmentArgument=if($runnerEnvironmentContext){" -RunnerEnvironmentContext `"$runnerEnvironmentContext`""}else{''}
+    $runnerContextArgument=" -RunnerContextPath `"$runnerContextFile`""
+    $arguments="-NoProfile -ExecutionPolicy Bypass -File `"$childScript`" -Child -InstallerPath `"$(Join-Path $stageRoot 'EyeBreakReminder-Setup-x64.exe')`" -ExecutablePath `"$(Join-Path $stageRoot 'EyeBreakReminder.exe')`" -EvidenceDirectory `"$stageEvidence`" -ChildResultPath `"$childResult`"$safeCaptureArgument$expectedUserArgument$expectedPrincipalArgument$runnerEnvironmentArgument$runnerContextArgument"
     $credential=[pscredential]::new($principal,$securePassword)
     $childStdout=Join-Path $stageRoot 'standard-user-child.stdout.log';$childStderr=Join-Path $stageRoot 'standard-user-child.stderr.log'
     $childProcess=Start-Process -FilePath $pwsh -Credential $credential -LoadUserProfile -ArgumentList $arguments -RedirectStandardOutput $childStdout -RedirectStandardError $childStderr -PassThru
     $testStarted=$true
     $credential=$null;try{$securePassword.Dispose()}catch{};$securePassword=$null
-    if(-not$childProcess.WaitForExit(900000)){Stop-Process -Id $childProcess.Id -Force -ErrorAction SilentlyContinue;throw 'Standard-user test process exceeded the fifteen-minute limit.'}
+    if(-not$childProcess.WaitForExit(2100000)){Stop-Process -Id $childProcess.Id -Force -ErrorAction SilentlyContinue;throw 'Standard-user test process exceeded its thirty-five-minute limit.'}
     $childExitCode=$childProcess.ExitCode;$childProcess.Dispose()
     foreach($capture in @(@($childResult,'standard-user-child-results.json'),@($childStdout,'standard-user-child.stdout.log'),@($childStderr,'standard-user-child.stderr.log'))){if(Test-Path -LiteralPath $capture[0]){Copy-Item -LiteralPath $capture[0] -Destination (Join-Path $evidenceRoot $capture[1]) -Force}}
     if(Test-Path -LiteralPath $childResult){$result=Get-Content -LiteralPath $childResult -Raw|ConvertFrom-Json}else{$result=$null}
     $childOutput=if(Test-Path -LiteralPath $childStdout){(Get-Content -LiteralPath $childStdout -Tail 60)-join"`n"}else{''};$childError=if(Test-Path -LiteralPath $childStderr){(Get-Content -LiteralPath $childStderr -Tail 60)-join"`n"}else{''}
-    if($childExitCode-eq0-and$result-and$result.Status-eq'PASS'){$status='PASS'}else{$status='FAIL';$reason=if($result){$result.Failure}else{"Standard-user child returned exit code $childExitCode without a passing evidence file. stdout: $childOutput stderr: $childError"}}
+    if($result-and$result.Status-eq'BLOCKED'){$status='BLOCKED';$reason=$result.Failure}
+    elseif($childExitCode-eq0-and$result-and$result.Status-eq'PASS'){$status='PASS'}
+    else{$status='FAIL';$reason=if($result){$result.Failure}else{"Standard-user child returned exit code $childExitCode without a passing evidence file. stdout: $childOutput stderr: $childError"}}
   }catch{
     if($testStarted){$status='FAIL';$reason=$_.Exception.Message}else{$status='BLOCKED';$reason="The hosted runner could not safely provision or launch the isolated standard-user test: $($_.Exception.Message)"}
   }
@@ -532,6 +749,8 @@ try{
     try{
       $screenshots=@(Get-ChildItem -LiteralPath $stagedEvidence -Filter '*.png' -File)
       if($screenshots.Count){$settingsScreenshotDirectory=Join-Path $evidenceRoot 'standard-user-screenshots';[void][IO.Directory]::CreateDirectory($settingsScreenshotDirectory);foreach($screenshot in $screenshots){Copy-Item -LiteralPath $screenshot.FullName -Destination (Join-Path $settingsScreenshotDirectory $screenshot.Name) -Force}}
+      $probeEvidenceSource=Join-Path $stagedEvidence 'capability-probes'
+      if(Test-Path -LiteralPath $probeEvidenceSource){Copy-Item -LiteralPath $probeEvidenceSource -Destination (Join-Path $evidenceRoot 'capability-probes') -Recurse -Force}
     }catch{$cleanupErrors.Add("Could not retain standard-user screenshots: $($_.Exception.Message)")}
   }
   if($userCreated){
@@ -570,7 +789,7 @@ $accountRemoved=(-not[bool](Get-LocalUser -Name $userName -ErrorAction SilentlyC
 if(-not$accountRemoved){$cleanupErrors.Add('Disposable standard-user account still exists after cleanup.')};if(-not$stageRemoved){$cleanupErrors.Add('Temporary candidate staging directory still exists after cleanup.')}
 $settingsEvent=if($result){@($result.Events|Where-Object{$_.Name-eq'Windows Settings > Apps uninstalls the standard-user candidate'}|Select-Object -First 1)}else{@()}
 $settingsScreenshotDirectory=Join-Path $evidenceRoot 'standard-user-screenshots'
-$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;ChildExitCode=$childExitCode;ChildResultCaptured=[bool]$result;CleanupActions=$cleanupActions.ToArray();CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;WholeDesktopCapturesDisabled=[bool]$DisableWholeDesktopCaptures;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};SettingsAppsUninstall=if($settingsEvent.Count){$settingsEvent[0].Status}else{'NOT TESTED'};SettingsAppsUninstallReason=if($settingsEvent.Count){$settingsEvent[0].Details.Reason}else{'The Settings Apps probe did not produce a result.'};SettingsScreenshots=@(Get-ChildItem -LiteralPath $settingsScreenshotDirectory -Filter '*.png' -File -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Name);CompletedUtc=[DateTime]::UtcNow.ToString('o')}
+$resultObject=[pscustomobject]@{Status=$status;Account=$userName;Failure=$reason;ChildExitCode=$childExitCode;ChildResultCaptured=[bool]$result;CleanupActions=$cleanupActions.ToArray();CleanupErrors=$cleanupErrors.ToArray();AccountRemoved=$accountRemoved;StageRemoved=$stageRemoved;WholeDesktopCapturesDisabled=[bool]$DisableWholeDesktopCaptures;CandidateSHA256=if(Test-Path -LiteralPath $ExecutablePath){(Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()}else{$null};Events=if($result){$result.Events}else{@()};CapabilityProbes=if($result){@($result.Events|Where-Object{$_.Name-like'Optional pre-install capability probe *'}|ForEach-Object{$_.Details})}else{@()};SettingsAppsUninstall=if($settingsEvent.Count){$settingsEvent[0].Status}else{'NOT TESTED'};SettingsAppsUninstallReason=if($settingsEvent.Count){$settingsEvent[0].Details.Reason}else{'The Settings Apps probe did not produce a result.'};SettingsScreenshots=@(Get-ChildItem -LiteralPath $settingsScreenshotDirectory -Filter '*.png' -File -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Name);CompletedUtc=[DateTime]::UtcNow.ToString('o')}
 if($cleanupErrors.Count-gt0){$resultObject.Status='FAIL';$failureParts=@($reason)+@($cleanupErrors.ToArray())|Where-Object{$_};$resultObject.Failure=$failureParts -join '; '}
 Save-StandardUserResult $finalResult $resultObject
 $resultObject|ConvertTo-Json -Depth 8
