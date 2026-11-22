@@ -391,9 +391,8 @@ function Read-AudioSettings {
   return $map
 }
 function Wait-AudioSetting([string]$Key,[string]$Expected){$watch=[Diagnostics.Stopwatch]::StartNew();do{$saved=Read-AudioSettings;if($saved.ContainsKey($Key)-and[string]$saved[$Key]-ceq$Expected){return $true};Start-Sleep -Milliseconds 50}while($watch.Elapsed.TotalSeconds-lt4);return $false}
-function Get-AudioWindowText([IntPtr]$Handle){
-  $text=@([EBR_AUDIO_NATIVE]::Text($Handle));foreach($child in [EBR_AUDIO_NATIVE]::ChildWindows($Handle)){$value=[EBR_AUDIO_NATIVE]::Text($child);if($value){$text+=,$value}}
-  try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($Handle);if($root){$all=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);foreach($e in $all){try{if($e.Current.Name){$text+=,$e.Current.Name}}catch{}}}}catch{}
+function Get-AudioWindowNativeText([IntPtr]$Handle){
+  $text=[System.Collections.Generic.List[string]]::new();$title=[EBR_AUDIO_NATIVE]::Text($Handle);if($title){$text.Add($title)};foreach($child in [EBR_AUDIO_NATIVE]::ChildWindows($Handle)){$value=[EBR_AUDIO_NATIVE]::Text($child);if($value){$text.Add($value)}}
   return $text-join' '
 }
 function Get-AudioErrorDialog {
@@ -403,7 +402,7 @@ function Get-AudioErrorDialog {
   foreach($h in [EBR_AUDIO_NATIVE]::TopWindowsForProcess($script:appPid)){if($h-ne$script:mainWindow-and-not$candidates.Contains($h)){$candidates.Add($h)}}
   foreach($h in $candidates){
     if(-not[EBR_AUDIO_NATIVE]::Visible($h)-or[EBR_AUDIO_NATIVE]::OwnerPid($h)-ne$script:appPid){continue}
-    if((Get-AudioWindowText $h)-match'The alarm couldn.t play\. Check your Windows audio output\.') {return $h}
+    if((Get-AudioWindowNativeText $h)-match'The alarm couldn.t play\. Check your Windows audio output\.') {return $h}
   }
   return [IntPtr]::Zero
 }
@@ -456,24 +455,24 @@ function Save-LoopbackWave($Capture,[string]$Name){
   return $path
 }
 function Complete-UnavailableDialog([IntPtr]$Dialog,[string]$Tag){
-  if($Dialog-eq$script:mainWindow-or[EBR_AUDIO_NATIVE]::OwnerPid($Dialog)-ne$script:appPid-or(Get-AudioWindowText $Dialog)-notmatch'The alarm couldn.t play\. Check your Windows audio output\.'){throw 'Refusing to dismiss a window that is not the candidate-owned audio-unavailable dialog.'}
+  $dialogClassBeforeDismissal=[EBR_AUDIO_NATIVE]::ClassName($Dialog);$dialogOwnerBeforeDismissal=[EBR_AUDIO_NATIVE]::OwnerPid($Dialog);$dialogTextBeforeDismissal=Get-AudioWindowNativeText $Dialog
+  if($Dialog-eq$script:mainWindow-or$dialogOwnerBeforeDismissal-ne$script:appPid-or$dialogClassBeforeDismissal-cne'#32770'-or$dialogTextBeforeDismissal-notmatch'The alarm couldn.t play\. Check your Windows audio output\.'){throw 'Refusing to dismiss a window that is not the exact candidate-owned native audio-unavailable TaskDialog.'}
   $candidateHandleCountBeforeDismissal=Get-CandidateHandleCount
   $shot=Save-WindowScreenshot $Dialog "$Tag-audio-unavailable.png";$buttons=@(foreach($h in [EBR_AUDIO_NATIVE]::ChildWindows($Dialog)){if([EBR_AUDIO_NATIVE]::ClassName($h)-ieq'Button'-and[EBR_AUDIO_NATIVE]::Visible($h)-and[EBR_AUDIO_NATIVE]::Enabled($h)-and[EBR_AUDIO_NATIVE]::Text($h)-match'^\s*&?OK\s*$'){$h}})
   $dismissMethod=$null
   if($buttons.Count-eq1){$r=[IntPtr]::Zero;if([EBR_AUDIO_NATIVE]::SendBounded($buttons[0],0x00F5,[IntPtr]::Zero,[IntPtr]::Zero,3000,[ref]$r)){$dismissMethod='native OK button BM_CLICK'}}
-  $uiaOkButtonCount=0
-  if(-not$dismissMethod){
-    try{$root=[System.Windows.Automation.AutomationElement]::FromHandle($Dialog);$all=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);$uiaButtons=@(foreach($element in $all){try{if($element.Current.ControlType-eq[System.Windows.Automation.ControlType]::Button-and$element.Current.IsEnabled-and$element.Current.Name-match'^\s*&?OK\s*$'){$pattern=$null;if($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$pattern)){[pscustomobject]@{Element=$element;Pattern=$pattern}}}}catch{}});$uiaOkButtonCount=$uiaButtons.Count;if($uiaButtons.Count-eq1){$uiaButtons[0].Pattern.Invoke();$dismissMethod='UI Automation OK button InvokePattern'}}catch{}
-  }
+  # Keep this path native-only so UIA provider calls cannot perturb the
+  # candidate-process handle counts being measured by the audio acceptance.
+  $uiaOkButtonCount=$null
   $watch=[Diagnostics.Stopwatch]::StartNew();while([EBR_AUDIO_NATIVE]::Visible($Dialog)-and$watch.Elapsed.TotalSeconds-lt1){Start-Sleep -Milliseconds 25}
   $taskDialogClickSent=$false
-  if([EBR_AUDIO_NATIVE]::Visible($Dialog)-and(Get-AudioWindowText $Dialog)-match'The alarm couldn.t play\. Check your Windows audio output\.'){
+  if([EBR_AUDIO_NATIVE]::Visible($Dialog)-and(Get-AudioWindowNativeText $Dialog)-match'The alarm couldn.t play\. Check your Windows audio output\.'){
     # TDM_CLICK_BUTTON is the documented Task Dialog message for activating the standard IDOK button when a native Button HWND is not exposed.
     $r=[IntPtr]::Zero;$taskDialogClickSent=[EBR_AUDIO_NATIVE]::SendBounded($Dialog,0x0466,[IntPtr]::new(1),[IntPtr]::Zero,3000,[ref]$r);if($taskDialogClickSent){$dismissMethod='Task Dialog IDOK activation'}
   }
   $watch=[Diagnostics.Stopwatch]::StartNew();while([EBR_AUDIO_NATIVE]::Visible($Dialog)-and$watch.Elapsed.TotalSeconds-lt4){Start-Sleep -Milliseconds 25}
   $candidateHandleCountAfterDismissal=Get-CandidateHandleCount
-  return [pscustomobject]@{Closed=(-not[EBR_AUDIO_NATIVE]::Visible($Dialog));Screenshot=$shot;DialogHandle=('0x{0:X}'-f$Dialog.ToInt64());DialogClass=[EBR_AUDIO_NATIVE]::ClassName($Dialog);DialogOwnerProcessId=[EBR_AUDIO_NATIVE]::OwnerPid($Dialog);OKButtonCount=$buttons.Count;UIAOKButtonCount=$uiaOkButtonCount;DismissMethod=$dismissMethod;TaskDialogClickSent=$taskDialogClickSent;CandidateHandleCountBeforeDismissal=$candidateHandleCountBeforeDismissal;CandidateHandleCountAfterDismissal=$candidateHandleCountAfterDismissal;CandidateHandleDelta=if($null-ne$candidateHandleCountBeforeDismissal-and$null-ne$candidateHandleCountAfterDismissal){$candidateHandleCountAfterDismissal-$candidateHandleCountBeforeDismissal}else{$null}}
+  return [pscustomobject]@{Closed=(-not[EBR_AUDIO_NATIVE]::Visible($Dialog));Screenshot=$shot;DialogHandle=('0x{0:X}'-f$Dialog.ToInt64());DialogClass=$dialogClassBeforeDismissal;DialogOwnerProcessId=$dialogOwnerBeforeDismissal;DialogText=$dialogTextBeforeDismissal;OKButtonCount=$buttons.Count;UIAInspectionPerformed=$false;UIAOKButtonCount=$uiaOkButtonCount;DismissMethod=$dismissMethod;TaskDialogClickSent=$taskDialogClickSent;CandidateHandleCountBeforeDismissal=$candidateHandleCountBeforeDismissal;CandidateHandleCountAfterDismissal=$candidateHandleCountAfterDismissal;CandidateHandleDelta=if($null-ne$candidateHandleCountBeforeDismissal-and$null-ne$candidateHandleCountAfterDismissal){$candidateHandleCountAfterDismissal-$candidateHandleCountBeforeDismissal}else{$null}}
 }
 function Get-AudioPreview([int]$Sound,[int]$Volume,[bool]$CaptureEnabled,[string]$Tag,[bool]$ToggleAlarmDuringPlayback=$false,[bool]$WaitForNaturalCompletion=$false){
   $stop=Get-AudioControl 117 'Stop preview';if($stop.Enabled){Invoke-AudioClick 117 'Stop preview';$watch=[Diagnostics.Stopwatch]::StartNew();while((Get-AudioControl 117 'Stop preview').Enabled-and$watch.Elapsed.TotalSeconds-lt4){Start-Sleep -Milliseconds 20}}
@@ -618,7 +617,7 @@ function Invoke-NaturalAlarmTrial {
 
       $dialog=Get-AudioErrorDialog
       if($dialog-ne[IntPtr]::Zero){
-        $alarmErrorDialog=Get-TopWindowNarration $dialog
+        $alarmErrorDialog=[pscustomobject]@{Handle=('0x{0:X}'-f$dialog.ToInt64());Class=[EBR_AUDIO_NATIVE]::ClassName($dialog);OwnerProcessId=[EBR_AUDIO_NATIVE]::OwnerPid($dialog);Text=(Get-AudioWindowNativeText $dialog)}
         $alarmErrorDialogScreenshot=Save-WindowScreenshot $dialog 'natural-alarm-output-error-dialog.png'
         $closed=Complete-UnavailableDialog $dialog 'natural-alarm-output-error-dialog'
         $alarmErrorDialog|Add-Member -NotePropertyName CloseResult -NotePropertyValue $closed -Force

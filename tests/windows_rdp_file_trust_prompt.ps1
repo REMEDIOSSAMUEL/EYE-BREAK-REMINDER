@@ -131,6 +131,23 @@ public static class EBR_RdpUiNative {
   [DllImport("user32.dll")]
   public static extern IntPtr GetForegroundWindow();
 
+  [DllImport("user32.dll", EntryPoint = "GetDlgCtrlID", SetLastError = true)]
+  public static extern int GetDialogControlId(IntPtr hWnd);
+
+  [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
+  private static extern int GetWindowLong32(IntPtr hWnd, int index);
+
+  public static int GetButtonStyle(IntPtr hWnd) {
+    return GetWindowLong32(hWnd, -16);
+  }
+
+  public static int ReadButtonCheckState(IntPtr hWnd) {
+    IntPtr result;
+    IntPtr sent = SendMessageTimeout(hWnd, 0x00F0u, IntPtr.Zero, IntPtr.Zero, 0x0002u, 3000u, out result);
+    if (sent == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "BM_GETCHECK timed out or failed.");
+    return result.ToInt32();
+  }
+
   [DllImport("user32.dll", SetLastError = true)]
   public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMilliseconds, out IntPtr result);
 
@@ -743,12 +760,12 @@ public static class EBR_RdpUiNative {
       if($allWarnings.Count-ne1-or$warnings.Count-ne1){throw 'original mstsc certificate warning did not uniquely return after viewing certificate.'}
       $warning=Get-EBRPromptSnapshot $warnings[0]
       if(-not(Test-EBRServerCertificateWarning $warning.JoinedNames)-or-not(Test-EBRForegroundProcessWindow $warningHandle $MstscProcessId)){throw 'certificate warning changed or lost foreground before Yes.'}
-      $checkboxes=@(foreach($node in $warning.Nodes){try{$c=$node.Current;if($c.ControlType-eq[System.Windows.Automation.ControlType]::CheckBox-and-not$c.IsOffscreen){$node}}catch{}})
       $rememberCheckboxName="Don't ask me again for connections to this computer"
+      $checkboxes=@(foreach($node in $warning.Nodes){try{$c=$node.Current;$isAccessibleCheckBox=$c.ControlType-eq[System.Windows.Automation.ControlType]::CheckBox;$isExactNativeRememberPane=$c.ControlType-eq[System.Windows.Automation.ControlType]::Pane-and$c.ClassName-ceq'Button'-and$c.AutomationId-ceq'14002'-and$c.Name-ceq$rememberCheckboxName-and$c.NativeWindowHandle-ne0-and$c.ProcessId-eq$MstscProcessId;if(($isAccessibleCheckBox-or$isExactNativeRememberPane)-and-not$c.IsOffscreen){$node}}catch{}})
       $rememberCheckboxes=@(foreach($node in $checkboxes){try{if($node.Current.Name-ceq$rememberCheckboxName){$node}}catch{}})
       if($warning.JoinedNames-notmatch[regex]::Escape($rememberCheckboxName)-or$rememberCheckboxes.Count-ne1){Save-EBRPromptEvidence $warning 'rdp-server-certificate-remember-checkbox-unrecognized' ([pscustomobject]@{ObservedText=($warning.JoinedNames-match[regex]::Escape($rememberCheckboxName));ExactNamedCheckboxCount=$rememberCheckboxes.Count;VisibleCheckboxCount=$checkboxes.Count});throw 'the observed remember-trust text did not map to one exact accessible CheckBox name.'}
       $checkboxStates=[System.Collections.Generic.List[object]]::new()
-      foreach($node in $checkboxes){try{$c=$node.Current;$toggle=[System.Windows.Automation.TogglePattern]$node.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern);$state=[string]$toggle.Current.ToggleState;$checkboxStates.Add([pscustomobject]@{Name=[string]$c.Name;State=$state});if($state-ne[string][System.Windows.Automation.ToggleState]::Off){throw 'persistent trust checkbox is selected.'}}catch{Save-EBRPromptEvidence $warning 'rdp-server-certificate-checkbox-state-unreadable' ([pscustomobject]@{Checkboxes=@($checkboxStates)});throw 'certificate trust checkbox state is unreadable or selected.'}}
+      foreach($node in $checkboxes){try{$c=$node.Current;if($c.ControlType-eq[System.Windows.Automation.ControlType]::CheckBox){$toggle=[System.Windows.Automation.TogglePattern]$node.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern);$state=[string]$toggle.Current.ToggleState;$evidence=[pscustomobject]@{Name=[string]$c.Name;State=$state;ReadMethod='UIA TogglePattern'}}else{$handle=[IntPtr]$c.NativeWindowHandle;$owner=[uint32]0;[void][EBR_RdpUiNative]::GetWindowThreadProcessId($handle,[ref]$owner);$nativeId=[EBR_RdpUiNative]::GetDialogControlId($handle);$style=[EBR_RdpUiNative]::GetButtonStyle($handle);$buttonType=$style-band0xF;if($handle-eq[IntPtr]::Zero-or$owner-ne[uint32]$MstscProcessId-or-not[EBR_RdpUiNative]::IsChild([IntPtr]$warning.Handle,$handle)-or-not[EBR_RdpUiNative]::IsWindowVisible($handle)-or-not[EBR_RdpUiNative]::IsWindowEnabled($handle)-or[EBR_RdpUiNative]::GetForegroundWindow()-ne[IntPtr]$warning.Handle-or$nativeId-ne14002-or[string]$c.AutomationId-cne[string]$nativeId-or$buttonType-notin@(2,3,5,6)){throw 'native remember-trust control HWND, identity, style, or foreground validation failed.'};$checkValue=[EBR_RdpUiNative]::ReadButtonCheckState($handle);$state=switch($checkValue){0{'Off'}1{'On'}2{'Indeterminate'}default{'Unknown'}};$evidence=[pscustomobject]@{Name=[string]$c.Name;State=$state;ReadMethod='Native BM_GETCHECK';AutomationId=[string]$c.AutomationId;NativeControlId=$nativeId;NativeButtonType=$buttonType;NativeCheckValue=$checkValue;NativeHandle=('0x{0:X}'-f$handle.ToInt64())}};$checkboxStates.Add($evidence);if($state-ne[string][System.Windows.Automation.ToggleState]::Off){throw 'persistent trust checkbox is selected.'}}catch{Save-EBRPromptEvidence $warning 'rdp-server-certificate-checkbox-state-unreadable' ([pscustomobject]@{Checkboxes=@($checkboxStates)});throw 'certificate trust checkbox state is unreadable or selected.'}}
       $yes=@(Get-EBRNamedPromptActions $warning.Nodes 'Yes' '' $MstscProcessId);$no=@(Get-EBRNamedPromptActions $warning.Nodes 'No' '' $MstscProcessId)
       if($yes.Count-ne1-or$no.Count-ne1-or-not$yes[0].Current.IsEnabled-or-not$no[0].Current.IsEnabled){Save-EBRPromptEvidence $warning 'rdp-server-certificate-actions-unrecognized' ([pscustomobject]@{DisplayedThumbprintSHA1=$displayed;Checkboxes=@($checkboxStates)});throw 'expected unique enabled Yes and No certificate-warning actions.'}
       $rdpHash=Assert-EBRCurrentReviewedRdpFile;$listenerAfter=Get-EBRListenerCertificate

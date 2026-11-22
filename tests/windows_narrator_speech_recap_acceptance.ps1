@@ -153,8 +153,13 @@ function Get-NarratorProcessIdentity([Diagnostics.Process]$Process) {
       $observedPaths.Add([string]$nativeProcess[0].ExecutablePath)
     }
   } catch {}
+  $nativeQueryError = $null
+  try {
+    $nativeImagePath = [string][EBR_NARRATOR_NATIVE]::ProcessImagePath($Process.SafeHandle)
+    if (-not [string]::IsNullOrWhiteSpace($nativeImagePath)) { $observedPaths.Add($nativeImagePath) }
+  } catch { $nativeQueryError = $_.Exception.Message }
   $normalizedPaths = @($observedPaths | ForEach-Object { [IO.Path]::GetFullPath($_) } | Sort-Object -Unique)
-  if ($normalizedPaths.Count -eq 0) { throw 'Narrator executable path could not be read from the running process.' }
+  if ($normalizedPaths.Count -eq 0) { throw "Narrator executable path could not be read from the running process. QueryFullProcessImageNameW: $nativeQueryError" }
   if ($normalizedPaths.Count -ne 1) { throw "Narrator executable path sources disagreed: $($normalizedPaths -join '; ')" }
   $imagePath = $normalizedPaths[0]
   if ([string]::IsNullOrWhiteSpace($imagePath) -or -not (Test-Path -LiteralPath $imagePath -PathType Leaf)) { throw 'Narrator executable path could not be verified.' }
@@ -511,6 +516,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 [StructLayout(LayoutKind.Sequential)]
 public struct EBR_NARRATOR_SYSTEM_INFO {
@@ -535,6 +541,7 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
  public static class EBR_NARRATOR_NATIVE {
   private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr data);
   [DllImport("kernel32.dll")] private static extern void GetNativeSystemInfo(out EBR_NARRATOR_SYSTEM_INFO info);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, EntryPoint="QueryFullProcessImageNameW", SetLastError=true)] private static extern bool QueryFullProcessImageName(SafeProcessHandle process, uint flags, StringBuilder imageName, ref uint size);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr data);
   [DllImport("user32.dll", SetLastError=true)] private static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr data);
   [DllImport("user32.dll", SetLastError=true)] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
@@ -610,6 +617,12 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
     return (int)sent;
   }
   public static ushort NativeArchitecture() { EBR_NARRATOR_SYSTEM_INFO i; GetNativeSystemInfo(out i); return i.ProcessorArchitecture; }
+  public static string ProcessImagePath(SafeProcessHandle process) {
+    if(process==null||process.IsInvalid||process.IsClosed) throw new InvalidOperationException("The owned Narrator Process does not expose a live safe process handle.");
+    StringBuilder path=new StringBuilder(32768);uint size=(uint)path.Capacity;
+    if(!QueryFullProcessImageName(process,0,path,ref size)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"QueryFullProcessImageNameW failed for the owned Narrator process.");
+    return path.ToString();
+  }
   public static int WindowControlId(IntPtr hwnd) { return GetDlgCtrlID(hwnd); }
   public static IntPtr TargetThreadFocus(IntPtr targetWindow) {
     uint processId; uint threadId=GetWindowThreadProcessId(targetWindow, out processId);
@@ -837,7 +850,7 @@ public struct EBR_NARRATOR_SYSTEM_INFO {
   $narratorProcessIdentity = Get-NarratorProcessIdentity $narratorProcess
   if ($narratorOwned) { $narratorOwnedIdentity = $narratorProcessIdentity }
   if ($narratorProcessIdentity.SessionId -ne $sessionId) { throw 'NOT TESTED: observed Narrator process identity is not in the candidate test session.' }
-  if ($narratorProcessIdentity.ImageName -ine 'Narrator.exe' -or $narratorProcessIdentity.ImageSHA256 -cne $expectedNarratorImageSha256) { throw 'NOT TESTED: observed Narrator process image does not match the requested built-in Narrator executable.' }
+  if ($narratorProcessIdentity.ImagePath -ine [IO.Path]::GetFullPath($narratorPath) -or $narratorProcessIdentity.ImageName -ine 'Narrator.exe' -or $narratorProcessIdentity.ImageSHA256 -cne $expectedNarratorImageSha256) { throw 'NOT TESTED: observed Narrator process image path or hash does not match the requested built-in Narrator executable.' }
   $narratorRecord = [pscustomobject]@{RequestedPath=$narratorPath;RequestedImageSHA256=$expectedNarratorImageSha256;ProductVersion=$narratorProcessIdentity.ProductVersion;Version=$narratorProcessIdentity.FileVersion;ProcessId=$narratorPid;SessionId=$narratorProcess.SessionId;OwnedByHarness=$narratorOwned;ProcessIdentity=$narratorProcessIdentity;ModifierKey='Insert';CopyLastPhraseShortcut='Insert+Ctrl+X'}
   Start-Sleep -Seconds 2
 
