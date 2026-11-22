@@ -65,6 +65,8 @@ public static class EBR_AUDIO_NATIVE {
   [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] private struct WTS_SESSION_INFO { public int SessionId; [MarshalAs(UnmanagedType.LPWStr)] public string Station; public int State; }
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left,Top,Right,Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X,Y; }
+  [StructLayout(LayoutKind.Sequential)] public struct GUITHREADINFO { public uint cbSize,flags; public IntPtr hwndActive,hwndFocus,hwndCapture,hwndMenuOwner,hwndMoveSize,hwndCaret; public RECT rcCaret; }
+  public sealed class FocusSnapshot { public uint ThreadId; public uint OwnerProcessId; public IntPtr FocusedWindow; public uint FocusedThreadId; public uint FocusedProcessId; public uint Flags; }
   [DllImport("kernel32.dll",SetLastError=true)] public static extern uint WTSGetActiveConsoleSessionId();
   [DllImport("wtsapi32.dll",EntryPoint="WTSEnumerateSessionsW",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool WTSEnumerateSessions(IntPtr server,int reserved,int version,out IntPtr sessions,out int count);
   [DllImport("wtsapi32.dll")] static extern void WTSFreeMemory(IntPtr memory);
@@ -77,6 +79,7 @@ public static class EBR_AUDIO_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] static extern bool EnumWindows(EnumWindowCallback callback,IntPtr data);
   [DllImport("user32.dll",SetLastError=true)] static extern bool EnumChildWindows(IntPtr parent,EnumWindowCallback callback,IntPtr data);
   [DllImport("user32.dll",SetLastError=true)] static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint processId);
+  [DllImport("user32.dll",SetLastError=true)] static extern bool GetGUIThreadInfo(uint threadId,ref GUITHREADINFO info);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="GetWindowTextW",SetLastError=true)] static extern int GetWindowTextNative(IntPtr hwnd,StringBuilder text,int maxCount);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="GetClassNameW",SetLastError=true)] static extern int GetClassNameNative(IntPtr hwnd,StringBuilder name,int maxCount);
   [DllImport("user32.dll",SetLastError=true)] static extern int GetDlgCtrlID(IntPtr hwnd);
@@ -89,6 +92,8 @@ public static class EBR_AUDIO_NATIVE {
   [DllImport("user32.dll",SetLastError=true)] static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll",SetLastError=true)] static extern bool ShowWindow(IntPtr hwnd,int command);
   [DllImport("user32.dll",SetLastError=true)] static extern IntPtr WindowFromPoint(POINT point);
+  [DllImport("user32.dll",SetLastError=true)] static extern bool SetCursorPos(int x,int y);
+  [DllImport("user32.dll",SetLastError=true)] static extern void mouse_event(uint flags,uint dx,uint dy,uint data,UIntPtr extraInfo);
   [DllImport("user32.dll",SetLastError=true)] static extern IntPtr GetAncestor(IntPtr hwnd,uint flags);
   [DllImport("user32.dll",EntryPoint="SendMessageTimeoutW",SetLastError=true)] static extern IntPtr SendMessageTimeoutNative(IntPtr hwnd,uint msg,IntPtr wParam,IntPtr lParam,uint flags,uint timeout,out IntPtr result);
   [DllImport("user32.dll",EntryPoint="SendMessageW",SetLastError=true)] static extern IntPtr SendMessageNative(IntPtr hwnd,uint msg,IntPtr wParam,IntPtr lParam);
@@ -108,6 +113,9 @@ public static class EBR_AUDIO_NATIVE {
   public static bool Enabled(IntPtr hwnd){return IsWindowEnabled(hwnd);}
   public static IntPtr Parent(IntPtr hwnd){return GetParent(hwnd);}
   public static bool WindowRect(IntPtr hwnd,out RECT rect){return GetWindowRect(hwnd,out rect);}
+  public static IntPtr WindowAtPoint(int x,int y){return WindowFromPoint(new POINT{X=x,Y=y});}
+  public static bool ClickLeftAtExactWindow(IntPtr expectedWindow,int x,int y){if(expectedWindow==IntPtr.Zero||!SetCursorPos(x,y))return false;var p=new POINT{X=x,Y=y};if(WindowFromPoint(p)!=expectedWindow)return false;mouse_event(0x0002,0,0,0,UIntPtr.Zero);try{Thread.Sleep(60);}finally{mouse_event(0x0004,0,0,0,UIntPtr.Zero);}return true;}
+  public static FocusSnapshot FocusForWindow(IntPtr hwnd){uint ownerPid;uint threadId=GetWindowThreadProcessId(hwnd,out ownerPid);if(hwnd==IntPtr.Zero||threadId==0)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"Could not identify the target window thread.");var info=new GUITHREADINFO{cbSize=(uint)Marshal.SizeOf(typeof(GUITHREADINFO))};if(!GetGUIThreadInfo(threadId,ref info))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"GetGUIThreadInfo failed for the target window thread.");uint focusedPid=0;uint focusedThread=0;if(info.hwndFocus!=IntPtr.Zero)focusedThread=GetWindowThreadProcessId(info.hwndFocus,out focusedPid);return new FocusSnapshot{ThreadId=threadId,OwnerProcessId=ownerPid,FocusedWindow=info.hwndFocus,FocusedThreadId=focusedThread,FocusedProcessId=focusedPid,Flags=info.flags};}
   public static IntPtr ForegroundWindow(){return GetForegroundWindow();}
   public static IntPtr LastActivePopup(IntPtr hwnd){return hwnd==IntPtr.Zero?IntPtr.Zero:GetLastActivePopup(hwnd);}
   public static bool TryActivate(IntPtr hwnd){ShowWindow(hwnd,9);SetForegroundWindow(hwnd);return GetForegroundWindow()==hwnd;}
@@ -359,6 +367,36 @@ function Get-AudioControl([int]$Id,[string]$Name){
   $found=@(foreach($h in [EBR_AUDIO_NATIVE]::ChildWindows($script:mainWindow)){if([EBR_AUDIO_NATIVE]::OwnerPid($h)-eq$script:appPid-and[EBR_AUDIO_NATIVE]::Visible($h)-and[EBR_AUDIO_NATIVE]::ControlId($h)-eq$Id){[pscustomobject]@{Handle=$h;Id=$Id;Class=[EBR_AUDIO_NATIVE]::ClassName($h);Text=[EBR_AUDIO_NATIVE]::Text($h);Enabled=[EBR_AUDIO_NATIVE]::Enabled($h)}}})
   if($found.Count-ne1){throw "Expected one visible candidate control '$Name' (ID $Id), found $($found.Count)."};return $found[0]
 }
+function Assert-NaturalAlarmConsoleInputGate {
+  $record=$script:consoleDesktopRecord;$checks=if($record){$record.Checks}else{$null}
+  $currentSession=[Diagnostics.Process]::GetCurrentProcess().SessionId;$activeConsoleSession=[EBR_AUDIO_NATIVE]::WTSGetActiveConsoleSessionId();$windowStation=[EBR_AUDIO_NATIVE]::ProcessWindowStationName();$threadDesktop=[EBR_AUDIO_NATIVE]::ThreadDesktopName();$inputDesktop=[EBR_AUDIO_NATIVE]::InputDesktopName()
+  $valid=($script:server2025ConsoleContext-and$script:runnerFlavor-ceq'Server2025ConsoleX64'-and$record-and$record.RunnerContext-ceq'GitHub-hosted Windows Server 2025 x64'-and$record.OSArchitecture-ceq'X64'-and$record.ProcessArchitecture-ceq'X64'-and$record.ExpectedSessionName-ieq'Console'-and$record.RawSessionNameAccepted-and$record.ProcessSessionId-eq$record.ActiveConsoleSessionId-and$record.ProcessSessionId-eq$currentSession-and$activeConsoleSession-eq$currentSession-and[Environment]::UserInteractive-and$windowStation-ceq'WinSta0'-and$threadDesktop-ceq'Default'-and$inputDesktop-ceq'Default'-and$checks-and$checks.Identity-and$checks.ActiveConsoleSession-and$checks.Desktop-and$checks.TaskbarOwnedByExplorer-and$checks.Shell)
+  if(-not$valid){throw 'NOT TESTED: native pointer/keyboard entry is authorized only in a verified disposable GitHub-hosted Server 2025 x64 Console desktop.'}
+}
+function Assert-NaturalWorkEditFocus([IntPtr]$ExpectedHandle,[string]$Stage){
+  Assert-NaturalAlarmConsoleInputGate
+  $current=Get-AudioControl 100 'Work interval';$foreground=[EBR_AUDIO_NATIVE]::ForegroundWindow();$focus=[EBR_AUDIO_NATIVE]::FocusForWindow($ExpectedHandle)
+  $foregroundPid=if($foreground-ne[IntPtr]::Zero){[EBR_AUDIO_NATIVE]::OwnerPid($foreground)}else{0}
+  $ok=($current.Handle-eq$ExpectedHandle-and$current.Class-ceq'Edit'-and$current.Enabled-and[EBR_AUDIO_NATIVE]::OwnerPid($ExpectedHandle)-eq$script:appPid-and$foreground-eq$script:mainWindow-and$foregroundPid-eq$script:appPid-and$focus.OwnerProcessId-eq$script:appPid-and$focus.FocusedWindow-eq$ExpectedHandle-and$focus.FocusedThreadId-eq$focus.ThreadId-and$focus.FocusedProcessId-eq$script:appPid)
+  $evidence=[pscustomobject]@{Stage=$Stage;WorkEditHandle=('0x{0:X}'-f$ExpectedHandle.ToInt64());WorkEditOwnerProcessId=[EBR_AUDIO_NATIVE]::OwnerPid($ExpectedHandle);ForegroundHandle=('0x{0:X}'-f$foreground.ToInt64());ForegroundProcessId=$foregroundPid;TargetGuiThreadId=$focus.ThreadId;FocusedHandle=('0x{0:X}'-f$focus.FocusedWindow.ToInt64());FocusedThreadId=$focus.FocusedThreadId;FocusedProcessId=$focus.FocusedProcessId;GuiThreadFlags=$focus.Flags;ExactCandidateEditFocused=$ok}
+  if(-not$ok){throw "NOT TESTED: candidate Work interval Edit focus verification failed at '$Stage': $($evidence|ConvertTo-Json -Compress -Depth 4)."}
+  return $evidence
+}
+function Focus-NaturalWorkEditWithPointer($WorkControl){
+  Assert-NaturalAlarmConsoleInputGate
+  if($WorkControl.Id-ne100-or$WorkControl.Class-cne'Edit'-or-not$WorkControl.Enabled-or[EBR_AUDIO_NATIVE]::OwnerPid($WorkControl.Handle)-ne$script:appPid){throw 'NOT TESTED: refusing pointer input because the Work interval is not the exact enabled candidate-owned Edit HWND.'}
+  $activated=[EBR_AUDIO_NATIVE]::TryActivate($script:mainWindow);Start-Sleep -Milliseconds 100
+  $foreground=[EBR_AUDIO_NATIVE]::ForegroundWindow();$foregroundPid=if($foreground-ne[IntPtr]::Zero){[EBR_AUDIO_NATIVE]::OwnerPid($foreground)}else{0};$rootAtCenter=[EBR_AUDIO_NATIVE]::RootWindowAtCenter($script:mainWindow)
+  if(-not$activated-or$foreground-ne$script:mainWindow-or$foregroundPid-ne$script:appPid-or$rootAtCenter-ne$script:mainWindow){throw 'NOT TESTED: candidate window was not the exact unobscured foreground window before Work interval pointer input.'}
+  $bounds=[EBR_AUDIO_NATIVE+RECT]::new();if(-not[EBR_AUDIO_NATIVE]::WindowRect($WorkControl.Handle,[ref]$bounds)){throw 'NOT TESTED: could not obtain the exact Work interval Edit bounds.'}
+  $width=$bounds.Right-$bounds.Left;$height=$bounds.Bottom-$bounds.Top;if($width-lt6-or$height-lt6){throw 'NOT TESTED: Work interval Edit has invalid pointer target bounds.'}
+  $x=$bounds.Left+[Math]::Min(8,[Math]::Max(2,[int]($width/2)));$y=$bounds.Top+[int]($height/2);$hit=[EBR_AUDIO_NATIVE]::WindowAtPoint($x,$y)
+  if($hit-ne$WorkControl.Handle-or[EBR_AUDIO_NATIVE]::OwnerPid($hit)-ne$script:appPid){throw "NOT TESTED: pointer hit test did not resolve to the exact candidate Work interval Edit HWND (hit=0x$('{0:X}'-f$hit.ToInt64()))."}
+  if(-not[EBR_AUDIO_NATIVE]::ClickLeftAtExactWindow($WorkControl.Handle,$x,$y)){throw 'NOT TESTED: exact-window native pointer click could not be issued safely.'}
+  Start-Sleep -Milliseconds 100
+  $focus=Assert-NaturalWorkEditFocus $WorkControl.Handle 'after verified native pointer click'
+  return [pscustomobject]@{Method='SetCursorPos + exact WindowFromPoint check + native left-button input';CandidateMainWindow=('0x{0:X}'-f$script:mainWindow.ToInt64());CandidateProcessId=$script:appPid;WorkEditHandle=('0x{0:X}'-f$WorkControl.Handle.ToInt64());WorkEditBounds=[pscustomobject]@{Left=$bounds.Left;Top=$bounds.Top;Right=$bounds.Right;Bottom=$bounds.Bottom};ClickPoint=[pscustomobject]@{X=$x;Y=$y};HitTestHandle=('0x{0:X}'-f$hit.ToInt64());CandidateForegroundHandle=('0x{0:X}'-f$foreground.ToInt64());CandidateForegroundProcessId=$foregroundPid;FocusVerification=$focus;Screenshot=(Save-WindowScreenshot $script:mainWindow 'natural-alarm-work-interval-pointer-focus.png')}
+}
 function Add-ControlEvidence([int]$Id,[string]$Name){
   $control=Get-AudioControl $Id $Name;$uia=$null
   try{$element=[System.Windows.Automation.AutomationElement]::FromHandle($control.Handle);$uia=[pscustomobject]@{Name=$element.Current.Name;Role=$element.Current.ControlType.ProgrammaticName;AutomationId=$element.Current.AutomationId;IsEnabled=$element.Current.IsEnabled}}catch{$uia=[pscustomobject]@{Error=$_.Exception.Message}}
@@ -546,6 +584,7 @@ function Invoke-NaturalAlarmTrial {
   $breakWindow=[IntPtr]::Zero;$breakScreenshot=$null;$timerScreenshot=$null
   $recorder=$null;$sessionMeter=$null;$capture=$null;$meterResult=$null
   $captureStartError=$null;$meterStartError=$null;$captureWave=$null;$captureHash=$null
+  $inputFocusTrace=[System.Collections.Generic.List[object]]::new();$pointerFocusEvidence=$null
   $alarmErrorDialog=$null;$alarmErrorDialogScreenshot=$null
   $captureStarted=$false;$alarmSettings=$null;$skipResult=$null
   $endpointMutedOrZero=($script:endpoint-and($script:endpoint.DefaultMuted-or$script:endpoint.DefaultMasterVolume-le0.001))
@@ -559,15 +598,13 @@ function Invoke-NaturalAlarmTrial {
     Invoke-AudioClick 130 'Intervals settings section'
     $workControl=Get-AudioControl 100 'Work interval'
     if($workControl.Class-ne'Edit'){throw 'NOT TESTED: the real Work interval control is not an editable field.'}
-    $workElement=[System.Windows.Automation.AutomationElement]::FromHandle($workControl.Handle)
-    $workElement.SetFocus()
-    Start-Sleep -Milliseconds 100
-    $focusedWorkElement=[System.Windows.Automation.AutomationElement]::FocusedElement
-    if($focusedWorkElement.Current.NativeWindowHandle-ne$workControl.Handle.ToInt32()){
-      throw 'NOT TESTED: the real Work interval Edit did not receive keyboard focus.'
-    }
+    $pointerFocusEvidence=Focus-NaturalWorkEditWithPointer $workControl
+    $inputFocusTrace.Add($pointerFocusEvidence.FocusVerification)
+    $inputFocusTrace.Add((Assert-NaturalWorkEditFocus $workControl.Handle 'immediately before Ctrl+A'))
     [System.Windows.Forms.SendKeys]::SendWait('^a')
+    $inputFocusTrace.Add((Assert-NaturalWorkEditFocus $workControl.Handle 'after Ctrl+A and immediately before typing 1'))
     [System.Windows.Forms.SendKeys]::SendWait('1')
+    $inputFocusTrace.Add((Assert-NaturalWorkEditFocus $workControl.Handle 'after typing 1 and immediately before Tab commit'))
     [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
     Start-Sleep -Milliseconds 100
     $committedWorkControl=Get-AudioControl 100 'Work interval'
@@ -696,10 +733,10 @@ function Invoke-NaturalAlarmTrial {
     elseif($_.Exception.Message-match'^(BLOCKED|NOT TESTED):'){$timerStatus='NOT TESTED';$timerReason=$_.Exception.Message}
     else{$timerStatus='NOT TESTED';$timerReason=$_.Exception.Message}
     $script:acousticCoverageMissing=$true
-    Add-AudioEvent 'Natural one-minute Work-to-Break alarm trial' $timerStatus ([pscustomobject]@{Reason=$timerReason;ResetUtc=$timerStartUtc;InitialCountdown=$initialCountdown;FinalStatus=$finalStatusText;FinalCountdown=$finalCountdownText;Trace=$trace.ToArray();CaptureStartError=$captureStartError;SessionMeterStartError=$meterStartError})
+    Add-AudioEvent 'Natural one-minute Work-to-Break alarm trial' $timerStatus ([pscustomobject]@{Reason=$timerReason;ResetUtc=$timerStartUtc;InitialCountdown=$initialCountdown;FinalStatus=$finalStatusText;FinalCountdown=$finalCountdownText;Trace=$trace.ToArray();InputFocusEvidence=$pointerFocusEvidence;InputFocusTrace=$inputFocusTrace.ToArray();CaptureStartError=$captureStartError;SessionMeterStartError=$meterStartError})
   }
   $overallTrialStatus=if($timerStatus-eq'FAIL'-or$acousticStatus-eq'FAIL'){'FAIL'}elseif($timerStatus-eq'PASS'-and$acousticStatus-eq'PASS'-and$skipResult-and$skipResult.Clicked-and$skipResult.BreakWindowClosed){'PASS'}else{'BLOCKED'}
-  return [pscustomobject]@{Status=$overallTrialStatus;TimerTransitionStatus=$timerStatus;TimerReason=$timerReason;ResetUtc=$timerStartUtc;ElapsedSeconds=$timerElapsedSeconds;InitialCountdown=$initialCountdown;FinalStatusText=$finalStatusText;FinalCountdownText=$finalCountdownText;CountdownTrace=$trace.ToArray();BreakWindow=if($breakWindow-ne[IntPtr]::Zero){[pscustomobject]@{Handle=('0x{0:X}'-f$breakWindow.ToInt64());Class=[EBR_AUDIO_NATIVE]::ClassName($breakWindow);OwnerProcessId=[EBR_AUDIO_NATIVE]::OwnerPid($breakWindow);Title=[EBR_AUDIO_NATIVE]::Text($breakWindow);Screenshot=$breakScreenshot}}else{$null};TimerScreenshot=$timerScreenshot;AcousticStatus=$acousticStatus;AcousticReason=$acousticReason;Loopback=if($capture){[pscustomobject]@{EndpointId=$capture.EndpointId;StartedUtc=$capture.StartedUtc;CompletedUtc=$capture.CompletedUtc;Frames=$capture.Frames;Packets=$capture.Packets;NonZeroSamples=$capture.NonZeroSamples;Rms=[Math]::Round($capture.Rms,8);Peak=[Math]::Round($capture.Peak,8);Error=$capture.Error;WaveFile=$captureWave;WaveSHA256=$captureHash}}else{$null};CandidateSessionMeter=if($meterResult){[pscustomobject]@{ProcessId=$meterResult.ProcessId;EndpointId=$meterResult.EndpointId;Polls=$meterResult.Polls;ActiveSamples=$meterResult.ActiveSamples;MeterSamples=$meterResult.MeterSamples;NonZeroSamples=$meterResult.NonZeroSamples;Peak=[Math]::Round($meterResult.Peak,8);Error=$meterResult.Error}}else{$null};CaptureStartError=$captureStartError;SessionMeterStartError=$meterStartError;AlarmErrorDialog=$alarmErrorDialog;AlarmErrorDialogScreenshot=$alarmErrorDialogScreenshot;AlarmSettings=$alarmSettings;SkipResult=$skipResult;Reason=if($overallTrialStatus-eq'PASS'){'A natural one-minute Work timer reached Break, and the actual candidate alarm produced same-endpoint render and candidate-PID session-meter evidence; the break was skipped to avoid a completion alarm.'}else{$timerReason+' '+$acousticReason}}
+  return [pscustomobject]@{Status=$overallTrialStatus;TimerTransitionStatus=$timerStatus;TimerReason=$timerReason;ResetUtc=$timerStartUtc;ElapsedSeconds=$timerElapsedSeconds;InitialCountdown=$initialCountdown;FinalStatusText=$finalStatusText;FinalCountdownText=$finalCountdownText;CountdownTrace=$trace.ToArray();InputFocusEvidence=$pointerFocusEvidence;InputFocusTrace=$inputFocusTrace.ToArray();BreakWindow=if($breakWindow-ne[IntPtr]::Zero){[pscustomobject]@{Handle=('0x{0:X}'-f$breakWindow.ToInt64());Class=[EBR_AUDIO_NATIVE]::ClassName($breakWindow);OwnerProcessId=[EBR_AUDIO_NATIVE]::OwnerPid($breakWindow);Title=[EBR_AUDIO_NATIVE]::Text($breakWindow);Screenshot=$breakScreenshot}}else{$null};TimerScreenshot=$timerScreenshot;AcousticStatus=$acousticStatus;AcousticReason=$acousticReason;Loopback=if($capture){[pscustomobject]@{EndpointId=$capture.EndpointId;StartedUtc=$capture.StartedUtc;CompletedUtc=$capture.CompletedUtc;Frames=$capture.Frames;Packets=$capture.Packets;NonZeroSamples=$capture.NonZeroSamples;Rms=[Math]::Round($capture.Rms,8);Peak=[Math]::Round($capture.Peak,8);Error=$capture.Error;WaveFile=$captureWave;WaveSHA256=$captureHash}}else{$null};CandidateSessionMeter=if($meterResult){[pscustomobject]@{ProcessId=$meterResult.ProcessId;EndpointId=$meterResult.EndpointId;Polls=$meterResult.Polls;ActiveSamples=$meterResult.ActiveSamples;MeterSamples=$meterResult.MeterSamples;NonZeroSamples=$meterResult.NonZeroSamples;Peak=[Math]::Round($meterResult.Peak,8);Error=$meterResult.Error}}else{$null};CaptureStartError=$captureStartError;SessionMeterStartError=$meterStartError;AlarmErrorDialog=$alarmErrorDialog;AlarmErrorDialogScreenshot=$alarmErrorDialogScreenshot;AlarmSettings=$alarmSettings;SkipResult=$skipResult;Reason=if($overallTrialStatus-eq'PASS'){'A natural one-minute Work timer reached Break, and the actual candidate alarm produced same-endpoint render and candidate-PID session-meter evidence; the break was skipped to avoid a completion alarm.'}else{$timerReason+' '+$acousticReason}}
 }
 
 $script:evidenceRoot=[IO.Path]::GetFullPath($EvidenceDirectory)

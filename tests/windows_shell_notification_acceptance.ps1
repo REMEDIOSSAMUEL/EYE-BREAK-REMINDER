@@ -87,6 +87,7 @@ $consoleDesktopEvidence = $null
 $executionMode = if ($ServerRdpSession) { 'native x64 on Windows Server 2025 in a temporary interactive localhost-RDP session' } elseif ($ServerConsoleSession) { 'native AMD64 x64 on Windows Server 2025 in the verified active standard-user Console session' } else { 'x64 emulation on native Windows 11 ARM64' }
 $candidateMainWindow = [IntPtr]::Zero
 $candidateBreakWindow = [IntPtr]::Zero
+$closeToTrayDiagnostic = $null
 $desktopScreenshotPath = $null
 $shellNotificationScreenshotPath = $null
 $sameShellWindow = $false
@@ -442,6 +443,51 @@ function Capture-InteractiveDesktop([string]$FileName) {
     $bitmap.Save($path, [Drawing.Imaging.ImageFormat]::Png)
   } finally { $graphics.Dispose(); $bitmap.Dispose() }
   return [pscustomobject]@{Path=$path;Width=$bounds.Width;Height=$bounds.Height;VirtualScreen=@($bounds.Left,$bounds.Top,$bounds.Width,$bounds.Height);Capture='fresh GitHub-hosted runner desktop'}
+}
+
+function Get-CandidateCloseFailureDiagnostic([int]$ProcessId) {
+  $windowRecords=[System.Collections.Generic.List[object]]::new()
+  $dialogScreenshot=$null
+  $errors=[System.Collections.Generic.List[string]]::new()
+  $trayUnavailablePattern='(?is)The\s+tray\s+icon\s+isn''t\s+available\s*\.\s*The\s+window\s+will\s+stay\s+open\s+so\s+you\s+can\s+control\s+the\s+timer\s*\.'
+  foreach($windowText in [EBR_SHELL_NOTIFY_NATIVE]::WindowsForProcess($ProcessId)) {
+    $handle=[IntPtr]::new([long]$windowText)
+    try {
+      $description=Get-WindowDescription $handle
+      $nativeChildren=@([EBR_SHELL_NOTIFY_NATIVE]::ChildWindowDetails($handle))
+      $uiSnapshot=Get-VisibleWindowUiSnapshot $handle
+      $uiButtons=@($uiSnapshot.Buttons|ForEach-Object{[pscustomobject]@{Name=$_.Name;Enabled=$_.Enabled;Offscreen=$_.Offscreen;Bounds=$_.Bounds}})
+      $nativeText=@($description.Title;foreach($child in $nativeChildren){$child.Text}) -join "`n"
+      $combinedText=$nativeText+"`n"+[string]$uiSnapshot.Text
+      $trayUnavailableObserved=($combinedText -match $trayUnavailablePattern)
+      $windowScreenshot=$null
+      if($trayUnavailableObserved-and-not$dialogScreenshot) {
+        try { $windowScreenshot=Capture-WindowScreenshot $handle 'env-009-candidate-tray-unavailable-dialog.png';$dialogScreenshot=$windowScreenshot }
+        catch { $errors.Add("Screenshot for candidate window $($description.Handle): $($_.Exception.Message)") }
+      }
+      $windowRecords.Add([pscustomobject]@{
+        Window=$description
+        NativeText=$description.Title
+        NativeChildControls=$nativeChildren
+        UiAutomation=[pscustomobject]@{Names=@($uiSnapshot.Names);Text=[string]$uiSnapshot.Text;Buttons=$uiButtons}
+        TrayUnavailableMessageObserved=$trayUnavailableObserved
+        Screenshot=$windowScreenshot
+      })
+    } catch { $errors.Add("Candidate window 0x$(([long]$handle.ToInt64()).ToString('X')): $($_.Exception.Message)") }
+  }
+  $dialogObserved=@($windowRecords|Where-Object{$_.TrayUnavailableMessageObserved}).Count-gt0
+  [pscustomobject]@{
+    Status='INFO'
+    DiagnosticOnly=$true
+    AcceptanceStatusChanged=$false
+    ProcessId=$ProcessId
+    CapturedUtc=[DateTime]::UtcNow.ToString('o')
+    CandidateOwnedVisibleTopLevelWindows=$windowRecords.ToArray()
+    ExactTrayUnavailableDialogObserved=$dialogObserved
+    DialogScreenshot=$dialogScreenshot
+    Errors=$errors.ToArray()
+    Reason=if($dialogObserved){'A visible candidate-owned top-level window exposed the exact tray-unavailable message; this diagnoses the close-to-tray fallback and does not establish a Shell notification.'}else{'No visible candidate-owned top-level window exposed the exact tray-unavailable message in this snapshot; absence does not establish tray registration or notification delivery.'}
+  }
 }
 
 function Get-ShellProcessIds {
@@ -800,14 +846,14 @@ function Save-Result([string]$FinalStatus, [string]$FinalReason) {
     OperatingSystem=$osRecord
     Environment=[pscustomobject]@{Provider=if($ServerRdpSession-or$ServerConsoleSession){'GitHub-hosted disposable Windows Server 2025 runner'}else{'GitHub-hosted Actions runner'};ImageOS=$env:ImageOS;ImageVersion=$env:ImageVersion;RunnerOS=$env:RUNNER_OS;RunnerArchitecture=$env:RUNNER_ARCH;ProcessSessionId=$sessionId;SessionName=$currentSessionName;RawSessionName=$currentSessionName;User=$currentUserIdentity;ServerSessionMode=if($ServerRdpSession){'RDP'}elseif($ServerConsoleSession){'ActiveConsole'}else{$null};ExpectedSessionId=if($ServerRdpSession-or$ServerConsoleSession){$ExpectedSessionId}else{$null};ExpectedSessionName=if($ServerRdpSession-or$ServerConsoleSession){$ExpectedSessionName}else{$null};ExpectedUser=if($ServerRdpSession-or$ServerConsoleSession){$ExpectedUser}else{$null};ExpectedRdpSessionId=if($ServerRdpSession){$ExpectedSessionId}else{$null};ExpectedRdpSessionName=if($ServerRdpSession){$ExpectedSessionName}else{$null};ExpectedRdpUser=if($ServerRdpSession){$ExpectedUser}else{$null};UserInteractive=[Environment]::UserInteractive;Execution=$executionMode;ConsoleDesktopEvidence=$consoleDesktopEvidence}
     Profile=[pscustomobject]@{LocalAppData=$env:LOCALAPPDATA;AppDataPath=$dataDirectory;AppDataAbsentBeforeTest=(-not $dataExistedBefore);TestDataCreatedByHarness=$dataCreatedByHarness;TestDataRemoved=$dataRemoved;User=$currentUserIdentity;SessionId=$sessionId}
-    Timer=$timerRecord;FirstRunOobe=$oobeRecord;WindowsShell=$shellRecord;ShellNotificationVisibilityStatus=$shellVisibilityStatus;ShellNotificationVisibilityReason=$shellVisibilityReason
+    Timer=$timerRecord;FirstRunOobe=$oobeRecord;WindowsShell=$shellRecord;CloseToTrayDiagnostic=$closeToTrayDiagnostic;ShellNotificationVisibilityStatus=$shellVisibilityStatus;ShellNotificationVisibilityReason=$shellVisibilityReason
     NotificationActivation=$activationRecord;NotificationDismissal=$dismissalRecord;NotificationPersistence=$persistenceRecord;NotificationActionSequence=$secondActionSequenceRecord
     SecondNaturalNotification=$secondNotificationRecord;SecondNotificationPersistence=$secondPersistenceRecord
     SecondShellNotificationVisibilityStatus=$secondShellNotificationStatus;SecondShellNotificationVisibilityReason=$secondShellNotificationReason
     Audio=[pscustomobject]@{Status=$notificationAudioStatus;PhysicalAudioVerified=$physicalAudioVerified;NotificationSoundExpected=$false;Reason='The candidate sets NIIF_NOSOUND and NIIF_RESPECT_QUIET_TIME for Shell reminders. Alarm audio was disabled for this test; no audio endpoint or audible output was verified.'}
     Assertions=@($assertions);Events=@($events);ShellUiAutomationSnapshots=@($shellSnapshots)
     AssertionCounts=[pscustomobject]@{Total=$assertions.Count;Passed=@($assertions|Where-Object{$_.Passed}).Count;NotTested=@($assertions|Where-Object{-not$_.Passed}).Count}
-    Screenshots=@(@($desktopScreenshotPath,$shellNotificationScreenshotPath,$breakScreenshotPath,$activationDesktopScreenshotPath,$secondBreakScreenshotPath,$secondDesktopScreenshotPath,$secondShellNotificationScreenshotPath,$postDismissalScreenshotPath) + @($oobeRecord.Screenshots) | Where-Object { $_ })
+    Screenshots=@(@($desktopScreenshotPath,$shellNotificationScreenshotPath,$breakScreenshotPath,$activationDesktopScreenshotPath,$secondBreakScreenshotPath,$secondDesktopScreenshotPath,$secondShellNotificationScreenshotPath,$postDismissalScreenshotPath) + @($oobeRecord.Screenshots) + @($closeToTrayDiagnostic.DialogScreenshot) | Where-Object { $_ })
     LogFile=$logPath
     Cleanup=[pscustomobject]@{CandidateProcessStopped=$candidateStopped;AppDataRemoved=$dataRemoved;Errors=@($cleanupErrors)}
     Limitations=if($ServerRdpSession){@('Windows Server 2025 x64 interactive localhost-RDP session; this is not Windows 11.','The exact x64 candidate ran natively on x64; no architecture emulation was used.','ENV-009 aggregate status remains BLOCKED because audio and physical audibility were not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer or updater was exercised.')}elseif($ServerConsoleSession){@('Windows Server 2025 x64 interactive active Console session; this is not Windows 11.','The exact x64 candidate ran natively on AMD64 x64; no architecture emulation was used.','ENV-009 aggregate status remains BLOCKED because notification audio and physical audibility were not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer or updater was exercised.')}else{@('Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.','ENV-009 aggregate status remains BLOCKED because audio was not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer, updater, or physical speaker path was exercised.')}
@@ -831,6 +877,7 @@ using System.Text;
 [StructLayout(LayoutKind.Sequential)] public struct EBR_SHELL_NOTIFY_ICON_IDENTIFIER { public uint cbSize; public IntPtr hWnd; public uint uID; public Guid guidItem; }
 [StructLayout(LayoutKind.Sequential)] public struct EBR_SHELL_SYSTEM_INFO { public ushort ProcessorArchitecture; public ushort Reserved; public uint PageSize; public IntPtr MinimumApplicationAddress; public IntPtr MaximumApplicationAddress; public UIntPtr ActiveProcessorMask; public uint NumberOfProcessors; public uint ProcessorType; public uint AllocationGranularity; public ushort ProcessorLevel; public ushort ProcessorRevision; }
 public sealed class EBR_SHELL_WTS_SESSION { public int SessionId; public string Station; public int State; }
+public sealed class EBR_SHELL_NOTIFY_CHILD_WINDOW { public string Handle; public int ProcessId; public string ClassName; public string Text; public int ControlId; public bool Visible; public int[] Bounds; }
 
 public static class EBR_SHELL_NOTIFY_NATIVE {
   [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] private struct WTS_SESSION_INFO { public int SessionId; [MarshalAs(UnmanagedType.LPWStr)] public string Station; public int State; }
@@ -849,6 +896,7 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   [DllImport("user32.dll", SetLastError=true)] private static extern bool EnumChildWindows(IntPtr parent, EnumProc callback, IntPtr data);
   [DllImport("user32.dll", SetLastError=true)] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="GetWindowTextW", SetLastError=true)] private static extern int GetWindowTextNative(IntPtr hwnd, StringBuilder text, int maxCount);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageTimeoutW", SetLastError=true)] private static extern IntPtr SendMessageTimeoutText(IntPtr hwnd, uint message, IntPtr wParam, StringBuilder text, uint flags, uint timeout, out UIntPtr result);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="GetClassNameW", SetLastError=true)] private static extern int GetClassNameNative(IntPtr hwnd, StringBuilder text, int maxCount);
   [DllImport("user32.dll", SetLastError=true)] private static extern int GetDlgCtrlID(IntPtr hwnd);
   [DllImport("user32.dll", EntryPoint="IsWindowVisible", SetLastError=true)] private static extern bool IsWindowVisibleNative(IntPtr hwnd);
@@ -891,8 +939,14 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   public static IntPtr FindVisibleChildById(IntPtr parent,int id) {
     IntPtr found=IntPtr.Zero;EnumChildWindows(parent,(hwnd,data)=>{if(found==IntPtr.Zero&&GetDlgCtrlID(hwnd)==id&&IsWindowVisible(hwnd)&&IsWindowEnabled(hwnd)){found=hwnd;return false;}return true;},IntPtr.Zero);return found;
   }
+  public static EBR_SHELL_NOTIFY_CHILD_WINDOW[] ChildWindowDetails(IntPtr parent) {
+    uint parentPid;GetWindowThreadProcessId(parent,out parentPid);var found=new List<EBR_SHELL_NOTIFY_CHILD_WINDOW>();
+    EnumChildWindows(parent,(hwnd,data)=>{uint pid;GetWindowThreadProcessId(hwnd,out pid);if(pid!=(uint)parentPid||found.Count>=64)return found.Count<64;var r=new EBR_SHELL_NOTIFY_RECT();int[] bounds=GetWindowRect(hwnd,out r)?new int[]{r.Left,r.Top,r.Right,r.Bottom}:new int[0];bool visible=IsWindowVisibleNative(hwnd);found.Add(new EBR_SHELL_NOTIFY_CHILD_WINDOW{Handle="0x"+hwnd.ToInt64().ToString("X"),ProcessId=(int)pid,ClassName=WindowClass(hwnd),Text=visible?NativeControlText(hwnd):WindowText(hwnd),ControlId=GetDlgCtrlID(hwnd),Visible=visible,Bounds=bounds});return true;},IntPtr.Zero);
+    return found.ToArray();
+  }
   public static int[] Bounds(IntPtr hwnd) { EBR_SHELL_NOTIFY_RECT r;if(!GetWindowRect(hwnd,out r))return new int[0];return new int[]{r.Left,r.Top,r.Right,r.Bottom}; }
   public static string WindowText(IntPtr hwnd) { var b=new StringBuilder(512);GetWindowTextNative(hwnd,b,b.Capacity);return b.ToString(); }
+  private static string NativeControlText(IntPtr hwnd) { var b=new StringBuilder(2048);UIntPtr result;SendMessageTimeoutText(hwnd,0x000D,new IntPtr(b.Capacity),b,0x0002,100,out result);return b.ToString(); }
   public static string WindowClass(IntPtr hwnd) { var b=new StringBuilder(256);GetClassNameNative(hwnd,b,b.Capacity);return b.ToString(); }
   public static int OwnerProcessId(IntPtr hwnd) { uint pid;GetWindowThreadProcessId(hwnd,out pid);return (int)pid; }
   public static bool IsWindowVisible(IntPtr hwnd) { return IsWindowVisibleNative(hwnd); }
@@ -1066,7 +1120,12 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   while([EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow)-and$hideWatch.Elapsed.TotalSeconds-lt5){Start-Sleep -Milliseconds 100}
   $hidden=(-not[EBR_SHELL_NOTIFY_NATIVE]::IsWindowVisible($candidateMainWindow))
   $candidateProcess.Refresh()
-  Add-Assertion 'Real candidate window hides to the Windows Shell tray while its process and timer continue' ($hidden-and-not$candidateProcess.HasExited) ([pscustomobject]@{WindowHidden=$hidden;ProcessAlive=(-not$candidateProcess.HasExited);ProcessId=$candidatePid;TrayBounds=$trayBounds;HiddenUtc=[DateTime]::UtcNow.ToString('o')})
+  if(-not$hidden-and-not$candidateProcess.HasExited){
+    try{$closeToTrayDiagnostic=Get-CandidateCloseFailureDiagnostic $candidatePid}
+    catch{$closeToTrayDiagnostic=[pscustomobject]@{Status='INFO';DiagnosticOnly=$true;AcceptanceStatusChanged=$false;ProcessId=$candidatePid;CapturedUtc=[DateTime]::UtcNow.ToString('o');CandidateOwnedVisibleTopLevelWindows=@();ExactTrayUnavailableDialogObserved=$false;DialogScreenshot=$null;Errors=@($_.Exception.Message);Reason='The post-close diagnostic could not complete; this does not establish tray registration or notification delivery.'}}
+    Add-Event 'Diagnostic snapshot of candidate-owned windows after close-to-tray did not hide the main window' 'INFO' $closeToTrayDiagnostic
+  }
+  Add-Assertion 'Real candidate window hides to the Windows Shell tray while its process and timer continue' ($hidden-and-not$candidateProcess.HasExited) ([pscustomobject]@{WindowHidden=$hidden;ProcessAlive=(-not$candidateProcess.HasExited);ProcessId=$candidatePid;TrayBounds=$trayBounds;CloseToTrayDiagnostic=$closeToTrayDiagnostic;HiddenUtc=[DateTime]::UtcNow.ToString('o')})
   if(-not$hidden-or$candidateProcess.HasExited){throw 'NOT TESTED: candidate did not remain alive and hidden in the Windows Shell tray.'}
 
   $dueWatch=[Diagnostics.Stopwatch]::StartNew()
