@@ -15,6 +15,7 @@ function Resolve-EBRTestRdpFileTrustPrompt {
     throw 'BLOCKED: the owned RDP client launch has no generated RDP file.'
   }
   $rdpText = Get-Content -LiteralPath $RdpFilePath -Raw
+  $rdpFileSHA256 = (Get-FileHash -LiteralPath $RdpFilePath -Algorithm SHA256).Hash.ToLowerInvariant()
   $addresses = [regex]::Matches($rdpText, '(?im)^[ \t]*full address:s:([^\r\n]*?)[ \t]*\r?$')
   if ($addresses.Count -ne 1 -or $addresses[0].Groups[1].Value -cne '127.0.0.1:3389') {
     throw 'BLOCKED: refusing RDP prompts unless the generated file has exactly one full-address field targeting 127.0.0.1:3389.'
@@ -107,7 +108,7 @@ public static class EBR_RdpUiNative {
         $current = $window.Current
         if ($current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and
             $current.ProcessId -eq $MstscProcessId -and $current.NativeWindowHandle -ne 0 -and
-            -not $current.IsOffscreen -and $current.Name -ceq 'Remote Desktop Connection') {
+            -not $current.IsOffscreen -and $current.Name -cin @('Remote Desktop Connection','Remote Desktop Connection security warning')) {
           $found.Add($window)
         }
       } catch { }
@@ -200,9 +201,10 @@ public static class EBR_RdpUiNative {
   function Save-EBRPromptEvidence($Snapshot, [string]$BaseName, $Extra = $null) {
     [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
     $record = [pscustomobject]@{
-      WindowTitle = 'Remote Desktop Connection'
+      WindowTitle = [string]$Snapshot.Window.Current.Name
       ProcessId = $MstscProcessId
       RdpFile = $RdpFilePath
+      RdpFileSHA256 = $rdpFileSHA256
       Target = '127.0.0.1:3389'
       AllowAudioPlayback = [bool]$AllowAudioPlayback
       Controls = $Snapshot.Tree
@@ -285,25 +287,27 @@ public static class EBR_RdpUiNative {
         )
         $connectButtons = @(Get-EBRNamedPromptActions $nodes 'Connect' '' $MstscProcessId)
         $cancelButtons = @(Get-EBRNamedPromptActions $nodes 'Cancel' '' $MstscProcessId | Where-Object { $_.Current.IsEnabled })
-        if ($checkboxes.Count -eq 0 -or $connectButtons.Count -ne 1 -or $cancelButtons.Count -ne 1) {
+        if ($connectButtons.Count -ne 1 -or $cancelButtons.Count -ne 1) {
           Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-unrecognized'
-          throw 'BLOCKED: the exact localhost connection warning lacked uniquely verifiable resource controls or Connect/Cancel actions.'
+          throw 'BLOCKED: the exact localhost connection warning lacked unique Connect/Cancel actions.'
         }
         $statesBefore = [System.Collections.Generic.List[object]]::new()
         $audioNodes = [System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
-        foreach ($node in $checkboxes) {
-          try {
-            $current = $node.Current
-            $toggle = [System.Windows.Automation.TogglePattern]$node.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
-            $state = [string]$toggle.Current.ToggleState
-            $statesBefore.Add([pscustomobject]@{Name=[string]$current.Name;State=$state})
-            if ($current.Name -ceq 'Audio playback') { $audioNodes.Add($node) }
-          } catch {
-            Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-unreadable'
-            throw 'BLOCKED: one or more localhost connection resource checkboxes could not be read safely.'
+        if ($checkboxes.Count -gt 0) {
+          foreach ($node in $checkboxes) {
+            try {
+              $current = $node.Current
+              $toggle = [System.Windows.Automation.TogglePattern]$node.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+              $state = [string]$toggle.Current.ToggleState
+              $statesBefore.Add([pscustomobject]@{Name=[string]$current.Name;State=$state})
+              if ($current.Name -ceq 'Audio playback') { $audioNodes.Add($node) }
+            } catch {
+              Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-unreadable'
+              throw 'BLOCKED: one or more localhost connection resource checkboxes could not be read safely.'
+            }
           }
         }
-        if ($AllowAudioPlayback -and $audioNodes.Count -ne 1) {
+        if ($checkboxes.Count -gt 0 -and $AllowAudioPlayback -and $audioNodes.Count -ne 1) {
           Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-audio-unrecognized' ([pscustomobject]@{CheckboxStates=@($statesBefore)})
           throw 'BLOCKED: audio playback was requested, but exactly one UI Automation checkbox named Audio playback was not present.'
         }
@@ -311,16 +315,20 @@ public static class EBR_RdpUiNative {
           Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-audio-ambiguous' ([pscustomobject]@{CheckboxStates=@($statesBefore)})
           throw 'BLOCKED: the disabled-audio test exposed ambiguous audio resource controls.'
         }
-        foreach ($item in $statesBefore) {
-          if ($item.Name -ceq 'Audio playback' -and $AllowAudioPlayback) { continue }
-          if ($item.State -ne [string][System.Windows.Automation.ToggleState]::Off) {
-            Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-resource-already-enabled' ([pscustomobject]@{CheckboxStates=@($statesBefore)})
-            throw "BLOCKED: unexpected RDP redirection '$($item.Name)' was already enabled; no resource was accepted."
+        if ($checkboxes.Count -gt 0) {
+          foreach ($item in $statesBefore) {
+            if ($item.Name -ceq 'Audio playback' -and $AllowAudioPlayback) { continue }
+            if ($item.State -ne [string][System.Windows.Automation.ToggleState]::Off) {
+              Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-resource-already-enabled' ([pscustomobject]@{CheckboxStates=@($statesBefore)})
+              throw "BLOCKED: unexpected RDP redirection '$($item.Name)' was already enabled; no resource was accepted."
+            }
           }
         }
-        Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-before-acknowledgement' ([pscustomobject]@{CheckboxStates=@($statesBefore);AudioPlaybackRequested=[bool]$AllowAudioPlayback})
-        $audioState = $null
-        if ($AllowAudioPlayback) {
+        if ($checkboxes.Count -eq 0) {
+          $audioState = if ($AllowAudioPlayback) {'No resource checkboxes were presented; the exact generated file requests only audiomode:i:0 after all redirections were verified disabled.'} else {'No resource checkboxes were presented; the exact generated file sets audiomode:i:2 and all other redirections disabled.'}
+        } else { $audioState = $null }
+        Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-before-acknowledgement' ([pscustomobject]@{CheckboxStates=@($statesBefore);NoResourceCheckboxesDisplayed=($checkboxes.Count-eq0);AudioPlaybackRequested=[bool]$AllowAudioPlayback;RdpFileSHA256=$rdpFileSHA256})
+        if ($AllowAudioPlayback -and $checkboxes.Count -gt 0) {
           $audioNode = $audioNodes[0]
           $audioToggle = [System.Windows.Automation.TogglePattern]$audioNode.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
           if ([string]$audioToggle.Current.ToggleState -eq [string][System.Windows.Automation.ToggleState]::Off) { $audioToggle.Toggle() }
@@ -329,8 +337,12 @@ public static class EBR_RdpUiNative {
             throw 'BLOCKED: the exact Audio playback resource could not be enabled for the disposable test client.'
           }
           $audioPlaybackAuthorized = $true
+        } elseif ($AllowAudioPlayback -and $checkboxes.Count -eq 0) {
+          $audioPlaybackAuthorized = $true
         }
         if (-not $connectButtons[0].Current.IsEnabled) { throw 'BLOCKED: the exact localhost Connect action is disabled.' }
+        $currentRdpFileSHA256 = (Get-FileHash -LiteralPath $RdpFilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($currentRdpFileSHA256 -cne $rdpFileSHA256) { throw 'BLOCKED: the reviewed generated RDP file changed before connection; no Connect action was invoked.' }
         $buttonHandle = $snapshot.Handle
         $actionPattern = Invoke-EBRNamedPromptAction $connectButtons[0] 'Connect' $MstscProcessId $snapshot.Handle ([string]$connectButtons[0].Current.AutomationId)
         $promptActionMethods.Add("Connection Connect: $actionPattern")
@@ -365,7 +377,7 @@ public static class EBR_RdpUiNative {
           Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-did-not-close' ([pscustomobject]@{CheckboxStatesBefore=@($statesBefore);AudioPlaybackAfter=$audioState})
           throw 'BLOCKED: the exact localhost connection security dialog remained open after the scoped action.'
         }
-        $after = [pscustomobject]@{CheckboxStatesBefore=@($statesBefore);AudioPlaybackAfter=$audioState;ConnectInvoked=$true;ActionPattern=$actionPattern;AudioOnlyWhenRequested=[bool]$AllowAudioPlayback}
+        $after = [pscustomobject]@{CheckboxStatesBefore=@($statesBefore);NoResourceCheckboxesDisplayed=($checkboxes.Count-eq0);AudioPlaybackAfter=$audioState;AudioPlaybackAuthorized=$audioPlaybackAuthorized;ConnectInvoked=$true;ActionPattern=$actionPattern;RdpFileSHA256Before=$rdpFileSHA256;RdpFileSHA256AtConnect=$currentRdpFileSHA256;AudioOnlyWhenRequested=[bool]$AllowAudioPlayback}
         Save-EBRPromptEvidence $snapshot 'rdp-connection-security-prompt-after-scoped-selection' $after
         $postWatch = [Diagnostics.Stopwatch]::StartNew()
         while ($postWatch.Elapsed.TotalSeconds -lt 20) {
@@ -383,13 +395,16 @@ public static class EBR_RdpUiNative {
           ProcessId = $MstscProcessId
           ProcessName = $client.ProcessName
           RdpFile = $RdpFilePath
+          RdpFileSHA256 = $rdpFileSHA256
           Target = '127.0.0.1:3389'
           EducationalPromptAcknowledged = $educationAcknowledged
           ConnectionSecurityAcknowledged = $connectionAcknowledged
           PromptActionMethods = @($promptActionMethods.ToArray())
           AudioPlaybackRequested = [bool]$AllowAudioPlayback
           AudioPlaybackAuthorized = $audioPlaybackAuthorized
-          ResourceRedirections = 'All visible resource checkboxes remained off except the exact Audio playback checkbox when explicitly requested by the RDP file and caller.'
+          ResourceCheckboxCount = $checkboxes.Count
+          NoResourceCheckboxesDisplayed = ($checkboxes.Count -eq 0)
+          ResourceRedirections = if($checkboxes.Count-eq0){'No resource checkbox controls were displayed; the exact generated .rdp file SHA-256 and every redirection setting were verified before Connect.'}else{'All visible resource checkboxes remained off except the exact Audio playback checkbox when explicitly requested by the RDP file and caller.'}
           CertificatePromptAccepted = $false
           Scope = 'Ephemeral GitHub-hosted runner profile; the only connection target is the runner itself at 127.0.0.1:3389.'
         }

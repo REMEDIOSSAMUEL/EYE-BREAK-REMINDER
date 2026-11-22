@@ -234,8 +234,9 @@ function Invoke-RecordedProbe {
   $residue=@($processes).Count-gt0-or(Test-Path -LiteralPath $appDataPath)
   $probeStatus=if($report){[string]$report.Status}else{'NOT TESTED'}
   if($residue){$script:probeStopAfterCleanupFailure=$true;if($probeStatus-eq'PASS'){$probeStatus='BLOCKED'};$harnessError=if($harnessError){$harnessError+'; '}else{''};$harnessError+='The probe left a candidate process or test profile data in the isolated account; later app launches were stopped.'}
-  $script:probeResults.Add([pscustomobject]@{Name=$Name;Status=$probeStatus;Reason=if($report){[string]$report.Reason}else{$harnessError};HarnessError=$harnessError;ReportPresent=[bool]$report;CandidateProcessResidue=@($processes|Select-Object Id,SessionId,Path);AppDataRemains=(Test-Path -LiteralPath $appDataPath);ObservedUtc=[DateTime]::UtcNow.ToString('o')})
-  [pscustomobject]@{Status=$probeStatus;Reason=if($report){[string]$report.Reason}else{$harnessError};Report=$report;ReportPath=if($report){$reportPath}else{$null}}
+  $probeReason=if($harnessError){if($report){$harnessError+' Raw probe report reason: '+[string]$report.Reason}else{$harnessError}}elseif($report){[string]$report.Reason}else{'The probe did not produce its expected machine-readable report.'}
+  $script:probeResults.Add([pscustomobject]@{Name=$Name;Status=$probeStatus;Reason=$probeReason;RawProbeReason=if($report){[string]$report.Reason}else{$null};HarnessError=$harnessError;ReportPresent=[bool]$report;CandidateProcessResidue=@($processes|Select-Object Id,SessionId,Path);AppDataRemains=(Test-Path -LiteralPath $appDataPath);ObservedUtc=[DateTime]::UtcNow.ToString('o')})
+  [pscustomobject]@{Status=$probeStatus;Reason=$probeReason;Report=$report;ReportPath=if($report){$reportPath}else{$null}}
 }
 $initialAppDataPath=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'
 if(Test-Path -LiteralPath $initialAppDataPath){$probeStopAfterCleanupFailure=$true;$probeResults.Add([pscustomobject]@{Name='Isolated RDP profile preflight';Status='BLOCKED';Reason='EyeBreakReminder app-data already existed in the new temporary user profile; no candidate probe was launched.';AppDataPath=$initialAppDataPath;ObservedUtc=[DateTime]::UtcNow.ToString('o')})}
