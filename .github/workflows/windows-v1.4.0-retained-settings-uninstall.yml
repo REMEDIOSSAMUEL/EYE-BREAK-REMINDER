@@ -9,6 +9,8 @@ on:
 # hosted image's first-sign-in OOBE was already observed and blocked the exact
 # candidate. The separate `approve-win11-privacy-oobe-next` label is the only
 # workflow path that passes the explicit OOBE Next opt-in to those probes.
+# The ARM64 audio endpoint inventory is read-only, launches no app, and makes
+# no UI action, so it runs independently of the desktop-probe opt-in.
 # The Windows Server localhost RDP Settings and lock/unlock routes repeatedly
 # failed to create a second active user session through run 45007378820. Keep
 # those unchanged routes behind an explicit retry label until the RDP/session
@@ -91,8 +93,7 @@ jobs:
           retention-days: 90
 
   audio-endpoint-preflight:
-    name: Exact candidate Windows 11 ARM64 audio endpoint preflight
-    if: contains(github.event.pull_request.labels.*.name, 'run-win11-arm64-ui-probes')
+    name: Exact candidate Windows 11 ARM64 audio endpoint preflight (read-only)
     runs-on: windows-11-vs2026-arm
     timeout-minutes: 20
     steps:
