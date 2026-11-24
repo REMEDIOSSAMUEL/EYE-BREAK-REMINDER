@@ -1,0 +1,124 @@
+name: v1.4.0 targeted Windows Shell notification test
+
+on:
+  # A one-off feature branch keeps this single acceptance run independent of
+  # PR #7's label-triggered Settings and capability workflows.
+  push:
+    branches:
+      - codex/targeted-env009-shell-14695418078
+    paths:
+      - .github/workflows/windows-v1.4.0-targeted-shell-notification.yml
+      - tests/windows_shell_notification_acceptance.ps1
+      - tests/windows_personal_profile_isolation.ps1
+  workflow_dispatch:
+    inputs:
+      allow_privacy_oobe_next:
+        description: Allow one Next action only on the exact first-run privacy page in this disposable runner
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: v1.4.0-targeted-shell-notification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  shell-notification:
+    name: Exact-candidate Windows Shell notification only
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out only the selected test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the immutable production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          run-id: 44875679345
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Verify artifact identity and all seven preserved files
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifactResponse = Invoke-RestMethod -Headers @{Authorization="Bearer $env:GH_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'} -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/actions/artifacts/14695418078"
+          if ([string]$artifactResponse.id -cne '14695418078' -or [string]$artifactResponse.workflow_run.id -cne '44875679345' -or $artifactResponse.name -cne 'EyeBreakReminder-v1.4.0-production-candidate-44875679345' -or $artifactResponse.expired) {
+            throw 'GitHub did not identify artifact 14695418078 as the unexpired candidate from finalization run 44875679345.'
+          }
+
+          $expected = [ordered]@{
+            'EyeBreakReminder.exe' = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+            'EyeBreakReminder-Setup-x64.exe' = 'a15fc525557603dbed1ef0dccb8d128e500dfee91c6416b478513de790dd5c9b'
+            'EyeBreakReminder-Portable-x64.zip' = 'a579b0e3cd7573f4214b0df4ff25dee99801735123658afd70e455886189c2be'
+            'EyeBreakReminder-Source.zip' = 'a915342af6e50122a2d511e4cb91eb036de9b4fbf21889d6ecfcb9de1c8c140d'
+            'EyeBreakReminder-SHA256.txt' = '5fc0ed3317c3e4e0ad1b57ffc2cef435031db8024d7a1ca024ff14d1b46a9538'
+            'EyeBreakReminder-UpdateManifest.json' = 'e599ff055613366133ba8a03bae3f7acff9ac383d24214cc0c620a7efbe9a682'
+            'EyeBreakReminder-UpdateManifest.sig' = '411372a2b5a1836968d60b6f1c3e3c7d21830df3c43d92728366653833f6b8c8'
+          }
+          $candidateDirectory = Join-Path $PWD 'production-candidate-artifact/final-candidate'
+          $actualFiles = @(Get-ChildItem -LiteralPath $candidateDirectory -Force)
+          if ($actualFiles.Count -ne $expected.Count -or @($actualFiles | Where-Object { $_.PSIsContainer }).Count -ne 0) {
+            throw 'Downloaded candidate directory does not contain exactly the seven expected files.'
+          }
+          foreach ($name in $expected.Keys) {
+            $path = Join-Path $candidateDirectory $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate file is missing: $name" }
+            $actualHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -cne $expected[$name]) { throw "Candidate file hash mismatch: $name" }
+          }
+          $actualNames = @($actualFiles | Sort-Object Name | Select-Object -ExpandProperty Name)
+          $expectedNames = @($expected.Keys | Sort-Object)
+          if (($actualNames -join "`n") -cne ($expectedNames -join "`n")) { throw 'Downloaded candidate file names differ from the verified seven-file artifact.' }
+
+          $verificationPath = Join-Path $PWD 'production-candidate-artifact/final-candidate-evidence/candidate-verification.json'
+          $verification = Get-Content -LiteralPath $verificationPath -Raw | ConvertFrom-Json
+          if ($verification.status -cne 'PASS' -or $verification.application -cne 'Eye Break Reminder' -or $verification.version -cne '1.4.0') {
+            throw 'Candidate verification evidence does not identify the verified Eye Break Reminder v1.4.0 artifact.'
+          }
+          foreach ($name in $expected.Keys) {
+            $identity = $verification.release_files.PSObject.Properties[$name]
+            if (-not $identity -or [string]$identity.Value.sha256 -cne $expected[$name]) { throw "Candidate verification evidence differs for $name" }
+          }
+          "Candidate artifact 14695418078 verified; EXE SHA-256 $($expected['EyeBreakReminder.exe'])." | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Run only the real Shell notification scenario
+        shell: pwsh
+        env:
+          ALLOW_PRIVACY_OOBE_NEXT: ${{ github.event_name == 'push' || inputs.allow_privacy_oobe_next }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $evidence = Join-Path $PWD 'remaining-coverage-evidence/shell-notification'
+          $arguments = @{ExecutablePath=$exe;EvidenceDirectory=$evidence}
+          if ($env:ALLOW_PRIVACY_OOBE_NEXT -eq 'true') { $arguments.AllowPrivacyOobeNext = $true }
+          & .\tests\windows_shell_notification_acceptance.ps1 @arguments
+          $reportPath = Join-Path $evidence 'env-009-shell-notification-results.json'
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'Shell harness did not produce its result record.' }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          $shellStatus = [string]$report.ShellNotificationVisibilityStatus
+          $activationStatus = [string]$report.NotificationActivation.Status
+          $dismissalStatus = [string]$report.NotificationDismissal.Status
+          $summary = "ENV-009 Shell subtest (not the composite row): $shellStatus`nActivation: $activationStatus`nDismissal: $dismissalStatus`nCandidate: artifact $($report.Candidate.ArtifactId), SHA-256 $($report.Candidate.SHA256)`nPhysical output verified: $($report.Audio.PhysicalAudioVerified)`nThe composite ENV-009 row remains blocked until its physical endpoint/audio criterion is independently satisfied.`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($report.Status -eq 'FAIL') { throw "Exact-candidate Shell harness found a product failure: $($report.Reason)" }
+
+      - name: Preserve only the targeted Shell test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-targeted-env-009-shell-${{ github.run_id }}
+          path: remaining-coverage-evidence/shell-notification/**
+          if-no-files-found: warn
+          retention-days: 90

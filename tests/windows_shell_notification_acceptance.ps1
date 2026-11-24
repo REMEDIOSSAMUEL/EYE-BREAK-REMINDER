@@ -6,12 +6,16 @@ param(
   [switch]$ServerConsoleOwnerSession,
   [switch]$WaitForQuietTimeExit,
   [switch]$AllowPrivacyOobeNext,
+  [switch]$PersonalWindows11X64Session,
   [int]$ExpectedSessionId = -1,
   [string]$ExpectedSessionName,
   [string]$ExpectedUser
 )
 
 $ErrorActionPreference = 'Stop'
+$personalProfileIsolation = $null
+$personalWindows11X64Context = $false
+. (Join-Path $PSScriptRoot 'windows_personal_profile_isolation.ps1')
 $expectedSha256 = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
 $candidateArtifactId = '14695418078'
 $candidateRunId = '44875679345'
@@ -27,20 +31,22 @@ if ($ServerRdpSession) { $serverSessionModeCount++ }
 if ($ServerConsoleSession) { $serverSessionModeCount++ }
 if ($ServerConsoleOwnerSession) { $serverSessionModeCount++ }
 if ($serverSessionModeCount -gt 1) { throw 'BLOCKED: choose exactly one Server session mode.' }
+if ($PersonalWindows11X64Session -and $serverSessionModeCount -gt 0) { throw 'BLOCKED: personal Windows 11 x64 mode cannot be combined with a Server mode.' }
+if ($PersonalWindows11X64Session -and ($WaitForQuietTimeExit -or $AllowPrivacyOobeNext)) { throw 'BLOCKED: personal-desktop mode cannot wait for quiet time or advance any first-sign-in privacy page.' }
 $requiredRunnerArchitecture = if ($serverSessionModeCount) { 'X64' } else { 'ARM64' }
-$runnerDescription = if ($ServerRdpSession) { 'GitHub-hosted Windows Server 2025 x64 temporary localhost-RDP session' } elseif ($ServerConsoleSession) { 'GitHub-hosted Windows Server 2025 x64 active standard-user Console session' } elseif ($ServerConsoleOwnerSession) { 'GitHub-hosted Windows Server 2025 x64 owner-matched active Console session' } else { 'GitHub-hosted Windows 11 ARM64 runner' }
-if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne $requiredRunnerArchitecture) {
+$runnerDescription = if ($PersonalWindows11X64Session) { 'explicitly authorized interactive native Windows 11 x64 owner desktop' } elseif ($ServerRdpSession) { 'GitHub-hosted Windows Server 2025 x64 temporary localhost-RDP session' } elseif ($ServerConsoleSession) { 'GitHub-hosted Windows Server 2025 x64 active standard-user Console session' } elseif ($ServerConsoleOwnerSession) { 'GitHub-hosted Windows Server 2025 x64 owner-matched active Console session' } else { 'GitHub-hosted Windows 11 ARM64 runner' }
+if (-not $PersonalWindows11X64Session -and ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne $requiredRunnerArchitecture)) {
   throw "BLOCKED: this Shell notification probe may run only on a $runnerDescription."
 }
-if ($env:GITHUB_SERVER_URL -cne 'https://github.com' -or $env:GITHUB_REPOSITORY -ine 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER' -or -not $env:GITHUB_RUN_ID -or -not $env:RUNNER_NAME) {
+if (-not $PersonalWindows11X64Session -and ($env:GITHUB_SERVER_URL -cne 'https://github.com' -or $env:GITHUB_REPOSITORY -ine 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER' -or -not $env:GITHUB_RUN_ID -or -not $env:RUNNER_NAME)) {
   throw 'BLOCKED: a GitHub Actions run context for the authorized project repository is required.'
 }
-if (-not $env:GITHUB_WORKSPACE -or -not $env:RUNNER_TEMP) {
+if (-not $PersonalWindows11X64Session -and (-not $env:GITHUB_WORKSPACE -or -not $env:RUNNER_TEMP)) {
   throw 'BLOCKED: GitHub workspace and runner temporary roots are required.'
 }
 
-$workspaceRoot = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd('\') + '\'
-$runnerTempRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\'
+$workspaceRoot = if ($PersonalWindows11X64Session) { [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot)).TrimEnd('\') + '\' } else { [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE).TrimEnd('\') + '\' }
+$runnerTempRoot = if ($PersonalWindows11X64Session) { [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\' } else { [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd('\') + '\' }
 $ExecutablePath = [IO.Path]::GetFullPath($ExecutablePath)
 $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 if (-not ($ExecutablePath.StartsWith($workspaceRoot, [StringComparison]::OrdinalIgnoreCase) -or $ExecutablePath.StartsWith($runnerTempRoot, [StringComparison]::OrdinalIgnoreCase))) {
@@ -55,6 +61,7 @@ $resultPath = Join-Path $EvidenceDirectory 'env-009-shell-notification-results.j
 $logPath = Join-Path $EvidenceDirectory 'env-009-shell-notification.log'
 $scriptTranscriptStarted = $false
 $candidateProcess = $null
+$candidateStartTimeUtcTicks = 0L
 $candidatePid = 0
 $candidateOwned = $false
 $candidateStopped = $false
@@ -91,7 +98,7 @@ $sessionId = $null
 $currentSessionName = $null
 $currentUserIdentity = $null
 $consoleDesktopEvidence = $null
-$executionMode = if ($ServerRdpSession) { 'native x64 on Windows Server 2025 in a temporary interactive localhost-RDP session' } elseif ($ServerConsoleSession) { 'native AMD64 x64 on Windows Server 2025 in the verified active standard-user Console session' } elseif ($ServerConsoleOwnerSession) { 'native AMD64 x64 on Windows Server 2025 in an owner-matched active Console session' } else { 'x64 emulation on native Windows 11 ARM64' }
+$executionMode = if ($PersonalWindows11X64Session) { 'native AMD64 x64 on the explicitly authorized current Windows 11 desktop' } elseif ($ServerRdpSession) { 'native x64 on Windows Server 2025 in a temporary interactive localhost-RDP session' } elseif ($ServerConsoleSession) { 'native AMD64 x64 on Windows Server 2025 in the verified active standard-user Console session' } elseif ($ServerConsoleOwnerSession) { 'native AMD64 x64 on Windows Server 2025 in an owner-matched active Console session' } else { 'x64 emulation on native Windows 11 ARM64' }
 $candidateMainWindow = [IntPtr]::Zero
 $candidateBreakWindow = [IntPtr]::Zero
 $closeToTrayDiagnostic = $null
@@ -437,6 +444,20 @@ function Capture-WindowScreenshot([IntPtr]$Window, [string]$FileName) {
 }
 
 function Capture-InteractiveDesktop([string]$FileName) {
+  if($personalWindows11X64Context){
+    try{
+      $snapshot=Get-ShellNotificationSnapshot
+      if($snapshot.SurfaceObserved-and$snapshot.CorrelatedContainer.Window.Handle){
+        $hex=[string]$snapshot.CorrelatedContainer.Window.Handle -replace '^0x',''
+        $shellWindow=[IntPtr]::new([Convert]::ToInt64($hex,16))
+        $notificationShot=Capture-WindowScreenshot $shellWindow $FileName
+        if($notificationShot){$notificationShot|Add-Member -NotePropertyName Capture -NotePropertyValue 'cropped Windows Shell notification window only' -Force;return $notificationShot}
+      }
+    }catch{}
+    $target=if($candidateBreakWindow-ne[IntPtr]::Zero){$candidateBreakWindow}else{$candidateMainWindow}
+    if($target-ne[IntPtr]::Zero){$candidateShot=Capture-WindowScreenshot $target $FileName;if($candidateShot){$candidateShot|Add-Member -NotePropertyName Capture -NotePropertyValue 'candidate window only; no full desktop capture in owner mode' -Force;return $candidateShot}}
+    return $null
+  }
   Add-Type -AssemblyName System.Drawing -ErrorAction Stop
   Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
   $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -851,8 +872,8 @@ function Save-Result([string]$FinalStatus, [string]$FinalReason) {
     Requirement='ENV-009'; Status=$FinalStatus; Reason=$FinalReason
     Candidate=[pscustomobject]@{ArtifactId=$candidateArtifactId;FinalizerRunId=$candidateRunId;SourceCommit=$candidateSourceCommit;ExecutablePath=$ExecutablePath;SHA256=$expectedSha256;Identity=$candidateIdentity;Execution=$executionMode;InstallerLaunched=$false}
     OperatingSystem=$osRecord
-    Environment=[pscustomobject]@{Provider=if($serverSessionModeCount){'GitHub-hosted disposable Windows Server 2025 runner'}else{'GitHub-hosted Actions runner'};ImageOS=$env:ImageOS;ImageVersion=$env:ImageVersion;RunnerOS=$env:RUNNER_OS;RunnerArchitecture=$env:RUNNER_ARCH;ProcessSessionId=$sessionId;SessionName=$currentSessionName;RawSessionName=$currentSessionName;User=$currentUserIdentity;ServerSessionMode=if($ServerRdpSession){'RDP'}elseif($ServerConsoleSession){'ActiveConsoleStandardUser'}elseif($ServerConsoleOwnerSession){'ActiveConsoleOwnerMatchedUser'}else{$null};ExpectedSessionId=if($serverSessionModeCount){$ExpectedSessionId}else{$null};ExpectedSessionName=if($serverSessionModeCount){$ExpectedSessionName}else{$null};ExpectedUser=if($serverSessionModeCount){$ExpectedUser}else{$null};ExpectedRdpSessionId=if($ServerRdpSession){$ExpectedSessionId}else{$null};ExpectedRdpSessionName=if($ServerRdpSession){$ExpectedSessionName}else{$null};ExpectedRdpUser=if($ServerRdpSession){$ExpectedUser}else{$null};UserInteractive=[Environment]::UserInteractive;Execution=$executionMode;ConsoleDesktopEvidence=$consoleDesktopEvidence}
-    Profile=[pscustomobject]@{LocalAppData=$env:LOCALAPPDATA;AppDataPath=$dataDirectory;AppDataAbsentBeforeTest=(-not $dataExistedBefore);TestDataCreatedByHarness=$dataCreatedByHarness;TestDataRemoved=$dataRemoved;User=$currentUserIdentity;SessionId=$sessionId}
+    Environment=[pscustomobject]@{Provider=if($PersonalWindows11X64Session){'Current interactive Windows 11 x64 owner desktop'}elseif($serverSessionModeCount){'GitHub-hosted disposable Windows Server 2025 runner'}else{'GitHub-hosted Actions runner'};ImageOS=$env:ImageOS;ImageVersion=$env:ImageVersion;RunnerOS=$env:RUNNER_OS;RunnerArchitecture=$env:RUNNER_ARCH;OSArchitecture=if($osRecord){$osRecord.OSArchitecture}else{$null};ProcessArchitecture=if($osRecord){$osRecord.ProcessArchitecture}else{$null};ProcessSessionId=$sessionId;SessionName=$currentSessionName;RawSessionName=$currentSessionName;User=$currentUserIdentity;PersonalWindows11X64Session=[bool]$PersonalWindows11X64Session;ServerSessionMode=if($ServerRdpSession){'RDP'}elseif($ServerConsoleSession){'ActiveConsoleStandardUser'}elseif($ServerConsoleOwnerSession){'ActiveConsoleOwnerMatchedUser'}else{$null};ExpectedSessionId=if($serverSessionModeCount){$ExpectedSessionId}else{$null};ExpectedSessionName=if($serverSessionModeCount){$ExpectedSessionName}else{$null};ExpectedUser=if($serverSessionModeCount){$ExpectedUser}else{$null};ExpectedRdpSessionId=if($ServerRdpSession){$ExpectedSessionId}else{$null};ExpectedRdpSessionName=if($ServerRdpSession){$ExpectedSessionName}else{$null};ExpectedRdpUser=if($ServerRdpSession){$ExpectedUser}else{$null};UserInteractive=[Environment]::UserInteractive;Execution=$executionMode;ConsoleDesktopEvidence=$consoleDesktopEvidence}
+    Profile=[pscustomobject]@{LocalAppData=$env:LOCALAPPDATA;AppDataPath=$dataDirectory;AppDataAbsentBeforeTest=(-not $dataExistedBefore);TestDataCreatedByHarness=$dataCreatedByHarness;TestDataRemoved=$dataRemoved;OriginalProfileExisted=if($personalProfileIsolation){$personalProfileIsolation.OriginalExisted}else{$false};OriginalProfileDataMoved=$false;ProfileCleanupVerified=if($personalProfileIsolation){$personalProfileIsolation.Completed}else{$null};User=$currentUserIdentity;SessionId=$sessionId}
     Timer=$timerRecord;FirstRunOobe=$oobeRecord;WindowsShell=$shellRecord;ShellNotificationEligibility=$shellStateRecord;NotificationEligibilityWait=$notificationEligibilityWaitRecord;CloseToTrayDiagnostic=$closeToTrayDiagnostic;ShellNotificationVisibilityStatus=$shellVisibilityStatus;ShellNotificationVisibilityReason=$shellVisibilityReason
     NotificationActivation=$activationRecord;NotificationDismissal=$dismissalRecord;NotificationPersistence=$persistenceRecord;NotificationActionSequence=$secondActionSequenceRecord
     SecondNaturalNotification=$secondNotificationRecord;SecondNotificationPersistence=$secondPersistenceRecord
@@ -862,8 +883,8 @@ function Save-Result([string]$FinalStatus, [string]$FinalReason) {
     AssertionCounts=[pscustomobject]@{Total=$assertions.Count;Passed=@($assertions|Where-Object{$_.Passed}).Count;NotTested=@($assertions|Where-Object{-not$_.Passed}).Count}
     Screenshots=@(@($desktopScreenshotPath,$shellNotificationScreenshotPath,$breakScreenshotPath,$activationDesktopScreenshotPath,$secondBreakScreenshotPath,$secondDesktopScreenshotPath,$secondShellNotificationScreenshotPath,$postDismissalScreenshotPath) + @($oobeRecord.Screenshots) + @($closeToTrayDiagnostic.DialogScreenshot) | Where-Object { $_ })
     LogFile=$logPath
-    Cleanup=[pscustomobject]@{CandidateProcessStopped=$candidateStopped;AppDataRemoved=$dataRemoved;Errors=@($cleanupErrors)}
-    Limitations=if($ServerRdpSession){@('Windows Server 2025 x64 interactive localhost-RDP session; this is not Windows 11.','The exact x64 candidate ran natively on x64; no architecture emulation was used.','ENV-009 aggregate status remains BLOCKED because audio and physical audibility were not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer or updater was exercised.')}elseif($ServerConsoleSession){@('Windows Server 2025 x64 interactive active Console session with a temporary standard user; this is not Windows 11.','The exact x64 candidate ran natively on AMD64 x64; no architecture emulation was used.','ENV-009 aggregate status remains BLOCKED because notification audio and physical audibility were not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer or updater was exercised.')}elseif($ServerConsoleOwnerSession){@('Windows Server 2025 x64 interactive active Console session owned by the current GitHub-hosted runner account; this is not Windows 11.','The exact x64 candidate ran natively on AMD64 x64; no architecture emulation was used.','This owner-matched Shell probe is separate from the temporary-standard-user result. ENV-009 aggregate status remains BLOCKED unless the original Shell and audio criteria are met.','The standalone candidate was launched; no installer or updater was exercised.')}else{@('Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.','ENV-009 aggregate status remains BLOCKED because audio was not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer, updater, or physical speaker path was exercised.')}
+    Cleanup=[pscustomobject]@{CandidateProcessStopped=$candidateStopped;AppDataRemoved=$dataRemoved;OriginalAppDataMoved=$false;Errors=@($cleanupErrors)}
+    Limitations=if($PersonalWindows11X64Session){@('The test runs in the current interactive Windows 11 x64 session only after explicit authorization and a non-administrator token.','The harness proceeds only if the Eye Break Reminder app-data directory is absent; it never moves, copies, or edits existing settings/history. A terminated test may leave disposable test data in that previously empty profile.','A real Shell notification briefly appears and is activated/dismissed; Windows may retain up to two notification-history entries. Use an isolated guest if that history change is unacceptable.','The candidate requests NIIF_NOSOUND for Shell notifications; audible alarm playback is exercised separately by the REG-008 harness.','Screenshots are cropped to candidate or Shell notification windows; no full desktop screenshot is saved.')}elseif($ServerRdpSession){@('Windows Server 2025 x64 interactive localhost-RDP session; this is not Windows 11.','The exact x64 candidate ran natively on x64; no architecture emulation was used.','ENV-009 aggregate status remains BLOCKED because audio and physical audibility were not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer or updater was exercised.')}elseif($ServerConsoleSession){@('Windows Server 2025 x64 interactive active Console session with a temporary standard user; this is not Windows 11.','The exact x64 candidate ran natively on AMD64 x64; no architecture emulation was used.','ENV-009 aggregate status remains BLOCKED because notification audio and physical audibility were not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer or updater was exercised.')}elseif($ServerConsoleOwnerSession){@('Windows Server 2025 x64 interactive active Console session owned by the current GitHub-hosted runner account; this is not Windows 11.','The exact x64 candidate ran natively on AMD64 x64; no architecture emulation was used.','This owner-matched Shell probe is separate from the temporary-standard-user result. ENV-009 aggregate status remains BLOCKED unless the original Shell and audio criteria are met.','The standalone candidate was launched; no installer or updater was exercised.')}else{@('Windows 11 ARM64 host; exact x64 candidate ran under emulation, not native x64.','ENV-009 aggregate status remains BLOCKED because audio was not verified; notification visibility is tracked independently.','The standalone candidate was launched; no installer, updater, or physical speaker path was exercised.')}
     ObservedUtc=[DateTime]::UtcNow.ToString('o')
   }
   $result | ConvertTo-Json -Depth 14 | Set-Content -LiteralPath $resultPath -Encoding utf8
@@ -994,17 +1015,48 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   Add-Type -AssemblyName UIAutomationClient -ErrorAction Stop
   Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
 
-  $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+  if ($PersonalWindows11X64Session) {
+    $isElevated = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isElevated) { throw 'BLOCKED: personal-desktop mode must run with a standard, non-administrator token. No candidate or test data was started.' }
+    $osVersionKey = Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop
+    $osProductOptions = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\ProductOptions' -ErrorAction Stop
+    $osBuildNumber = [int]$osVersionKey.CurrentBuildNumber
+    $osInstallationType = [string]$osVersionKey.InstallationType
+    $osProductType = [string]$osProductOptions.ProductType
+    $osIsWindows11 = ($osBuildNumber -ge 22000 -and $osInstallationType -ceq 'Client' -and $osProductType -ceq 'WinNT')
+    $osCaption = if ($osIsWindows11) { 'Windows 11' } else { [string]$osVersionKey.ProductName }
+    $osVersion = "10.0.$osBuildNumber.$([int]$osVersionKey.UBR)"
+    $os = [pscustomobject]@{Caption=$osCaption;Version=$osVersion;BuildNumber=[string]$osBuildNumber;ProductName=[string]$osVersionKey.ProductName;InstallationType=$osInstallationType;ProductType=$osProductType;VersionSource='Read-only Windows version/product registry keys'}
+  } else {
+    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+  }
   $osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
   $processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
   $nativeCpuArchitecture = [EBR_SHELL_NOTIFY_NATIVE]::NativeArchitecture()
   $nativeArchitectureName = switch ($nativeCpuArchitecture) { 9 { 'AMD64' } 12 { 'ARM64' } default { "Unknown ($nativeCpuArchitecture)" } }
-  $osRecord = [pscustomobject]@{Caption=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;OSArchitecture=$osArchitecture;ProcessArchitecture=$processArchitecture;NativeProcessorArchitectureCode=$nativeCpuArchitecture;NativeProcessorArchitecture=$nativeArchitectureName}
+  $osRecord = [pscustomobject]@{Caption=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;RegistryProductName=$os.ProductName;InstallationType=$os.InstallationType;ProductType=$os.ProductType;VersionSource=$os.VersionSource;OSArchitecture=$osArchitecture;ProcessArchitecture=$processArchitecture;NativeProcessorArchitectureCode=$nativeCpuArchitecture;NativeProcessorArchitecture=$nativeArchitectureName}
   $currentProcess = Get-Process -Id $PID -ErrorAction Stop
   $sessionId = $currentProcess.SessionId
   $currentSessionName = [string]$env:SESSIONNAME
   $currentUserIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-  if ($ServerConsoleSession) {
+  if ($PersonalWindows11X64Session) {
+    $processorArchitectureCodes = @($nativeCpuArchitecture)
+    $osValid = ($os.Caption -match 'Windows 11' -and $os.Caption -notmatch 'Server' -and $osArchitecture -eq 'X64' -and $processArchitecture -eq 'X64' -and $nativeCpuArchitecture -eq 9 -and 9 -in $processorArchitectureCodes)
+    $processWindowStation = [EBR_SHELL_NOTIFY_NATIVE]::ProcessWindowStationName()
+    $threadDesktop = [EBR_SHELL_NOTIFY_NATIVE]::ThreadDesktopName()
+    $inputDesktop = [EBR_SHELL_NOTIFY_NATIVE]::InputDesktopName()
+    $desktopValid = ($processWindowStation -ceq 'WinSta0' -and $threadDesktop -ceq 'Default' -and $inputDesktop -ceq 'Default')
+    $taskbar = [EBR_SHELL_NOTIFY_NATIVE]::TaskbarWindow()
+    $taskbarPid = if ($taskbar -ne [IntPtr]::Zero) { [EBR_SHELL_NOTIFY_NATIVE]::OwnerProcessId($taskbar) } else { 0 }
+    $taskbarProcess = if ($taskbarPid -gt 0) { Get-Process -Id $taskbarPid -ErrorAction SilentlyContinue } else { $null }
+    $explorer = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId })
+    $shellValid = ($taskbar -ne [IntPtr]::Zero -and $taskbarProcess -and $taskbarProcess.ProcessName -ieq 'explorer' -and $taskbarProcess.SessionId -eq $sessionId -and $explorer.Count -gt 0)
+    $processWindowStationValid = ($osValid -and $desktopValid -and $shellValid -and [Environment]::UserInteractive)
+    $personalWindows11X64Context = $processWindowStationValid
+    $personalDesktopEvidence = [pscustomobject]@{Mode='Explicitly authorized current Windows 11 x64 desktop';OS=$osRecord;ProcessorArchitectureCodes=$processorArchitectureCodes;SessionId=$sessionId;SessionName=$currentSessionName;User=$currentUserIdentity;UserInteractive=[Environment]::UserInteractive;ProcessWindowStation=$processWindowStation;ThreadDesktop=$threadDesktop;InputDesktop=$inputDesktop;ExplorerProcesses=@($explorer|Select-Object Id,SessionId,ProcessName);TaskbarHandle=if($taskbar-ne[IntPtr]::Zero){'0x{0:X}'-f$taskbar.ToInt64()}else{$null};TaskbarProcessId=$taskbarPid;Checks=[pscustomobject]@{NativeWindows11X64=$osValid;Desktop=$desktopValid;InteractiveShell=$shellValid;Interactive=[Environment]::UserInteractive}}
+    Add-Assertion 'Explicit personal test mode is the current native Windows 11 x64 desktop with same-session Explorer and Default input desktop' $processWindowStationValid $personalDesktopEvidence
+    if (-not $processWindowStationValid) { throw 'BLOCKED: personal mode requires a real interactive native Windows 11 x64 desktop with Explorer and the Default input desktop.' }
+  } elseif ($ServerConsoleSession) {
     if ($ExpectedSessionId -le 0 -or $ExpectedSessionName -ine 'Console' -or [string]::IsNullOrWhiteSpace($ExpectedUser)) {
       throw 'BLOCKED: Server Console mode requires the expected active Console session ID and exact temporary standard-user identity.'
     }
@@ -1096,7 +1148,7 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
     Add-Assertion 'Windows runner has a genuinely interactive user session' $true ([pscustomobject]@{SessionId=$sessionId;UserInteractive=[Environment]::UserInteractive;RunnerImage=$env:ImageOS})
   }
   if (-not [Environment]::UserInteractive) { throw 'BLOCKED: no genuinely interactive Windows user session is available.' }
-  $executionMode = if ($ServerRdpSession) { 'native x64 on Windows Server 2025 in a temporary interactive localhost-RDP session' } elseif ($ServerConsoleSession) { 'native AMD64 x64 on Windows Server 2025 in the verified active standard-user Console session' } elseif ($ServerConsoleOwnerSession) { 'native AMD64 x64 on Windows Server 2025 in an owner-matched active Console session' } else { 'x64 emulation on native Windows 11 ARM64' }
+  $executionMode = if ($PersonalWindows11X64Session) { 'native AMD64 x64 on the explicitly authorized current Windows 11 desktop' } elseif ($ServerRdpSession) { 'native x64 on Windows Server 2025 in a temporary interactive localhost-RDP session' } elseif ($ServerConsoleSession) { 'native AMD64 x64 on Windows Server 2025 in the verified active standard-user Console session' } elseif ($ServerConsoleOwnerSession) { 'native AMD64 x64 on Windows Server 2025 in an owner-matched active Console session' } else { 'x64 emulation on native Windows 11 ARM64' }
   $taskbar = [EBR_SHELL_NOTIFY_NATIVE]::TaskbarWindow()
   $explorer = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId })
   $shellAvailable = ($taskbar -ne [IntPtr]::Zero -and $explorer.Count -gt 0)
@@ -1110,9 +1162,11 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   # test HWND, icon registration, and icon are removed immediately; this does not
   # emit a notification and is not ENV-009 acceptance evidence.
   $shellApiControl=$null
-  try{$shellApiControl=[EBR_SHELL_NOTIFY_NATIVE]::ProbeTrayRegistration()}catch{$shellApiControl=[pscustomobject]@{Error=$_.Exception.GetType().FullName+': '+$_.Exception.Message;InteractiveShellPresent=$shellAvailable;AddSucceeded=$false;DeleteAttempted=$false;WindowDestroyed=$false}}
-  $shellRecord|Add-Member -MemberType NoteProperty -Name TransientTrayRegistrationControl -Value $shellApiControl -Force
-  Add-Event 'Capability-only transient Windows Shell tray registration control (not candidate acceptance)' 'INFO' $shellApiControl
+  if(-not$PersonalWindows11X64Session){
+    try{$shellApiControl=[EBR_SHELL_NOTIFY_NATIVE]::ProbeTrayRegistration()}catch{$shellApiControl=[pscustomobject]@{Error=$_.Exception.GetType().FullName+': '+$_.Exception.Message;InteractiveShellPresent=$shellAvailable;AddSucceeded=$false;DeleteAttempted=$false;WindowDestroyed=$false}}
+    $shellRecord|Add-Member -MemberType NoteProperty -Name TransientTrayRegistrationControl -Value $shellApiControl -Force
+    Add-Event 'Capability-only transient Windows Shell tray registration control (not candidate acceptance)' 'INFO' $shellApiControl
+  }else{Add-Event 'Omit the independent transient Shell registration inventory in the owner desktop route' 'INFO' ([pscustomobject]@{Performed=$false;Reason='The targeted personal desktop route proceeds directly to the actual candidate Shell notification.'})}
 
   if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) { throw 'BLOCKED: exact standalone candidate is missing.' }
   $candidateInfo = Get-Item -LiteralPath $ExecutablePath -ErrorAction Stop
@@ -1125,10 +1179,9 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   $candidateIdentity = [pscustomobject]@{ArtifactId=$candidateArtifactId;FinalizerRunId=$candidateRunId;SourceCommit=$candidateSourceCommit;SHA256=$actualSha256;Bytes=$candidateInfo.Length;ProductVersion=$candidateInfo.VersionInfo.ProductVersion;PEMachine=('0x{0:X4}'-f$peMachine);Execution=$executionMode}
   Add-Assertion 'Standalone executable matches authoritative production artifact 14695418078' $true $candidateIdentity
 
-  if ($dataExistedBefore) { throw "BLOCKED: fresh runner profile requirement failed; existing EyeBreakReminder data is present at '$dataDirectory'." }
   if (-not $dataDirectory.StartsWith($localAppDataRoot,[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($dataDirectory)-cne'EyeBreakReminder') { throw 'BLOCKED: app-data cleanup target is not the exact LocalAppData\EyeBreakReminder folder.' }
   if (@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $sessionId }).Count -gt 0) { throw 'BLOCKED: a candidate process already exists in this runner session; refusing to interact with it.' }
-  Add-Assertion 'Fresh runner profile has no pre-existing EyeBreakReminder app data' $true ([pscustomobject]@{Path=$dataDirectory;AbsentBeforeTest=$true})
+  if ($dataExistedBefore) { throw "BLOCKED: fresh runner profile requirement failed; existing EyeBreakReminder data is present at '$dataDirectory'. The harness will not move or modify it." }
 
   $notificationState=0
   $notificationStateHResult=[EBR_SHELL_NOTIFY_NATIVE]::NotificationState([ref]$notificationState)
@@ -1157,6 +1210,17 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
     $notificationEligibilityWaitRecord=[pscustomobject]@{Requested=$false;Status='NOT TESTED';InitialState=$shellStateRecord;FinalState=$shellStateRecord;WaitedSeconds=0;MaximumWaitSeconds=0;CandidateLaunchedBeforeWaitEnded=$false;FailureReason='Owner-matched runner is in QUNS_QUIET_TIME; no wait was requested.'}
   }
 
+  if($personalWindows11X64Context-and-not$shellStateRecord.AcceptsNotifications){
+    Add-Event 'Owner-desktop notification test requires Windows to accept notifications before profile isolation' 'NOT TESTED' ([pscustomobject]@{NotificationState=$shellStateRecord;CandidateLaunched=$false;ProfileMoved=$false;Reason='No Focus Assist, quiet-time, or notification settings were changed.'})
+    throw 'NOT TESTED: Windows is not accepting notifications in the current session; no candidate was launched and app data was not moved.'
+  }
+  if($personalWindows11X64Context){
+    $personalProfileIsolation = Start-EbrPersonalProfileIsolation $EvidenceDirectory
+    $dataExistedBefore = $false
+    Add-Event 'Require an empty dedicated profile and leave existing app data untouched' 'PASS' ([pscustomobject]@{OriginalProfileExisted=$personalProfileIsolation.OriginalExisted;OriginalDataMoved=$personalProfileIsolation.ProfileDataMoved;TestProfilePath=$dataDirectory})
+  }
+  Add-Assertion 'Fresh runner profile has no pre-existing EyeBreakReminder app data after safe isolation' $true ([pscustomobject]@{Path=$dataDirectory;AbsentBeforeTest=$true;PersonalProfileIsolated=$personalWindows11X64Context})
+
   [void][IO.Directory]::CreateDirectory($dataDirectory)
   $dataCreatedByHarness=$true
   $settingsPath=Join-Path $dataDirectory 'settings.ini'
@@ -1164,9 +1228,13 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
   [IO.File]::WriteAllText($settingsPath,$settingsText,[Text.UTF8Encoding]::new($false))
   Add-Event 'Seed the fresh test profile for a real one-minute hidden-tray reminder' 'PASS' ([pscustomobject]@{SettingsPath=$settingsPath;SettingsSHA256=(Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash.ToLowerInvariant();WorkMinutes=1;BreakSeconds=20;AutoStart=$true;Notifications=$true;Alarm=$false;Tray=$true;AutoUpdateChecks=$false;TestDataOnly=$true})
 
+  $preLaunchCandidateHash = (Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+  if ($preLaunchCandidateHash -cne $expectedSha256) { throw "Candidate hash changed immediately before ENV-009 launch: $preLaunchCandidateHash" }
+  Add-Event 'Candidate SHA-256 is reverified immediately before ENV-009 launch' 'PASS' ([pscustomobject]@{ArtifactId=$candidateArtifactId;SHA256=$preLaunchCandidateHash})
+
   $timerStartUtc=[DateTime]::UtcNow
   $candidateProcess=Start-Process -FilePath $ExecutablePath -WorkingDirectory (Split-Path -Parent $ExecutablePath) -PassThru -ErrorAction Stop
-  $candidatePid=$candidateProcess.Id;$candidateOwned=$true
+  $candidatePid=$candidateProcess.Id;$candidateOwned=$true;$candidateStartTimeUtcTicks=$candidateProcess.StartTime.ToUniversalTime().Ticks
   $candidateSessionId=(Get-Process -Id $candidatePid -ErrorAction Stop).SessionId
   $candidateSessionValid=($candidateSessionId-eq$sessionId)
   Add-Assertion 'Exact candidate process starts inside the verified interactive test session' $candidateSessionValid ([pscustomobject]@{CandidatePid=$candidatePid;CandidateSessionId=$candidateSessionId;ExpectedSessionId=$sessionId;Execution=$executionMode;User=$currentUserIdentity})
@@ -1343,20 +1411,35 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
     try{
       $owned=Get-Process -Id $candidatePid -ErrorAction SilentlyContinue
       if($owned){
-        $ownedPath='';try{$ownedPath=[IO.Path]::GetFullPath($owned.Path)}catch{}
-        if($ownedPath-ieq$ExecutablePath){
+        $ownedPath=[IO.Path]::GetFullPath($owned.Path)
+        $ownedStartTimeUtcTicks=$owned.StartTime.ToUniversalTime().Ticks
+        if($ownedPath-ieq$ExecutablePath -and $owned.SessionId-eq$candidateSessionId -and $ownedStartTimeUtcTicks-eq$candidateStartTimeUtcTicks){
           if($candidateMainWindow-ne[IntPtr]::Zero){[void][EBR_SHELL_NOTIFY_NATIVE]::ExitOwnedApp($candidateMainWindow)}
-          if(-not$owned.WaitForExit(5000)){Stop-Process -Id $candidatePid -Force -ErrorAction Stop;$owned.WaitForExit(5000)|Out-Null}
-          $candidateStopped=$true
-          Add-Event 'Stop only the exact standalone candidate process started by this harness' 'PASS' ([pscustomobject]@{ProcessId=$candidatePid;Path=$ownedPath})
+          if(-not$owned.WaitForExit(5000)){
+            $ownedAgain=Get-Process -Id $candidatePid -ErrorAction SilentlyContinue
+            if(-not$ownedAgain){$candidateStopped=$true}
+            else{
+              $pathAgain=[IO.Path]::GetFullPath($ownedAgain.Path)
+              $startAgain=$ownedAgain.StartTime.ToUniversalTime().Ticks
+              if($pathAgain-cne$ExecutablePath-or$ownedAgain.SessionId-ne$candidateSessionId-or$startAgain-ne$candidateStartTimeUtcTicks){throw 'Candidate process identity changed before forced cleanup; it was not stopped.'}
+              Stop-Process -Id $candidatePid -Force -ErrorAction Stop
+              $candidateStopped=[bool]$ownedAgain.WaitForExit(5000)
+            }
+          }else{$candidateStopped=$true}
+          if(-not$candidateStopped){throw 'Candidate process did not exit after graceful and exact-identity forced cleanup; preserving its data.'}
+          Add-Event 'Stop only the exact standalone candidate process started by this harness' 'PASS' ([pscustomobject]@{ProcessId=$candidatePid;Path=$ownedPath;SessionId=$candidateSessionId;StartTimeUtcTicks=$candidateStartTimeUtcTicks;Exited=$true})
         }else{$cleanupErrors.Add("Candidate PID $candidatePid no longer resolves to the exact candidate; it was not stopped.")}
       }else{$candidateStopped=$true}
     }catch{$cleanupErrors.Add("Candidate process cleanup: $($_.Exception.Message)")}
   }
   if($dataCreatedByHarness-and-not$dataExistedBefore-and(Test-Path -LiteralPath $dataDirectory)){
     try{
+      if(-not$candidateStopped-and$candidateOwned){throw 'Candidate exit was not confirmed; preserving its app-data directory.'}
+      $otherProcesses=@(Get-Process -Name EyeBreakReminder -ErrorAction SilentlyContinue)
+      if($otherProcesses.Count-gt0){throw ('Eye Break Reminder process(es) are still present; preserving app data. '+(@($otherProcesses|ForEach-Object{"PID $($_.Id), session $($_.SessionId)"})-join'; '))}
       $resolvedData=[IO.Path]::GetFullPath($dataDirectory)
       if(-not$resolvedData.StartsWith($localAppDataRoot,[StringComparison]::OrdinalIgnoreCase)-or[IO.Path]::GetFileName($resolvedData)-cne'EyeBreakReminder'){throw "Refusing cleanup outside the exact test profile folder: $resolvedData"}
+      if(-not(Test-Path -LiteralPath $resolvedData -PathType Container)){throw 'Fresh test data path is no longer a directory; preserving it.'}
       if(([IO.File]::GetAttributes($resolvedData)-band[IO.FileAttributes]::ReparsePoint)-ne0){throw 'Refusing to recurse into an app-data reparse point.'}
       $reparseChildren=@(Get-ChildItem -LiteralPath $resolvedData -Force -Recurse -ErrorAction Stop|Where-Object{($_.Attributes-band[IO.FileAttributes]::ReparsePoint)-ne0})
       if($reparseChildren.Count){throw 'Refusing to recurse into a reparse point created inside the app-data test folder.'}
@@ -1366,10 +1449,15 @@ public static class EBR_SHELL_NOTIFY_NATIVE {
       Add-Event 'Remove only the fresh app-data directory created by this harness' 'PASS' ([pscustomobject]@{Path=$resolvedData;Removed=$true})
     }catch{$cleanupErrors.Add("App-data cleanup: $($_.Exception.Message)")}
   }
+  if($personalProfileIsolation){
+    try{$profileResult=Complete-EbrPersonalProfileIsolation $personalProfileIsolation $candidatePid $EvidenceDirectory;Add-Event 'Confirm the existing app-data profile was never moved and test data is absent' 'PASS' $profileResult}
+    catch{$cleanupErrors.Add("Fresh-profile cleanup verification: $($_.Exception.Message)")}
+  }
   if($scriptTranscriptStarted){try{Stop-Transcript|Out-Null}catch{$cleanupErrors.Add("Transcript close: $($_.Exception.Message)")}}
 }
 
 if($status-eq'PASS'){$status='BLOCKED';$reason='ENV-009 is a grouped audio and Shell requirement; notification visibility alone cannot mark the aggregate PASS.'}
+if($personalProfileIsolation-and-not$personalProfileIsolation.Completed){$status='FAIL';$reason='Fresh-profile cleanup verification did not complete. '+($cleanupErrors -join ' ')}
 if($cleanupErrors.Count-gt0-and$status-eq'PASS'){$status='BLOCKED';$reason+=' Cleanup did not complete cleanly.'}
 try{
   $result=Save-Result $status $reason
