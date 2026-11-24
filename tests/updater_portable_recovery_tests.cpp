@@ -127,6 +127,20 @@ bool hasRunOnceRecovery() {
     return result == ERROR_SUCCESS;
 }
 
+bool emulateWindowsRunOncePostCommandRemovalForTest(const eye::updates::Transaction&transaction) {
+    // This test calls runRecovery directly instead of allowing Windows to
+    // dispatch RunOnce. Remove only the exact owned value to model the
+    // documented post-command cleanup; this is not automatic-invocation proof.
+    if (!eye::updates::recoveryRegistrationMatches(transaction)) return false;
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce", 0,
+        KEY_SET_VALUE, &key) != ERROR_SUCCESS) return false;
+    const LONG result = RegDeleteValueW(key, L"!EyeBreakReminderUpdateRecovery");
+    RegCloseKey(key);
+    return result == ERROR_SUCCESS;
+}
+
 bool assertProfilePreserved(const std::wstring& dataDirectory, const std::string& historyBefore) {
     std::string settings, history;
     const bool readSettings = readFile(dataDirectory + L"\\settings.ini", settings);
@@ -333,7 +347,7 @@ bool runCase(const TestCase& test, const std::wstring& baseline, const std::wstr
                 "restore the disposable portable directory ACL before recovery");
 
     if (!test.suppressUpdatedConfirmation) {
-        const int recoveryExit = eye::updates::runRecovery(transactionPath);
+        const int recoveryExit = eye::updates::runRecovery(transactionPath, transaction.stagingDirectory + L"\\coordinator.exe");
         ok &= check(recoveryExit == 0,
                     "actual coordinator recovery restores the previous portable executable after the fault clears");
     }
@@ -342,10 +356,17 @@ bool runCase(const TestCase& test, const std::wstring& baseline, const std::wstr
     ok &= check(eye::updates::targetApplicationRunning(transaction),
                 "the recovered previous portable application launches and confirms startup");
     ok &= assertProfilePreserved(data, history);
-    ok &= check(!hasRunOnceRecovery(),
-                "successful recovery clears only the update recovery registration");
+    if (test.suppressUpdatedConfirmation) {
+        ok &= check(!hasRunOnceRecovery(),
+                    "the ordinary coordinator clears its owned RunOnce value after in-process rollback");
+    } else {
+        ok &= check(hasRunOnceRecovery() && eye::updates::recoveryRegistrationMatches(transaction),
+                    "manual recovery leaves the exact !RunOnce value for Windows post-command handling");
+        ok &= check(emulateWindowsRunOncePostCommandRemovalForTest(transaction) && !hasRunOnceRecovery(),
+                    "test harness models post-command RunOnce removal without claiming an automatic sign-in invocation");
+    }
 
-    ok &= check(eye::updates::stopRunningApplication(),
+    ok &= check(eye::updates::stopRunningApplication(transaction),
                 "close only the recovered disposable portable application gracefully");
     for (int attempt = 0; attempt < 100 && eye::updates::targetApplicationRunning(transaction); ++attempt)
         Sleep(50);

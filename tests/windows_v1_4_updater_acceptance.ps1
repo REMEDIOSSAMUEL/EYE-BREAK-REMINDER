@@ -8,7 +8,9 @@ param(
   [ValidateSet('All','UpdatePreferences','ActiveBreakDeferral','DialogThemes')][string]$Scenario='All'
 )
 $ErrorActionPreference='Stop'
-if($env:GITHUB_ACTIONS -ne 'true'){throw 'Updater installation acceptance is restricted to a disposable GitHub Actions Windows runner.'}
+if($env:GITHUB_ACTIONS -ne 'true'-or$env:RUNNER_OS -ne 'Windows'-or$env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Updater installation acceptance is restricted to a disposable GitHub-hosted Windows runner.'}
+if([Runtime.InteropServices.RuntimeInformation]::OSArchitecture-ne[Runtime.InteropServices.Architecture]::X64){throw 'Updater installation acceptance requires an x64 Windows runner.'}
+if([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)){throw 'RUNNER_TEMP is unavailable; refusing to create disposable test state.'}
 $runnerTemp=[IO.Path]::GetFullPath($env:RUNNER_TEMP)
 $scriptRoot=[IO.Path]::GetFullPath((Join-Path $runnerTemp 'EBR-v1.4-Updater-Acceptance'))
 $installDir=Join-Path $scriptRoot 'install'
@@ -18,6 +20,9 @@ $allowedEvidence=[IO.Path]::GetFullPath((Join-Path (Get-Location) 'build/v1.4.0-
 if($EvidenceDirectory -ine $allowedEvidence){throw "Evidence path must be the isolated build folder: $allowedEvidence"}
 foreach($file in @($BaselineInstaller,$BaselineExecutable,$UpdateInstaller,$UpdateExecutable,$FailingInstaller)){if(-not(Test-Path -LiteralPath $file -PathType Leaf)){throw "Required isolated test artifact is missing: $file"}}
 if((Test-Path -LiteralPath $scriptRoot) -or (Test-Path -LiteralPath $dataDir)){throw 'Refusing to reuse a runner test folder or Windows profile data directory.'}
+$registryRoot=[Microsoft.Win32.Registry]::CurrentUser
+foreach($subKey in @('Software\EyeBreakReminder','Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder')){$existing=$registryRoot.OpenSubKey($subKey,$false);if($null-ne$existing){$existing.Dispose();throw "Refusing to replace pre-existing Eye Break Reminder Registry key: HKCU\$subKey"}}
+foreach($check in @(@{Path='Software\Microsoft\Windows\CurrentVersion\Run';Name='EyeBreakReminder'},@{Path='Software\Microsoft\Windows\CurrentVersion\RunOnce';Name='!EyeBreakReminderUpdateRecovery'})){$key=$registryRoot.OpenSubKey($check.Path,$false);if($null-eq$key){continue};try{if($key.GetValueNames()-contains$check.Name){throw "Refusing to replace pre-existing HKCU\$($check.Path)\$($check.Name)."}}finally{$key.Dispose()}}
 [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
 [void][IO.Directory]::CreateDirectory($scriptRoot)
 $script:events=[Collections.Generic.List[object]]::new();$script:assertions=0
@@ -382,8 +387,9 @@ function Run-InterruptedCleanRecovery(){
   while($watch.Elapsed.TotalSeconds-lt90-and-not$stage){foreach($candidate in @(Get-ChildItem -LiteralPath $updatesRoot -Directory -ErrorAction SilentlyContinue)){ $statePath=Join-Path $candidate.FullName 'transaction-state.ini';$state=if(Test-Path -LiteralPath $statePath){Get-Content -LiteralPath $statePath -Raw}else{''};if($state-match'(?m)^phase=cleaning\r?$'-and-not(Test-Path -LiteralPath $settingsPath)-and-not(Test-Path -LiteralPath (Join-Path $dataDir 'timer.dat'))){$stage=$candidate.FullName;break} };if(-not$stage){Start-Sleep -Milliseconds 50}}
   Assert ([bool]$stage) 'confirmed clean transaction reaches the durable cleaning phase before recovery' $stage
   Assert ((Test-Path -LiteralPath (Join-Path $dataDir 'history.dat'))-and((Get-FileHash -LiteralPath (Join-Path $dataDir 'history.dat') -Algorithm SHA256).Hash.ToLowerInvariant()-eq$beforeHistory)) 'clean transaction has not removed unselected history before interruption'
-  $transactionPath=Join-Path $stage 'transaction.ini';$coordinatorPath=Join-Path $stage 'coordinator.exe';$registered=(Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction Stop).'!EyeBreakReminderUpdateRecovery';$expected='"'+$coordinatorPath+'" --update-recover "'+$transactionPath+'"'
-  Assert ($registered-ceq$expected) 'RunOnce recovery registration points only to the staged coordinator and transaction' $registered
+  $transactionPath=Join-Path $stage 'transaction.ini';$coordinatorPath=Join-Path $stage 'coordinator.exe';$runOnceHandle=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\RunOnce',$false);if($null-eq$runOnceHandle){throw 'The disposable runner has no RunOnce key for the pending recovery transaction.'};try{if($runOnceHandle.GetValueNames()-notcontains'!EyeBreakReminderUpdateRecovery'){throw 'The coordinator did not register the expected RunOnce recovery value.'};$registeredKind=$runOnceHandle.GetValueKind('!EyeBreakReminderUpdateRecovery');$registered=$runOnceHandle.GetValue('!EyeBreakReminderUpdateRecovery',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)}finally{$runOnceHandle.Dispose()}
+  $quotedCoordinator='"'+$coordinatorPath+'"';$compactCommand=$quotedCoordinator+' --update-recover';$fullCommand=$compactCommand+' "'+$transactionPath+'"';$expected=if($fullCommand.Length-le260){$fullCommand}elseif($compactCommand.Length-le260){$compactCommand}else{throw 'The recovery command cannot fit within the documented RunOnce command-line limit.'}
+  Assert ($registeredKind-eq[Microsoft.Win32.RegistryValueKind]::String-and$registered-ceq$expected-and$registered.Length-le260) 'RunOnce recovery registration is the exact bounded REG_SZ staged-coordinator command' ([pscustomobject]@{Command=$registered;Kind=$registeredKind;Length=$registered.Length;Compact=($expected-ceq$compactCommand)})
   Assert ((Get-Item -LiteralPath (Join-Path $installDir 'EyeBreakReminder.exe')).VersionInfo.ProductVersion-eq'1.4.1') 'new version is installed before the simulated interruption'
   $coordinator=Get-CimInstance Win32_Process -Filter "Name='coordinator.exe'"|Where-Object{$_.ExecutablePath-ieq$coordinatorPath}|Select-Object -First 1
   Assert ([bool]$coordinator) 'the isolated update coordinator is waiting at the clean-recovery pause'
@@ -393,7 +399,8 @@ function Run-InterruptedCleanRecovery(){
   Assert (-not(Test-Path -LiteralPath $settingsPath)-and-not(Test-Path -LiteralPath (Join-Path $dataDir 'timer.dat'))) 'interruption fixture reaches the destructive settings boundary before recovery'
   Remove-Item Env:EBR_GUI_TEST_UPDATE_ASSET_PATH,Env:EBR_GUI_TEST_HOLD_AFTER_CLEAN_MS -ErrorAction SilentlyContinue
   $priorConfirmTimeout=$env:EBR_GUI_TEST_CONFIRM_TIMEOUT_MS;$env:EBR_GUI_TEST_CONFIRM_TIMEOUT_MS='8000'
-  try{$recovery=Start-Process -FilePath $coordinatorPath -ArgumentList ('--update-recover "'+$transactionPath+'"') -PassThru}
+  $recoveryArguments=$registered.Substring($quotedCoordinator.Length).TrimStart()
+  try{$recovery=Start-Process -FilePath $coordinatorPath -ArgumentList $recoveryArguments -PassThru}
   finally{if($null-eq$priorConfirmTimeout){Remove-Item Env:EBR_GUI_TEST_CONFIRM_TIMEOUT_MS -ErrorAction SilentlyContinue}else{$env:EBR_GUI_TEST_CONFIRM_TIMEOUT_MS=$priorConfirmTimeout}}
   if(-not$recovery.WaitForExit(60000)){
     $dialogs=[Collections.Generic.List[string]]::new();foreach($hwnd in [EBR_UPD_NATIVE]::Windows($recovery.Id)){ $root=Get-Root $hwnd;if($root){$dialogs.Add((Get-Names $root)-join ' | ')} }
@@ -409,7 +416,10 @@ function Run-InterruptedCleanRecovery(){
   Assert ((Get-Content -LiteralPath $settingsPath -Raw)-match'(?m)^workMinutes=37$'-and(Get-Content -LiteralPath $settingsPath -Raw)-match'(?m)^startup=1$') 'recovery restores the previous settings and startup preference'
   Assert ((Get-Content -LiteralPath (Join-Path $dataDir 'history.dat') -Raw)-eq$script:historyText-and(Get-FileHash -LiteralPath (Join-Path $dataDir 'history.dat') -Algorithm SHA256).Hash.ToLowerInvariant()-eq$beforeHistory) 'recovery preserves history byte-for-byte'
   $restoredRun=Get-ItemPropertyValue -LiteralPath $runKey -Name 'EyeBreakReminder' -ErrorAction Stop;Assert ($restoredRun-ceq$startupCommand) 'recovery restores the prior Windows startup registration' $restoredRun
-  $remaining=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue;Assert (-not$remaining) 'successful recovery removes its one-time RunOnce registration'
+  $remaining=Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue
+  Assert ($remaining-ceq$registered) 'manual recovery leaves the exact !RunOnce value for Windows post-command handling' ([pscustomobject]@{Command=$remaining})
+  Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction Stop
+  Assert (-not(Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue)) 'disposable harness models only exact-value RunOnce deletion after automatic command execution'
   $restoredExe=[IO.Path]::GetFullPath((Join-Path $installDir 'EyeBreakReminder.exe'));$launchWatch=[Diagnostics.Stopwatch]::StartNew();$runningPid=0;$runningPath='';$runningWindow=[IntPtr]::Zero;$runningWindowClass=''
   while($launchWatch.Elapsed.TotalSeconds-lt20-and$runningPid-eq0){
     # FindWindow returns only the first desktop window with a class name. During transaction tests another app instance can
@@ -426,7 +436,8 @@ function Run-InterruptedCleanRecovery(){
   }
   $launchDetails=[pscustomobject]@{ElapsedSeconds=[Math]::Round($launchWatch.Elapsed.TotalSeconds,2);ExpectedPath=$restoredExe;ProcessId=$runningPid;ProcessPath=$runningPath;WindowHandle=('0x{0:X}' -f $runningWindow.ToInt64());WindowClass=$runningWindowClass;WindowTitle=$(if($runningWindow-ne[IntPtr]::Zero){[EBR_UPD_NATIVE]::Title($runningWindow)}else{$null});MatchingProcesses=@(Get-TestOwnedApplications|ForEach-Object{[pscustomobject]@{ProcessId=$_.Id;Path=$_.Path;MainWindowHandle=('0x{0:X}' -f $_.MainWindowHandle.ToInt64())}})}
   Assert ($runningPid-gt0-and$runningWindow-ne[IntPtr]::Zero) 'the restored previous version launched after durable recovery' $launchDetails
-  Stop-Application;$currentStartup=Get-ItemPropertyValue -LiteralPath $runKey -Name 'EyeBreakReminder' -ErrorAction SilentlyContinue;if($currentStartup-ceq$startupCommand){Remove-ItemProperty -LiteralPath $runKey -Name 'EyeBreakReminder' -ErrorAction Stop};Record 'Interrupted clean update and RunOnce recovery' 'PASS' ([pscustomobject]@{Phase='cleaning';RestoredVersion='1.4.0';SettingsRestored=$true;HistoryPreserved=$true;StartupRestored=$true;ComputerRebooted=$false})
+  $cleanupWatch=[Diagnostics.Stopwatch]::StartNew();while((Test-Path -LiteralPath $stage)-and$cleanupWatch.Elapsed.TotalSeconds-lt20){Start-Sleep -Milliseconds 200};Assert (-not(Test-Path -LiteralPath $stage)) 'restored app cleans the owned recovery stage after simulated OS RunOnce deletion' ([pscustomobject]@{ElapsedSeconds=[Math]::Round($cleanupWatch.Elapsed.TotalSeconds,2)})
+  Stop-Application;$currentStartup=Get-ItemPropertyValue -LiteralPath $runKey -Name 'EyeBreakReminder' -ErrorAction SilentlyContinue;if($currentStartup-ceq$startupCommand){Remove-ItemProperty -LiteralPath $runKey -Name 'EyeBreakReminder' -ErrorAction Stop};Record 'Interrupted clean update and RunOnce recovery' 'PASS' ([pscustomobject]@{Phase='cleaning';RestoredVersion='1.4.0';SettingsRestored=$true;HistoryPreserved=$true;StartupRestored=$true;ComputerRebooted=$false;AutomaticRunOnceInvocation=$false})
 }
 function Run-CancelAndHashFailure([bool]$Mismatch,[string]$ProgressScreenshotName='download-cancel-progress.png',[switch]$ReturnMetrics){
   Install-Baseline;Seed-Profile;New-ReleaseFixture $UpdateInstaller $UpdateExecutable

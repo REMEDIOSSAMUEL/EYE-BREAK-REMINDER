@@ -1,0 +1,200 @@
+name: Windows v1.4.0 restart-recovery process verification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-v1.4.0-restart-recovery.yml'
+      - 'src/app.cpp'
+      - 'src/update_coordinator.hpp'
+      - 'src/update_manifest.hpp'
+      - 'src/update_signature_win.hpp'
+      - 'tests/updater_windows_tests.cpp'
+      - 'tests/updater_portable_recovery_tests.cpp'
+      - 'tests/windows_restart_recovery_acceptance.ps1'
+      - 'tests/windows_update_failure_edges_acceptance.ps1'
+      - 'tests/windows_v1_4_updater_acceptance.ps1'
+      - 'tests/build_production_update_fixture.ps1'
+      - 'docs/V1.4.0_RESTART_RECOVERY_AND_RUNONCE_VERIFICATION.md'
+      - 'docs/V1.4.0_ACCEPTANCE_MATRIX.json'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  process-recovery:
+    name: Fresh-process recovery (${{ matrix.path_layout }} paths)
+    runs-on: windows-2025
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        path_layout: [Short, Long]
+    steps:
+      - name: Check out the focused recovery harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the immutable production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          run-id: 44875679345
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Verify artifact 14695418078 and every retained file
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifact = Invoke-RestMethod -Headers @{Authorization="Bearer $env:GH_TOKEN";Accept='application/vnd.github+json';'X-GitHub-Api-Version'='2022-11-28'} -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/actions/artifacts/14695418078"
+          if ([string]$artifact.id -cne '14695418078' -or [string]$artifact.workflow_run.id -cne '44875679345' -or $artifact.name -cne 'EyeBreakReminder-v1.4.0-production-candidate-44875679345' -or $artifact.expired) {
+            throw 'GitHub did not identify artifact 14695418078 as the unexpired candidate from finalization run 44875679345.'
+          }
+          $expected = [ordered]@{
+            'EyeBreakReminder.exe' = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+            'EyeBreakReminder-Setup-x64.exe' = 'a15fc525557603dbed1ef0dccb8d128e500dfee91c6416b478513de790dd5c9b'
+            'EyeBreakReminder-Portable-x64.zip' = 'a579b0e3cd7573f4214b0df4ff25dee99801735123658afd70e455886189c2be'
+            'EyeBreakReminder-Source.zip' = 'a915342af6e50122a2d511e4cb91eb036de9b4fbf21889d6ecfcb9de1c8c140d'
+            'EyeBreakReminder-SHA256.txt' = '5fc0ed3317c3e4e0ad1b57ffc2cef435031db8024d7a1ca024ff14d1b46a9538'
+            'EyeBreakReminder-UpdateManifest.json' = 'e599ff055613366133ba8a03bae3f7acff9ac383d24214cc0c620a7efbe9a682'
+            'EyeBreakReminder-UpdateManifest.sig' = '411372a2b5a1836968d60b6f1c3e3c7d21830df3c43d92728366653833f6b8c8'
+          }
+          $candidate = Join-Path $PWD 'production-candidate-artifact/final-candidate'
+          $files = @(Get-ChildItem -LiteralPath $candidate -Force)
+          if ($files.Count -ne $expected.Count -or @($files | Where-Object PSIsContainer).Count -ne 0) { throw 'Candidate artifact does not contain exactly seven files.' }
+          foreach ($name in $expected.Keys) {
+            $path = Join-Path $candidate $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate file missing: $name" }
+            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expected[$name]) { throw "Candidate SHA-256 mismatch: $name" }
+          }
+          if ((@($files | Sort-Object Name | Select-Object -ExpandProperty Name) -join "`n") -cne (@($expected.Keys | Sort-Object) -join "`n")) { throw 'Candidate file names differ from the authoritative set.' }
+          $verificationPath = Join-Path $PWD 'production-candidate-artifact/final-candidate-evidence/candidate-verification.json'
+          $verification = Get-Content -LiteralPath $verificationPath -Raw | ConvertFrom-Json
+          if ($verification.status -cne 'PASS' -or $verification.application -cne 'Eye Break Reminder' -or $verification.version -cne '1.4.0') { throw 'Candidate verification evidence does not match v1.4.0.' }
+          foreach ($name in $expected.Keys) {
+            $identity = $verification.release_files.PSObject.Properties[$name]
+            if (-not $identity -or [string]$identity.Value.sha256 -cne $expected[$name]) { throw "Candidate provenance mismatch: $name" }
+          }
+          "Artifact 14695418078 and all seven file hashes verified; application SHA-256 $($expected['EyeBreakReminder.exe'])." | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Install isolated test-fixture build tools
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+
+      - name: Install upstream NSIS 3.11
+        uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1
+        with:
+          version: '3.11'
+
+      - name: Record the MSYS2 tool directory
+        shell: msys2 {0}
+        run: printf 'MSYS2_ROOT=%s\n' "$(cygpath -aw /)" >> "$GITHUB_ENV"
+
+      - name: Build focused test binaries
+        shell: msys2 {0}
+        run: |
+          strip --version
+          make gui-test CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' WINDRES=windres STRIP=strip
+          make build/updater-windows-tests.exe HOST_CXX=g++
+
+      - name: Run recovery and manifest regression assertions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:EBR_TEST_PREVIOUS_APP = Join-Path $PWD 'build/gui-test/EyeBreakReminder.exe'
+          & .\build\updater-windows-tests.exe
+          if ($LASTEXITCODE -ne 0) { throw "Windows updater regression suite failed with exit code $LASTEXITCODE." }
+
+      - name: Build test-only signed v1.4.1 recovery fixtures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\build_production_update_fixture.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Test fixture builder failed with exit code $LASTEXITCODE." }
+          $fixture = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-Production-Update-Fixture\release'
+          foreach ($name in @('EyeBreakReminder-Test.exe','EyeBreakReminder-Setup-x64-Test.exe')) {
+            $path = Join-Path $fixture $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).VersionInfo.ProductVersion -notmatch '^1\.4\.1(\.0)?$') { throw "Missing or incorrect test fixture: $name" }
+          }
+
+      - name: Run portable recovery and RunOnce lifecycle regressions
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          x86_64-w64-mingw32-g++ \
+            -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror \
+            -static -static-libgcc -static-libstdc++ \
+            -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE \
+            tests/updater_portable_recovery_tests.cpp \
+            -o build/updater-portable-recovery-tests.exe \
+            -lcomctl32 -lcomdlg32 -ldwmapi -lwtsapi32 -lwinmm -lgdiplus \
+            -lshell32 -lole32 -loleaut32 -luuid -ladvapi32 -luxtheme \
+            -lwinhttp -lversion -lbcrypt
+          fixture="$(cygpath -u "$RUNNER_TEMP")/EyeBreakReminder-Production-Update-Fixture/release"
+          ./build/updater-portable-recovery-tests.exe \
+            "$(cygpath -aw build/gui-test/EyeBreakReminder.exe)" \
+            "$(cygpath -aw "$fixture/EyeBreakReminder-Test.exe")" \
+            "$(cygpath -aw "$fixture/EyeBreakReminder-Setup-x64-Test.exe")" \
+            "$(cygpath -aw build/updater-windows-tests.exe)" \
+            2>&1 | tee build/updater-portable-recovery-tests.log
+
+      - name: Interrupt a real disposable update after clean-install changes
+        id: interrupt
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-Production-Update-Fixture\release'
+          & .\tests\windows_restart_recovery_acceptance.ps1 `
+            -Phase Interrupt `
+            -CandidateDirectory '.\production-candidate-artifact\final-candidate' `
+            -CandidateExecutable '.\build\gui-test\EyeBreakReminder.exe' `
+            -SuccessorInstaller (Join-Path $fixture 'EyeBreakReminder-Setup-x64-Test.exe') `
+            -SuccessorExecutable (Join-Path $fixture 'EyeBreakReminder-Test.exe') `
+            -SignatureTool '.\build\updater-windows-tests.exe' `
+            -EvidencePath '.\build\v1.4.0-restart-recovery-evidence\${{ matrix.path_layout }}-interrupted.json' `
+            -PathLayout '${{ matrix.path_layout }}'
+          $report = Get-Content -LiteralPath '.\build\v1.4.0-restart-recovery-evidence\${{ matrix.path_layout }}-interrupted.json' -Raw | ConvertFrom-Json
+          if ($report.Status -cne 'INTERRUPTED' -or $report.GenuineWindowsReboot -ne $false -or $report.WindowsSignInInvocation -ne $false) { throw 'The interruption phase did not leave verified persisted recovery state.' }
+
+      - name: Resume recovery in a new PowerShell process
+        id: recover
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-Production-Update-Fixture\release'
+          & .\tests\windows_restart_recovery_acceptance.ps1 `
+            -Phase Recover `
+            -CandidateDirectory '.\production-candidate-artifact\final-candidate' `
+            -CandidateExecutable '.\build\gui-test\EyeBreakReminder.exe' `
+            -SuccessorInstaller (Join-Path $fixture 'EyeBreakReminder-Setup-x64-Test.exe') `
+            -SuccessorExecutable (Join-Path $fixture 'EyeBreakReminder-Test.exe') `
+            -SignatureTool '.\build\updater-windows-tests.exe' `
+            -EvidencePath '.\build\v1.4.0-restart-recovery-evidence\${{ matrix.path_layout }}-recovered.json' `
+            -PathLayout '${{ matrix.path_layout }}'
+          $report = Get-Content -LiteralPath '.\build\v1.4.0-restart-recovery-evidence\${{ matrix.path_layout }}-recovered.json' -Raw | ConvertFrom-Json
+          if ($report.Status -cne 'PASS' -or $report.GenuineWindowsReboot -ne $false -or $report.WindowsSignInInvocation -ne $false) { throw 'The recovery phase did not pass every required supplemental assertion.' }
+          "SUPPLEMENTAL PASS: ${{ matrix.path_layout }} path layout; exact registered RunOnce command manually executed in a fresh process. No Windows reboot or automatic sign-in invocation was tested." | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Retain focused recovery evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.4.0-restart-recovery-${{ matrix.path_layout }}-${{ github.run_id }}
+          path: |
+            build/v1.4.0-restart-recovery-evidence/**
+            build/v1.4.0-updater-evidence/production-update-fixture-identities.json
+          if-no-files-found: warn
+          retention-days: 90

@@ -645,7 +645,7 @@ public:
 #endif
    if(!testSuppressConfirmation&&!startupUpdateNonce.empty()){const std::wstring name=L"Local\\EyeBreakReminder.UpdateConfirm."+startupUpdateNonce;HANDLE event=OpenEventW(EVENT_MODIFY_STATE,FALSE,name.c_str());if(event){SetEvent(event);CloseHandle(event);}}
    if(startupCleanupDirectory.empty()||!startupCoordinatorPid)return;
-   try{const auto stage=startupCleanupDirectory;const DWORD pid=startupCoordinatorPid;std::thread([stage,pid]{HANDLE helper=OpenProcess(SYNCHRONIZE,FALSE,pid);if(helper){WaitForSingleObject(helper,INFINITE);CloseHandle(helper);}if(!updates::safeStagingDirectory(stage)||!updates::recoveryRegistrationAbsent())return;const wchar_t*files[]={L"EyeBreakReminder-Setup-x64.exe",L"EyeBreakReminder.exe",L"EyeBreakReminder-Setup-x64.exe.part",L"EyeBreakReminder.exe.part",L"EyeBreakReminder-UpdateManifest.json",L"EyeBreakReminder-UpdateManifest.sig",L"test-update-public-key.bin",L"transaction.ini",L"transaction-state.ini",L"transaction-state.ini.tmp",L"previous.exe",L"coordinator.exe",L"backup-0.dat",L"backup-1.dat",L"backup-2.dat",L"previous-owned-0.dat",L"previous-owned-1.dat",L"previous-owned-2.dat",L"previous-owned-3.dat"};for(auto name:files)DeleteFileW((stage+L"\\"+name).c_str());RemoveDirectoryW(stage.c_str());}).detach();}catch(...){}
+   try{const auto stage=startupCleanupDirectory;const auto application=eye::win::executable();const DWORD pid=startupCoordinatorPid;std::thread([stage,application,pid]{HANDLE helper=OpenProcess(SYNCHRONIZE|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!helper)return;wchar_t helperPath[32768]{};DWORD length=DWORD(std::size(helperPath));const bool correctHelper=QueryFullProcessImageNameW(helper,0,helperPath,&length)&&updates::samePath(helperPath,stage+L"\\coordinator.exe");if(!correctHelper){CloseHandle(helper);return;}const DWORD wait=WaitForSingleObject(helper,INFINITE);CloseHandle(helper);if(wait!=WAIT_OBJECT_0)return;for(unsigned attempt=0;attempt<120&&!updates::recoveryRegistrationAbsent();++attempt)Sleep(1000);if(!updates::recoveryRegistrationAbsent()||!updates::cleanupTransactionIsCurrent(stage,application))return;const wchar_t*files[]={L"EyeBreakReminder-Setup-x64.exe",L"EyeBreakReminder.exe",L"EyeBreakReminder-Setup-x64.exe.part",L"EyeBreakReminder.exe.part",L"EyeBreakReminder-UpdateManifest.json",L"EyeBreakReminder-UpdateManifest.sig",L"test-update-public-key.bin",L"transaction.ini",L"transaction-state.ini",L"transaction-state.ini.tmp",L"previous.exe",L"coordinator.exe",L"backup-0.dat",L"backup-1.dat",L"backup-2.dat",L"previous-owned-0.dat",L"previous-owned-1.dat",L"previous-owned-2.dat",L"previous-owned-3.dat"};for(auto name:files)DeleteFileW((stage+L"\\"+name).c_str());RemoveDirectoryW(stage.c_str());}).detach();}catch(...){}
   }
  // Stop is only useful while something is playing. The audio object only posts a request (never touches the UI itself), so
  // alarm playback never runs UI code; the request is coalesced and evaluated once the audio call has returned.
@@ -1236,7 +1236,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show){
   bool authorizedUpdateStart=false;
   if(arguments){
    if(argumentCount>=2&&wcscmp(arguments[1],L"--update-coordinator")==0){int result=argumentCount==3?updates::runCoordinator(arguments[2]):2;LocalFree(arguments);return result;}
-   if(argumentCount>=2&&wcscmp(arguments[1],L"--update-recover")==0){int result=argumentCount==3?updates::runRecovery(arguments[2]):2;LocalFree(arguments);return result;}
+   if(argumentCount>=2&&wcscmp(arguments[1],L"--update-recover")==0){
+    const auto coordinator=eye::win::executable();
+    const auto transaction=argumentCount==3?std::wstring(arguments[2]):updates::parentPath(coordinator)+L"\\transaction.ini";
+    const int result=argumentCount<=3&&!coordinator.empty()?updates::runRecovery(transaction,coordinator):2;
+    LocalFree(arguments);return result;
+   }
   for(int i=1;i<argumentCount;++i){
     if(wcscmp(arguments[i],L"--update-confirm")==0&&i+1<argumentCount){std::wstring nonce=arguments[++i];if(nonce.size()==36&&nonce.find_first_not_of(L"0123456789abcdefABCDEF-")==std::wstring::npos){startupUpdateNonce=std::move(nonce);authorizedUpdateStart=true;}}
     else if(wcscmp(arguments[i],L"--update-cleanup")==0&&i+2<argumentCount){startupCleanupDirectory=arguments[++i];try{auto pid=std::stoul(arguments[++i]);if(pid>0&&pid<=UINT32_MAX){startupCoordinatorPid=DWORD(pid);authorizedUpdateStart=true;}}catch(...){startupCleanupDirectory.clear();startupCoordinatorPid=0;}}

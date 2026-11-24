@@ -479,13 +479,18 @@ int main(int argc,char**argv){
 
     const std::wstring install=stage+L"\\install";CreateDirectoryW(install.c_str(),nullptr);const wchar_t*ownedNames[]={L"Uninstall.exe",L"README.md",L"PRIVACY.md",L"VERIFICATION.md"};for(unsigned i:{0u,1u,3u})ok&=check(writeBytes(install+L"\\"+ownedNames[i],"previous-owned-file"),"create exact test installer-owned file");
     eye::updates::Transaction installedFiles;installedFiles.stagingDirectory=stage;installedFiles.targetExecutable=install+L"\\EyeBreakReminder.exe";installedFiles.kind="installed";
+    installedFiles.nonce=L"12345678-1234-1234-1234-123456789abc";
+    const std::wstring uninstallScratch=install+L"\\Uninstall.exe.update-restore."+installedFiles.nonce;
+    const std::wstring readmeScratch=install+L"\\README.md.update-restore."+installedFiles.nonce;
     ok&=check(eye::updates::backupInstalledFiles(installedFiles)&&installedFiles.ownedFileMask==11,"backup only present installer-owned files and record their exact mask");
     for(const auto*name:ownedNames)ok&=check(writeBytes(install+L"\\"+name,"replacement-owned-file"),"simulate NSIS replacing an owned file");
     ok&=check(writeBytes(stage+L"\\previous-owned-3.dat","CORRUPTED-OWNED-BACKUP"),"corrupt a later staged installer-owned-file backup");
     const bool corruptedOwnedRejected=!eye::updates::restoreInstalledFiles(installedFiles);std::string stillReplacement;
-    ok&=check(corruptedOwnedRejected&&eye::win::read(install+L"\\Uninstall.exe",stillReplacement,128)&&stillReplacement=="replacement-owned-file"&&eye::win::read(install+L"\\README.md",stillReplacement,128)&&stillReplacement=="replacement-owned-file"&&GetFileAttributesW((install+L"\\Uninstall.exe.update-restore").c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW((install+L"\\README.md.update-restore").c_str())==INVALID_FILE_ATTRIBUTES,"reject a later corrupted owned-file backup before changing earlier files and remove all prepared restore files");
+    ok&=check(corruptedOwnedRejected&&eye::win::read(install+L"\\Uninstall.exe",stillReplacement,128)&&stillReplacement=="replacement-owned-file"&&eye::win::read(install+L"\\README.md",stillReplacement,128)&&stillReplacement=="replacement-owned-file"&&GetFileAttributesW(uninstallScratch.c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW(readmeScratch.c_str())==INVALID_FILE_ATTRIBUTES,"reject a later corrupted owned-file backup before changing earlier files and remove all prepared restore files");
     ok&=check(writeBytes(stage+L"\\previous-owned-3.dat","previous-owned-file"),"restore exact owned-file backup fixture after the rejection check");
-    ok&=check(eye::updates::restoreInstalledFiles(installedFiles),"restore previous uninstaller and installed documentation");
+    ok&=check(writeBytes(uninstallScratch,"partial-recovery-copy"),"seed a partial uninstaller restore copy left by an interrupted recovery");
+    ok&=check(eye::updates::restoreInstalledFiles(installedFiles)&&GetFileAttributesW(uninstallScratch.c_str())==INVALID_FILE_ATTRIBUTES,
+              "retry replaces the interrupted uninstaller copy and restores the previous owned files");
     std::string restored;ok&=check(eye::win::read(install+L"\\Uninstall.exe",restored,128)&&restored=="previous-owned-file"&&eye::win::read(install+L"\\README.md",restored,128)&&restored=="previous-owned-file"&&eye::win::read(install+L"\\VERIFICATION.md",restored,128)&&restored=="previous-owned-file"&&GetFileAttributesW((install+L"\\PRIVACY.md").c_str())==INVALID_FILE_ATTRIBUTES,"restore original contents and remove only files absent before the update");
     eye::updates::Transaction transaction;transaction.stagingDirectory=stage;transaction.artifactPath=stage+L"\\EyeBreakReminder.exe";transaction.targetExecutable=stage+L"\\target.exe";transaction.dataDirectory=stage+L"\\test-data";transaction.version=L"1.4.1";transaction.previousVersion=L"1.4.0";transaction.nonce=L"12345678-1234-1234-1234-123456789abc";transaction.kind="portable";transaction.artifactName="EyeBreakReminder.exe";transaction.sha256=std::string(64,'a');transaction.expectedApplicationSha256=std::string(64,'b');transaction.previousSha256=std::string(64,'c');transaction.expectedSize=3;transaction.backupMask=5;transaction.ownedFileMask=11;transaction.backupSha256={std::string(64,'d'),"",std::string(64,'e')};transaction.ownedFileSha256={std::string(64,'f'),std::string(64,'a'),"",std::string(64,'b')};transaction.ownerPid=GetCurrentProcessId();transaction.clean=true;transaction.dark=true;transaction.previousStartup=true;
     ok&=check(eye::updates::writeTransaction(transaction),"write durable-format transaction record");eye::updates::Transaction parsed;const std::wstring txPath=stage+L"\\transaction.ini";
@@ -499,6 +504,45 @@ int main(int argc,char**argv){
     ok&=check(validationStageCreated&&testKeyReady&&writeSignedManifest(validationStage,transactionSigner,validManifest),"create a signed test-key transaction fixture with only its public key in the isolated stage");
     eye::updates::Transaction validTransaction;validTransaction.stagingDirectory=validationStage;validTransaction.artifactPath=validationStage+L"\\EyeBreakReminder.exe";validTransaction.targetExecutable=portableTarget;validTransaction.dataDirectory=validationData;validTransaction.version=L"1.4.1";validTransaction.previousVersion=L"1.4.0";validTransaction.nonce=L"12345678-1234-1234-1234-123456789abc";validTransaction.kind="portable";validTransaction.artifactName="EyeBreakReminder.exe";validTransaction.sha256=std::string(64,'b');validTransaction.expectedApplicationSha256=std::string(64,'b');validTransaction.previousSha256=std::string(64,'c');validTransaction.expectedSize=3;validTransaction.ownerPid=GetCurrentProcessId();
     std::string validationError;const std::wstring validTransactionPath=validationStage+L"\\transaction.ini",validCoordinatorPath=validationStage+L"\\coordinator.exe";ok&=check(validationStageCreated&&eye::updates::validateTransaction(validTransaction,validTransactionPath,validCoordinatorPath,validationError),"accept a correctly scoped disposable portable transaction");
+    const auto future=std::time(nullptr)+2*24*60*60;
+    const auto validManifestBytes=eye::updates::canonicalManifest(validManifest);
+    std::string validSignature;
+    const bool validSigned=transactionSigner.sign(validManifestBytes,validSignature);
+    ok&=check(validSigned&&
+        !eye::updates::verifyManifestWithKey(validManifestBytes,validSignature,"v1.4.1","1.4.0",future,transactionSigner.trusted).ok&&
+        eye::updates::verifyManifestWithKey(validManifestBytes,validSignature,"v1.4.1","1.4.0",future,transactionSigner.trusted,eye::updates::ManifestUse::Recover).ok,
+        "an expired authentic staged authorization remains usable for rollback but cannot authorize install");
+    const std::wstring compactStage=L"C:\\Temp\\Eye Break — "+std::wstring(120,L'x');
+    const auto compactRecovery=eye::updates::recoveryCommand(compactStage);
+    ok&=check(compactRecovery==eye::updates::quoteArgument(compactStage+L"\\coordinator.exe")+L" --update-recover"&&
+        compactRecovery.size()<=260&&eye::updates::recoveryCommand(std::wstring(260,L'x')).empty(),
+        "RunOnce uses a quoted compact command when required and rejects overlong compact commands");
+    auto recoveryOwner=validTransaction;recoveryOwner.stagingDirectory=compactStage;
+    const auto legacyRecovery=eye::updates::quoteArgument(compactStage+L"\\coordinator.exe")+L" --update-recover "+
+        eye::updates::quoteArgument(compactStage+L"\\transaction.ini");
+    ok&=check(eye::updates::recoveryRegistrationValueMatches(recoveryOwner,compactRecovery)&&
+        eye::updates::recoveryRegistrationValueMatches(recoveryOwner,legacyRecovery)&&
+        !eye::updates::recoveryRegistrationValueMatches(recoveryOwner,L"C:\\unrelated\\other.exe --update-recover"),
+        "accept only this transaction's current or legacy RunOnce command and reject a foreign owner");
+    ok&=check(!eye::updates::recoveryRegistrationWriteNeeded(true,true,ERROR_SUCCESS)&&
+        eye::updates::recoveryRegistrationWriteNeeded(true,false,ERROR_FILE_NOT_FOUND)&&
+        !eye::updates::recoveryRegistrationWriteNeeded(true,false,ERROR_ACCESS_DENIED),
+        "recovery does not rewrite an owned RunOnce value while Windows is processing it and creates only a missing entry");
+    auto cleanupTransaction=validTransaction;std::string cleanupPreviousHash;
+    const bool cleanupTransactionReady=eye::updates::hashFile(portableTarget,cleanupPreviousHash)&&
+        ((cleanupTransaction.previousSha256=cleanupPreviousHash),eye::updates::writeTransaction(cleanupTransaction));
+    const bool waitingJournalReady=cleanupTransactionReady&&eye::updates::writeJournal(cleanupTransaction,L"waiting");
+    ok&=check(waitingJournalReady&&eye::updates::cleanupTransactionIsCurrent(validationStage,portableTarget),
+        "allow pre-install abort cleanup only when the signed transaction and exact previous executable still match");
+    const bool cleanupJournalReady=cleanupTransactionReady&&eye::updates::writeJournal(cleanupTransaction,L"recovered");
+    ok&=check(cleanupJournalReady&&eye::updates::cleanupTransactionIsCurrent(validationStage,portableTarget),
+        "allow stage cleanup only after a signed transaction validates and the running app matches a recovered version");
+    ok&=check(eye::win::writeAtomic(validationStage+L"\\transaction-state.ini", "phase=complete\nmessage=truncated\n")&&
+        eye::updates::journalPhase(cleanupTransaction).empty(),
+        "reject a truncated or incomplete journal instead of treating its first phase line as authoritative");
+    ok&=check(!eye::updates::cleanupTransactionIsCurrent(validationStage,stage+L"\\unrelated.exe")&&
+        !eye::updates::cleanupTransactionIsCurrent(stage,portableTarget),
+        "reject cleanup paths that do not match the validated transaction and running application");
     auto wrongProfile=validTransaction;wrongProfile.dataDirectory=stage+L"\\unrelated-profile";validationError.clear();ok&=check(!eye::updates::validateTransaction(wrongProfile,validTransactionPath,validCoordinatorPath,validationError)&&validationError.find("Windows user's Eye Break Reminder profile")!=std::string::npos,"reject a transaction directed at an unrelated user-profile destination");
     auto wrongName=validTransaction;wrongName.artifactName="..\\outside.exe";validationError.clear();ok&=check(!eye::updates::validateTransaction(wrongName,validTransactionPath,validCoordinatorPath,validationError),"reject command/path substitution in the fixed portable asset name");
     auto injectedNonce=validTransaction;injectedNonce.nonce=L"12345678-1234-1234-1234-123456789abc & cmd.exe";validationError.clear();ok&=check(!eye::updates::validateTransaction(injectedNonce,validTransactionPath,validCoordinatorPath,validationError),"reject command-line metacharacters in the transaction token");
@@ -513,8 +557,8 @@ int main(int argc,char**argv){
     const std::wstring settingsPath=validationData+L"\\settings.ini",timerPath=validationData+L"\\timer.dat",historyPath=validationData+L"\\history.dat";
     ok&=check(writeBytes(settingsPath,originalSettings)&&writeBytes(timerPath,originalTimer)&&writeBytes(historyPath,originalHistory),"populate an isolated settings/history recovery profile");
     struct RejectionFixture {std::string name,manifest,signature;std::string publicPoint;bool missingSignature=false;bool missingManifest=false;};
-    std::vector<RejectionFixture> rejectionCases;std::string validManifestBytes=eye::updates::canonicalManifest(validManifest),validSignature;
-    ok&=check(transactionSigner.sign(validManifestBytes,validSignature),"prepare the complete valid signed-manifest baseline for the rejection matrix");
+    std::vector<RejectionFixture> rejectionCases;
+    ok&=check(validSigned,"prepare the complete valid signed-manifest baseline for the rejection matrix");
     rejectionCases.push_back({"missing signature",validManifestBytes,{}, {},true});
     rejectionCases.push_back({"missing manifest",{}, {}, {},false,true});
     rejectionCases.push_back({"empty signature",validManifestBytes,"",{},false});
@@ -621,18 +665,34 @@ int main(int argc,char**argv){
     ok&=check(dataBackupComplete&&dataDigestsPersisted,"backup settings, timer and history and persist each SHA-256 in the transaction record");
     const std::string partialSettings="theme=partial-migration\n",partialTimer="incomplete=true\n",partialHistory="partial-history\n";
     ok&=check(writeBytes(settingsPath,partialSettings)&&writeBytes(timerPath,partialTimer)&&writeBytes(historyPath,partialHistory),"simulate an interrupted settings and history migration");
-    const std::wstring preexistingRestoreTemp=settingsPath+L".update-restore";ok&=check(writeBytes(preexistingRestoreTemp,"preexisting-temporary-sentinel"),"create a preexisting restore-temporary sentinel");
-    const bool restoreTempCollisionRejected=!eye::updates::restoreData(dataRecovery,false);unchanged.clear();const bool restoreTempPreserved=eye::win::read(preexistingRestoreTemp,unchanged,128)&&unchanged=="preexisting-temporary-sentinel";
-    ok&=check(restoreTempCollisionRejected&&restoreTempPreserved&&eye::win::read(settingsPath,unchanged,128)&&unchanged==partialSettings,"a restore-temp collision fails safely without deleting the preexisting file or changing settings");
-    DeleteFileW(preexistingRestoreTemp.c_str());
+    const std::wstring preexistingRestoreTemp=settingsPath+L".update-restore";
+    const std::wstring settingsScratch=settingsPath+L".update-restore."+dataRecovery.nonce;
+    const std::wstring timerScratch=timerPath+L".update-restore."+dataRecovery.nonce;
+    ok&=check(writeBytes(preexistingRestoreTemp,"preexisting-temporary-sentinel"),"create an unrelated file beside the scoped restore path");
+    ok&=check(CreateDirectoryW(timerScratch.c_str(),nullptr)!=FALSE,"place a directory at a transaction scratch path");
+    const bool restoreTempCollisionRejected=!eye::updates::restoreData(dataRecovery,false);
+    const DWORD collisionAttributes=GetFileAttributesW(timerScratch.c_str());
+    unchanged.clear();
+    ok&=check(restoreTempCollisionRejected&&collisionAttributes!=INVALID_FILE_ATTRIBUTES&&
+              (collisionAttributes&FILE_ATTRIBUTE_DIRECTORY)&&eye::win::read(settingsPath,unchanged,128)&&unchanged==partialSettings,
+              "a directory at the scratch path is left intact and no settings are changed");
+    RemoveDirectoryW(timerScratch.c_str());
     ok&=check(writeBytes(validationStage+L"\\backup-2.dat","CORRUPTED-HISTORY-BACKUP"),"corrupt a later history backup after the restore-temp collision check");
     const bool corruptHistoryRejected=!eye::updates::restoreData(dataRecovery,false);
     unchanged.clear();const bool noPartialLiveOverwrite=eye::win::read(settingsPath,unchanged,128)&&unchanged==partialSettings&&eye::win::read(timerPath,unchanged,128)&&unchanged==partialTimer&&eye::win::read(historyPath,unchanged,128)&&unchanged==partialHistory;
-    const bool noRestoreTemps=GetFileAttributesW((settingsPath+L".update-restore").c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW((timerPath+L".update-restore").c_str())==INVALID_FILE_ATTRIBUTES;
+    const bool noRestoreTemps=GetFileAttributesW(settingsScratch.c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW(timerScratch.c_str())==INVALID_FILE_ATTRIBUTES;
     ok&=check(corruptHistoryRejected&&noPartialLiveOverwrite&&noRestoreTemps,"reject a corrupted history backup before overwriting any settings or history and remove all staged restore files");
     ok&=check(writeBytes(validationStage+L"\\backup-2.dat",originalHistory),"repair the test history backup to its recorded bytes");
-    const bool repairedDataRestored=eye::updates::restoreData(dataRecovery,false);unchanged.clear();
+    ok&=check(writeBytes(settingsScratch,"truncated")&&writeBytes(timerScratch,originalTimer),
+              "seed partial and complete transaction restore copies left by an interrupted recovery");
+    const bool repairedDataRestored=eye::updates::restoreData(persistedDataRecovery,false);
+    unchanged.clear();
     ok&=check(repairedDataRestored&&eye::win::read(settingsPath,unchanged,128)&&unchanged==originalSettings&&eye::win::read(timerPath,unchanged,128)&&unchanged==originalTimer&&eye::win::read(historyPath,unchanged,128)&&unchanged==originalHistory,"restore all original settings, timer and history after a valid retry");
+    ok&=check(GetFileAttributesW(settingsScratch.c_str())==INVALID_FILE_ATTRIBUTES&&
+              GetFileAttributesW(timerScratch.c_str())==INVALID_FILE_ATTRIBUTES&&
+              eye::win::read(preexistingRestoreTemp,unchanged,128)&&unchanged=="preexisting-temporary-sentinel",
+              "successful retry consumes only transaction scratch files and preserves the unrelated file");
+    DeleteFileW(preexistingRestoreTemp.c_str());
 
     dataRecovery.clean=true;dataRecovery.deleteHistory=false;
     const bool cleanKeepsHistory=eye::updates::applyCleanPolicy(dataRecovery)&&GetFileAttributesW(settingsPath.c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW(timerPath.c_str())==INVALID_FILE_ATTRIBUTES&&eye::win::read(historyPath,unchanged,128)&&unchanged==originalHistory;

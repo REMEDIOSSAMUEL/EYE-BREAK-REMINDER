@@ -58,9 +58,13 @@ inline bool hashFile(const std::wstring&path,std::string&out){
     CloseHandle(file);return ok;
 }
 inline bool writeJournal(const Transaction&t,const wchar_t*phase,const std::wstring&message={}){
-    const std::wstring path=t.stagingDirectory+L"\\transaction-state.ini",temp=path+L".tmp";
+    const std::wstring path=t.stagingDirectory+L"\\transaction-state.ini";
+    if(!safeStagingDirectory(t.stagingDirectory))return false;
+    const DWORD attributes=GetFileAttributesW(path.c_str());
+    if(attributes==INVALID_FILE_ATTRIBUTES){if(GetLastError()!=ERROR_FILE_NOT_FOUND)return false;}
+    else if(!safeFile(path,4096))return false;
     std::string content="phase="+eye::win::utf8(std::wstring(phase))+"\nmessage="+eye::win::utf8(message)+"\nversion="+eye::win::utf8(t.version)+"\nclean="+(t.clean?"1":"0")+"\ndeleteHistory="+(t.deleteHistory?"1":"0")+"\n";
-    HANDLE f=CreateFileW(temp.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_WRITE_THROUGH,nullptr);if(f==INVALID_HANDLE_VALUE)return false;DWORD wrote=0;bool ok=WriteFile(f,content.data(),DWORD(content.size()),&wrote,nullptr)&&wrote==content.size()&&FlushFileBuffers(f);CloseHandle(f);if(ok)ok=MoveFileExW(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);if(!ok)DeleteFileW(temp.c_str());return ok;
+    return eye::win::writeAtomic(path,content);
 }
 inline std::string transactionText(const Transaction&t){
     std::string text="staging="+eye::win::utf8(t.stagingDirectory)+"\nartifact="+eye::win::utf8(t.artifactPath)+"\ntarget="+eye::win::utf8(t.targetExecutable)+"\ndata="+eye::win::utf8(t.dataDirectory)+"\nversion="+eye::win::utf8(t.version)+"\nprevious="+eye::win::utf8(t.previousVersion)+"\nnonce="+eye::win::utf8(t.nonce)+"\nkind="+t.kind+"\nname="+t.artifactName+"\nsha256="+t.sha256+"\napplicationSha256="+t.expectedApplicationSha256+"\npreviousSha256="+t.previousSha256+"\nsize="+std::to_string(t.expectedSize)+"\nbackupMask="+std::to_string(t.backupMask)+"\nownedFileMask="+std::to_string(t.ownedFileMask)+"\npid="+std::to_string(t.ownerPid)+"\nclean="+(t.clean?"1":"0")+"\ndeleteHistory="+(t.deleteHistory?"1":"0")+"\ndark="+(t.dark?"1":"0")+"\nforcedColors="+(t.forcedColors?"1":"0")+"\npreviousStartup="+(t.previousStartup?"1":"0")+"\n";
@@ -79,7 +83,7 @@ inline bool readTransaction(const std::wstring&path,Transaction&out){
     out=std::move(t);return true;
 }
 inline bool registeredInstallDirectory(std::wstring&out){HKEY key{};if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\EyeBreakReminder",0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS)return false;wchar_t value[32768]{};DWORD type=0,bytes=sizeof(value);LONG result=RegQueryValueExW(key,L"InstallDir",nullptr,&type,reinterpret_cast<BYTE*>(value),&bytes);RegCloseKey(key);if(result!=ERROR_SUCCESS||type!=REG_SZ||!value[0])return false;out=value;return true;}
-inline bool validateTransaction(const Transaction&t,const std::wstring&transactionPath,const std::wstring&coordinatorPath,std::string&error,bool allowMissingTarget=false){
+inline bool validateTransaction(const Transaction&t,const std::wstring&transactionPath,const std::wstring&coordinatorPath,std::string&error,ManifestUse use=ManifestUse::Install){
     Version newer,older;if(!detail::parseVersion(eye::win::utf8(t.version),newer)||!detail::parseVersion(eye::win::utf8(t.previousVersion),older)||detail::compare(newer,older)<=0){error="The update transaction has invalid or non-upgrading version metadata.";return false;}
     if(!safeStagingDirectory(t.stagingDirectory)||!samePath(transactionPath,t.stagingDirectory+L"\\transaction.ini")||!samePath(coordinatorPath,t.stagingDirectory+L"\\coordinator.exe")){error="The update staging path failed its safety checks.";return false;}
     std::wstring expectedData;if(!localDataDirectory(expectedData)||!samePath(t.dataDirectory,expectedData)||!samePath(parentPath(t.stagingDirectory),expectedData+L"\\updates")){error="The update data path is outside this Windows user's Eye Break Reminder profile.";return false;}
@@ -91,7 +95,7 @@ inline bool validateTransaction(const Transaction&t,const std::wstring&transacti
     if((t.kind=="installed")!=isRegistered){error="The installation type changed while the update was being prepared.";return false;}
     if(!safeStagingDirectory(parentPath(t.targetExecutable))){error="The application folder is not safe to update.";return false;}
     const DWORD targetAttributes=GetFileAttributesW(t.targetExecutable.c_str());
-    if(targetAttributes==INVALID_FILE_ATTRIBUTES){if(!allowMissingTarget||GetLastError()!=ERROR_FILE_NOT_FOUND){error="The application executable is missing or inaccessible.";return false;}}
+    if(targetAttributes==INVALID_FILE_ATTRIBUTES){if(use!=ManifestUse::Recover||GetLastError()!=ERROR_FILE_NOT_FOUND){error="The application executable is missing or inaccessible.";return false;}}
     else if((targetAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT))||!safeFile(t.targetExecutable)){error="The current application executable is not a regular file.";return false;}
     if(t.kind=="installed"&&!samePath(t.artifactPath,t.stagingDirectory+L"\\EyeBreakReminder-Setup-x64.exe")){error="The downloaded installer is not in the private staging folder.";return false;}
     if(t.nonce.size()!=36||t.nonce.find_first_not_of(L"0123456789abcdefABCDEF-")!=std::wstring::npos){error="The update confirmation token is invalid.";return false;}
@@ -102,7 +106,7 @@ inline bool validateTransaction(const Transaction&t,const std::wstring&transacti
         error="The publisher-signed update manifest or signature is missing or unreadable.";return false;
     }
     const std::string signedReleaseTag="v"+eye::win::utf8(t.version);
-    const auto authorization=verifyStagedManifest(manifestBytes,signatureBytes,t.stagingDirectory,signedReleaseTag,eye::win::utf8(t.previousVersion),std::time(nullptr));
+    const auto authorization=verifyStagedManifest(manifestBytes,signatureBytes,t.stagingDirectory,signedReleaseTag,eye::win::utf8(t.previousVersion),std::time(nullptr),use);
     if(!authorization.ok){error=authorization.error;return false;}
     const auto*installer=manifestAsset(authorization.manifest,true);const auto*portable=manifestAsset(authorization.manifest,false);
     const auto*selected=t.kind=="installed"?installer:portable;
@@ -111,6 +115,14 @@ inline bool validateTransaction(const Transaction&t,const std::wstring&transacti
         error="The update transaction does not match a payload authorized by the signed manifest.";return false;
     }
     return true;
+}
+inline bool installedTargetIsNewerThanTransaction(const Transaction&t){
+    const auto installed=productVersion(t.targetExecutable);
+    if(installed.empty())return false;
+    Version current,transaction;
+    return detail::parseVersion(eye::win::utf8(installed),current)&&
+        detail::parseVersion(eye::win::utf8(t.version),transaction)&&
+        detail::compare(current,transaction)>0;
 }
 
 struct UiState {std::mutex mutex;std::wstring message=L"Preparing the update…";std::atomic_bool done{false};bool success=false,dark=false,forcedColors=false,completionShown=false;HWND window{},heading{},status{},progress{},close{};HBRUSH background{};UINT dpi=96;};
@@ -157,13 +169,57 @@ inline bool setStartupRegistration(const Transaction&t,bool enabled){
     RegCloseKey(key);return ok;
 }
 inline std::wstring quoteArgument(const std::wstring&value);
-inline bool copyAtomic(const std::wstring&source,const std::wstring&target){const std::wstring temp=target+L".update-restore";DeleteFileW(temp.c_str());if(!CopyFileW(source.c_str(),temp.c_str(),TRUE))return false;if(!MoveFileExW(temp.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)){DeleteFileW(temp.c_str());return false;}return true;}
+inline std::wstring recoveryCommand(const std::wstring&stage){
+    constexpr std::size_t maxRunOnceCommand=260;
+    const auto compact=quoteArgument(stage+L"\\coordinator.exe")+L" --update-recover";
+    const auto explicitPath=compact+L" "+quoteArgument(stage+L"\\transaction.ini");
+    if(explicitPath.size()<=maxRunOnceCommand)return explicitPath;
+    return compact.size()<=maxRunOnceCommand?compact:std::wstring{};
+}
+inline bool recoveryRegistrationValueMatches(const Transaction&t,const std::wstring&value){
+    const auto command=recoveryCommand(t.stagingDirectory);
+    const auto legacyCommand=quoteArgument(t.stagingDirectory+L"\\coordinator.exe")+L" --update-recover "+
+        quoteArgument(t.stagingDirectory+L"\\transaction.ini");
+    return (!command.empty()&&value==command)||value==legacyCommand;
+}
+inline bool recoveryRegistrationMatches(const Transaction&t){
+    HKEY key{};if(RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",0,KEY_QUERY_VALUE,&key)!=ERROR_SUCCESS)return false;
+    wchar_t existing[32768]{};DWORD type=0,bytes=sizeof(existing);
+    const LONG query=RegQueryValueExW(key,L"!EyeBreakReminderUpdateRecovery",nullptr,&type,reinterpret_cast<BYTE*>(existing),&bytes);
+    RegCloseKey(key);
+    if(query!=ERROR_SUCCESS||type!=REG_SZ||bytes<sizeof(wchar_t)||bytes%sizeof(wchar_t)!=0||bytes>sizeof(existing)||existing[bytes/sizeof(wchar_t)-1]!=L'\0')return false;
+    return recoveryRegistrationValueMatches(t,std::wstring(existing,bytes/sizeof(wchar_t)-1));
+}
+inline bool recoveryRegistrationWriteNeeded(bool enabled,bool owned,LONG query){
+    return enabled&&!owned&&query==ERROR_FILE_NOT_FOUND;
+}
 inline bool setRecoveryRegistration(const Transaction&t,bool enabled){
-    HKEY key{};if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",0,nullptr,0,KEY_SET_VALUE,nullptr,&key,nullptr)!=ERROR_SUCCESS)return false;
-    constexpr wchar_t name[]=L"!EyeBreakReminderUpdateRecovery";bool ok=true;
-    if(enabled){const std::wstring helper=t.stagingDirectory+L"\\coordinator.exe",transaction=t.stagingDirectory+L"\\transaction.ini";const std::wstring command=quoteArgument(helper)+L" --update-recover "+quoteArgument(transaction);ok=RegSetValueExW(key,name,0,REG_SZ,reinterpret_cast<const BYTE*>(command.c_str()),DWORD((command.size()+1)*sizeof(wchar_t)))==ERROR_SUCCESS;}
-    else{LONG result=RegDeleteValueW(key,name);ok=result==ERROR_SUCCESS||result==ERROR_FILE_NOT_FOUND;}
-    RegCloseKey(key);return ok;
+    const auto command=recoveryCommand(t.stagingDirectory);
+    if(enabled&&command.empty())return false;
+    const auto legacyCommand=quoteArgument(t.stagingDirectory+L"\\coordinator.exe")+L" --update-recover "+
+        quoteArgument(t.stagingDirectory+L"\\transaction.ini");
+    HKEY key{};
+    if(RegCreateKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",0,nullptr,0,
+                       KEY_QUERY_VALUE|KEY_SET_VALUE,nullptr,&key,nullptr)!=ERROR_SUCCESS)return false;
+    constexpr wchar_t name[]=L"!EyeBreakReminderUpdateRecovery";
+    wchar_t existing[32768]{};
+    DWORD type=0,bytes=sizeof(existing);
+    const LONG query=RegQueryValueExW(key,name,nullptr,&type,reinterpret_cast<BYTE*>(existing),&bytes);
+    const DWORD commandBytes=DWORD((command.size()+1)*sizeof(wchar_t));
+    const auto matches=[&](const std::wstring&value){
+        return bytes==(value.size()+1)*sizeof(wchar_t)&&
+            std::equal(value.c_str(),value.c_str()+value.size()+1,existing);
+    };
+    const bool owned=query==ERROR_SUCCESS&&type==REG_SZ&&
+        ((!command.empty()&&matches(command))||matches(legacyCommand));
+    bool ok=false;
+    if(enabled)
+        ok=owned||(recoveryRegistrationWriteNeeded(enabled,owned,query)&&
+            RegSetValueExW(key,name,0,REG_SZ,reinterpret_cast<const BYTE*>(command.c_str()),commandBytes)==ERROR_SUCCESS);
+    else if(!enabled)
+        ok=query==ERROR_FILE_NOT_FOUND||(owned&&RegDeleteValueW(key,name)==ERROR_SUCCESS);
+    RegCloseKey(key);
+    return ok;
 }
 inline bool recoveryRegistrationAbsent(){HKEY key{};LONG open=RegOpenKeyExW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",0,KEY_QUERY_VALUE,&key);if(open==ERROR_FILE_NOT_FOUND)return true;if(open!=ERROR_SUCCESS)return false;DWORD type=0,bytes=0;LONG result=RegQueryValueExW(key,L"!EyeBreakReminderUpdateRecovery",nullptr,&type,nullptr,&bytes);RegCloseKey(key);return result==ERROR_FILE_NOT_FOUND;}
 inline bool acquireCoordinatorMutex(HANDLE&mutex,const wchar_t*name=L"Local\\EyeBreakReminder.UpdateCoordinator.1"){
@@ -171,7 +227,38 @@ inline bool acquireCoordinatorMutex(HANDLE&mutex,const wchar_t*name=L"Local\\Eye
     if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(mutex);mutex=nullptr;return false;}
     return true;
 }
-inline std::wstring journalPhase(const Transaction&t){std::string data;if(!eye::win::read(t.stagingDirectory+L"\\transaction-state.ini",data,4096))return{};const auto end=data.find('\n');if(end==std::string::npos||data.compare(0,6,"phase=")!=0)return{};return eye::win::wide(data.substr(6,end-6));}
+inline std::wstring journalPhase(const Transaction&t){
+    const auto path=t.stagingDirectory+L"\\transaction-state.ini";
+    if(!safeFile(path,4096))return{};
+    std::string data;if(!eye::win::read(path,data,4096))return{};
+    std::istringstream input(data);std::array<std::string,5>lines{};
+    for(auto&line:lines)if(!std::getline(input,line))return{};
+    std::string extra;if(std::getline(input,extra))return{};
+    const std::string version="version="+eye::win::utf8(t.version);
+    const std::string clean=std::string("clean=")+(t.clean?"1":"0");
+    const std::string deleteHistory=std::string("deleteHistory=")+(t.deleteHistory?"1":"0");
+    if(lines[0].compare(0,6,"phase=")!=0||lines[1].compare(0,8,"message=")!=0||
+       lines[2]!=version||lines[3]!=clean||lines[4]!=deleteHistory)return{};
+    const auto phase=lines[0].substr(6);
+    static const std::array<std::string,8>allowed={"waiting","verified","installing","installed","cleaning","starting","complete","recovered"};
+    if(std::find(allowed.begin(),allowed.end(),phase)==allowed.end())return{};
+    return eye::win::wide(phase);
+}
+inline bool cleanupTransactionIsCurrent(const std::wstring&stage,const std::wstring&applicationPath){
+    if(!safeStagingDirectory(stage))return false;
+    const auto transactionPath=stage+L"\\transaction.ini";
+    Transaction t;if(!readTransaction(transactionPath,t))return false;
+    std::string error;
+    if(!validateTransaction(t,transactionPath,stage+L"\\coordinator.exe",error,ManifestUse::Recover)||
+       !samePath(applicationPath,t.targetExecutable))return false;
+    const auto phase=journalPhase(t);
+    std::string digest;
+    if(phase==L"complete")
+        return productVersion(t.targetExecutable)==t.version&&hashFile(t.targetExecutable,digest)&&digest==t.expectedApplicationSha256;
+    if(phase==L"recovered"||phase==L"verified"||phase==L"waiting")
+        return productVersion(t.targetExecutable)==t.previousVersion&&hashFile(t.targetExecutable,digest)&&digest==t.previousSha256;
+    return false;
+}
 inline bool backupData(Transaction&t){
     const wchar_t*names[]={L"settings.ini",L"timer.dat",L"history.dat"};
     for(unsigned i=0;i<3;++i){
@@ -199,12 +286,24 @@ inline bool backupInstalledFiles(Transaction&t){
     }
     return writeTransaction(t);
 }
-inline bool prepareVerifiedRestore(const std::wstring&source,const std::wstring&target,const std::string&expected,std::uint64_t maximum,std::wstring&prepared){
+inline std::wstring restoreTemporaryPath(const Transaction&t,const std::wstring&target){
+    return target+L".update-restore."+t.nonce;
+}
+inline bool prepareVerifiedRestore(const Transaction&t,const std::wstring&source,const std::wstring&target,const std::string&expected,std::uint64_t maximum,std::wstring&prepared){
     if(!digestText(expected)||!safeFile(source,maximum))return false;
     const DWORD targetAttributes=GetFileAttributesW(target.c_str());
     if(targetAttributes==INVALID_FILE_ATTRIBUTES){if(GetLastError()!=ERROR_FILE_NOT_FOUND)return false;}
     else if(targetAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))return false;
-    const std::wstring temp=target+L".update-restore";
+    const std::wstring temp=restoreTemporaryPath(t,target);
+    // A terminated recovery can leave a complete or partial copy beside the
+    // target. Recopy from the backup using only this transaction's scratch path.
+    const DWORD tempAttributes=GetFileAttributesW(temp.c_str());
+    if(tempAttributes==INVALID_FILE_ATTRIBUTES){
+        if(GetLastError()!=ERROR_FILE_NOT_FOUND)return false;
+    }else{
+        if(!safeFile(temp,maximum))return false;
+        if(!DeleteFileW(temp.c_str()))return false;
+    }
     if(!CopyFileW(source.c_str(),temp.c_str(),TRUE))return false;
     prepared=temp;
     std::string stagedHash;
@@ -221,7 +320,7 @@ inline bool restoreInstalledFiles(const Transaction&t){
         targets[i]=installDirectory+L"\\"+names[i];const DWORD attr=GetFileAttributesW(targets[i].c_str());
         if(t.ownedFileMask&(1u<<i)){
             const std::wstring backup=t.stagingDirectory+L"\\previous-owned-"+std::to_wstring(i)+L".dat";
-            if(!prepareVerifiedRestore(backup,targets[i],t.ownedFileSha256[i],512ull*1024*1024,prepared[i])){discardPreparedRestores(prepared);return false;}
+            if(!prepareVerifiedRestore(t,backup,targets[i],t.ownedFileSha256[i],512ull*1024*1024,prepared[i])){discardPreparedRestores(prepared);return false;}
         }else if(attr!=INVALID_FILE_ATTRIBUTES){
             if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(targets[i])){discardPreparedRestores(prepared);return false;}
         }else if(GetLastError()!=ERROR_FILE_NOT_FOUND){discardPreparedRestores(prepared);return false;}
@@ -241,7 +340,7 @@ inline bool restoreData(const Transaction&t,bool restoringClean){
         targets[i]=t.dataDirectory+L"\\"+names[i];const DWORD attr=GetFileAttributesW(targets[i].c_str());
         if(t.backupMask&(1u<<i)){
             const std::wstring backup=t.stagingDirectory+L"\\backup-"+std::to_wstring(i)+L".dat";
-            if(!prepareVerifiedRestore(backup,targets[i],t.backupSha256[i],32ull*1024*1024,prepared[i])){discardPreparedRestores(prepared);return false;}
+            if(!prepareVerifiedRestore(t,backup,targets[i],t.backupSha256[i],32ull*1024*1024,prepared[i])){discardPreparedRestores(prepared);return false;}
         }else if(affected[i]&&attr!=INVALID_FILE_ATTRIBUTES){
             if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(targets[i],32ull*1024*1024)){discardPreparedRestores(prepared);return false;}
         }else if(affected[i]&&GetLastError()!=ERROR_FILE_NOT_FOUND){discardPreparedRestores(prepared);return false;}
@@ -256,8 +355,21 @@ inline bool restoreData(const Transaction&t,bool restoringClean){
 }
 inline bool applyCleanPolicy(const Transaction&t){const wchar_t*names[]={L"settings.ini",L"timer.dat",L"history.dat"};for(int i=0;i<3;++i){if(i==2&&!t.deleteHistory)continue;const std::wstring path=t.dataDirectory+L"\\"+names[i];DWORD attr=GetFileAttributesW(path.c_str());if(attr==INVALID_FILE_ATTRIBUTES&&GetLastError()==ERROR_FILE_NOT_FOUND)continue;if(attr==INVALID_FILE_ATTRIBUTES||(attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!DeleteFileW(path.c_str()))return false;}return true;}
 inline bool targetApplicationRunning(const Transaction&t,DWORD expectedPid=0){HWND window=FindWindowW(L"EyeBreakReminder.Native",nullptr);if(!window)return false;DWORD pid=0;GetWindowThreadProcessId(window,&pid);if(!pid||(expectedPid&&pid!=expectedPid))return false;HANDLE process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!process)return false;wchar_t path[32768]{};DWORD length=DWORD(std::size(path));const bool same=QueryFullProcessImageNameW(process,0,path,&length)&&samePath(path,t.targetExecutable);CloseHandle(process);return same;}
+inline bool requestExactApplicationExit(const Transaction&t,DWORD expectedPid){
+    if(!expectedPid)return false;
+    HWND window=FindWindowW(L"EyeBreakReminder.Native",nullptr);if(!window)return false;
+    DWORD pid=0;GetWindowThreadProcessId(window,&pid);if(pid!=expectedPid)return false;
+    HANDLE process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);if(!process)return false;
+    wchar_t path[32768]{};DWORD length=DWORD(std::size(path));
+    const bool exact=QueryFullProcessImageNameW(process,0,path,&length)&&samePath(path,t.targetExecutable);
+    CloseHandle(process);if(!exact)return false;
+    const UINT quit=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");DWORD_PTR ignored=0;
+    return SendMessageTimeoutW(window,quit,0,0,SMTO_ABORTIFHUNG,5000,&ignored)!=0;
+}
 inline bool startPrevious(const Transaction&t){
-    if(productVersion(t.targetExecutable)!=t.previousVersion)return false;
+    std::string digest;
+    if(productVersion(t.targetExecutable)!=t.previousVersion||
+       !hashFile(t.targetExecutable,digest)||digest!=t.previousSha256)return false;
     if(targetApplicationRunning(t))return true;
     const std::wstring eventName=L"Local\\EyeBreakReminder.UpdateConfirm."+t.nonce;HANDLE confirmed=CreateEventW(nullptr,TRUE,FALSE,eventName.c_str());if(!confirmed)return false;const DWORD eventError=GetLastError();if(eventError==ERROR_ALREADY_EXISTS){CloseHandle(confirmed);return false;}
     const std::wstring args=L"--update-confirm "+quoteArgument(t.nonce)+L" --update-cleanup "+quoteArgument(t.stagingDirectory)+L" "+std::to_wstring(GetCurrentProcessId());PROCESS_INFORMATION pi{};
@@ -267,36 +379,80 @@ inline bool startPrevious(const Transaction&t){
     if(!alive){HWND window=FindWindowW(L"EyeBreakReminder.Native",nullptr);DWORD owner=0;if(window)GetWindowThreadProcessId(window,&owner);if(window&&owner==pi.dwProcessId){const UINT quit=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");DWORD_PTR ignored=0;SendMessageTimeoutW(window,quit,0,0,SMTO_ABORTIFHUNG,5000,&ignored);}WaitForSingleObject(pi.hProcess,10000);}
     CloseHandle(pi.hProcess);return alive;
 }
-inline bool stopRunningApplication(){HWND window=FindWindowW(L"EyeBreakReminder.Native",nullptr);if(!window)return true;DWORD pid=0;GetWindowThreadProcessId(window,&pid);if(!pid||pid==GetCurrentProcessId())return false;HANDLE process=OpenProcess(SYNCHRONIZE,FALSE,pid);if(!process)return GetLastError()==ERROR_INVALID_PARAMETER;const UINT quit=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");DWORD_PTR ignored=0;SendMessageTimeoutW(window,quit,0,0,SMTO_ABORTIFHUNG,5000,&ignored);const DWORD wait=WaitForSingleObject(process,60000);CloseHandle(process);return wait==WAIT_OBJECT_0;}
+inline bool stopRunningApplication(const Transaction&t){
+    HWND window=FindWindowW(L"EyeBreakReminder.Native",nullptr);if(!window)return true;
+    DWORD pid=0;GetWindowThreadProcessId(window,&pid);if(!pid||pid==GetCurrentProcessId())return false;
+    HANDLE process=OpenProcess(SYNCHRONIZE|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);
+    if(!process)return GetLastError()==ERROR_INVALID_PARAMETER;
+    wchar_t path[32768]{};DWORD length=DWORD(std::size(path));
+    DWORD owner=0;GetWindowThreadProcessId(window,&owner);
+    const bool target=owner==pid&&QueryFullProcessImageNameW(process,0,path,&length)&&samePath(path,t.targetExecutable);
+    if(!target){CloseHandle(process);return false;}
+    const UINT quit=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");DWORD_PTR ignored=0;
+    SendMessageTimeoutW(window,quit,0,0,SMTO_ABORTIFHUNG,5000,&ignored);
+    const DWORD wait=WaitForSingleObject(process,60000);CloseHandle(process);return wait==WAIT_OBJECT_0;
+}
 inline bool restorePreviousVersion(const Transaction&t){
     const std::wstring backup=t.stagingDirectory+L"\\previous.exe";std::string digest;
     if(!safeFile(backup)||productVersion(backup)!=t.previousVersion||!hashFile(backup,digest)||digest!=t.previousSha256)return false;
-    if(!stopRunningApplication())return false;
-    const bool appRestored=copyAtomic(backup,t.targetExecutable);
-    const bool filesRestored=appRestored&&restoreInstalledFiles(t);
+    if(!stopRunningApplication(t))return false;
+    std::wstring prepared;
+    if(!prepareVerifiedRestore(t,backup,t.targetExecutable,t.previousSha256,512ull*1024*1024,prepared))return false;
+    if(!commitPreparedRestore(prepared,t.targetExecutable)){DeleteFileW(prepared.c_str());return false;}
+    const bool filesRestored=restoreInstalledFiles(t);
     const bool dataRestored=filesRestored&&restoreData(t,t.clean);
     const bool versionRestored=dataRestored&&(t.kind!="installed"||writeVersionRegistry(t.previousVersion));
     const bool startupRestored=versionRestored&&(!t.clean||setStartupRegistration(t,t.previousStartup));
     if(!startupRestored)return false;
     if(!writeJournal(t,L"recovered"))return false;
     if(!startPrevious(t))return false;
-    return setRecoveryRegistration(t,false);
+    // Leave a RunOnce command's own value alone. Windows removes the
+    // !-prefixed value after the command finishes.
+    return true;
 }
-inline int runRecovery(const std::wstring&transactionPath){
-    Transaction t;if(!readTransaction(transactionPath,t)){MessageBoxW(nullptr,L"The saved update recovery record is invalid. No files were changed; keep the recovery folder for manual review.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 2;}
-    std::string error;if(!validateTransaction(t,transactionPath,t.stagingDirectory+L"\\coordinator.exe",error,true)){MessageBoxW(nullptr,eye::win::wide(error).c_str(),L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 2;}
-    const std::wstring phase=journalPhase(t);
-    if(phase==L"complete"){setRecoveryRegistration(t,false);return 0;}
-    if(phase==L"recovered"||phase==L"verified"){
-        HANDLE single{};if(!acquireCoordinatorMutex(single))return 3;
-        const bool registered=setRecoveryRegistration(t,true);const bool started=registered&&startPrevious(t);const bool cleared=started&&setRecoveryRegistration(t,false);CloseHandle(single);
-        if(cleared)return 0;
-        setRecoveryRegistration(t,true);MessageBoxW(nullptr,L"Eye Break Reminder restored the previous files but could not confirm that the application started. The recovery record remains available; close any error dialog and run the saved recovery command again, or contact support with the recovery folder contents.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 1;
-    }
-    if(phase!=L"installing"&&phase!=L"installed"&&phase!=L"cleaning"&&phase!=L"starting")return 2;
+inline int runRecovery(const std::wstring&transactionPath,const std::wstring&coordinatorPath){
     HANDLE single{};if(!acquireCoordinatorMutex(single))return 3;
-    const bool restored=restorePreviousVersion(t);CloseHandle(single);
-    if(!restored){setRecoveryRegistration(t,true);MessageBoxW(nullptr,L"Eye Break Reminder could not finish automatic recovery. The previous application and data backups remain in the updates folder. Close Eye Break Reminder and run the saved coordinator again, or contact support with the recovery folder contents.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 1;}
+    Transaction t;if(!readTransaction(transactionPath,t)){
+        CloseHandle(single);
+        MessageBoxW(nullptr,L"The saved update recovery record is invalid. No files were changed; keep the recovery folder for manual review.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 2;
+    }
+    // Expiry gates installation. This path authenticates the record for rollback and never launches the successor payload.
+    std::string error;if(!validateTransaction(t,transactionPath,coordinatorPath,error,ManifestUse::Recover)){
+        CloseHandle(single);
+        MessageBoxW(nullptr,eye::win::wide(error).c_str(),L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 2;
+    }
+    const std::wstring phase=journalPhase(t);
+    if(phase==L"complete"){
+        CloseHandle(single);
+        return 0;
+    }
+    if(phase==L"recovered"||phase==L"verified"){
+        const bool started=startPrevious(t);
+        CloseHandle(single);
+        if(started)return 0;
+        MessageBoxW(nullptr,L"Eye Break Reminder could not confirm that the restored application started. Keep the recovery folder and contact support; Windows may remove this one-time entry after the command exits.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 1;
+    }
+    if(phase!=L"installing"&&phase!=L"installed"&&phase!=L"cleaning"&&phase!=L"starting"){CloseHandle(single);return 2;}
+    if(installedTargetIsNewerThanTransaction(t)){
+        CloseHandle(single);
+        return 2;
+    }
+    const bool registrationOwned=recoveryRegistrationMatches(t);
+    if(!registrationOwned&&!recoveryRegistrationAbsent()){
+        CloseHandle(single);
+        MessageBoxW(nullptr,L"Another update owns the Windows recovery registration. No application files were changed.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);
+        return 2;
+    }
+    if(!registrationOwned){
+        const std::wstring prompt=L"Windows no longer has this update's recovery command registered. This saved transaction may be stale.\n\nRecovery: "+
+            t.version+L" to "+t.previousVersion+L"\nFolder: "+t.stagingDirectory+
+            L"\n\nContinue only if you intentionally started this manual recovery.";
+        const int choice=MessageBoxW(nullptr,prompt.c_str(),L"Eye Break Reminder Manual Recovery",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2);
+        if(choice!=IDYES){CloseHandle(single);return 2;}
+    }
+    const bool restored=restorePreviousVersion(t);
+    CloseHandle(single);
+    if(!restored){MessageBoxW(nullptr,L"Eye Break Reminder could not finish automatic recovery. The previous application and data backups remain in the updates folder. Close Eye Break Reminder and run the saved coordinator again, or contact support with the recovery folder contents.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 1;}
     return 0;
 }
 
@@ -311,7 +467,7 @@ inline void performTransaction(Transaction t,UiState&ui){
     auto fail=[&](const std::wstring&message){coordinatorMessage(ui,message);ui.success=false;ui.done=true;};
     std::string error;if(!validateTransaction(t,t.stagingDirectory+L"\\transaction.ini",t.stagingDirectory+L"\\coordinator.exe",error)){fail(eye::win::wide(error));return;}
     HANDLE single{};if(!acquireCoordinatorMutex(single)){fail(L"Another update operation is already running. Close it before trying again.");return;}
-    auto rollback=[&](const wchar_t*message){coordinatorMessage(ui,L"Restoring the previous application and its data…");const bool restored=restorePreviousVersion(t);CloseHandle(single);fail(restored?message:L"Automatic rollback could not finish. The previous executable and data backup remain in the updates folder, and Windows will retry recovery at the next sign-in.");};
+    auto rollback=[&](const wchar_t*message){coordinatorMessage(ui,L"Restoring the previous application and its data…");const bool restored=restorePreviousVersion(t);const bool registrationCleared=restored&&setRecoveryRegistration(t,false);CloseHandle(single);fail(registrationCleared?message:L"Automatic rollback could not finish. The previous executable and data backup remain in the updates folder. Close Eye Break Reminder and run the saved recovery command, or contact support with the recovery folder contents.");};
     auto abortBeforeInstall=[&](const std::wstring&message){const bool restarted=startPrevious(t);CloseHandle(single);fail(restarted?message:message+L" The existing version is unchanged; reopen Eye Break Reminder if it is not already running.");};
     coordinatorMessage(ui,L"Waiting for Eye Break Reminder to close safely…");if(!writeJournal(t,L"waiting")){CloseHandle(single);fail(L"The update recovery record could not be saved. No files were changed.");return;}
     HANDLE owner=OpenProcess(SYNCHRONIZE,FALSE,t.ownerPid);if(owner){DWORD wait=WaitForSingleObject(owner,60000);CloseHandle(owner);if(wait!=WAIT_OBJECT_0){CloseHandle(single);fail(L"The application did not close within one minute. No files were changed; reopen it and try again.");return;}}
@@ -350,7 +506,7 @@ inline void performTransaction(Transaction t,UiState&ui){
     coordinatorMessage(ui,L"Starting the updated application and waiting for its startup confirmation…");
     const std::wstring eventName=L"Local\\EyeBreakReminder.UpdateConfirm."+t.nonce;HANDLE confirmed=CreateEventW(nullptr,TRUE,FALSE,eventName.c_str());PROCESS_INFORMATION app{};const std::wstring args=L"--update-confirm "+t.nonce+L" --update-cleanup "+quoteArgument(t.stagingDirectory)+L" "+std::to_wstring(GetCurrentProcessId());
     bool running=confirmed&&launchProcess(t.targetExecutable,args,app);bool launched=running&&WaitForSingleObject(confirmed,confirmationWaitMilliseconds())==WAIT_OBJECT_0;if(confirmed)CloseHandle(confirmed);
-    if(running&&!launched){UINT quit=RegisterWindowMessageW(L"EyeBreakReminder.Exit.Native.1");DWORD_PTR ignored=0;SendMessageTimeoutW(FindWindowW(L"EyeBreakReminder.Native",nullptr),quit,0,0,SMTO_ABORTIFHUNG,5000,&ignored);DWORD wait=WaitForSingleObject(app.hProcess,10000);CloseHandle(app.hThread);CloseHandle(app.hProcess);if(wait!=WAIT_OBJECT_0){CloseHandle(single);fail(L"The new application did not confirm startup and did not close safely. The previous executable and data backup remain available; no process was forced to stop.");return;}}
+    if(running&&!launched){requestExactApplicationExit(t,app.dwProcessId);DWORD wait=WaitForSingleObject(app.hProcess,10000);CloseHandle(app.hThread);CloseHandle(app.hProcess);if(wait!=WAIT_OBJECT_0){CloseHandle(single);fail(L"The new application did not confirm startup and did not close safely. The previous executable and data backup remain available; no process was forced to stop.");return;}}
     else if(running){CloseHandle(app.hThread);CloseHandle(app.hProcess);}
     if(!launched){rollback(L"The updated application did not start. The previous version was restored and restarted with its data.");return;}
     if(!writeJournal(t,L"complete")){rollback(L"The new application started, but its durable completion record could not be saved. The previous version was restored and restarted.");return;}

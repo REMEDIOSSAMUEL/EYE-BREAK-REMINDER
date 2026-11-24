@@ -42,11 +42,17 @@ $appKeyPath = 'HKCU:\Software\EyeBreakReminder'
 $uninstallKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder'
 $runKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $runOnceKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
-if (Test-Path -LiteralPath $appKeyPath) { throw 'Refusing to replace an existing Eye Break Reminder install registration.' }
-if (Test-Path -LiteralPath $uninstallKeyPath) { throw 'Refusing to replace an existing Eye Break Reminder uninstall registration.' }
-if ((Get-ItemProperty -LiteralPath $runKeyPath -Name EyeBreakReminder -ErrorAction SilentlyContinue) -or
-    (Get-ItemProperty -LiteralPath $runOnceKeyPath -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue)) {
-  throw 'Refusing to replace an existing Eye Break Reminder startup or recovery registration.'
+$registryRoot = [Microsoft.Win32.Registry]::CurrentUser
+foreach ($subKey in @('Software\EyeBreakReminder','Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder')) {
+  $existing = $registryRoot.OpenSubKey($subKey, $false)
+  if ($null -ne $existing) { $existing.Dispose(); throw "Refusing to replace an existing Eye Break Reminder Registry key: HKCU\$subKey" }
+}
+foreach ($check in @(@{Path='Software\Microsoft\Windows\CurrentVersion\Run';Name='EyeBreakReminder'},@{Path='Software\Microsoft\Windows\CurrentVersion\RunOnce';Name='!EyeBreakReminderUpdateRecovery'})) {
+  $key = $registryRoot.OpenSubKey($check.Path, $false)
+  if ($null -eq $key) { continue }
+  try {
+    if ($key.GetValueNames() -contains $check.Name) { throw "Refusing to replace a pre-existing HKCU\$($check.Path)\$($check.Name)." }
+  } finally { $key.Dispose() }
 }
 
 $evidencePath = [IO.Path]::GetFullPath($EvidencePath)
@@ -260,10 +266,16 @@ function Close-DisposableApp($App) {
   $script:activeApp=$null
 }
 
-function Start-Recovery($Transaction) {
+function Start-Recovery($Transaction,[string]$RegisteredCommand) {
   $coordinator=Join-Path $Transaction.Stage 'coordinator.exe'
-  $args=@('--update-recover',(Quote-Argument $Transaction.Transaction))
-  $process=Start-Process -FilePath $coordinator -ArgumentList $args -WorkingDirectory $Transaction.Stage -PassThru
+  $quotedCoordinator=Quote-Argument $coordinator
+  $compactCommand=$quotedCoordinator+' --update-recover'
+  $fullCommand=$compactCommand+' '+(Quote-Argument $Transaction.Transaction)
+  $expectedCommand=if($fullCommand.Length-le260){$fullCommand}elseif($compactCommand.Length-le260){$compactCommand}else{''}
+  $exactCommand=$expectedCommand-and$RegisteredCommand-ceq$expectedCommand-and$RegisteredCommand.Length-le260
+  Add-Assertion $exactCommand 'INST-011: manual recovery replays the exact bounded command registered in RunOnce' ([pscustomobject]@{Registered=$RegisteredCommand;Expected=$expectedCommand;Length=$RegisteredCommand.Length})
+  $arguments=$RegisteredCommand.Substring($quotedCoordinator.Length).TrimStart()
+  $process=Start-Process -FilePath $coordinator -ArgumentList $arguments -WorkingDirectory $Transaction.Stage -PassThru
   if (-not $process.WaitForExit(90000)) { throw 'Recovery helper exceeded its 90-second hosted acceptance bound.' }
   $process.Refresh()
   if ($process.ExitCode -ne 0) { throw "Recovery helper returned exit code $($process.ExitCode)." }
@@ -364,13 +376,13 @@ function Invoke-LockedExecutableRecoveryTest() {
     $stillOriginal=(Get-Hash $transaction.Target) -ceq (Get-Hash $candidate) -and (Get-AppVersion $transaction.Target) -match '^1\.4\.0(\.0)?$'
     Add-Assertion $stillOriginal 'INST-011: locked installed executable is not truncated or replaced' ([pscustomobject]@{SHA256=(Get-Hash $transaction.Target);ProductVersion=(Get-AppVersion $transaction.Target)})
     $registeredVersion=(Get-ItemProperty -LiteralPath $uninstallKeyPath -Name DisplayVersion -ErrorAction Stop).DisplayVersion
-    $recoveryCommand=(Get-ItemProperty -LiteralPath $runOnceKeyPath -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction Stop).'!EyeBreakReminderUpdateRecovery'
+    $runOnceHandle=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\RunOnce',$false);if($null-eq$runOnceHandle){throw 'The test coordinator did not create the RunOnce key.'};try{if($runOnceHandle.GetValueNames()-notcontains'!EyeBreakReminderUpdateRecovery'){throw 'The test coordinator did not create its expected recovery value.'};$recoveryValueKind=$runOnceHandle.GetValueKind('!EyeBreakReminderUpdateRecovery');$recoveryCommand=$runOnceHandle.GetValue('!EyeBreakReminderUpdateRecovery',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)}finally{$runOnceHandle.Dispose()}
     $registrationRecoverable=($registeredVersion -ceq '1.4.0') -or ($registeredVersion -ceq '1.4.1' -and $recoveryCommand -like '*--update-recover*')
     Add-Assertion $registrationRecoverable 'INST-011: registration is previous version or explicitly pending the verified rollback' ([pscustomobject]@{DisplayVersion=$registeredVersion;RecoveryCommand=$recoveryCommand})
-    Add-Assertion ($recoveryCommand -like '*--update-recover*') 'INST-011: interrupted automatic rollback retains an actionable recovery registration'
+    Add-Assertion ($recoveryValueKind -eq [Microsoft.Win32.RegistryValueKind]::String -and $recoveryCommand -like '*--update-recover*') 'INST-011: interrupted automatic rollback retains an actionable REG_SZ recovery registration' ([pscustomobject]@{Kind=$recoveryValueKind;Command=$recoveryCommand})
     Close-Coordinator $coordinator $coordinatorWindow; $coordinatorWindow=[IntPtr]::Zero
     [void][EBR_FAILURE_EDGE_NATIVE]::CloseOwnedFile($script:lockHandle); $script:lockHandle=[IntPtr]::Zero
-    $recovery=Start-Recovery $transaction
+    $recovery=Start-Recovery $transaction $recoveryCommand
     $recoveryRequired=$false
     $recoveryApp=Find-RunningDisposableApp $transaction.Target
     Add-Assertion ($recovery.ExitCode -eq 0 -and $recoveryApp.Process -and -not $recoveryApp.Process.HasExited) 'INST-011: after releasing the test lock, explicit recovery starts the previous app successfully' ([pscustomobject]@{RecoveryExitCode=$recovery.ExitCode;ProcessId=$recoveryApp.Process.Id;Path=$recoveryApp.Process.Path})
@@ -378,11 +390,14 @@ function Invoke-LockedExecutableRecoveryTest() {
     Add-Assertion ((Get-ItemProperty -LiteralPath $uninstallKeyPath -Name DisplayVersion -ErrorAction Stop).DisplayVersion -ceq '1.4.0') 'INST-011: recovered Installed Apps registration is v1.4.0'
     $profileAfter=Get-ProfileHashes
     foreach ($name in @('settings.ini','history.dat','unrelated-sentinel.txt')) { Add-Assertion ($profileAfter[$name] -ceq $profileBefore[$name]) "INST-011: $name survives failed replacement and recovery byte-for-byte" @{Before=$profileBefore[$name];After=$profileAfter[$name]} }
-    Add-Assertion (-not (Get-ItemProperty -LiteralPath $runOnceKeyPath -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue)) 'INST-011: recovery clears its RunOnce entry after application confirmation'
-    Close-DisposableApp $recoveryApp; $recoveryApp=$null
+    $postRecoveryCommand=Get-ItemPropertyValue -LiteralPath $runOnceKeyPath -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue
+    Add-Assertion ($postRecoveryCommand -ceq $recoveryCommand) 'INST-011: manual recovery leaves the exact !RunOnce command untouched for Windows post-command handling' ([pscustomobject]@{Command=$postRecoveryCommand})
+    if ($postRecoveryCommand -ceq $recoveryCommand) { Remove-ItemProperty -LiteralPath $runOnceKeyPath -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction Stop }
+    Add-Assertion (-not (Get-ItemProperty -LiteralPath $runOnceKeyPath -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue)) 'INST-011: test harness models only the exact value removal Windows performs after automatic command execution'
     $watch=[Diagnostics.Stopwatch]::StartNew(); while ((Test-Path -LiteralPath $transaction.Stage) -and $watch.Elapsed.TotalSeconds -lt 20) { Start-Sleep -Milliseconds 200 }
-    Add-Assertion (-not (Test-Path -LiteralPath $transaction.Stage)) 'INST-011: successful recovery removes its owned staging directory after the app exits'
-    return [pscustomobject]@{Status='PASS';Scenario='INST-011';Assertions=12;Message=$status.Status;Lock='Real Windows handle denies write and delete sharing on the installed executable';InitialVersionIntact=$true;RecoveryExitCode=$recovery.ExitCode;RecoveredApplicationRelaunched=$true;SettingsHistorySentinelUnchanged=$true;StageCleaned=$true}
+    Add-Assertion (-not (Test-Path -LiteralPath $transaction.Stage)) 'INST-011: restored app removes owned staging after the harness models OS post-command cleanup'
+    Close-DisposableApp $recoveryApp; $recoveryApp=$null
+    return [pscustomobject]@{Status='PASS';Scenario='INST-011';Assertions=14;Message=$status.Status;Lock='Real Windows handle denies write and delete sharing on the installed executable';InitialVersionIntact=$true;RecoveryExitCode=$recovery.ExitCode;RecoveredApplicationRelaunched=$true;SettingsHistorySentinelUnchanged=$true;StageCleaned=$true;AutomaticRunOnceInvocation=$false}
   } finally {
     if ($script:lockHandle -ne [IntPtr]::Zero -and $script:lockHandle -ne [IntPtr]::new(-1)) { [void][EBR_FAILURE_EDGE_NATIVE]::CloseOwnedFile($script:lockHandle); $script:lockHandle=[IntPtr]::Zero }
     if ($null -ne $recoveryApp) { try { Close-DisposableApp $recoveryApp } catch { Write-Warning $_ } }

@@ -80,7 +80,7 @@ inline bool verifyManifestSignature(std::string_view manifest,std::string_view s
 struct ManifestAuthorization {bool ok=false;UpdateManifest manifest;std::string error;};
 
 inline ManifestAuthorization verifyProductionManifest(std::string_view manifestBytes,std::string_view signatureBytes,
-    std::string_view releaseTag,std::string_view installedVersion,std::int64_t now){
+    std::string_view releaseTag,std::string_view installedVersion,std::int64_t now,ManifestUse use=ManifestUse::Install){
     ManifestAuthorization result;
     if(!ProductionUpdateKeyProvisioned||ProductionUpdateKeyId.empty()){
         result.error="Publisher update authentication is not configured on this build.";return result;
@@ -89,7 +89,7 @@ inline ManifestAuthorization verifyProductionManifest(std::string_view manifestB
     if(!verifyManifestSignature(manifestBytes,signatureBytes,key)){result.error="The update manifest signature is missing, invalid, or from an unknown publisher key.";return result;}
     if(!parseCanonicalManifest(manifestBytes,result.manifest)){result.error="The signed update manifest is malformed or uses an unsupported schema.";return result;}
     if(result.manifest.keyId!=key.keyId||releaseTag!="v"+result.manifest.version){result.error="The signed update manifest does not match this official release version.";return result;}
-    if(!validateManifestFreshness(result.manifest,now)){result.error="The signed update manifest is expired or has an invalid publication time.";return result;}
+    if(!validateManifestFreshness(result.manifest,now,use)){result.error="The signed update manifest is expired or has an invalid publication time.";return result;}
     Version installed,latest;
     if(!detail::parseVersion(installedVersion,installed)||!detail::parseVersion(result.manifest.version,latest)||
        !latest.prerelease.empty()||detail::compare(latest,installed)<=0){result.error="The signed update is not a newer stable version.";return result;}
@@ -97,12 +97,13 @@ inline ManifestAuthorization verifyProductionManifest(std::string_view manifestB
 }
 
 inline ManifestAuthorization verifyManifestWithKey(std::string_view manifestBytes,std::string_view signatureBytes,
-    std::string_view releaseTag,std::string_view installedVersion,std::int64_t now,const TrustedPublicKey&key){
+    std::string_view releaseTag,std::string_view installedVersion,std::int64_t now,const TrustedPublicKey&key,
+    ManifestUse use=ManifestUse::Install){
     ManifestAuthorization result;
     if(!verifyManifestSignature(manifestBytes,signatureBytes,key)){result.error="The update manifest signature is missing, invalid, or from an unknown publisher key.";return result;}
     if(!parseCanonicalManifest(manifestBytes,result.manifest)){result.error="The signed update manifest is malformed or uses an unsupported schema.";return result;}
     if(result.manifest.keyId!=key.keyId||releaseTag!="v"+result.manifest.version){result.error="The signed update manifest does not match this official release version.";return result;}
-    if(!validateManifestFreshness(result.manifest,now)){result.error="The signed update manifest is expired or has an invalid publication time.";return result;}
+    if(!validateManifestFreshness(result.manifest,now,use)){result.error="The signed update manifest is expired or has an invalid publication time.";return result;}
     Version installed,latest;
     if(!detail::parseVersion(installedVersion,installed)||!detail::parseVersion(result.manifest.version,latest)||
        !latest.prerelease.empty()||detail::compare(latest,installed)<=0){result.error="The signed update is not a newer stable version.";return result;}
@@ -120,15 +121,17 @@ inline bool readTestPublicKey(const std::wstring&stagingDirectory,TrustedPublicK
     CloseHandle(file);if(!ok)return false;key.p256Point.assign(point.begin(),point.end());return signature_detail::keyIdForPoint(key.p256Point,key.keyId);
 }
 inline ManifestAuthorization verifyStagedManifest(std::string_view manifestBytes,std::string_view signatureBytes,
-    const std::wstring&stagingDirectory,std::string_view releaseTag,std::string_view installedVersion,std::int64_t now){
+    const std::wstring&stagingDirectory,std::string_view releaseTag,std::string_view installedVersion,std::int64_t now,
+    ManifestUse use=ManifestUse::Install){
     TrustedPublicKey testKey;
-    if(readTestPublicKey(stagingDirectory,testKey))return verifyManifestWithKey(manifestBytes,signatureBytes,releaseTag,installedVersion,now,testKey);
-    return verifyProductionManifest(manifestBytes,signatureBytes,releaseTag,installedVersion,now);
+    if(readTestPublicKey(stagingDirectory,testKey))return verifyManifestWithKey(manifestBytes,signatureBytes,releaseTag,installedVersion,now,testKey,use);
+    return verifyProductionManifest(manifestBytes,signatureBytes,releaseTag,installedVersion,now,use);
 }
 #else
 inline ManifestAuthorization verifyStagedManifest(std::string_view manifestBytes,std::string_view signatureBytes,
-    const std::wstring&,std::string_view releaseTag,std::string_view installedVersion,std::int64_t now){
-    return verifyProductionManifest(manifestBytes,signatureBytes,releaseTag,installedVersion,now);
+    const std::wstring&,std::string_view releaseTag,std::string_view installedVersion,std::int64_t now,
+    ManifestUse use=ManifestUse::Install){
+    return verifyProductionManifest(manifestBytes,signatureBytes,releaseTag,installedVersion,now,use);
 }
 #endif
 

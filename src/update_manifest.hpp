@@ -139,10 +139,12 @@ inline bool parseCanonicalManifest(std::string_view bytes,UpdateManifest&out){
     CanonicalReader reader(bytes);return reader.parse(out);
 }
 
-inline bool validateManifestFreshness(const UpdateManifest&m,std::int64_t now){
+enum class ManifestUse { Install, Recover };
+
+inline bool validateManifestFreshness(const UpdateManifest&m,std::int64_t now,ManifestUse use=ManifestUse::Install){
     std::int64_t issued=0,expires=0;
     return manifest_detail::parseDate(m.issuedAt,issued)&&manifest_detail::parseDate(m.expiresAt,expires)&&
-           issued<=now+300&&expires>now&&expires>issued&&expires-issued<=90ll*24*60*60;
+           issued<=now+300&&(use==ManifestUse::Recover||expires>now)&&expires>issued&&expires-issued<=90ll*24*60*60;
 }
 
 inline const ManifestAsset* manifestAsset(const UpdateManifest&m,bool installed){
