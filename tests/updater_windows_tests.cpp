@@ -211,18 +211,16 @@ bool testDnsResolutionFailure(const std::wstring&stage){
     wchar_t previous[8]{};const DWORD previousLength=GetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",previous,DWORD(std::size(previous)));
     const unsigned closeFailuresBefore=eye::updates::client_detail::WinHttpCloseFailures.load(std::memory_order_relaxed);
     const bool configured=SetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",L"1")!=FALSE;
-    // WinHTTP may create a small set of process-wide resolver/worker handles
-    // lazily after the session has already appeared flat for several requests.
-    // Hosted-runner evidence showed one-time process-wide handle initialization
-    // can occur several seconds after an apparent plateau. Do not stop at the
-    // first flat window: sample the complete bounded 128-request warm-up so
-    // delayed Windows resolver/worker handles are included before measuring.
-    // The final 16 warm-up samples must still be identical, and the following
-    // 20 requests still reject any continued per-request handle growth.
+    // WinHTTP can create process-wide resolver/worker handles late in warm-up.
+    // Always sample at least 128 active requests, then extend the bounded
+    // warm-up to at most 160 until 16 consecutive transitions are stable.
+    // The following 20 active requests and final delayed sample still reject
+    // continued per-request handle growth.
     eye::updates::HttpResponse response;if(configured)for(unsigned i=0;i<8;++i)response=eye::updates::latestStableReleaseResponse();
     Sleep(5000);std::vector<DWORD>dnsHandleSamples;DWORD stableHandleBaseline=0,previousHandles=0;unsigned stableSamples=0,warmupSamples=0;bool stableBaselineObserved=false;
-    for(unsigned i=0;i<128&&configured;++i){response=eye::updates::latestStableReleaseResponse();Sleep(250);DWORD handles=0;if(!GetProcessHandleCount(GetCurrentProcess(),&handles))break;dnsHandleSamples.push_back(handles);++warmupSamples;if(i&&handles==previousHandles)++stableSamples;else stableSamples=0;previousHandles=handles;}
-    stableHandleBaseline=previousHandles;stableBaselineObserved=warmupSamples>=64&&stableSamples>=16;bool repeatedHandleCountsStable=stableBaselineObserved;
+    constexpr unsigned minimumWarmupSamples=128,maximumWarmupSamples=160,requiredStableTransitions=16;
+    for(unsigned i=0;i<maximumWarmupSamples&&configured;++i){response=eye::updates::latestStableReleaseResponse();Sleep(250);DWORD handles=0;if(!GetProcessHandleCount(GetCurrentProcess(),&handles))break;dnsHandleSamples.push_back(handles);++warmupSamples;if(i&&handles==previousHandles)++stableSamples;else stableSamples=0;previousHandles=handles;if(warmupSamples>=minimumWarmupSamples&&stableSamples>=requiredStableTransitions)break;}
+    stableHandleBaseline=previousHandles;stableBaselineObserved=warmupSamples>=minimumWarmupSamples&&stableSamples>=requiredStableTransitions;bool repeatedHandleCountsStable=stableBaselineObserved;
     for(unsigned i=0;i<20&&configured;++i){response=eye::updates::latestStableReleaseResponse();Sleep(250);DWORD handles=0;const bool observed=GetProcessHandleCount(GetCurrentProcess(),&handles)!=FALSE;dnsHandleSamples.push_back(handles);repeatedHandleCountsStable&=observed&&handles==stableHandleBaseline;}
     const bool restoredEnvironment=previousLength?SetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",std::wstring(previous,previousLength).c_str())!=FALSE:SetEnvironmentVariableW(L"EBR_GUI_TEST_DNS_FAILURE",nullptr)!=FALSE;
     Sleep(5000);DWORD finalHandles=0;const bool handlesObserved=GetProcessHandleCount(GetCurrentProcess(),&finalHandles)!=FALSE;

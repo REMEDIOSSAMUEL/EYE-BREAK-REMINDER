@@ -481,6 +481,10 @@ try {
       (Get-Sha (Join-Path $data 'history.dat')) -ceq $prior.Profile['history.dat'] -and
       (Read-Reg $runOnceKey $valueName).Value -ceq $command.Command) 'Recovery restores prior bytes and keeps RunOnce pending during startup confirmation'
     $stoppedApp = $null
+    if ($PathLayout -ceq 'Long') {
+      Confirm-Timer $restored
+      Confirm (-not $first.Process.HasExited) 'Recovery helper remains active after the restored application is ready and before test-only termination'
+    }
     $stoppedRecovery = Stop-Owned $first
     if ($PathLayout -ceq 'Long') {
       $restored.Process.Refresh()
