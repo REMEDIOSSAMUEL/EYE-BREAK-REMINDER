@@ -946,8 +946,26 @@ public static class EBR_STD_APP_ACTIVATION {
     $isAdministrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if($isAdministrator-and-not$AllowActiveConsoleAdministrator){throw 'The disposable test account unexpectedly has administrator membership.'}
     $testAccountLabel=if($AllowActiveConsoleAdministrator){'active Console owner'}else{'standard user'}
-    $identityEventName=if($AllowActiveConsoleAdministrator){'Child process is the active Console owner'}else{'Child process has a standard Windows user token'}
-    $events.Add([pscustomobject]@{Name=$identityEventName;Status='PASS';User=$identity.Name;Sid=$identity.User.Value;IsAdministrator=$isAdministrator;ActiveConsoleOwnerMode=[bool]$AllowActiveConsoleAdministrator;ProfilePathSource=$userProfilePathSource;ProfilePath=$env:USERPROFILE})
+    $standardUserAcceptanceEventNames=[ordered]@{
+      Identity='Child process has a standard Windows user token'
+      InstallerWizard='Standard-user interactive installer wizard'
+      InstalledImage='Installed image matches the candidate at the standard user LocalAppData path'
+      Registration='Installer registers under the standard account HKCU hive'
+      InstalledLaunch='Installed candidate launches with a visible window under the standard account'
+      UninstallerWizard='Standard-user interactive uninstaller wizard'
+      UninstallPreservation='Interactive uninstall removes the standard user installation, preserves settings/history byte-for-byte, and clears both HKCU registrations'
+    }
+    $activeConsoleAcceptanceEventNames=[ordered]@{
+      Identity='Child process is the active Console owner'
+      InstallerWizard="$testAccountLabel interactive installer wizard"
+      InstalledImage="Installed image matches the candidate at the $testAccountLabel LocalAppData path"
+      Registration="Installer registers under the $testAccountLabel HKCU hive"
+      InstalledLaunch="Installed candidate launches with a visible window under the $testAccountLabel identity"
+      UninstallerWizard="$testAccountLabel interactive uninstaller wizard"
+      UninstallPreservation="Interactive uninstall removes the $testAccountLabel installation, preserves settings/history byte-for-byte, and clears both HKCU registrations"
+    }
+    $acceptanceEventNames=if($AllowActiveConsoleAdministrator){$activeConsoleAcceptanceEventNames}else{$standardUserAcceptanceEventNames}
+    $events.Add([pscustomobject]@{Name=$acceptanceEventNames.Identity;Status='PASS';User=$identity.Name;Sid=$identity.User.Value;IsAdministrator=$isAdministrator;ActiveConsoleOwnerMode=[bool]$AllowActiveConsoleAdministrator;ProfilePathSource=$userProfilePathSource;ProfilePath=$env:USERPROFILE})
     $stageRoot=[IO.Path]::GetFullPath((Split-Path -Parent $PSCommandPath))
     $runnerTempRoot=[IO.Path]::GetFullPath([string]$env:RUNNER_TEMP).TrimEnd('\')+'\'
     if(-not$stageRoot.StartsWith($runnerTempRoot,[StringComparison]::OrdinalIgnoreCase)){throw "The disposable child script is outside the verified RUNNER_TEMP root: '$stageRoot'."}
@@ -1001,7 +1019,7 @@ public static class EBR_STD_APP_ACTIVATION {
     }
     $installDir=Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder';$installed=Join-Path $installDir 'EyeBreakReminder.exe';$uninstaller=Join-Path $installDir 'Uninstall.exe'
     $wizardInstall=Invoke-StandardUserWizard $installer "$testAccountLabel interactive install wizard"
-    $events.Add([pscustomobject]@{Name="$testAccountLabel interactive installer wizard";Status=$wizardInstall.Status;Details=$wizardInstall;TokenAdministrator=$isAdministrator})
+    $events.Add([pscustomobject]@{Name=$acceptanceEventNames.InstallerWizard;Status=$wizardInstall.Status;Details=$wizardInstall;TokenAdministrator=$isAdministrator})
     if($wizardInstall.Status-eq'PASS'){if($wizardInstall.FinishCheckbox-notmatch'(?i)^(Off|Unchecked)(?:\s+\(native Win32\))?$'){$events.Add([pscustomobject]@{Name="$testAccountLabel installer finish-page Run checkbox state";Status='NOT TESTED';Details="Finish-page checkbox state: $($wizardInstall.FinishCheckbox)."})}else{$events.Add([pscustomobject]@{Name="$testAccountLabel installer finish-page Run checkbox is unchecked";Status='PASS';State=$wizardInstall.FinishCheckbox})}}
     if($wizardInstall.Status-eq'FAIL'){throw $wizardInstall.Reason}
     if($wizardInstall.Status-ne'PASS'){
@@ -1014,7 +1032,7 @@ public static class EBR_STD_APP_ACTIVATION {
     if(-not(Test-Path -LiteralPath $installed -PathType Leaf)){throw "Installer did not create the expected user-scoped executable '$installed'."}
     $installedHash=(Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()
     if($installedHash-cne$expectedHash){throw "Installed executable hash $installedHash differs from candidate hash $expectedHash."}
-    $events.Add([pscustomobject]@{Name="Installed image matches the candidate at the $testAccountLabel LocalAppData path";Status='PASS';Path=$installed;SHA256=$installedHash;TestAccount=$testAccountLabel})
+    $events.Add([pscustomobject]@{Name=$acceptanceEventNames.InstalledImage;Status='PASS';Path=$installed;SHA256=$installedHash;TestAccount=$testAccountLabel})
     $startMenuShortcut=Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Eye Break Reminder\Eye Break Reminder.lnk'
     if(-not(Test-Path -LiteralPath $startMenuShortcut -PathType Leaf)){throw "The installer did not create the expected per-user Start Menu shortcut in the $testAccountLabel profile: '$startMenuShortcut'."}
     $shortcutShell=$null;$shortcut=$null
@@ -1034,7 +1052,7 @@ public static class EBR_STD_APP_ACTIVATION {
     $registeredPath=[IO.Path]::GetFullPath([string]$registration.UninstallString.Trim('"'))
     if($registeredPath-ine[IO.Path]::GetFullPath($uninstaller)){throw "Uninstall registration points at '$registeredPath', expected '$uninstaller'."}
     if(-not(Test-Path -LiteralPath $appKey)){throw "The $testAccountLabel HKCU application registration was not created."}
-    $events.Add([pscustomobject]@{Name="Installer registers under the $testAccountLabel HKCU hive";Status='PASS';UninstallKey=$uninstallKey;UninstallString=$registration.UninstallString;TestAccount=$testAccountLabel})
+    $events.Add([pscustomobject]@{Name=$acceptanceEventNames.Registration;Status='PASS';UninstallKey=$uninstallKey;UninstallString=$registration.UninstallString;TestAccount=$testAccountLabel})
     function Get-InstalledCandidateLaunchSnapshot([switch]$CaptureScreenshots){
       $expectedPath=[IO.Path]::GetFullPath($installed);$expectedSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$expectedSession=[int]$guardSessionId
       $candidateRows=@(Get-StandardUserCandidateProcesses $installed);$processSnapshots=[System.Collections.Generic.List[object]]::new()
@@ -1119,7 +1137,7 @@ public static class EBR_STD_APP_ACTIVATION {
       }
     }
     $launchSnapshot=Get-InstalledCandidateLaunchSnapshot -CaptureScreenshots
-    $launchEventName="Installed candidate launches with a visible window under the $testAccountLabel identity"
+    $launchEventName=$acceptanceEventNames.InstalledLaunch
     if(-not$launchSnapshot.UniqueVisibleInstalledCandidateProcess){
       $candidateLaunchFailure=$true;if(-not$candidateLaunchFailureReason){$candidateLaunchFailureReason="The exact installed executable did not produce one visible main window in the active $testAccountLabel session."};try{$launchFailureDiagnostics=Get-StandardUserLaunchFailureDiagnostics $appProcess $launchAttemptProcessId $launchStartException $launchAttemptStartedUtc $installed $launchSnapshot}catch{$launchFailureDiagnostics=[pscustomobject]@{LaunchAttemptStartedUtc=$launchAttemptStartedUtc.ToString('o');ExpectedExecutable=$installed;LaunchStartException=$launchStartException;DiagnosticsCollectionError=$_.Exception.Message;LastWindowSnapshot=$launchSnapshot;CapturedUtc=[DateTime]::UtcNow.ToString('o')}}
       foreach($candidateProcess in $launchSnapshot.Processes){if(-not$candidateProcess.ProcessExited-and$candidateProcess.ExactPathVerified-and$candidateProcess.SessionVerified-and$candidateProcess.UserIdentityVerified){try{Stop-Process -Id ([int]$candidateProcess.ProcessId) -Force -ErrorAction Stop}catch{}}}
@@ -1172,7 +1190,7 @@ public static class EBR_STD_APP_ACTIVATION {
     $historyFixtureHash=(Get-FileHash -LiteralPath $historyFixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $events.Add([pscustomobject]@{Name="Disposable $testAccountLabel settings and history seeded immediately before interactive uninstall";Status='PASS';SettingsSHA256=$settingsFixtureHash;HistorySHA256=$historyFixtureHash})
     $wizardUninstall=Invoke-StandardUserWizard $uninstaller "$testAccountLabel interactive uninstall wizard"
-    $events.Add([pscustomobject]@{Name="$testAccountLabel interactive uninstaller wizard";Status=$wizardUninstall.Status;Details=$wizardUninstall;TokenAdministrator=$isAdministrator})
+    $events.Add([pscustomobject]@{Name=$acceptanceEventNames.UninstallerWizard;Status=$wizardUninstall.Status;Details=$wizardUninstall;TokenAdministrator=$isAdministrator})
     if($wizardUninstall.Status-eq'PASS'){if($wizardUninstall.FinishCheckbox-eq'Off'){$events.Add([pscustomobject]@{Name="$testAccountLabel uninstaller finish-page Run checkbox is unchecked";Status='PASS';State=$wizardUninstall.FinishCheckbox})}else{$events.Add([pscustomobject]@{Name="$testAccountLabel uninstaller finish-page Run checkbox";Status='NOT APPLICABLE';Details='The uninstaller uses MUI_UNPAGE_FINISH; setup.nsi defines the Run checkbox only for install finish pages.'})}}
     if($wizardUninstall.Status-eq'FAIL'){throw $wizardUninstall.Reason}
     if($wizardUninstall.Status-ne'PASS'){
@@ -1188,7 +1206,7 @@ public static class EBR_STD_APP_ACTIVATION {
       $settingsPreserved=$settingsAfterUninstall-and($settingsAfterHash-ceq$settingsFixtureHash)
       $historyPreserved=$historyAfterUninstall-and($historyAfterHash-ceq$historyFixtureHash)
       if(-not$settingsPreserved-or-not$historyPreserved){throw "Interactive $testAccountLabel uninstall did not retain its disposable settings and history byte-for-byte."}
-      $events.Add([pscustomobject]@{Name="Interactive uninstall removes the $testAccountLabel installation, preserves settings/history byte-for-byte, and clears both HKCU registrations";Status='PASS';ExitCode=$wizardUninstall.ExitCode;InstallDirectoryExists=$false;UninstallRegistrationExists=$false;ApplicationRegistrationExists=$false;SettingsSHA256=$settingsFixtureHash;SettingsPreserved=$settingsPreserved;HistorySHA256=$historyFixtureHash;HistoryPreserved=$historyPreserved})
+      $events.Add([pscustomobject]@{Name=$acceptanceEventNames.UninstallPreservation;Status='PASS';ExitCode=$wizardUninstall.ExitCode;InstallDirectoryExists=$false;UninstallRegistrationExists=$false;ApplicationRegistrationExists=$false;SettingsSHA256=$settingsFixtureHash;SettingsPreserved=$settingsPreserved;HistorySHA256=$historyFixtureHash;HistoryPreserved=$historyPreserved})
       $silentInstall=Start-Process -FilePath $installer -ArgumentList '/S' -PassThru
       if(-not$silentInstall.WaitForExit(120000)-or$silentInstall.ExitCode-ne0){throw "Silent reinstall failed after the $testAccountLabel interactive uninstall."}
       $silentUninstall=Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru

@@ -7,7 +7,7 @@ STRIP ?= x86_64-w64-mingw32-strip
 UPDATER_SMOKE_ARGS ?=
 FLAGS = -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -municode -mwindows -static -static-libgcc -static-libstdc++ -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE
 LIBS = -lcomctl32 -lcomdlg32 -ldwmapi -lwtsapi32 -lwinmm -lgdiplus -lshell32 -lole32 -loleaut32 -luuid -ladvapi32 -luxtheme -lwinhttp -lversion -lbcrypt
-.PHONY: all test package gui-test updater-metadata-test package-source-policy-test update-signing-tool-test updater-windows-test updater-test-artifacts github-updater-smoke clean
+.PHONY: all test package gui-test updater-metadata-test package-source-policy-test update-signing-tool-test windows-standard-user-event-contract-test updater-windows-test updater-test-artifacts github-updater-smoke clean
 all: test release/EyeBreakReminder.exe
 release:
 	mkdir -p release
@@ -42,7 +42,7 @@ build/updater-failing-installer.exe: tests/updater_failing_installer.cpp build/u
 updater-test-artifacts: build/updater-failing-installer.exe
 tests/core-tests: tests/core_tests.cpp src/core.hpp
 	$(HOST_CXX) -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror $< -o $@
-test: tests/core-tests build/updater-metadata-tests package-source-policy-test update-signing-tool-test
+test: tests/core-tests build/updater-metadata-tests package-source-policy-test update-signing-tool-test windows-standard-user-event-contract-test
 	./tests/core-tests
 	./build/updater-metadata-tests
 build/updater-metadata-tests: tests/updater_metadata_tests.cpp src/update_checker.hpp src/update_manifest.hpp src/update_signature_win.hpp src/update_trust.hpp | build
@@ -53,6 +53,8 @@ package-source-policy-test:
 	$(PYTHON) tests/package_source_policy_tests.py
 update-signing-tool-test:
 	$(PYTHON) tests/update_signing_tool_tests.py
+windows-standard-user-event-contract-test:
+	$(PYTHON) tests/windows_standard_user_event_contract_tests.py
 release/EyeBreakReminder-Setup-x64.exe: release/EyeBreakReminder.exe installer/setup.nsi README.md docs/PRIVACY.md docs/VERIFICATION.md
 	$(MAKENSIS) -NOCD installer/setup.nsi
 package: all release/EyeBreakReminder-Setup-x64.exe
