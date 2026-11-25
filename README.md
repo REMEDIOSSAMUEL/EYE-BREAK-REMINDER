@@ -1,4 +1,4 @@
-# Eye Break Reminder 1.4.0 — Windows 11 x64
+# Eye Break Reminder 1.4.1 — Windows 11 x64
 
 A native Windows desktop eye-break utility, compiled from Linux with C++17 and MinGW-w64. It uses Win32 system controls, Windows common dialogs, native title bars, native tray integration, and a custom timer dial. It has no browser, console, .NET dependency or external assets at runtime.
 
@@ -8,9 +8,9 @@ A native Windows desktop eye-break utility, compiled from Linux with C++17 and M
 
 **Portable:** extract `EyeBreakReminder-Portable-x64.zip` and double-click `EyeBreakReminder.exe`. You can also use the separately supplied `EyeBreakReminder.exe` directly: its icon and five sounds are embedded. No compiler or SDK is needed to run it. Only Windows 11 on a native x64 operating system is supported.
 
-**Windows signing:** the v1.4.0 installer and executable may be Authenticode unsigned under the owner's approved release policy. Windows can show publisher or SmartScreen warnings; this project does not change or bypass Windows security. The initial installer is a manual bootstrap and is not authenticated by the updater manifest. GitHub HTTPS and a checksum do not independently authenticate the publisher if the repository or release channel is compromised.
+**Windows signing:** the v1.4.1 production update uses signed update metadata. The installer and executable may be Authenticode unsigned. Windows can show publisher or SmartScreen warnings; this project does not change or bypass Windows security. The initial installer is a manual bootstrap and is not authenticated by the updater manifest. GitHub HTTPS and a checksum do not independently authenticate the publisher if the repository or release channel is compromised.
 
-**Automatic update trust:** after a trusted initial installation, v1.4.0 production updates must include an ECDSA P-256/SHA-256 signed manifest verified by the public key embedded in the application. The manifest binds each supported update payload to its identity, version, architecture, size and SHA-256 digest. Missing or invalid signatures are rejected with no unsigned-update fallback. This signature does not Authenticode-sign the initial installer or remove Windows warnings. The exact production-authenticated candidate passed installed and portable update acceptance; v1.4.0 remains unpublished and awaits separate owner publication approval.
+**Automatic update trust:** after a trusted initial installation, production updates for clients starting with v1.4.0 must include an ECDSA P-256/SHA-256 signed manifest verified by the public key embedded in the application. The manifest binds each supported update payload to its identity, version, architecture, size and SHA-256 digest. Missing or invalid signatures are rejected with no unsigned-update fallback. This signature does not Authenticode-sign the initial installer or remove Windows warnings.
 
 ## Controls
 
@@ -32,9 +32,9 @@ During work the timer uses the familiar blue accent and says **Running**. During
 
 Settings → About includes **Check for Updates**, **Automatically check for updates**, and **Automatically download updates**. The optional automatic checks run at most daily; downloads and installation are always explained to and confirmed by the user. An available stable release opens a native themed dialog with release notes, versions, size, Preserve Settings (selected by default), and Clean Install. Downloads stream over HTTPS with Windows certificate validation, progress, cancellation, strict GitHub asset URL checks and SHA-256 verification. A separate per-user coordinator waits for the app to close before invoking the existing NSIS installer; portable copies replace only their executable. Recovery backups and a next-sign-in recovery entry protect interrupted installs. See the [updater architecture](docs/V1.4.0_UPDATER_ARCHITECTURE.md), [security model](docs/V1.4.0_UPDATE_SECURITY.md), [update guide](docs/UPDATES.md), and [installer behavior](docs/INSTALLER.md).
 
-**v1.4.0 has not been published or merged.** Production update authentication is provisioned with the embedded ECDSA P-256/SHA-256 public key and a signed manifest. The exact candidate passed production-key installed and portable update transactions and is ready for separate owner publication approval. See the [security model](docs/V1.4.0_UPDATE_SECURITY.md) for evidence and the remaining test limitations.
+**v1.4.1** retains the functionality and appearance of v1.4.0 and is prepared to validate an authenticated production update. See the [v1.4.0 published verification](docs/V1.4.0_PUBLISHED_RELEASE_VERIFICATION.md) for the stable baseline and its documented limitations.
 
-The currently published v1.3.0 build only links to the release page, so its one-time upgrade to v1.4.0 still requires downloading and running the v1.4.0 setup file. After v1.4.0 is installed, future supported releases can be installed in the app.
+The published v1.3.0 build only links to the release page, so its one-time upgrade to v1.4.0 still requires downloading and running the v1.4.0 setup file. After v1.4.0 is installed, future supported releases can be installed in the app.
 
 ## Operating schedule
 

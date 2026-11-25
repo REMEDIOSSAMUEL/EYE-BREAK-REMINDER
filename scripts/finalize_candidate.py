@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble and verify a signed v1.4.0 candidate without accessing private keys."""
+"""Assemble and verify a signed production candidate without accessing private keys."""
 from __future__ import annotations
 
 import argparse
@@ -24,6 +24,7 @@ RELEASE_FILES = (
     "EyeBreakReminder-UpdateManifest.json",
     "EyeBreakReminder-UpdateManifest.sig",
 )
+EXPECTED_VERSION = (ROOT / "VERSION").read_text(encoding="ascii").strip()
 UNSIGNED_CANDIDATE_FILES = RELEASE_FILES[:5]
 CHECKSUM_FILES = RELEASE_FILES[:4]
 _PEM_BEGIN = b"-----BEGIN "
@@ -89,8 +90,8 @@ def verify_candidate(release: Path, trust_header: Path) -> dict[str, object]:
     manifest_path = release / "EyeBreakReminder-UpdateManifest.json"
     signature_path = release / "EyeBreakReminder-UpdateManifest.sig"
     _, manifest = signing.load_manifest(manifest_path)
-    if manifest["version"] != "1.4.0":
-        raise ValueError("The final candidate manifest must identify v1.4.0.")
+    if manifest["version"] != EXPECTED_VERSION:
+        raise ValueError(f"The final candidate manifest must identify v{EXPECTED_VERSION}.")
     signing.verify_embedded_signature(trust_header, manifest_path, signature_path)
 
     signed_by_name = {asset["name"]: asset for asset in manifest["assets"]}
@@ -156,8 +157,8 @@ def finalize_candidate(release: Path, manifest: Path, signature: Path, trust_hea
         if source == release / name or (release / name).exists():
             raise ValueError(f"Refusing to overwrite candidate metadata: {name}")
     _, signed_manifest = signing.load_manifest(manifest)
-    if signed_manifest["version"] != "1.4.0":
-        raise ValueError("The final candidate manifest must identify v1.4.0.")
+    if signed_manifest["version"] != EXPECTED_VERSION:
+        raise ValueError(f"The final candidate manifest must identify v{EXPECTED_VERSION}.")
     signing.verify_embedded_signature(trust_header, manifest, signature)
     signed_by_name = {asset["name"]: asset for asset in signed_manifest["assets"]}
     for name in ("EyeBreakReminder-Setup-x64.exe", "EyeBreakReminder.exe"):
