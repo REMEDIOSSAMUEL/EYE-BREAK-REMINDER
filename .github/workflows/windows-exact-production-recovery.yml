@@ -24,6 +24,8 @@ jobs:
         ${{ fromJSON(
           contains(github.event.head_commit.message, '[repair-only]') &&
             '{"include":[{"scenario":"ManualRepairRegression"}]}' ||
+          contains(github.event.head_commit.message, '[bad-backups-only]') &&
+            '{"include":[{"scenario":"MissingBackup","boundary":"BeforeRelaunch","damage":"MissingBackup"},{"scenario":"CorruptBackup","boundary":"BeforeRelaunch","damage":"CorruptBackup"}]}' ||
           contains(github.event.head_commit.message, '[damaged-recovery-only]') &&
             '{"include":[{"scenario":"MissingCoordinator","boundary":"BeforeRelaunch","damage":"MissingCoordinator"},{"scenario":"MissingBackup","boundary":"BeforeRelaunch","damage":"MissingBackup"},{"scenario":"CorruptBackup","boundary":"BeforeRelaunch","damage":"CorruptBackup"}]}' ||
           '{"include":[{"scenario":"InstallerStart","boundary":"InstallerStart"},{"scenario":"BeforeRelaunch","boundary":"BeforeRelaunch"},{"scenario":"ReinstallWithPendingRecovery","boundary":"BeforeRelaunch","reinstall":true},{"scenario":"ManualRepairRegression"}]}'

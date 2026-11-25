@@ -481,29 +481,18 @@ try {
         Confirm (-not (Test-Path -LiteralPath $command.Image) -and (Read-Reg $runOnceKey $valueName).Value -ceq $command.Command) 'Exact saved RunOnce name still targets the missing coordinator'
         $report.DamagedTransaction.RunOnceReplay = 'BLOCKED_MISSING_REGISTERED_IMAGE'
       } else {
-        $traceSource = "ebr-recovery-$PID"
-        $trace = Register-CimIndicationEvent -Query 'SELECT * FROM Win32_ProcessStartTrace' -SourceIdentifier $traceSource
-        try {
-          $failure = Start-Exact $command.Image $retryCwd @() -RawArguments $command.RawArguments
-          [void](Wait-For {
-            $failure.Process.Refresh()
-            -not $failure.Process.HasExited -and $failure.Process.MainWindowTitle -ceq 'Eye Break Reminder Recovery'
-          } 'exact recovery error dialog for the damaged executable backup')
-          $native = Get-CimInstance Win32_Process -Filter "ProcessId=$($failure.Process.Id)"
-          Confirm ($native.ExecutablePath -ieq $command.Image -and $native.CommandLine -ceq $command.Command) 'Exact saved RunOnce command was replayed after the backup failure'
-          Confirm ($failure.Process.CloseMainWindow() -and $failure.Process.WaitForExit(10000) -and
-            $failure.Process.ExitCode -eq 1) 'Exact production recovery reports failure and exits with code 1'
-          $startedChildren = @(Get-Event -SourceIdentifier $traceSource -ErrorAction SilentlyContinue |
-            Where-Object { $_.SourceEventArgs.NewEvent.ParentProcessID -eq $failure.Process.Id })
-          $helperEvent = @(Get-Event -SourceIdentifier $traceSource -ErrorAction SilentlyContinue |
-            Where-Object { $_.SourceEventArgs.NewEvent.ProcessID -eq $failure.Process.Id -and
-              $_.SourceEventArgs.NewEvent.ProcessName -ceq 'coordinator.exe' })
-          Confirm ($helperEvent.Count -eq 1 -and $startedChildren.Count -eq 0) 'Runner process-start trace observes the recovery helper and no child process'
-          $report.DamagedTransaction.RunOnceReplay = 'RECOVERY_REJECTED_UNUSABLE_BACKUP'
-        } finally {
-          Unregister-Event -SourceIdentifier $traceSource
-          Remove-Event -SourceIdentifier $traceSource -ErrorAction SilentlyContinue
-        }
+        $report.DamagedTransaction.ProcessStartTrace = 'UNAVAILABLE: hosted Win32_ProcessStartTrace did not establish reliable positive helper observation in run 45610728833.'
+        $failure = Start-Exact $command.Image $retryCwd @() -RawArguments $command.RawArguments
+        [void](Wait-For {
+          $failure.Process.Refresh()
+          -not $failure.Process.HasExited -and $failure.Process.MainWindowTitle -ceq 'Eye Break Reminder Recovery'
+        } 'exact recovery error dialog for the damaged executable backup')
+        $native = Get-CimInstance Win32_Process -Filter "ProcessId=$($failure.Process.Id)"
+        Confirm ($native.ExecutablePath -ieq $command.Image -and $native.CommandLine -ceq $command.Command) 'Exact saved RunOnce command was replayed after the backup failure'
+        Confirm ($failure.Process.CloseMainWindow() -and $failure.Process.WaitForExit(10000) -and
+          $failure.Process.ExitCode -eq 1) 'Exact production recovery reports failure and exits with code 1'
+        Confirm ($null -eq (Find-TransactionProcesses $stage)) 'No transaction process survives after the failed recovery command exits'
+        $report.DamagedTransaction.RunOnceReplay = 'RECOVERY_REJECTED_UNUSABLE_BACKUP'
       }
 
       Confirm ((Read-Reg $runOnceKey $valueName).Value -ceq $command.Command -and
