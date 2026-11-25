@@ -2,9 +2,9 @@
 """Loopback HTTPS feed for the production-binary Windows update acceptance test.
 
 The workflow temporarily maps only the official GitHub hostnames to loopback
-and installs this test's ephemeral CA in the disposable runner's CurrentUser
-Root store. The production binary still executes its normal HTTPS and
-GitHub-SHA-256 checks. This feed is never configured into a release build.
+and installs this test's ephemeral CA in the disposable runner's machine Root
+store. The production binary executes its normal TLS, signature and hash
+checks. This feed is never configured into a release build.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import hashlib
 import json
 import socket
 import threading
+import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -62,6 +63,9 @@ def make_handler(
     request_log: Path,
     redirect_marker: Path | None = None,
     redirect_location: str = "https://unexpected-updates.example.invalid/unsafe.exe",
+    manifest: Path | None = None,
+    signature: Path | None = None,
+    payload_delay: float = 0,
 ):
     setup_path = setup_path.resolve(strict=True)
     app_path = app_path.resolve(strict=True)
@@ -71,6 +75,11 @@ def make_handler(
         "EyeBreakReminder-Setup-x64.exe": setup_path,
         "EyeBreakReminder.exe": app_path,
     }
+    if (manifest is None) != (signature is None):
+        raise ValueError("Supply the public manifest and signature together.")
+    if manifest is not None and signature is not None:
+        assets["EyeBreakReminder-UpdateManifest.json"] = manifest.resolve(strict=True)
+        assets["EyeBreakReminder-UpdateManifest.sig"] = signature.resolve(strict=True)
     release = {
         "tag_name": VERSION,
         "html_url": f"https://github.com/{REPOSITORY}/releases/tag/{VERSION}",
@@ -152,6 +161,8 @@ def make_handler(
                     with path.open("rb") as source:
                         for block in iter(lambda: source.read(64 * 1024), b""):
                             self.wfile.write(block)
+                            if payload_delay and name in ("EyeBreakReminder.exe", "EyeBreakReminder-Setup-x64.exe"):
+                                time.sleep(payload_delay)
                     return
 
             record["response_status"] = 404
@@ -180,6 +191,8 @@ def main() -> int:
         "--redirect-location",
         default="https://unexpected-updates.example.invalid/unsafe.exe",
     )
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--signature", type=Path)
     args = parser.parse_args()
 
     handler = make_handler(
@@ -188,6 +201,9 @@ def main() -> int:
         args.request_log,
         args.redirect_marker,
         args.redirect_location,
+        args.manifest,
+        args.signature,
+        payload_delay=0.12 if args.manifest else 0,
     )
     servers = [
         TLSHTTPServer(("127.0.0.1", 443), handler),

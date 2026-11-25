@@ -1,6 +1,10 @@
 # Changelog
 
-## 1.4.0 (development; not published)
+## 1.4.1
+
+- Update the application and Windows package version identities to validate the authenticated in-app upgrade from v1.4.0. Preserve Settings retains settings and history.
+
+## 1.4.0 (2026-11-25)
 
 Added
 
@@ -17,7 +21,7 @@ Security and initial installation
 
 - The owner-approved v1.4.0 policy makes signed update manifests and production verification mandatory. Authenticode and SignPath are optional for this release; the initial installer may remain unsigned if clearly disclosed.
 - The first installer is a manual bootstrap and is not authenticated by the later update manifest. GitHub HTTPS and checksums do not independently authenticate the publisher if the same release channel is compromised. Windows may show unsigned-publisher or SmartScreen warnings.
-- Production update key `p256-0aff97759ea95258` is provisioned and embedded. The exact signed candidate is retained and awaits separate owner publication approval; v1.4.0 is still unpublished.
+- Production update key `p256-0aff97759ea95258` is provisioned and embedded. The exact signed v1.4.0 candidate was published and independently verified.
 
 Changed
 

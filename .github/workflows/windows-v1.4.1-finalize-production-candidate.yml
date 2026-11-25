@@ -1,0 +1,177 @@
+name: Finalize signed v1.4.1 production candidate
+
+on:
+  push:
+    branches: [release/v1.4.1-update-validation]
+    paths:
+      - 'release-inputs/v1.4.1/**'
+      - '.github/workflows/windows-v1.4.1-finalize-production-candidate.yml'
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+
+jobs:
+  finalize:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact source and hosted candidate identity
+        id: candidate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pointer = Get-Content release-inputs/v1.4.1/candidate-provenance.json -Raw | ConvertFrom-Json
+          $source = [string]$pointer.candidate_source_commit
+          $run = [string]$pointer.candidate_run_id
+          $id = [string]$pointer.candidate_artifact_id
+          if ($source -cnotmatch '^[0-9a-f]{40}$' -or $run -notmatch '^\d+$' -or $id -notmatch '^\d+$') { throw 'Invalid candidate pointer.' }
+          git merge-base --is-ancestor $source $env:GITHUB_SHA
+          if ($LASTEXITCODE) { throw 'Frozen build source is not an ancestor of finalization.' }
+          $paths = @(git diff --name-only $source $env:GITHUB_SHA)
+          $expected = @('release-inputs/v1.4.1/EyeBreakReminder-UpdateManifest.json','release-inputs/v1.4.1/EyeBreakReminder-UpdateManifest.sig','release-inputs/v1.4.1/candidate-provenance.json')
+          $expected += '.github/workflows/windows-v1.4.1-finalize-production-candidate.yml'
+          if (Compare-Object $expected $paths -CaseSensitive) { throw 'Only the signed metadata, provenance pointer, and reviewed post-freeze finalization workflow may follow the freeze.' }
+          $base = "repos/$env:GITHUB_REPOSITORY"
+          $build = gh api "$base/actions/runs/$run" | ConvertFrom-Json
+          if ($LASTEXITCODE -or $build.conclusion -cne 'success' -or $build.head_sha -cne $source -or
+              $build.head_branch -cne $env:GITHUB_REF_NAME -or $build.path -cne '.github/workflows/windows-v1.4.1-production-candidate.yml') { throw 'Wrong candidate build run.' }
+          $artifact = gh api "$base/actions/artifacts/$id" | ConvertFrom-Json
+          if ($LASTEXITCODE -or $artifact.expired -or [string]$artifact.workflow_run.id -cne $run -or
+              $artifact.name -cne "eye-break-reminder-v1.4.1-candidate-$run") { throw 'Wrong or expired candidate artifact.' }
+          "source=$source" >> $env:GITHUB_OUTPUT
+          "run=$run" >> $env:GITHUB_OUTPUT
+          "artifact=$id" >> $env:GITHUB_OUTPUT
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          artifact-ids: ${{ steps.candidate.outputs.artifact }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.candidate.outputs.run }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: unsigned
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+      - name: Check frozen file hashes and provenance
+        shell: pwsh
+        env:
+          SOURCE: ${{ steps.candidate.outputs.source }}
+          RUN_ID: ${{ steps.candidate.outputs.run }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $p = Get-Content unsigned/candidate-evidence/candidate-provenance.json -Raw | ConvertFrom-Json
+          if ($p.Status -cne 'PASS' -or $p.Version -cne '1.4.1' -or $p.SourceCommit -cne $env:SOURCE -or $p.RunId -cne $env:RUN_ID -or
+              $p.Repository -cne $env:GITHUB_REPOSITORY -or $p.Branch -cne $env:GITHUB_REF_NAME -or @($p.Files).Count -ne 5) { throw 'Invalid hosted candidate provenance.' }
+          if (Compare-Object $p.Files.Name @(Get-ChildItem unsigned/release -File).Name -CaseSensitive) { throw 'Wrong candidate file set.' }
+          foreach ($entry in $p.Files) {
+            $file = Get-Item -LiteralPath (Join-Path unsigned/release $entry.Name)
+            if ($file.Length -ne $entry.Bytes -or (Get-FileHash $file.FullName).Hash.ToLowerInvariant() -cne $entry.SHA256) { throw "Wrong candidate bytes: $($entry.Name)" }
+          }
+      - name: Assemble the seven exact files with embedded-key verification
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          python scripts/finalize_candidate.py --assemble --release-dir unsigned/release \
+            --manifest release-inputs/v1.4.1/EyeBreakReminder-UpdateManifest.json \
+            --signature release-inputs/v1.4.1/EyeBreakReminder-UpdateManifest.sig \
+            --report unsigned/candidate-evidence/assembled.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: EyeBreakReminder-v1.4.1-production-candidate
+          path: |
+            unsigned/release/
+            unsigned/candidate-evidence/
+          if-no-files-found: error
+          retention-days: 90
+
+  verify-and-update:
+    needs: finalize
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [installed, portable]
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: EyeBreakReminder-v1.4.1-production-candidate
+          path: signed-candidate
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+      - name: Check all downloaded files and verify the production signature with Windows CNG
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          python scripts/finalize_candidate.py --verify-existing --release-dir signed-candidate/release \
+            --report build/v1.4.1-updater-evidence/independent-verification.json
+          python - <<'PY'
+          from pathlib import Path
+          assembled = Path('signed-candidate/candidate-evidence/assembled.json').read_bytes()
+          verified = Path('build/v1.4.1-updater-evidence/independent-verification.json').read_bytes()
+          if assembled != verified:
+              raise SystemExit('Independent seven-file identity report differs from the assembly report.')
+          PY
+          make build/updater-windows-tests.exe
+          ./build/updater-windows-tests.exe --verify-production-manifest \
+            signed-candidate/release/EyeBreakReminder-UpdateManifest.json \
+            signed-candidate/release/EyeBreakReminder-UpdateManifest.sig v1.4.1 1.4.0 \
+            | tee build/v1.4.1-updater-evidence/production-cng.log
+          printf 'MSYS2_ROOT=%s\n' "$(cygpath -aw /)" >> "$GITHUB_ENV"
+          printf '%s\n' "$(cygpath -aw /mingw64/bin)" >> "$GITHUB_PATH"
+      - name: Verify public predecessor and run the exact signed update
+        shell: pwsh
+        env:
+          PACKAGE_KIND: ${{ matrix.kind }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.0'
+          $previous = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP 'public-v1.4.0')
+          $app = Join-Path $previous.FullName 'EyeBreakReminder.exe'
+          $setup = Join-Path $previous.FullName 'EyeBreakReminder-Setup-x64.exe'
+          Invoke-WebRequest "$base/EyeBreakReminder.exe" -OutFile $app
+          Invoke-WebRequest "$base/EyeBreakReminder-Setup-x64.exe" -OutFile $setup
+          if ((Get-FileHash $app).Hash -cne '90880BE4B515AF59967FF221E379AB5958D84C2E98F2EF50AC4CC5AECC9DC6A9' -or
+              (Get-FileHash $setup).Hash -cne 'C1D30C9D7F5ECF070FDA86711EDA7130C5F662FC27D98EAB7B6CE9E7A6B6865A') { throw 'Public predecessor hash mismatch.' }
+          $release = Join-Path $PWD 'signed-candidate/release'
+          $parameters = @{
+            Scenario = 'SignedPreserve'
+            PackageKind = $env:PACKAGE_KIND
+            CandidateInstaller = $setup
+            CandidateExecutable = $app
+            ControlledInstaller = Join-Path $release 'EyeBreakReminder-Setup-x64.exe'
+            ControlledExecutable = Join-Path $release 'EyeBreakReminder.exe'
+            ProductionManifest = Join-Path $release 'EyeBreakReminder-UpdateManifest.json'
+            ProductionSignature = Join-Path $release 'EyeBreakReminder-UpdateManifest.sig'
+            EvidenceDirectory = 'build/v1.4.1-updater-evidence'
+          }
+          & ./tests/windows_production_update_acceptance.ps1 @parameters
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: EyeBreakReminder-v1.4.1-evidence-${{ matrix.kind }}
+          path: build/v1.4.1-updater-evidence/
+          if-no-files-found: error
+          retention-days: 90
