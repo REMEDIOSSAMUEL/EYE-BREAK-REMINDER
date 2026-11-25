@@ -92,7 +92,7 @@ jobs:
           set -euo pipefail
           nsis_root="$(cygpath -u "$NSISDIR")"
           make build/gui-test/EyeBreakReminder.exe build/updater-windows-tests.exe \
-            CROSS_CXX=x86_64-w64-mingw32-g++ HOST_CXX=g++ WINDRES=windres \
+            CROSS_CXX=x86_64-w64-mingw32-g++ HOST_CXX=g++ WINDRES=windres STRIP=strip \
             "MAKENSIS=$nsis_root/makensis.exe" PYTHON=python
       - name: Download the exact public v1.4.1 predecessor
         shell: pwsh
