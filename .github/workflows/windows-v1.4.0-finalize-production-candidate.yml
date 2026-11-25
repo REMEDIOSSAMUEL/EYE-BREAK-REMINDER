@@ -74,8 +74,16 @@ jobs:
           CANDIDATE_SOURCE_COMMIT: ${{ inputs.candidate_source_commit }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $pointer = Get-Content -LiteralPath 'release-inputs/v1.4.0/candidate-provenance.json' -Raw | ConvertFrom-Json
+          $revalidateFrozen = $null -ne $pointer.candidate_revalidation_run_id
+          if ($revalidateFrozen -and ($env:GITHUB_EVENT_NAME -cne 'push' -or
+              [string]$pointer.candidate_run_id -cne '45624936126' -or
+              [string]$pointer.candidate_source_commit -cne 'dfd8018b319bdfde498d4f23b2d1ca96d0a99145' -or
+              [string]$pointer.candidate_artifact_id -cne '15029531496' -or
+              [string]$pointer.candidate_revalidation_run_id -cne '45628377723')) {
+            throw 'Frozen-candidate revalidation is pinned to the one retained candidate and its one verification run.'
+          }
           if ($env:GITHUB_EVENT_NAME -eq 'push') {
-            $pointer = Get-Content -LiteralPath 'release-inputs/v1.4.0/candidate-provenance.json' -Raw | ConvertFrom-Json
             $env:CANDIDATE_RUN_ID = [string]$pointer.candidate_run_id
             $env:CANDIDATE_SOURCE_COMMIT = [string]$pointer.candidate_source_commit
             if ($env:CANDIDATE_SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$') { throw 'Candidate pointer must identify a full source commit.' }
@@ -83,6 +91,9 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'The candidate source commit must be an ancestor of the metadata-only finalization commit.' }
             $changedPaths = @(git diff --name-only $env:CANDIDATE_SOURCE_COMMIT $env:GITHUB_SHA)
             $expectedPaths = @('release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json','release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig','release-inputs/v1.4.0/candidate-provenance.json')
+            if ($revalidateFrozen) {
+              $expectedPaths += @('.github/workflows/windows-v1.4.0-finalize-production-candidate.yml','scripts/verify_frozen_candidate_revalidation.ps1')
+            }
             $changedPathText = ($changedPaths | Sort-Object) -join "`n"
             $expectedPathText = ($expectedPaths | Sort-Object) -join "`n"
             if ($changedPathText -cne $expectedPathText) { throw 'The candidate source may only be followed by the three public signed-metadata input files.' }
@@ -107,7 +118,44 @@ jobs:
           $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
           $base = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY"
           $candidate = Invoke-RestMethod -Headers $headers -Uri "$base/actions/runs/$env:CANDIDATE_RUN_ID"
-          if ($candidate.name -cne 'Windows v1.4.0 updater and release-candidate acceptance' -or $candidate.status -cne 'completed' -or $candidate.conclusion -cne 'success' -or $candidate.head_branch -cne 'feature/v1.4.0-automatic-updater' -or $candidate.head_sha -cne $env:CANDIDATE_SOURCE_COMMIT) { throw 'Candidate run must be the completed successful Windows acceptance workflow on the feature branch at the exact declared commit.' }
+          $expectedConclusion = if ($revalidateFrozen) { 'failure' } else { 'success' }
+          if ($candidate.name -cne 'Windows v1.4.0 updater and release-candidate acceptance' -or $candidate.status -cne 'completed' -or $candidate.conclusion -cne $expectedConclusion -or $candidate.head_branch -cne 'feature/v1.4.0-automatic-updater' -or $candidate.head_sha -cne $env:CANDIDATE_SOURCE_COMMIT) { throw 'Candidate build identity or recorded conclusion differs from the expected workflow run.' }
+          if ($revalidateFrozen) {
+            $validationId = [string]$pointer.candidate_revalidation_run_id
+            $validationHead = '0af9f24d71ab003f82bd18e9146d0da8038973c4'
+            $validation = Invoke-RestMethod -Headers $headers -Uri "$base/actions/runs/$validationId"
+            if ($validation.name -cne 'Revalidate exact unsigned candidate 15029531496' -or
+                $validation.head_branch -cne 'codex/revalidate-candidate-45624936126' -or
+                $validation.head_sha -cne $validationHead -or $validation.status -cne 'completed' -or
+                $validation.conclusion -cne 'success' -or $validation.event -cne 'push') {
+              throw 'Revalidation run must have succeeded on its reviewed test-only commit.'
+            }
+            $comparison = Invoke-RestMethod -Headers $headers -Uri "$base/compare/$($env:CANDIDATE_SOURCE_COMMIT)...$validationHead"
+            $expectedDiff = @('.github/workflows/windows-frozen-candidate-revalidation.yml','tests/updater_windows_tests.cpp')
+            if ($comparison.merge_base_commit.sha -cne $env:CANDIDATE_SOURCE_COMMIT -or
+                (@($comparison.files.filename | Sort-Object) -join '|') -cne (@($expectedDiff | Sort-Object) -join '|')) {
+              throw 'Revalidation must leave the frozen production tree unchanged.'
+            }
+            $jobs = Invoke-RestMethod -Headers $headers -Uri "$base/actions/runs/$validationId/jobs?per_page=100"
+            $expectedJobs = @('Diagnose and rerun only the failed WinHTTP test','Fresh 110-cycle soak on the retained exact executable')
+            foreach ($name in $expectedJobs) {
+              $job = @($jobs.jobs | Where-Object name -CEQ $name)
+              if ($job.Count -ne 1 -or $job[0].status -cne 'completed' -or $job[0].conclusion -cne 'success' -or
+                  @($job[0].steps | Where-Object conclusion -NE 'success').Count) { throw "Revalidation job incomplete: $name" }
+            }
+            $validationArtifacts = Invoke-RestMethod -Headers $headers -Uri "$base/actions/runs/$validationId/artifacts?per_page=100"
+            $network = @($validationArtifacts.artifacts | Where-Object { $_.name -ceq "frozen-candidate-network-$validationId" -and -not $_.expired })
+            $soak = @($validationArtifacts.artifacts | Where-Object { $_.name -ceq "frozen-candidate-soak-$validationId" -and -not $_.expired })
+            if ($network.Count -ne 1 -or $soak.Count -ne 1 -or [string]$network[0].id -cne '15029466773' -or
+                [string]$soak[0].id -cne [string]$pointer.candidate_soak_artifact_id) {
+              throw 'The exact revalidation network or soak artifact is missing, expired, or ambiguous.'
+            }
+            "revalidation_run_id=$validationId" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            "revalidation_network_artifact_id=$($network[0].id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            "revalidation_soak_artifact_id=$($soak[0].id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            "CANDIDATE_REVALIDATION_RUN_ID=$validationId" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "CANDIDATE_REVALIDATION_SOAK_ARTIFACT_ID=$($soak[0].id)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
           $checks = Invoke-RestMethod -Headers $headers -Uri "$base/commits/$env:CANDIDATE_SOURCE_COMMIT/check-runs?filter=latest&per_page=100"
           $requiredCheck = @($checks.check_runs | Where-Object { $_.name -ceq 'Core tests and Windows package' -and $_.head_sha -ceq $env:CANDIDATE_SOURCE_COMMIT })
           if ($requiredCheck.Count -ne 1 -or $requiredCheck[0].status -cne 'completed' -or $requiredCheck[0].conclusion -cne 'success') { throw 'The exact candidate commit must have a successful latest Core tests and Windows package check.' }
@@ -141,6 +189,38 @@ jobs:
           run-id: ${{ steps.verify-candidate.outputs.candidate_run_id }}
           github-token: ${{ github.token }}
           path: candidate-input
+
+      - name: Download immutable network revalidation evidence
+        if: steps.verify-candidate.outputs.revalidation_run_id != ''
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.verify-candidate.outputs.revalidation_run_id }}
+          artifact-ids: ${{ steps.verify-candidate.outputs.revalidation_network_artifact_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: candidate-revalidation/network
+
+      - name: Download immutable fresh soak evidence
+        if: steps.verify-candidate.outputs.revalidation_run_id != ''
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.verify-candidate.outputs.revalidation_run_id }}
+          artifact-ids: ${{ steps.verify-candidate.outputs.revalidation_soak_artifact_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: candidate-revalidation/soak
+
+      - name: Verify every retained candidate gate from original and revalidation evidence
+        if: steps.verify-candidate.outputs.revalidation_run_id != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/verify_frozen_candidate_revalidation.ps1 -CandidateRoot 'candidate-input' `
+            -NetworkRoot 'candidate-revalidation/network' -SoakRoot 'candidate-revalidation/soak' `
+            -SoakArtifactId $env:CANDIDATE_REVALIDATION_SOAK_ARTIFACT_ID `
+            -ReportPath 'candidate-revalidation/verified-candidate-gates.json'
 
       - name: Decode the public manifest and signature without logging their contents
         shell: pwsh
@@ -201,7 +281,14 @@ jobs:
           }
           $provenance = Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
           $gate = Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Raw | ConvertFrom-Json
-          if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.SourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.RunId -ne $env:CANDIDATE_RUN_ID -or $provenance.Branch -cne 'feature/v1.4.0-automatic-updater' -or $gate.Status -cne 'PASS' -or $gate.Scope -notin @('ProductionCandidateOnly','All')) { throw 'Candidate provenance or production-candidate acceptance gate does not match the requested source and run.' }
+          if ($env:CANDIDATE_REVALIDATION_RUN_ID) {
+            $revalidated = Get-Content -LiteralPath 'candidate-revalidation/verified-candidate-gates.json' -Raw | ConvertFrom-Json
+            $accepted = $revalidated.Status -ceq 'PASS' -and $revalidated.CandidateSource -ceq $env:CANDIDATE_SOURCE_COMMIT -and
+              $revalidated.OriginalBuildRun -eq $env:CANDIDATE_RUN_ID -and $revalidated.RevalidationRun -eq $env:CANDIDATE_REVALIDATION_RUN_ID
+          } else {
+            $accepted = $gate.Status -ceq 'PASS' -and $gate.Scope -in @('ProductionCandidateOnly','All')
+          }
+          if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.SourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.RunId -ne $env:CANDIDATE_RUN_ID -or $provenance.Branch -cne 'feature/v1.4.0-automatic-updater' -or -not $accepted) { throw 'Candidate provenance or production-candidate acceptance gate does not match the requested source and run.' }
           $expectedNames = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
           $identities = @(Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/release-artifact-identities.json' -Raw | ConvertFrom-Json)
           $actualFiles = @(Get-ChildItem -LiteralPath $release -File)
@@ -235,6 +322,9 @@ jobs:
           cp candidate-input/release/EyeBreakReminder-UpdateManifest.json final-candidate/
           cp candidate-input/release/EyeBreakReminder-UpdateManifest.sig final-candidate/
           cp build/v1.4.0-finalized-evidence/candidate-verification.json final-candidate-evidence/
+          if test -f candidate-revalidation/verified-candidate-gates.json; then
+            cp candidate-revalidation/verified-candidate-gates.json final-candidate-evidence/
+          fi
           cp build/v1.4.0-finalized-evidence/production-cng-signature-verification.json final-candidate-evidence/
 
       - name: Record exact candidate provenance and retain signed files
@@ -250,6 +340,17 @@ jobs:
           $signatureHash = $identity.release_files.PSObject.Properties['EyeBreakReminder-UpdateManifest.sig'].Value.sha256
           if ($identity.status -cne 'PASS' -or $identity.production_key_id -cne $env:PRODUCTION_KEY_ID -or $cng.Status -cne 'PASS' -or $cng.Verifier -cne 'Windows CNG ECDSA P-256/SHA-256' -or $cng.ProductionKeyId -cne $env:PRODUCTION_KEY_ID -or $cng.ManifestSHA256 -cne $manifestHash -or $cng.SignatureSHA256 -cne $signatureHash -or $cng.PrivateKeyAccessed) { throw 'OpenSSL or Windows CNG production signature verification did not match the embedded trust root and final metadata bytes.' }
           [pscustomobject]@{Status='PASS';Application=$identity.application;Version=$identity.version;RequiredCheckName='Core tests and Windows package';RequiredCheckRunId=$env:REQUIRED_CHECK_RUN_ID;RequiredCheckUrl=$env:REQUIRED_CHECK_URL;CandidateAcceptanceRunId=$env:CANDIDATE_RUN_ID;CandidateAcceptanceRunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:CANDIDATE_RUN_ID";CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;FinalizationRunId=$env:GITHUB_RUN_ID;FinalizationSourceCommit=$env:GITHUB_SHA;ProductionKeyId=$identity.production_key_id;ManifestSignatureVerified=$true;WindowsCngProductionSignatureVerified=$true;Authenticode='NotSigned (owner-approved for v1.4.0; unsigned initial bootstrap must be disclosed)';Published=$false;Tagged=$false;Merged=$false;ReleaseFiles=$identity.release_files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'final-candidate-evidence/candidate-provenance.json' -Encoding UTF8
+          if ($env:CANDIDATE_REVALIDATION_RUN_ID) {
+            $path = 'final-candidate-evidence/candidate-provenance.json'
+            $provenance = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
+            $proof = Get-Content -LiteralPath 'candidate-revalidation/verified-candidate-gates.json' -Raw | ConvertFrom-Json
+            $provenance.OriginalWorkflowConclusion = $proof.OriginalWorkflowConclusion
+            $provenance.CandidateRevalidationRunId = $proof.RevalidationRun
+            $provenance.CandidateNetworkEvidenceArtifact = $proof.NetworkArtifact
+            $provenance.CandidateFreshSoakEvidenceArtifact = $proof.SoakArtifact
+            $provenance.VerifiedCandidateGatesSHA256 = (Get-FileHash -LiteralPath 'candidate-revalidation/verified-candidate-gates.json').Hash.ToLowerInvariant()
+            $provenance | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $path -Encoding UTF8
+          }
 
       - name: Upload the exact signed candidate for publication review
         id: signed-candidate
@@ -353,6 +454,25 @@ jobs:
             $expectedFiles.Remove($entry.Name)
           }
           if ($expectedFiles.Count -ne 0 -or $identityFiles.Length -ne 7) { throw 'Independent candidate file identities are missing or unexpected.' }
+          if ($provenance.CandidateRevalidationRunId) {
+            $path = 'clean-download/final-candidate-evidence/verified-candidate-gates.json'
+            $proof = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            if ((Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() -cne $provenance.VerifiedCandidateGatesSHA256 -or
+                $proof.Status -cne 'PASS' -or $proof.OriginalWorkflowConclusion -cne 'failure' -or
+                $proof.OriginalBuildRun -ne $provenance.CandidateAcceptanceRunId -or
+                $proof.CandidateSource -cne $provenance.CandidateSourceCommit -or
+                $proof.RevalidationRun -ne $provenance.CandidateRevalidationRunId -or
+                $proof.NetworkArtifact -ne $provenance.CandidateNetworkEvidenceArtifact -or
+                $proof.SoakArtifact -ne $provenance.CandidateFreshSoakEvidenceArtifact -or @($proof.VerifiedFiles).Count -ne 5) {
+              throw 'Retained-candidate gate provenance is incomplete or inconsistent.'
+            }
+            foreach ($file in $proof.VerifiedFiles) {
+              $asset = $identity.release_files.PSObject.Properties[$file.Name]
+              if (-not $asset -or $asset.Value.bytes -ne $file.Bytes -or $asset.Value.sha256 -cne $file.SHA256) {
+                throw "Hosted revalidation does not bind final file: $($file.Name)"
+              }
+            }
+          }
 
       - name: Retain independent verification evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
