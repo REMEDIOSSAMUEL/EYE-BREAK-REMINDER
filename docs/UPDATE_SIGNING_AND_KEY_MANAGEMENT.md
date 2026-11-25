@@ -1,6 +1,10 @@
 # Update signing and key management
 
-## Current v1.4.0 signed candidate — 2026-11-25
+## Published production baseline
+
+The published v1.4.0 release uses candidate `15041400454`, built from `dfd8018b319bdfde498d4f23b2d1ca96d0a99145`. Its stable x64 manifest was issued **25 November 2026 at 16:04:11 UTC** and expires **24 January 2027 at 16:04:10 UTC**. Use the published verification record for the authoritative asset hashes and provenance. The earlier signing records below preserve the identity and evidence of superseded candidates. [Published release verification](V1.4.0_PUBLISHED_RELEASE_VERIFICATION.md)
+
+## Superseded v1.4.0 candidate 15007651099 — 2026-11-25
 
 Candidate run [45575765880](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45575765880) built the replacement from source commit `0f49949a9e753fcca390c25affc99d7698b1ecde`, after the recovery cleanup-handoff defect was corrected. The owner completed the existing protected local signing procedure; the passphrase was entered only at the visible local OpenSSL prompt and was not sent in chat. Key `p256-0aff97759ea95258` signed the v1.4.0 manifest using ECDSA P-256/SHA-256 and a raw 64-byte P1363 signature. Manifest SHA-256: `88ec256d6c4bb8f0c52946b947cf8778e0966f8cfe84c9f83c551f9a61af84a6`. Signature SHA-256: `c0906144d52623a4d428df0d69208a849102df731877bbcdb9d366d1f4031992`.
 
@@ -76,7 +80,7 @@ The key pair is verified by deriving the public key from the encrypted private k
 
 Build, test, and freeze the candidate first. Where Authenticode is available, apply and verify it before creating portable packages and final hashes. The v1.4.0 policy allows an unsigned installer; do not change payload bytes after generating the signed manifest.
 
-Use a successful `ProductionCandidateOnly` Windows acceptance run on the feature branch. Verify its branch, full source commit, gate, exact five-file candidate identities, and retained artifact before signing. The following PowerShell shows the protected local procedure; replace the run ID with the final successful run:
+Use a successful `ProductionCandidateOnly` Windows acceptance run on the feature branch. Verify its branch, full source commit, gate, exact five-file candidate identities, and retained artifact before signing. The following PowerShell is the v1.4.0 example. For future releases, substitute the intended version, branch, run ID and actual artifact/evidence paths. [Future release checklist](V1.4.0_PUBLICATION_PLAN.md#future-release-checklist)
 
 ```powershell
 $ebrKeyDir = Join-Path $env:LOCALAPPDATA 'EyeBreakReminderSigning'
@@ -125,7 +129,7 @@ The signer validates the canonical schema and asset names, hashes the candidate 
 
 Copy only the public manifest and signature into `release-inputs/v1.4.0`, plus a pointer containing the candidate run ID and source commit. Commit/push those three public files on `feature/v1.4.0-automatic-updater`. The finalizer checks that the commit after the candidate changes only those metadata inputs, verifies the required CI check and exact artifact provenance, validates all seven release files, and verifies the signature with OpenSSL and Windows CNG. A separate job clean-downloads and independently verifies every file. A further Windows job exercises the authentic signed v1.4.0 transaction against an isolated v1.3.0 baseline, rejects a disposable test-key signature, installs the exact candidate setup, and checks relaunch and data preservation. It does not publish a release or use the private key in CI.
 
-## v1.4.0 production signing record
+## Superseded v1.4.0 candidate 14695418078
 
 The production public key ID is p256-0aff97759ea95258, and the public point matches the embedded production trust key in src/update_trust.hpp. The owner confirmed the encrypted private-key backup using the exact status: **“Owner confirms encrypted production-key backup. Independent backup restoration not performed.”** No independent restore was performed. The encrypted private key remained outside the checkout and was not copied to GitHub or CI.
 
@@ -139,11 +143,45 @@ After a test-only DNS warm-up timing defect was diagnosed from run 44877708026, 
 
 The retained candidate has seven files: application EXE, x64 setup, portable ZIP, source ZIP, SHA-256 list, manifest JSON and detached signature. Their exact hashes are recorded in V1.4.0_ACCEPTANCE_MATRIX.json. The EXE and setup are Authenticode NotSigned; the owner approved Authenticode as optional for v1.4.0 and SignPath is not a prerequisite. The initial installer remains a bootstrap trust boundary and must be obtained through a trusted manual process with clear unsigned-status disclosure. No merge or public release occurred.
 
-## Recovery and rotation
+## How manifest expiry affects users
 
-No automatic key rotation is implemented. To recover the current identity, retrieve the encrypted PEM and its separately stored passphrase from the owner-controlled password manager, restore them only into a protected user-scoped directory outside the repository, OneDrive, and temp, then verify the derived key ID is still `p256-0aff97759ea95258`. Do not claim backup restoration was tested unless a restoration is actually performed.
+| Scenario | Effect of expiry |
+|---|---|
+| Older authenticated updater discovers a newer stable release | It fetches and authenticates that release's manifest and signature before offering installation. An expired manifest makes the check fail. This applies to installed and portable clients with the authenticated updater. v1.3.0 is a discovery-only client that directs users to the release for manual installation. |
+| v1.4.0 checks while v1.4.0 is latest | Release discovery compares the versions and reports up to date without fetching the manifest. Future offers use the successor's manifest, independently of v1.4.0's expiry. |
+| An update is already staged | The coordinator checks freshness again immediately before launching setup or replacing the portable executable. Expiry at or before that check stops installation. |
+| Manual installation or ordinary application use | Users can independently verify and manually install the known-good setup or portable package. Installed applications continue to run. The standalone v1.4.0 installer remains Authenticode unsigned. |
+| Rollback of an interrupted transaction | Local recovery can authenticate the saved pair after it expires. Signature, transaction ownership, backups and applicable data-safety checks still apply. Recovery restores the prior installation and never uses that exception to run a successor installer or offer a network downgrade. |
 
-If the signing key is lost or compromised, stop signing. Never accept a replacement key merely because it appears in a GitHub release. Recovery requires a trusted manual installer or another independently authenticated channel that carries a reviewed replacement public key. Existing clients with the old embedded key do not receive an unauthenticated automatic key rotation. A legitimate rollback likewise requires a separately verified manual installer; an older signed manifest is not a downgrade bypass.
+Installation requires `expires_at > now`, a validity window of at most 90 days, and an issue time no more than five minutes ahead of the client's clock. The rollback path skips only the expiry cutoff. [Release discovery and offer](../src/app.cpp) · [Time policy](../src/update_manifest.hpp) · [Installation and recovery](../src/update_coordinator.hpp)
+
+Renew an unpublished candidate if its remaining validity cannot cover the intended publication and independent verification window. For published releases, keep the original assets and use a separately approved newer signed release when compatible older clients need a fresh in-app offer. Expiry alone calls for no v1.4.0 renewal. Verify a published offer before considering any exceptional replacement of its metadata. [Renewal procedure](V1.4.0_PUBLICATION_PLAN.md#signed-manifest-expiry-and-renewal)
+
+## Signing and publication incidents
+
+| Incident | Maintainer action and effect on existing installations |
+|---|---|
+| Lost or corrupted encrypted PEM | Pause signing. With owner approval, recover the encrypted PEM and separately backed-up passphrase into a private, user-scoped location outside the checkout, OneDrive and temp. Use the local OpenSSL prompt to derive the public key and verify its full point and ID match the embedded production key. If recoverable and uncompromised, the same identity can sign future updates. |
+| Forgotten passphrase | Ask the owner to check its protected backup. There is no passphrase bypass. If the key cannot be recovered and remains uncompromised, installations can still accept already-signed eligible releases while valid. Future updates under a different key require a trusted manual bootstrap. |
+| Suspected private-key compromise | Suspend signing and publication. Preserve evidence privately, secure GitHub and maintainer access as applicable, and give users independently authenticated instructions to avoid the affected update channel. Treat the old key as untrustworthy even when its signatures verify. Existing clients have no automatic key rotation or revocation mechanism. After review, use a trusted manual installer that embeds a new key delivered via an independently authenticated channel. Clients can resume authenticated updates after installing that trusted build. |
+| Failed production signature verification | Hold the draft and preserve the evidence. Independently fetch the expected pair, compare hashes, verify canonical bytes and key identity, and check the verifier's clock and version inputs if the failure is a policy rejection. If already public, inform the owner, investigate possible tampering or mixed assets and authorize any containment separately. Keep signature enforcement in place. |
+| Incorrect signed payload hash or size | Stop installation and publication. Compare the download and frozen candidate against signed sizes and hashes. A valid signature does not authenticate different payload bytes. Recover the original verified bytes while still in draft. If the frozen payload itself is wrong, freeze and independently verify a corrected candidate, then obtain separate signing approval. For a published mismatch, preserve evidence and prefer a separately approved corrected successor. |
+| Expired update manifest | Verify the UTC clock, exact pair and discovery target. Keep ordinary use and manual installation available. For an unpublished candidate, follow the metadata-only renewal procedure. For a published offer, prefer a newer authorized signed release when an in-app path is needed. |
+| Interrupted publication | Reconcile the exact tag target, release ID, draft/stable flags, and asset names, sizes and hashes before retrying. If still in draft, complete and verify the whole asset set before publishing. If public, capture what clients actually receive and notify the owner. Resume verification if the release is complete and correct. If assets differ or are missing, treat the offer as unavailable until an approved repair or corrected successor passes public verification. |
+
+Restoration of the original uncompromised key keeps existing clients on the authenticated path. Permanent loss or suspected compromise requires a trusted manual transition to a new identity for clients pinned to the old key. A deliberate downgrade outside an interrupted transaction also requires a separately verified manual installer. Production clients only authorize newer stable versions.
+
+## Maintenance checks and approvals
+
+| When | Review |
+|---|---|
+| **10 January 2027** | Check the live v1.4.0 pair against the production key and recorded hashes. Confirm expiry, the latest stable tag and the manual installation route. Decide whether older compatible clients still need a fresh in-app offer. |
+| Before each signing or release, and when reviewing a still-active offer near expiry | Verify private key availability by metadata, the public key identity and owner-confirmed access to the encrypted backup and separately stored passphrase. Check current UTC and the intended publication window. On each new release, record the expiry and next review date. |
+| During release closeout and before relevant Actions artifacts expire | Verify that unique signing, recovery, candidate and publication evidence has a durable verified copy. Record artifact retention dates and keep sensitive evidence private. |
+| Before each protected merge or publication | Review required checks and main branch protections. Resolve review requirements through the normal protected process and preserve prior releases and tags. |
+| When triaging reports or when suitable isolated environments become available | Review user-reported defects, run targeted regressions, and revisit deferred acceptance cases as the environment permits. Keep classifications aligned with actual evidence. |
+
+Obtain explicit owner approval before production signing, backup restoration, generating or changing production trust, publishing or changing public assets or tags, or creating recurring workflows or automated signing jobs. The dates above are manual review points.
 
 ## Initial bootstrap and Authenticode
 
@@ -151,10 +189,10 @@ The signed manifest cannot authenticate the application that first delivers its 
 
 Authenticode and update-manifest signing are separate controls. Authenticode can identify a publisher to Windows and may affect SmartScreen reputation; manifest signing authorizes future application updates. The approved v1.4.0 policy makes Authenticode optional and does not require SignPath approval.
 
-### SignPath Foundation findings
+### Historical SignPath Foundation assessment
 
 SignPath Foundation currently offers its service free to qualifying open-source projects. Its published terms require an OSI-approved license for all components, no proprietary project code, active maintenance, a prior release in the form to be signed, and public download documentation. Certificate-specific conditions include signing only the project's own source-built binaries, MFA for repository and SignPath access, defined author/reviewer/approver roles, a public code-signing policy and privacy statement, verifiable build provenance, and manual approval of each release signing request. The certificate is issued to SignPath Foundation and its private key is held in its HSM. This would add Authenticode signing; it would not replace the independent signed-manifest mechanism. See [Foundation eligibility terms](https://signpath.org/terms) and [GitHub integration requirements](https://docs.signpath.io/trusted-build-systems/github).
 
-This repository has no `LICENSE`, `LICENCE`, or `COPYING` file, and its README has no code-signing policy, so the published license and policy criteria are not currently established. The project is maintained and v1.3.0 is released, but v1.4.0 has not yet been released in the form proposed for signing. Eligibility therefore cannot be claimed without those changes and Foundation review. No application was submitted, no agreement accepted, no personal information supplied, and no certificate issued. Under the owner-approved policy, SignPath review is optional for v1.4.0. The [service description](https://signpath.org/) says the qualifying OSS service is free; the [project documentation](https://docs.signpath.io/projects) describes project and manual-approval configuration.
+At the time of this assessment, the repository lacked a license file and a README code-signing policy. v1.4.0 has since been published. Any future application would need a fresh assessment against the Foundation's requirements. The project has no recorded application or issued certificate. SignPath review was optional for v1.4.0. [Service description](https://signpath.org/) · [Project configuration](https://docs.signpath.io/projects)
 
 Other reviewed no-purchase options do not provide an immediate public Authenticode signature for the current NSIS/EXE/portable release set. Microsoft Store signing applies to Store-managed packages; Azure Artifact Signing and Certum options are paid; a self-signed certificate does not create public Windows publisher trust. See [Microsoft code-signing options](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options) and [Certum Open Source Code Signing](https://www.certum.eu/en/code-signing-certificates/).
