@@ -21,6 +21,7 @@ $script:updateBarrierStartedName="Local\EyeBreakReminder.GuiTest.UpdateStarted.$
 $script:updateBarrierReleaseName="Local\EyeBreakReminder.GuiTest.UpdateRelease.$PID"
 $script:oldUpdateBarrierStarted=[Environment]::GetEnvironmentVariable('EBR_GUI_TEST_UPDATE_STARTED','Process')
 $script:oldUpdateBarrierRelease=[Environment]::GetEnvironmentVariable('EBR_GUI_TEST_UPDATE_RELEASE','Process')
+$script:oldGuiTestDataDirectory=[Environment]::GetEnvironmentVariable('EBR_GUI_TEST_DATA_DIRECTORY','Process')
 $script:updateBarrierStartedCreated=$false
 $script:updateBarrierReleaseCreated=$false
 $script:updateBarrierStarted=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,$script:updateBarrierStartedName,[ref]$script:updateBarrierStartedCreated)
@@ -37,6 +38,7 @@ $script:updateLatestHandle = [IntPtr]::Zero
 $script:updateInstalledHandle = [IntPtr]::Zero
 $script:pickerResourceSamples = [System.Collections.Generic.List[object]]::new()
 $script:breakResourceSamples = [System.Collections.Generic.List[object]]::new()
+$script:updateDialogResourceSamples = [System.Collections.Generic.List[object]]::new()
 
 $native = @'
 using System;
@@ -417,7 +419,7 @@ function Get-StaticHandle([string]$Text,[string]$Name) {
 }
 function Initialize-UpdateHandles {
   if($script:updateStatusHandle -ne [IntPtr]::Zero){return}
-  $script:updateStatusHandle=Get-StaticHandle 'Select Check for Updates to query the official public GitHub Releases API.' 'Initial update status'
+  $script:updateStatusHandle=Get-StaticHandle 'Check for Updates queries the official public GitHub Releases API.' 'Initial update status'
   $script:updateLatestHandle=Get-StaticHandle 'Latest stable version: not checked' 'Initial latest version'
   $script:updateInstalledHandle=Get-StaticHandle ("Installed version: $version") 'Installed version'
 }
@@ -448,6 +450,56 @@ function Get-UiaNames([IntPtr]$Window) {
   if ($root.Current.ProcessId -ne $script:testPid) { throw 'The UI Automation root belongs to a different process.' }
   $items=$root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
   @($items | Where-Object { $_.Current.ProcessId -eq $script:testPid } | ForEach-Object { try { $_.Current.Name } catch { '' } } | Where-Object { $_ })
+}
+function Get-UiaElementDiagnostics($Root,[string]$Name) {
+  $rows=[Collections.Generic.List[object]]::new()
+  $patterns=@(
+    [pscustomobject]@{Name='Invoke';Pattern=[System.Windows.Automation.InvokePattern]::Pattern},
+    [pscustomobject]@{Name='SelectionItem';Pattern=[System.Windows.Automation.SelectionItemPattern]::Pattern},
+    [pscustomobject]@{Name='Toggle';Pattern=[System.Windows.Automation.TogglePattern]::Pattern}
+  )
+  foreach($element in $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)){
+    try{
+      $current=$element.Current
+      if($current.Name-cne$Name){continue}
+      $available=[Collections.Generic.List[string]]::new()
+      foreach($check in $patterns){$value=$null;try{if($element.TryGetCurrentPattern($check.Pattern,[ref]$value)){$available.Add($check.Name)}}catch{}}
+      $supported=@();try{$supported=@($element.GetSupportedPatterns()|ForEach-Object{$_.ProgrammaticName})}catch{}
+      $rows.Add([pscustomobject]@{Name=$current.Name;ControlType=$current.ControlType.ProgrammaticName;ClassName=$current.ClassName;AutomationId=$current.AutomationId;ProcessId=$current.ProcessId;NativeWindowHandle=$current.NativeWindowHandle;Enabled=$current.IsEnabled;KeyboardFocusable=$current.IsKeyboardFocusable;HasKeyboardFocus=$current.HasKeyboardFocus;Patterns=@($available);SupportedPatterns=$supported})
+    }catch{}
+  }
+  return ,@($rows)
+}
+function Find-UiaDialog([string]$Marker,[int]$TimeoutSeconds=15) {
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds-lt$TimeoutSeconds){
+    foreach($window in [EBR_GUI_NATIVE]::TopWindowsForProcess($script:testPid)){
+      if(-not[EBR_GUI_NATIVE]::IsWindowVisible($window)){continue}
+      try{$windowTitle=[EBR_GUI_NATIVE]::Text($window);if($Marker-eq'Eye Break Reminder Update Available'-and$windowTitle-cne'Eye Break Reminder Update'){continue};$root=[System.Windows.Automation.AutomationElement]::FromHandle($window);$rootName=$root.Current.Name;$names=@($rootName)+@(Get-UiaNames $window);if(($names -join "`n").Contains($Marker)){return [pscustomobject]@{Handle=$window;Root=$root;Names=$names;WindowTitle=$windowTitle}}}catch{}
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  throw "Timed out waiting for UI Automation dialog text '$Marker'."
+}
+function Find-NativeUpdateDialog([int]$TimeoutSeconds=15) {
+  $watch=[Diagnostics.Stopwatch]::StartNew()
+  while($watch.Elapsed.TotalSeconds-lt$TimeoutSeconds){
+    foreach($window in [EBR_GUI_NATIVE]::TopWindowsForProcess($script:testPid)){
+      if(-not[EBR_GUI_NATIVE]::IsWindowVisible($window)-or[EBR_GUI_NATIVE]::Text($window)-cne'Eye Break Reminder Update'){continue}
+      $install=[EBR_GUI_NATIVE]::GetDlgItem($window,12001);$later=[EBR_GUI_NATIVE]::GetDlgItem($window,12002)
+      if($install-ne[IntPtr]::Zero-and$later-ne[IntPtr]::Zero-and[EBR_GUI_NATIVE]::IsWindowVisible($install)-and[EBR_GUI_NATIVE]::IsWindowVisible($later)){return $window}
+    }
+    Start-Sleep -Milliseconds 50
+  }
+  throw 'Timed out waiting for the native update dialog and its install/remind-later buttons.'
+}
+function Invoke-UiaButton($Dialog,[string]$Name) {
+  $items=$Dialog.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+  foreach($element in $items){
+    try{if($element.Current.ProcessId-ne$script:testPid-or$element.Current.Name-cne$Name-or$element.Current.ControlType-ne[System.Windows.Automation.ControlType]::Button){continue};$pattern=$null;if($element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$pattern)){$pattern.Invoke();return}}catch{}
+  }
+  $diagnostics=ConvertTo-Json -InputObject (Get-UiaElementDiagnostics $Dialog.Root $Name) -Depth 5 -Compress
+  throw "Accessible dialog button '$Name' could not be invoked. Matching UI Automation elements: $diagnostics. Dialog names: $($Dialog.Names -join ' | ')"
 }
 function Save-Screenshot([IntPtr]$Window,[string]$Name,[switch]$PreserveForeground) {
   if (-not [EBR_GUI_NATIVE]::IsWindowVisible($Window)) { throw "Screenshot window is not visible: $Name" }
@@ -563,13 +615,27 @@ function Write-UpdateFixture([int]$Status,[string]$Body,[string]$Failure='none',
   $content="status=$Status`r`nfailure=$Failure`r`ndelay_ms=$DelayMilliseconds`r`n`r`n$Body"
   [IO.File]::WriteAllText($fixturePath,$content,[Text.UTF8Encoding]::new($false))
 }
-function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Failure,[string]$Expected,[int]$Delay=0) {
+function Set-ReleaseFixtureMetadata($Fixture) {
+  $metadataNames=@('EyeBreakReminder-UpdateManifest.json','EyeBreakReminder-UpdateManifest.sig','test-update-public-key.bin')
+  $metadataPaths=@($metadataNames|ForEach-Object{Join-Path (Split-Path -Parent $exePath) $_})
+  foreach($path in $metadataPaths){Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue}
+  if($null-eq$Fixture-or-not$Fixture.PSObject.Properties['ManifestBase64']){return}
+  if([string]::IsNullOrWhiteSpace([string]$Fixture.ManifestBase64)){return}
+  $metadataValues=@($Fixture.ManifestBase64,$Fixture.SignatureBase64,$Fixture.TestPublicKeyBase64)
+  for($i=0;$i-lt$metadataNames.Count;$i++){
+    if([string]::IsNullOrWhiteSpace([string]$metadataValues[$i])){throw "Signed test release metadata is incomplete: $($metadataNames[$i])"}
+    [IO.File]::WriteAllBytes($metadataPaths[$i],[Convert]::FromBase64String([string]$metadataValues[$i]))
+  }
+}
+function Run-UpdateFixture([string]$Name,[int]$Status,$Body,[string]$Failure,[string]$Expected,[int]$Delay=0) {
   $before=0
   if($Delay -ge 2000){Switch-Timer;$before=Get-TimerSeconds}
   Switch-Settings 5
   Initialize-UpdateHandles
   $fixtureDelay=[Math]::Max($Delay,1500)
-  Write-UpdateFixture $Status $Body $Failure $fixtureDelay
+  Set-ReleaseFixtureMetadata $Body
+  $releaseBody=if($Body-and$Body.PSObject.Properties['Body']){[string]$Body.Body}else{[string]$Body}
+  Write-UpdateFixture $Status $releaseBody $Failure $fixtureDelay
   Click-Control $script:mainWindow 160 'Check for Updates'
   $button=Get-Control $script:mainWindow 160 'Check for Updates'
   Assert-That (-not $button.Enabled) "$Name busy button disabled"
@@ -582,6 +648,19 @@ function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Fai
     Assert-That ($after -lt $before-5) "$Name timer continues during network request" ([pscustomobject]@{Before=$before;After=$after})
     Switch-Settings 5
   }
+  if($Name-eq'newer-version'){
+    $dialog=Find-UiaDialog 'Eye Break Reminder Update Available'
+    Assert-That ($dialog.WindowTitle-eq'Eye Break Reminder Update') 'UI Automation targets the actual update Task Dialog window' $dialog.WindowTitle
+    $names=@($dialog.Names);$summary=$names -join ' | '
+    $hasCurrent=@($names|Where-Object{$_.Contains("Current version: $expectedVersion")}).Count-gt0
+    $hasAvailableLabel=@($names|Where-Object{$_.Contains('Available version:')}).Count-gt0
+    $hasAvailableVersion=@($names|Where-Object{$_.Contains("v$newerVersion")}).Count-gt0
+    $hasReleaseNotes=@($names|Where-Object{$_.Contains('Release notes')}).Count-gt0
+    $hasDownloadInstallLabel=@($names|Where-Object{$_.Contains('Download & Install')}).Count-gt0
+    Assert-That ($hasCurrent-and$hasAvailableLabel-and$hasAvailableVersion-and$hasReleaseNotes-and$hasDownloadInstallLabel) 'Update dialog exposes current/available versions, install action and release notes' $summary
+    Save-Screenshot $dialog.Handle 'update-dialog-newer-release.png'
+    Invoke-UiaButton $dialog 'Remind Me Later'
+  }
   $watch=[Diagnostics.Stopwatch]::StartNew();$enabled=$false
   while ($watch.Elapsed.TotalSeconds -lt 12) { try { $enabled=(Get-Control $script:mainWindow 160 'Check for Updates').Enabled } catch { };if($enabled){break};Start-Sleep -Milliseconds 100 }
   Assert-That $enabled "$Name check completes"
@@ -589,6 +668,31 @@ function Run-UpdateFixture([string]$Name,[int]$Status,[string]$Body,[string]$Fai
   Assert-That ($statusText -like "*$Expected*") "$Name status result" $statusText
   $latest=[EBR_GUI_NATIVE]::Text($script:updateLatestHandle)
   Add-Result "$Name latest label" 'INFO' $latest
+}
+function Run-UpdateDialogResourceCycle([int]$Cycle,$ReleaseFixture,[bool]$Measure) {
+  # The resource loop uses native HWND controls so UI Automation client wrappers
+  # do not keep the app's accessibility providers alive during process-handle sampling.
+  Set-ReleaseFixtureMetadata $ReleaseFixture
+  Write-UpdateFixture 200 ([string]$ReleaseFixture.Body) 'none' 250
+  Click-Control $script:mainWindow 160 "Update-dialog resource cycle $Cycle"
+  $dialog=Find-NativeUpdateDialog 12
+  $install=[EBR_GUI_NATIVE]::GetDlgItem($dialog,12001);$later=[EBR_GUI_NATIVE]::GetDlgItem($dialog,12002)
+  $installLabel=[EBR_GUI_NATIVE]::Text($install)
+  if($installLabel-cne'Download && Install'){throw "Update-dialog cycle $Cycle did not expose the expected native install action. Raw button text='$installLabel'."}
+  if([EBR_GUI_NATIVE]::Text($later)-cne'Remind Me Later'){throw "Update-dialog cycle $Cycle did not expose the expected native dismiss action."}
+  Click-Control $dialog 12002 'Update-dialog Remind Me Later'
+  $watch=[Diagnostics.Stopwatch]::StartNew();$enabled=$false
+  while($watch.Elapsed.TotalSeconds-lt12){try{$enabled=(Get-Control $script:mainWindow 160 'Update-dialog resource check').Enabled}catch{};if($enabled){break};Start-Sleep -Milliseconds 50}
+  if(-not$enabled){throw "Update-dialog cycle $Cycle did not return the check control to idle."}
+  $remaining=@([EBR_GUI_NATIVE]::TopWindowsForProcess($script:testPid)|Where-Object{[EBR_GUI_NATIVE]::IsWindowVisible($_)-and[EBR_GUI_NATIVE]::Text($_)-eq'Eye Break Reminder Update'})
+  if($remaining.Count-ne0){throw "Update-dialog cycle $Cycle left $($remaining.Count) visible update dialog(s) after dismissal."}
+  $dialog=[IntPtr]::Zero
+  [GC]::Collect();[GC]::WaitForPendingFinalizers();[GC]::Collect()
+  if($Measure){
+    Start-Sleep -Milliseconds 50
+    $sample=Get-PickerResourceSample $Cycle
+    $script:updateDialogResourceSamples.Add([pscustomobject]@{TimestampUtc=[DateTime]::UtcNow.ToString('o');Cycle=$sample.Cycle;UserObjects=$sample.UserObjects;GdiObjects=$sample.GdiObjects;HandleCount=$sample.HandleCount;PrivateBytes=$sample.PrivateBytes;WorkingSetBytes=$sample.WorkingSetBytes})
+  }
 }
 function Run-UpdateOverlapBarrier {
   Switch-Timer
@@ -641,6 +745,7 @@ function Close-TestProcess {
 }
 
 try {
+  [Environment]::SetEnvironmentVariable('EBR_GUI_TEST_DATA_DIRECTORY',$dataDirectory,'Process')
   $running=@(Get-Process -Name 'EyeBreakReminder' -ErrorAction SilentlyContinue)
   foreach($item in $running){$runningPath='';try{$runningPath=[IO.Path]::GetFullPath($item.Path)}catch{};if($runningPath -ieq $exePath){throw "The isolated GUI-test executable is already running (PID $($item.Id)); refusing to reuse its test data."}}
   if([IO.Path]::GetFullPath($dataDirectory) -ine [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $exePath) 'test-data'))){throw 'The isolated test data path did not match the GUI test profile.'}
@@ -765,7 +870,7 @@ try {
   Assert-That (([EBR_GUI_NATIVE]::Text((Get-Control $script:mainWindow 125 'Work accent swatch').Handle)) -eq '#22C55E') 'Cancel leaves the visible swatch unchanged'
   Switch-Timer;$cancelShot=Save-Screenshot $script:mainWindow 'custom-cancel-keeps-green.png';Assert-TimerRingPixel $cancelShot '#22C55E' 'Cancelled Work Mode selection'
 
-  Switch-Settings 4;$resourceWarmup=5;$resourceCycles=40
+  Switch-Settings 4;$resourceWarmup=5;$resourceCycles=100
   for($i=0;$i -lt ($resourceWarmup+$resourceCycles);$i++){
     $beforeValue=Get-SettingLine 'workAccentColor';$dialog=Open-ColorPicker 127 'Repeated Work Mode colour picker'
     $accept=($i%2 -eq 0)
@@ -1001,7 +1106,36 @@ try {
   elseif($installedVersion.Minor -gt 0){$olderVersion='{0}.{1}.0' -f $installedVersion.Major,($installedVersion.Minor-1)}
   elseif($installedVersion.Major -gt 0){$olderVersion='{0}.0.0' -f ($installedVersion.Major-1)}
   else{throw 'Cannot construct a stable version older than 0.0.0 for the comparison fixture.'}
-  function Release-Fixture([string]$Tag,[bool]$Prerelease=$false){return ([ordered]@{tag_name="v$Tag";html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v$Tag";draft=$false;prerelease=$Prerelease}|ConvertTo-Json -Compress)}
+  function Release-Fixture([string]$Tag,[bool]$Prerelease=$false){
+    $tagName="v$Tag";$downloadBase="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/$tagName/";$fixtureDirectory=Split-Path -Parent $exePath
+    $setupPath=Join-Path $repoRoot 'build\gui-test\update-test-setup.exe';$portablePath=Join-Path $repoRoot 'build\gui-test\update-test-executable.exe'
+    $assets=@();$metadataBase64=@('','','')
+    if(-not$Prerelease){
+      foreach($path in @((Join-Path $fixtureDirectory 'EyeBreakReminder-UpdateManifest.json'),(Join-Path $fixtureDirectory 'EyeBreakReminder-UpdateManifest.sig'),(Join-Path $fixtureDirectory 'test-update-public-key.bin'))){Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue}
+      $signingTool=Join-Path $repoRoot 'build\updater-windows-tests.exe'
+      if(-not(Test-Path -LiteralPath $signingTool -PathType Leaf)){if($expectedVersion-eq'1.4.0'){throw 'The v1.4.0 GUI release fixtures require the disposable CNG manifest signer.'}}
+      else{
+        foreach($path in @($setupPath,$portablePath)){if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Signed GUI release payload fixture is missing: $path"}}
+        $signerOutput=@(& $signingTool --sign-update-manifest $fixtureDirectory $setupPath $portablePath $Tag 2>&1)
+        if($LASTEXITCODE-ne0){throw "The disposable CNG key could not sign the controlled GUI release manifest for v$Tag. $($signerOutput -join ' ')"}
+        $metadataPaths=@((Join-Path $fixtureDirectory 'EyeBreakReminder-UpdateManifest.json'),(Join-Path $fixtureDirectory 'EyeBreakReminder-UpdateManifest.sig'),(Join-Path $fixtureDirectory 'test-update-public-key.bin'))
+        $metadataBase64=@($metadataPaths|ForEach-Object{[Convert]::ToBase64String([IO.File]::ReadAllBytes($_))})
+      }
+    }
+    foreach($item in @(@{Name='EyeBreakReminder-Setup-x64.exe';Path=$setupPath},@{Name='EyeBreakReminder.exe';Path=$portablePath})){
+      if(Test-Path -LiteralPath $item.Path -PathType Leaf){$file=Get-Item -LiteralPath $item.Path;$digest='sha256:'+((Get-FileHash -LiteralPath $item.Path -Algorithm SHA256).Hash.ToLowerInvariant());$size=$file.Length}
+      else{$digest='sha256:'+('a'*64);$size=if($item.Name-eq'EyeBreakReminder-Setup-x64.exe'){2097152}else{1048576}}
+      $assets+=,[ordered]@{name=$item.Name;browser_download_url=($downloadBase+$item.Name);size=$size;digest=$digest}
+    }
+    if($metadataBase64[0]){
+      foreach($item in @(@{Name='EyeBreakReminder-UpdateManifest.json';Index=0},@{Name='EyeBreakReminder-UpdateManifest.sig';Index=1})){
+        $bytes=[Convert]::FromBase64String($metadataBase64[$item.Index]);$digest='sha256:'+([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant())
+        $assets+=,[ordered]@{name=$item.Name;browser_download_url=($downloadBase+$item.Name);size=$bytes.Length;digest=$digest}
+      }
+    }
+    $body=[ordered]@{tag_name=$tagName;html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/$tagName";draft=$false;prerelease=$Prerelease;body='Controlled GUI acceptance fixture release notes.';assets=$assets}|ConvertTo-Json -Compress -Depth 6
+    return [pscustomobject]@{Body=$body;ManifestBase64=$metadataBase64[0];SignatureBase64=$metadataBase64[1];TestPublicKeyBase64=$metadataBase64[2]}
+  }
   $stable=Release-Fixture $expectedVersion
   $newer=Release-Fixture $newerVersion
   $older=Release-Fixture $olderVersion
@@ -1009,10 +1143,25 @@ try {
   Run-UpdateFixture 'same-version' 200 $stable 'none' 'up to date' 3000
   Switch-Settings 5
   Assert-That (([EBR_GUI_NATIVE]::Text($script:updateLatestHandle)) -eq "Latest stable version: $expectedVersion") 'Same-version latest label'
-  Run-UpdateFixture 'newer-version' 200 $newer 'none' 'update is available'
+  Run-UpdateFixture 'newer-version' 200 $newer 'none' 'newer stable version is available'
+  $updateDialogWarmup=3;$updateDialogMeasured=20
+  for($i=1;$i-le($updateDialogWarmup+$updateDialogMeasured);$i++){
+    # A dismissed release is intentionally suppressed for the rest of this
+    # app session. Give each lifecycle a distinct, valid newer patch version
+    # so the soak measures dialog creation rather than defeating that UX rule.
+    $dialogVersionBase=[Version]$newerVersion
+    $dialogCycleVersion='{0}.{1}.{2}' -f $dialogVersionBase.Major,$dialogVersionBase.Minor,$i
+    $dialogCycleRelease=Release-Fixture $dialogCycleVersion
+    Run-UpdateDialogResourceCycle $i $dialogCycleRelease ($i-gt$updateDialogWarmup)
+  }
+  $updateDialogResourceTrends=@((Get-PickerResourceTrend 'USER objects' 'UserObjects' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'GDI objects' 'GdiObjects' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'process handles' 'HandleCount' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'private bytes' 'PrivateBytes' $script:updateDialogResourceSamples),(Get-PickerResourceTrend 'working set bytes' 'WorkingSetBytes' $script:updateDialogResourceSamples))
+  foreach($trend in $updateDialogResourceTrends){$tolerance=switch($trend.Resource){'private bytes'{1048576}'working set bytes'{8388608}default{2}};$flat=($trend.Resource -notin @('private bytes','working set bytes'));Assert-That ($trend.EndMedian-le($trend.StartMedian+$tolerance)-and(-not$flat-or$trend.SlopePerInteraction-le0.15)) "Repeated update dialogs have no sustained $($trend.Resource) growth" ([pscustomobject]@{Trend=$trend;AllowedMedianDrift=$tolerance})}
+  Add-Result 'Repeated update-dialog resource soak' 'INFO' ([pscustomobject]@{WarmupDialogs=$updateDialogWarmup;MeasuredDialogs=$updateDialogMeasured;Trends=$updateDialogResourceTrends;Samples=$script:updateDialogResourceSamples.ToArray()})
   Assert-That ((Get-Control $script:mainWindow 161 'Open official release').Enabled) 'Official release button enables for a newer version'
   Run-UpdateFixture 'older-version' 200 $older 'none' 'newer than the latest'
-  Assert-That (-not (Get-Control $script:mainWindow 161 'Open official release').Enabled) 'Release link stays disabled when installed version is newer'
+  Assert-That ((Get-Control $script:mainWindow 161 'Open official release').Enabled) 'Release notes remain available without offering a downgrade when installed version is newer'
+  $olderUpdateDialogs=@([EBR_GUI_NATIVE]::TopWindowsForProcess($script:testPid)|Where-Object{[EBR_GUI_NATIVE]::IsWindowVisible($_)-and[EBR_GUI_NATIVE]::Text($_)-eq'Eye Break Reminder Update'})
+  Assert-That ($olderUpdateDialogs.Count-eq0) 'Installed version newer than latest stable does not offer an update dialog' $olderUpdateDialogs.Count
   Run-UpdateFixture 'prerelease' 200 $prerelease 'none' 'stable release'
   Run-UpdateFixture 'private-or-not-found' 404 '' 'none' 'Private repositories'
   Run-UpdateFixture 'rate-limit' 429 '' 'none' 'rate limit'
@@ -1093,13 +1242,16 @@ catch {
 finally {
   try{$script:updateBarrierRelease.Set()}catch{}
   Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
+  foreach($metadataName in @('EyeBreakReminder-UpdateManifest.json','EyeBreakReminder-UpdateManifest.sig','test-update-public-key.bin')){Remove-Item -LiteralPath (Join-Path (Split-Path -Parent $exePath) $metadataName) -Force -ErrorAction SilentlyContinue}
   try { Close-TestProcess } catch { Add-Result 'test-app cleanup' 'FAIL' $_.Exception.Message }
+  [Environment]::SetEnvironmentVariable('EBR_GUI_TEST_DATA_DIRECTORY',$script:oldGuiTestDataDirectory,'Process')
   [Environment]::SetEnvironmentVariable('EBR_GUI_TEST_UPDATE_STARTED',$script:oldUpdateBarrierStarted,'Process')
   [Environment]::SetEnvironmentVariable('EBR_GUI_TEST_UPDATE_RELEASE',$script:oldUpdateBarrierRelease,'Process')
   if($script:updateBarrierStarted){$script:updateBarrierStarted.Dispose()}
   if($script:updateBarrierRelease){$script:updateBarrierRelease.Dispose()}
   if($script:pickerResourceSamples.Count){$script:pickerResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'picker-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
   if($script:breakResourceSamples.Count){$script:breakResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'reminder-window-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
+  if($script:updateDialogResourceSamples.Count){$script:updateDialogResourceSamples|Export-Csv -LiteralPath (Join-Path $EvidenceDirectory 'update-dialog-resource-time-series.csv') -NoTypeInformation -Encoding utf8}
   $os=Get-CimInstance Win32_OperatingSystem
   $guiExecutableHash=(Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLowerInvariant()
   $report=[pscustomobject]@{Version=$expectedVersion;ExecutableRole='Accelerated GUI test build; distinct from the production release candidate';ExecutableSHA256=$guiExecutableHash;WindowsCaption=$os.Caption;WindowsVersion=$os.Version;WindowsBuild=$os.BuildNumber;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();InteractiveDesktopAvailable=[Environment]::UserInteractive;Assertions=$script:assertionCount;Events=$script:events.ToArray();EvidenceDirectory=$EvidenceDirectory;TestDataDirectory=$dataDirectory}

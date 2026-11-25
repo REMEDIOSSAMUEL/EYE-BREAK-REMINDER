@@ -12,7 +12,7 @@ jobs:
   validate:
     name: Core tests and Windows package
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     permissions:
       contents: read
     steps:
@@ -22,9 +22,10 @@ jobs:
           persist-credentials: false
 
       - name: Install build dependencies
+        timeout-minutes: 30
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes build-essential g++-mingw-w64-x86-64 nsis python3
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::Max-Downloads=8 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::Max-Downloads=8 install --no-install-recommends --yes build-essential g++-mingw-w64-x86-64-posix nsis python3
 
       - name: Run core tests, Windows build, and package verification
-        run: make package
+        run: make package CROSS_CXX=x86_64-w64-mingw32-g++-posix

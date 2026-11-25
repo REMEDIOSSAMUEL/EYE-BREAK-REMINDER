@@ -15,6 +15,7 @@ class PE:
   require(d[:2]==b'MZ',f'{path.name}: DOS signature')
   self.pe=struct.unpack_from('<I',d,0x3c)[0]
   require(d[self.pe:self.pe+4]==b'PE\0\0',f'{path.name}: PE signature')
+  self.timestamp=struct.unpack_from('<I',d,self.pe+8)[0]
   self.machine,self.count=struct.unpack_from('<HH',d,self.pe+4)
   self.optional=self.pe+24;self.optional_size=struct.unpack_from('<H',d,self.pe+20)[0]
   self.magic=struct.unpack_from('<H',d,self.optional)[0]
@@ -66,11 +67,12 @@ class PE:
 
 app=PE(ROOT/'release/EyeBreakReminder.exe')
 require(app.machine==0x8664 and app.magic==0x20b,'Application must be x64 PE32+')
+require(app.timestamp==0,'Application PE timestamp is normalized for deterministic builds')
 require(app.subsystem==2,'Application must use Windows GUI subsystem')
 require(app.flags&0x160==0x160,'ASLR, NX and high-entropy VA flags')
 require(app.directory(4)==(0,0),'Expected unsigned release')
 imports=app.imports()
-allowed={'advapi32.dll','comctl32.dll','comdlg32.dll','dwmapi.dll','gdi32.dll','gdiplus.dll','kernel32.dll','msvcrt.dll','ole32.dll','shell32.dll','user32.dll','wtsapi32.dll','winmm.dll','uxtheme.dll','winhttp.dll','version.dll'}
+allowed={'advapi32.dll','bcrypt.dll','comctl32.dll','comdlg32.dll','dwmapi.dll','gdi32.dll','gdiplus.dll','kernel32.dll','msvcrt.dll','ole32.dll','oleaut32.dll','shell32.dll','user32.dll','wtsapi32.dll','winmm.dll','uxtheme.dll','winhttp.dll','version.dll'}
 require(all(d.lower() in allowed or d.lower().startswith(('api-ms-win-','ext-ms-win-')) for d in imports),'Only built-in Windows DLLs and OS API-set contracts')
 require('comdlg32.dll' in {d.lower() for d in imports},'Native Windows common-dialog library is linked for ChooseColorW')
 require(not any('libgcc' in d.lower() or 'libstdc++' in d.lower() for d in imports),'No external GCC/C++ runtime DLLs')
@@ -117,11 +119,22 @@ for name in ['EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip']:
     require('EyeBreakReminder/src/app.cpp' in names and 'EyeBreakReminder/tests/core_tests.cpp' in names,'Complete source/tests in archive')
     require('EyeBreakReminder/.git' not in names,'Source archive excludes the local Git pointer file')
     require('EyeBreakReminder/.github/workflows/windows-pre-release-validation.yml' in names,'Source archive includes the public Windows validation workflow')
+    require('EyeBreakReminder/.github/workflows/windows-v1.4.0-updater-acceptance.yml' in names,'Source archive includes the integrated updater release acceptance workflow')
+    require('EyeBreakReminder/.github/workflows/windows-v1.4.0-update-failure-edges.yml' in names,'Source archive includes the manual signed-transaction, recovery and development-candidate build/audit workflow')
+    require('EyeBreakReminder/docs/UPDATE_SIGNING_AND_KEY_MANAGEMENT.md' in names,'Source archive includes the offline update-signing and key-management procedure')
+    require('EyeBreakReminder/tests/windows_v1_4_updater_acceptance.ps1' in names,'Source archive includes disposable installed/portable updater acceptance')
+    require('EyeBreakReminder/tests/windows_v1_3_to_v1_4_upgrade_acceptance.ps1' in names,'Source archive includes the actual v1.3.0-to-v1.4.0 upgrade acceptance')
+    require('EyeBreakReminder/scripts/prepare-updater-test-fixtures.ps1' in names,'Source archive includes reproducible local update fixture preparation')
     require('EyeBreakReminder/.github/workflows/windows-v1.2.1-hotfix-validation.yml' in names,'Source archive includes the USER-object hotfix validation workflow')
     require('EyeBreakReminder/tests/windows_break_user_resource_soak.ps1' in names,'Source archive includes the comparative scheduled resource soak')
     require('EyeBreakReminder/docs/FINAL_PRE_RELEASE_VERIFICATION.md' not in names,'Final verification report is excluded to avoid a self-referential source ZIP digest')
     require('EyeBreakReminder/docs/V1.2.1_HOTFIX_VERIFICATION.md' not in names,'Hotfix verification report is excluded to avoid a self-referential source ZIP digest')
     require('EyeBreakReminder/docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md' not in names,'v1.3.0 final pre-release report is excluded to avoid a self-referential source ZIP digest')
+    require('EyeBreakReminder/docs/V1.4.0_FINAL_PRE_RELEASE_VERIFICATION.md' not in names,'v1.4.0 final pre-release report is excluded to avoid a self-referential source ZIP digest')
+    require('EyeBreakReminder/docs/V1.4.0_AUTONOMOUS_COMPLETION_PROGRESS.md' not in names,'v1.4.0 live progress log is excluded from the reusable source archive')
+    require('EyeBreakReminder/docs/V1.4.0_ACCEPTANCE_MATRIX.json' not in names,'v1.4.0 live acceptance matrix is excluded to avoid a self-referential source ZIP digest')
+    require('EyeBreakReminder/docs/V1.4.0_FINAL_COMPLETION_AUDIT.md' not in names,'v1.4.0 final audit is excluded to avoid a self-referential source ZIP digest')
+    require('EyeBreakReminder/docs/V1.4.0_COMPLETION_PROGRESS.md' not in names,'Operational v1.4.0 progress notes are excluded from the public source archive')
     require('EyeBreakReminder/docs/V1.3.0_COMPLETION_PROGRESS.md' not in names,'Operational completion progress log is excluded from the public source snapshot')
     require('EyeBreakReminder/docs/V1.3.0_AUTONOMOUS_COMPLETION_PROGRESS.md' not in names,'Autonomous completion progress log is excluded from the public source snapshot')
     require('EyeBreakReminder/docs/V1.3.0_FINAL_COMPLETION_AUDIT.md' not in names,'Final completion audit is excluded to avoid a self-referential source ZIP digest')
@@ -130,12 +143,12 @@ for name in ['EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip']:
     banned=('.exe','.dll','.o','.obj','.pdb','.zip','.tmp','.pyc','.pfx','.pem','.p12','.key')
     require(not any(p.lower().endswith(banned) or any(part in {'build','dist','__pycache__'} or (part.startswith('.') and part!='.github') for part in p.split('/')[1:-1]) for p in names),'Source archive has no binaries, build outputs, secrets or tool folders')
     # Everything needed to build, test and package is present: sources, test sources, scripts, installer, assets, documentation.
-    excluded_reports={Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md'),Path('docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.3.0_EXHAUSTIVE_FINAL_TEST_REPORT.md'),Path('docs/V1.3.0_COMPLETION_PROGRESS.md'),Path('docs/V1.3.0_AUTONOMOUS_COMPLETION_PROGRESS.md'),Path('docs/V1.3.0_FINAL_COMPLETION_AUDIT.md'),Path('docs/evidence/v1.3.0-exhaustive-final/acceptance-matrix.json')}
+    excluded_reports={Path('docs/FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.2.1_HOTFIX_VERIFICATION.md'),Path('docs/V1.3.0_FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.3.0_EXHAUSTIVE_FINAL_TEST_REPORT.md'),Path('docs/V1.3.0_COMPLETION_PROGRESS.md'),Path('docs/V1.3.0_AUTONOMOUS_COMPLETION_PROGRESS.md'),Path('docs/V1.3.0_FINAL_COMPLETION_AUDIT.md'),Path('docs/V1.4.0_FINAL_PRE_RELEASE_VERIFICATION.md'),Path('docs/V1.4.0_COMPLETION_PROGRESS.md'),Path('docs/V1.4.0_AUTONOMOUS_COMPLETION_PROGRESS.md'),Path('docs/V1.4.0_ACCEPTANCE_MATRIX.json'),Path('docs/V1.4.0_FINAL_COMPLETION_AUDIT.md'),Path('docs/evidence/v1.3.0-exhaustive-final/acceptance-matrix.json')}
     excluded_evidence_prefixes=('docs/evidence/v1.3.0-final-pre-release/','docs/evidence/v1.3.0-exhaustive-final/')
     def is_excluded_evidence(relative):return any(relative.as_posix().startswith(prefix) for prefix in excluded_evidence_prefixes)
     require(not any(name.startswith(tuple('EyeBreakReminder/'+p for p in excluded_evidence_prefixes)) for name in names),'Source archive excludes candidate-specific v1.3.0 run evidence with older artifact identities')
     shipped={str(f.relative_to(ROOT)).replace('\\','/') for d in ['src','scripts','installer','assets','docs'] for f in (ROOT/d).rglob('*') if f.is_file() and not f.name.lower().endswith(banned) and '__pycache__' not in f.parts and f.relative_to(ROOT) not in excluded_reports and not is_excluded_evidence(f.relative_to(ROOT))}
-    shipped|={'tests/core_tests.cpp','Makefile','VERSION','README.md','CHANGELOG.md','CONTRIBUTING.md','.editorconfig','.gitattributes','.gitignore'}
+    shipped|={'tests/core_tests.cpp','tests/github_updater_smoke.cpp','tests/updater_windows_tests.cpp','tests/updater_failing_installer.cpp','tests/updater_failing_installer.rc','tests/windows_v1_4_updater_acceptance.ps1','tests/windows_v1_3_to_v1_4_upgrade_acceptance.ps1','Makefile','VERSION','README.md','CHANGELOG.md','CONTRIBUTING.md','.editorconfig','.gitattributes','.gitignore'}
     missing=sorted(p for p in shipped if 'EyeBreakReminder/'+p not in names)
     require(not missing,'Source archive is missing '+', '.join(missing))
     excluded_dirs={'release','build','dist','__pycache__'}

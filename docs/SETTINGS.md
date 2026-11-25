@@ -1,4 +1,4 @@
-# Settings: themes and custom accent colours
+# Settings
 
 Open **Settings → General** and choose the **Appearance** section.
 
@@ -15,6 +15,14 @@ Work and break colours are independent. In normal themes, the Work Mode colour i
 The normal Dark theme defaults are Work `#60A5FA` and Break `#2DD4BF`. The Light theme uses its existing blue and teal accents (`#1D4ED8` and `#0F766E`). High-contrast themes use their accessible palette. With **Follow Windows Theme**, the defaults follow the selected Windows light/dark appearance.
 
 Pressing **OK** applies and saves the choice immediately. Pressing **Cancel** discards the dialog's pending selection. Neither action resets or pauses the timer. Saved colours and the picker's custom-colour palette remain when the theme changes or the application restarts. High contrast and Windows Forced Colors temporarily take priority while keeping custom preferences saved.
+
+## Updates
+
+Open **Settings → About** to see the installed version, last successful check, and **Check for Updates**. The manual check contacts only the public latest-stable-release endpoint for the official Eye Break Reminder GitHub repository. It uses HTTPS and sends no account credentials or settings.
+
+**Automatically check for updates** and **Automatically download updates** both default off. When enabled, checks run at most once per day. Automatic downloads still show progress and can be cancelled; installation always asks first. An update prompt is deferred while an eye break is active.
+
+The update dialog shows the installed and available versions, release notes and known download size. **Preserve my settings (Recommended)** is the default. **Clean install — reset previous settings** requires a second confirmation. The separate, unchecked **Also delete existing history and statistics** choice controls history deletion. See [Updater architecture](V1.4.0_UPDATER_ARCHITECTURE.md) for storage paths and failure recovery.
 
 ## Reset
 

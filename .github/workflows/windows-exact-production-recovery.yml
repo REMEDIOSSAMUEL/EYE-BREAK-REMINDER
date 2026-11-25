@@ -1,0 +1,136 @@
+name: Exact v1.4.0 production recovery and reinstall
+
+on:
+  push:
+    branches: [codex/exact-production-recovery-15007651099]
+    paths:
+      - '.github/workflows/windows-exact-production-recovery.yml'
+      - 'tests/windows_exact_candidate_*'
+      - 'tests/assert_exact_production_candidate.ps1'
+      - 'installer/setup.nsi'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify:
+    name: Exact candidate / ${{ matrix.scenario }}
+    runs-on: windows-2025
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix: >-
+        ${{ fromJSON(
+          contains(github.event.head_commit.message, '[repair-guard-only]') &&
+            '{"include":[{"scenario":"GuardedPendingRepair","boundary":"BeforeRelaunch","guarded":true},{"scenario":"ManualRepairRegression"}]}' ||
+          contains(github.event.head_commit.message, '[repair-only]') &&
+            '{"include":[{"scenario":"ManualRepairRegression"}]}' ||
+          contains(github.event.head_commit.message, '[bad-backups-only]') &&
+            '{"include":[{"scenario":"MissingBackup","boundary":"BeforeRelaunch","damage":"MissingBackup"},{"scenario":"CorruptBackup","boundary":"BeforeRelaunch","damage":"CorruptBackup"}]}' ||
+          contains(github.event.head_commit.message, '[damaged-recovery-only]') &&
+            '{"include":[{"scenario":"MissingCoordinator","boundary":"BeforeRelaunch","damage":"MissingCoordinator"},{"scenario":"MissingBackup","boundary":"BeforeRelaunch","damage":"MissingBackup"},{"scenario":"CorruptBackup","boundary":"BeforeRelaunch","damage":"CorruptBackup"}]}' ||
+          '{"include":[{"scenario":"InstallerStart","boundary":"InstallerStart"},{"scenario":"BeforeRelaunch","boundary":"BeforeRelaunch"},{"scenario":"ReinstallWithPendingRecovery","boundary":"BeforeRelaunch","reinstall":true},{"scenario":"ManualRepairRegression"}]}'
+        ) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          run-id: 45582714164
+          artifact-ids: 15007651099
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/exact-candidate
+      - name: Verify all seven files and authenticate the retained manifest
+        shell: pwsh
+        run: |
+          ./tests/assert_exact_production_candidate.ps1 `
+            -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
+            -EvidencePath 'build/exact-production-recovery/candidate.json'
+      - name: Install the existing pinned NSIS compiler
+        if: matrix.scenario == 'ManualRepairRegression' || matrix.guarded
+        uses: negrutiu/nsis-install@9c575d44c2938a43e38a305caeb403de90303c60
+        with:
+          version: v3.11.7461.309
+      - name: Compile only the installer regression fixture
+        if: matrix.scenario == 'ManualRepairRegression' || matrix.guarded
+        shell: pwsh
+        run: |
+          $candidate = "$env:RUNNER_TEMP/exact-candidate/final-candidate"
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+          Copy-Item -LiteralPath "$candidate/EyeBreakReminder.exe" -Destination release/
+          & makensis /V2 (Resolve-Path -LiteralPath installer/setup.nsi).Path
+          if ($LASTEXITCODE -ne 0) { throw 'Could not build the isolated installer regression fixture.' }
+      - name: Test checkpoint preservation on the installer regression fixture
+        if: matrix.scenario == 'ManualRepairRegression'
+        shell: pwsh
+        run: |
+          $candidate = "$env:RUNNER_TEMP/exact-candidate/final-candidate"
+          $fixture = (Resolve-Path -LiteralPath release/EyeBreakReminder-Setup-x64.exe).Path
+          ./tests/windows_exact_candidate_manual_repair.ps1 -CandidateDirectory $candidate `
+            -RepairInstaller $fixture -EvidencePath 'build/exact-production-recovery/manual-repair-regression.json'
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884
+        if: matrix.boundary != ''
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils
+      - name: Record baseline compiler path
+        if: matrix.boundary != ''
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          if [[ ! -x /mingw64/bin/x86_64-w64-mingw32-strip.exe ]]; then
+            cp "$(command -v strip)" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          fi
+          printf 'MSYS2_ROOT=%s\n' "$(cygpath -aw /)" >> "$GITHUB_ENV"
+      - name: Prepare the published installer and isolated v1.3.0 confirmation fixture
+        if: matrix.boundary != ''
+        shell: pwsh
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP 'stable-setup.exe'
+          Invoke-WebRequest -Uri 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.3.0/EyeBreakReminder-Setup-x64.exe' -OutFile $setup
+          if ((Get-FileHash -LiteralPath $setup).Hash.ToLowerInvariant() -cne '67c7bb338e83397e17007fa0afff9b4ad06f0a2d7924bb016198d9d38e3a76b4') {
+            throw 'Published v1.3.0 installer identity mismatch.'
+          }
+          ./tests/build_production_trust_baseline.ps1
+      - name: Observe the selected boundary and terminate the isolated processes
+        if: matrix.boundary != ''
+        shell: pwsh
+        env:
+          FAULT_BOUNDARY: ${{ matrix.boundary }}
+        run: |
+          ./tests/windows_exact_candidate_recovery.ps1 -Phase Interrupt -FaultBoundary $env:FAULT_BOUNDARY `
+            -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
+            -BaselineInstaller "$env:RUNNER_TEMP/stable-setup.exe" `
+            -BaselineApplication "$env:RUNNER_TEMP/EyeBreakReminder-ProductionTrust-Baseline-1.3.0/release/EyeBreakReminder.exe" `
+            -EvidencePath 'build/exact-production-recovery/interrupted.json'
+      - name: Replay the actual RunOnce command after original process loss
+        if: matrix.boundary != ''
+        shell: pwsh
+        env:
+          FAULT_BOUNDARY: ${{ matrix.boundary }}
+          REINSTALL_FIRST: ${{ matrix.reinstall || false }}
+          RECOVERY_DAMAGE: ${{ matrix.damage }}
+          GUARDED_REPAIR: ${{ matrix.guarded || false }}
+        run: |
+          $mode = @{}
+          if ($env:REINSTALL_FIRST -eq 'true') { $mode.ReinstallBeforeRecovery = $true }
+          if ($env:RECOVERY_DAMAGE) { $mode.RecoveryDamage = $env:RECOVERY_DAMAGE }
+          if ($env:GUARDED_REPAIR -eq 'true') { $mode.GuardedRepairInstaller = (Resolve-Path -LiteralPath release/EyeBreakReminder-Setup-x64.exe).Path }
+          ./tests/windows_exact_candidate_recovery.ps1 -Phase Recover -FaultBoundary $env:FAULT_BOUNDARY `
+            -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
+            -BaselineInstaller "$env:RUNNER_TEMP/stable-setup.exe" `
+            -BaselineApplication "$env:RUNNER_TEMP/EyeBreakReminder-ProductionTrust-Baseline-1.3.0/release/EyeBreakReminder.exe" `
+            -EvidencePath 'build/exact-production-recovery/recovered.json' @mode
+      - name: Retain exact candidate and scenario reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: exact-production-${{ matrix.scenario }}-${{ github.run_id }}
+          path: build/exact-production-recovery/*.json
+          if-no-files-found: error
+          retention-days: 90

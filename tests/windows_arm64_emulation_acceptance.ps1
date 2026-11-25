@@ -3,7 +3,8 @@ param(
   [Parameter(Mandatory=$true)][string]$StandaloneExecutable,
   [Parameter(Mandatory=$true)][string]$PortableArchive,
   [Parameter(Mandatory=$true)][string]$EvidenceDirectory,
-  [string]$CandidateSourceCommit
+  [string]$CandidateSourceCommit,
+  [ValidatePattern('^1\.4\.0$')][string]$ExpectedVersion='1.4.0'
 )
 $ErrorActionPreference='Stop'
 $InstallerPath=[IO.Path]::GetFullPath($InstallerPath)
@@ -20,7 +21,7 @@ foreach($path in @($InstallerPath,$StandaloneExecutable,$PortableArchive)){
 if(-not [Environment]::UserInteractive){throw 'Windows 11 ARM64 emulation test requires an interactive disposable runner.'}
 [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
 $events=[System.Collections.Generic.List[object]]::new()
-$expectedVersion='1.3.0'
+$expectedVersion=$ExpectedVersion
 $installDirectory=Join-Path $env:LOCALAPPDATA 'Programs\EyeBreakReminder'
 $appDataPath=Join-Path $env:LOCALAPPDATA 'EyeBreakReminder'
 $uninstallKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder'
@@ -170,7 +171,8 @@ try{
 
   $exeFile=Get-Item -LiteralPath $StandaloneExecutable
   $setupFile=Get-Item -LiteralPath $InstallerPath
-  Require ($exeFile.VersionInfo.ProductVersion -match '^1\.3\.0(\.0)?$' -and $setupFile.VersionInfo.ProductVersion -match '^1\.3\.0(\.0)?$') 'Candidate executable and installer are version 1.3.0' ([pscustomobject]@{Executable=$exeFile.VersionInfo.ProductVersion;Installer=$setupFile.VersionInfo.ProductVersion})
+  $versionPattern='^'+[regex]::Escape($expectedVersion)+'(\.0)?$'
+  Require ($exeFile.VersionInfo.ProductVersion -match $versionPattern -and $setupFile.VersionInfo.ProductVersion -match $versionPattern) "Candidate executable and installer are version $expectedVersion" ([pscustomobject]@{Executable=$exeFile.VersionInfo.ProductVersion;Installer=$setupFile.VersionInfo.ProductVersion})
   Require (-not $appDataExistedBefore) 'ARM64 runner has no pre-existing Eye Break Reminder user data' ([pscustomobject]@{AppDataPath=$appDataPath;Existed=$appDataExistedBefore})
 
   $reader=[IO.BinaryReader]::new([IO.File]::OpenRead($StandaloneExecutable))

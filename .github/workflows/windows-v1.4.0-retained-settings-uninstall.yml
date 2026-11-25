@@ -1,0 +1,990 @@
+name: v1.4.0 retained candidate Settings uninstall
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+
+# Windows 11 ARM64 desktop jobs require `run-win11-arm64-ui-probes` because the
+# hosted image's first-sign-in OOBE was already observed and blocked the exact
+# candidate. The separate `approve-win11-privacy-oobe-next` label is the only
+# workflow path that passes the explicit OOBE Next opt-in to those probes.
+# The ARM64 audio endpoint inventory is read-only, launches no app, and makes
+# no UI action, so it runs independently of the desktop-probe opt-in.
+# The Windows Server localhost RDP Settings and lock/unlock routes repeatedly
+# failed to create a second active user session through run 45007378820. Keep
+# those unchanged routes behind an explicit retry label until the RDP/session
+# environment changes; unrelated active-Console probes continue normally.
+# The owner-matched Shell job has a bounded first-login quiet-time wait, so it
+# also requires the one-off `run-shell-quiet-time-probe` label.
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  windows-11-arm64-power-capability:
+    name: Read Windows 11 ARM64 sleep, wake, and display capabilities (no changes; not acceptance)
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 10
+    steps:
+      - name: Query native Windows 11 ARM64 power and active display topology without changing state
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+          $osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          $processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+          if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'ARM64' -or $os.Caption -notmatch 'Windows 11' -or $osArchitecture -cne 'Arm64' -or $cpu.Architecture -ne 12) {
+            throw "This read-only probe requires the existing GitHub-hosted native Windows 11 ARM64 runner; found OS '$($os.Caption)', OS architecture '$osArchitecture', runner architecture '$env:RUNNER_ARCH', and CPU architecture '$($cpu.Architecture)'."
+          }
+          function Invoke-PowerCapabilityQuery([string]$Name, [string[]]$Arguments) {
+            $output = @(& powercfg.exe @Arguments 2>&1 | ForEach-Object { [string]$_ })
+            [pscustomobject]@{Name=$Name;Arguments=@($Arguments);ExitCode=$LASTEXITCODE;Output=($output -join "`n")}
+          }
+          $queries = @(
+            (Invoke-PowerCapabilityQuery 'Supported sleep states' @('/a'))
+            (Invoke-PowerCapabilityQuery 'Active wake timers' @('/waketimers'))
+            (Invoke-PowerCapabilityQuery 'Wake-armed devices' @('/devicequery','wake_armed'))
+            (Invoke-PowerCapabilityQuery 'Active power scheme' @('/getactivescheme'))
+            (Invoke-PowerCapabilityQuery 'Wake timer policy' @('/query','SCHEME_CURRENT','SUB_SLEEP','RTCWAKE'))
+          )
+          $displays = @()
+          $displayQueryError = $null
+          try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+            $displays = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { [pscustomobject]@{DeviceName=$_.DeviceName;Primary=$_.Primary;Bounds=@($_.Bounds.X,$_.Bounds.Y,$_.Bounds.Width,$_.Bounds.Height);WorkingArea=@($_.WorkingArea.X,$_.WorkingArea.Y,$_.WorkingArea.Width,$_.WorkingArea.Height)} })
+          } catch { $displayQueryError = $_.Exception.Message }
+          $computer = Get-CimInstance Win32_ComputerSystem
+          $process = Get-Process -Id $PID
+          $evidenceDirectory = Join-Path $env:RUNNER_TEMP 'v1.4.0-arm64-power-capability'
+          New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null
+          $report = [pscustomobject]@{
+            Requirement='ENV-007';Result='CAPABILITY ONLY — NOT AN ACCEPTANCE PASS'
+            Purpose='Read-only discovery; no candidate launch, UI action, sleep/wake, display change, or power setting action.'
+            Environment='GitHub-hosted disposable Windows 11 ARM64 runner'
+            OperatingSystem=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;Edition=$os.OperatingSystemSKU
+            OSArchitecture=$osArchitecture;ProcessArchitecture=$processArchitecture;RunnerArchitecture=$env:RUNNER_ARCH
+            NativeProcessorArchitectureCode=$cpu.Architecture;HypervisorPresent=$computer.HypervisorPresent
+            SessionId=$process.SessionId;SessionName=$env:SESSIONNAME;UserInteractive=[Environment]::UserInteractive
+            Queries=$queries;VisibleDisplayCount=$displays.Count;Displays=$displays;DisplayQueryError=$displayQueryError;ObservedUtc=[DateTime]::UtcNow.ToString('o')
+            Limitation='Even an available sleep state or wake source does not prove genuine sleep/resume or application timer recovery. A read-only monitor inventory is not multi-display application positioning or disconnect/reconnect acceptance evidence.'
+          }
+          $reportPath = Join-Path $evidenceDirectory 'env-007-windows-11-arm64-power-capability.json'
+          $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding UTF8
+          $summary = @(
+            '**ENV-007 hosted capability probe — not an acceptance PASS**'
+            ''
+            "Environment: $($report.Environment); $($report.OperatingSystem) $($report.Version) build $($report.Build); OS/process/native CPU architecture $osArchitecture/$processArchitecture/$($cpu.Architecture)."
+            "Runner session: $($report.SessionId) ($($report.SessionName)); interactive flag $($report.UserInteractive); hypervisor present $($report.HypervisorPresent)."
+            "Read-only powercfg plus active display topology queries only; Windows reported $($report.VisibleDisplayCount) active display(s). No candidate, UI, sleep/wake, display configuration, or power setting was changed."
+            'This does not satisfy ENV-007; a later test still needs genuine suspend/resume and observed application timer recovery.'
+          ) -join "`n"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary
+          Write-Host $summary
+          Write-Host "Evidence: $reportPath"
+
+      - name: Retain Windows 11 ARM64 capability evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-env-007-arm64-power-capability-${{ github.run_id }}
+          path: ${{ runner.temp }}/v1.4.0-arm64-power-capability/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  audio-endpoint-preflight:
+    name: Exact candidate Windows 11 ARM64 audio endpoint preflight (read-only)
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out the endpoint probe
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Verify the exact executable and record Windows audio endpoints
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "Audio probe candidate hash mismatch: $actual" }
+          & .\tests\windows_audio_endpoint_inventory.ps1 `
+            -EvidenceDirectory '.\remaining-coverage-evidence\audio-endpoint' `
+            -CandidateRunId '44875679345' `
+            -CandidateExeSHA256 $expected
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $report = Get-Content '.\remaining-coverage-evidence\audio-endpoint\windows-audio-endpoint-inventory.json' -Raw | ConvertFrom-Json
+          $summary = @(
+            '**Exact-candidate audio endpoint preflight (not a REG-008 PASS)**'
+            ''
+            "Candidate artifact 14695418078; EXE SHA-256 $($report.CandidateExecutableSHA256)."
+            "OS: $($report.OS) $($report.OSVersion); OS architecture $($report.OSArchitecture); candidate x64 emulation is not native x64."
+            "WinMM endpoints: $($report.WinMM.DeviceCount). Active WASAPI render endpoints: $($report.WASAPI.ActiveRenderEndpointCount)."
+            "Result: $($report.WindowsAudioOutputAndLoopbackStatus). $($report.Reason)"
+          ) -join "`n"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary
+          Write-Host $summary
+
+      - name: Retain audio endpoint capability evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-reg-008-audio-endpoint-preflight-${{ github.run_id }}
+          path: remaining-coverage-evidence/audio-endpoint/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  narrator-speech-recap-windows-11-arm64:
+    name: Exact candidate Narrator speech-content and keyboard accessibility probe
+    if: contains(github.event.pull_request.labels.*.name, 'run-win11-arm64-ui-probes')
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Verify exact candidate and run Narrator Speech Recap against real controls
+        shell: pwsh
+        env:
+          EBR_ALLOW_PRIVACY_OOBE_NEXT: ${{ contains(github.event.pull_request.labels.*.name, 'approve-win11-privacy-oobe-next') }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Join-Path $PWD 'production-candidate-artifact/final-candidate'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          $exe = Join-Path $release 'EyeBreakReminder.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Exact candidate executable is missing.' }
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "Narrator candidate hash mismatch: $actual" }
+          $evidence = Join-Path $PWD 'remaining-coverage-evidence/narrator'
+          $arguments = @{ ExecutablePath=$exe; EvidenceDirectory=$evidence }
+          if ($env:EBR_ALLOW_PRIVACY_OOBE_NEXT -eq 'true') { $arguments.AllowExactPrivacyOobeNext = $true }
+          & .\tests\windows_narrator_speech_recap_acceptance.ps1 @arguments
+          if (-not (Test-Path -LiteralPath (Join-Path $evidence 'gui-016-narrator-speech-recap.json'))) { throw 'Narrator harness produced no result report.' }
+          $report = Get-Content (Join-Path $evidence 'gui-016-narrator-speech-recap.json') -Raw | ConvertFrom-Json
+          $freshCaptures = @($report.Narrator.Captures | Where-Object { $_.ValidatedFreshPhrase -eq $true -and $_.FreshText -eq $true -and $_.PhraseIncludesFullAccessibleName -eq $true })
+          $summary = "Requirement: GUI-016`nCandidate: artifact $($report.Candidate.ArtifactId), SHA-256 $($report.Candidate.SHA256)`nOS: $($report.OperatingSystem.Caption) $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nOS/native CPU: $($report.OperatingSystem.OSArchitecture) / $($report.OperatingSystem.NativeProcessorArchitecture)`nEnvironment: GitHub-hosted interactive Windows 11 ARM64; candidate x64 emulation`nStatus: $($report.Status)`nReason: $($report.Reason)`nValidated fresh speech captures: $($freshCaptures.Count)`nPhysical audio verified: $($report.Narrator.PhysicalAudioVerified)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($report.Status -eq 'FAIL') { throw "Narrator acceptance harness found a product failure: $($report.Reason)" }
+
+      - name: Preserve Narrator speech-content logs and target-window screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-gui-016-narrator-speech-${{ github.run_id }}
+          path: remaining-coverage-evidence/narrator/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  candidate-audio-controls-windows-11-arm64:
+    name: Exact candidate alarm controls and Windows WASAPI loopback attempt
+    if: contains(github.event.pull_request.labels.*.name, 'run-win11-arm64-ui-probes')
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 25
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Exercise real alarm settings and capture Windows render samples when an endpoint exists
+        shell: pwsh
+        env:
+          EBR_ALLOW_PRIVACY_OOBE_NEXT: ${{ contains(github.event.pull_request.labels.*.name, 'approve-win11-privacy-oobe-next') }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "Audio acceptance candidate hash mismatch: $actual" }
+          $evidence = Join-Path $PWD 'remaining-coverage-evidence/audio-controls'
+          $arguments = @{ ExecutablePath=$exe; EvidenceDirectory=$evidence }
+          if ($env:EBR_ALLOW_PRIVACY_OOBE_NEXT -eq 'true') { $arguments.AllowExactPrivacyOobeNext = $true }
+          & .\tests\windows_candidate_audio_loopback_acceptance.ps1 @arguments
+          $reportPath = Join-Path $evidence 'reg-008-audio-loopback-results.json'
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'REG-008 audio harness produced no result report.' }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          $summary = "Requirement: REG-008`nCandidate: artifact $($report.ArtifactId), SHA-256 $($report.CandidateExecutableSHA256)`nOS: $($report.OperatingSystem.Caption) version $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nOS/process architecture: $($report.OperatingSystem.OSArchitecture) / $($report.OperatingSystem.ProcessArchitecture)`nEnvironment: fresh GitHub-hosted interactive Windows 11 ARM64; exact x64 candidate under emulation`nActive render endpoint: $($report.AudioEndpoint.ActiveRenderEndpointCount); loopback: $($report.WasapiLoopbackStatus)`nPhysical audible output: $($report.PhysicalAudibility)`nResult: $($report.Status) — $($report.Reason)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($report.Status -eq 'FAIL') { throw "Exact-candidate REG-008 harness found a product failure: $($report.Reason)" }
+
+      - name: Preserve audio controls, WASAPI capture and result evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-reg-008-audio-controls-${{ github.run_id }}
+          path: remaining-coverage-evidence/audio-controls/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  shell-notification-windows-11-arm64:
+    name: Exact candidate Windows Shell notification display and activation probe
+    if: contains(github.event.pull_request.labels.*.name, 'run-win11-arm64-ui-probes')
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Run a natural one-minute reminder and inspect the real Windows Shell surface
+        shell: pwsh
+        env:
+          EBR_ALLOW_PRIVACY_OOBE_NEXT: ${{ contains(github.event.pull_request.labels.*.name, 'approve-win11-privacy-oobe-next') }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "Shell notification candidate hash mismatch: $actual" }
+          $evidence = Join-Path $PWD 'remaining-coverage-evidence/shell-notification'
+          $arguments = @{ ExecutablePath=$exe; EvidenceDirectory=$evidence }
+          if ($env:EBR_ALLOW_PRIVACY_OOBE_NEXT -eq 'true') { $arguments.AllowPrivacyOobeNext = $true }
+          & .\tests\windows_shell_notification_acceptance.ps1 @arguments
+          $reportPath = Join-Path $evidence 'env-009-shell-notification-results.json'
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'Shell notification harness produced no result report.' }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          $summary = "Requirement: ENV-009`nCandidate: artifact $($report.Candidate.ArtifactId), SHA-256 $($report.Candidate.SHA256)`nOS: $($report.OperatingSystem.Caption) $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nEnvironment: GitHub-hosted interactive Windows 11 ARM64; candidate x64 emulation`nShell visibility subtest: $($report.ShellNotificationVisibilityStatus) — $($report.ShellNotificationVisibilityReason)`nNotification audio: $($report.Audio.Status); physical output verified: $($report.Audio.PhysicalAudioVerified)`nOverall ENV-009: $($report.Status) — $($report.Reason)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($report.Status -eq 'FAIL') { throw "Exact-candidate Shell acceptance harness found a failure: $($report.Reason)" }
+
+      - name: Preserve Windows Shell UIA evidence and screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-env-009-shell-notification-${{ github.run_id }}
+          path: remaining-coverage-evidence/shell-notification/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  windows-server-console-desktop-preflight:
+    name: Read-only Windows Server 2025 console desktop preflight (not acceptance)
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Inspect the hosted runner's active console desktop (read-only)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidenceDirectory = Join-Path $env:GITHUB_WORKSPACE 'remaining-coverage-evidence/server-console-preflight'
+          New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null
+          $probeErrors = [System.Collections.Generic.List[string]]::new()
+          $nativeSource = @'
+          using System;
+          using System.Collections.Generic;
+          using System.ComponentModel;
+          using System.Runtime.InteropServices;
+          using System.Text;
+
+          public enum EBR_WTS_CONNECT_STATE
+          {
+              Active = 0, Connected = 1, ConnectQuery = 2, Shadow = 3,
+              Disconnected = 4, Idle = 5, Listen = 6, Reset = 7, Down = 8, Init = 9
+          }
+
+          public sealed class EBR_WTS_SESSION
+          {
+              public int SessionId;
+              public string Station;
+              public string State;
+          }
+
+          public static class EBR_SERVER_CONSOLE_NATIVE
+          {
+              private const int UOI_NAME = 2;
+              private const uint DESKTOP_READOBJECTS = 0x0001;
+
+              [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+              private struct WTS_SESSION_INFO
+              {
+                  public int SessionId;
+                  [MarshalAs(UnmanagedType.LPWStr)] public string Station;
+                  public EBR_WTS_CONNECT_STATE State;
+              }
+
+              [DllImport("kernel32.dll", SetLastError = true)]
+              public static extern uint WTSGetActiveConsoleSessionId();
+
+              [DllImport("wtsapi32.dll", EntryPoint = "WTSEnumerateSessionsW", SetLastError = true, CharSet = CharSet.Unicode)]
+              private static extern bool WTSEnumerateSessions(IntPtr server, int reserved, int version, out IntPtr sessions, out int count);
+
+              [DllImport("wtsapi32.dll")]
+              private static extern void WTSFreeMemory(IntPtr memory);
+
+              public static EBR_WTS_SESSION[] EnumerateSessions()
+              {
+                  IntPtr buffer = IntPtr.Zero;
+                  int count = 0;
+                  if (!WTSEnumerateSessions(IntPtr.Zero, 0, 1, out buffer, out count))
+                      throw new Win32Exception(Marshal.GetLastWin32Error(), "WTSEnumerateSessions failed");
+
+                  try
+                  {
+                      int size = Marshal.SizeOf(typeof(WTS_SESSION_INFO));
+                      var rows = new List<EBR_WTS_SESSION>(count);
+                      for (int index = 0; index < count; index++)
+                      {
+                          IntPtr current = IntPtr.Add(buffer, index * size);
+                          var row = (WTS_SESSION_INFO)Marshal.PtrToStructure(current, typeof(WTS_SESSION_INFO));
+                          rows.Add(new EBR_WTS_SESSION { SessionId = row.SessionId, Station = row.Station, State = row.State.ToString() });
+                      }
+                      return rows.ToArray();
+                  }
+                  finally { if (buffer != IntPtr.Zero) WTSFreeMemory(buffer); }
+              }
+
+              [DllImport("user32.dll", SetLastError = true)]
+              public static extern IntPtr GetProcessWindowStation();
+
+              [DllImport("user32.dll", SetLastError = true)]
+              private static extern IntPtr GetThreadDesktop(uint threadId);
+
+              [DllImport("kernel32.dll")]
+              private static extern uint GetCurrentThreadId();
+
+              [DllImport("user32.dll", EntryPoint = "OpenInputDesktop", SetLastError = true, CharSet = CharSet.Unicode)]
+              private static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint desiredAccess);
+
+              [DllImport("user32.dll", SetLastError = true)]
+              private static extern bool CloseDesktop(IntPtr desktop);
+
+              [DllImport("user32.dll", EntryPoint = "GetUserObjectInformationW", SetLastError = true, CharSet = CharSet.Unicode)]
+              private static extern bool GetUserObjectInformation(IntPtr handle, int index, StringBuilder buffer, uint length, out uint needed);
+
+              private static string ObjectName(IntPtr handle)
+              {
+                  if (handle == IntPtr.Zero) return null;
+                  var buffer = new StringBuilder(256);
+                  uint needed;
+                  if (!GetUserObjectInformation(handle, UOI_NAME, buffer, (uint)(buffer.Capacity * 2), out needed))
+                      return "<ERROR:" + Marshal.GetLastWin32Error().ToString() + ">";
+                  return buffer.ToString();
+              }
+
+              public static string ProcessWindowStationName() { return ObjectName(GetProcessWindowStation()); }
+              public static string ThreadDesktopName() { return ObjectName(GetThreadDesktop(GetCurrentThreadId())); }
+
+              public static string InputDesktopName()
+              {
+                  IntPtr desktop = OpenInputDesktop(0, false, DESKTOP_READOBJECTS);
+                  if (desktop == IntPtr.Zero) return "<ERROR:" + Marshal.GetLastWin32Error().ToString() + ">";
+                  try { return ObjectName(desktop); }
+                  finally { CloseDesktop(desktop); }
+              }
+
+              [DllImport("user32.dll", EntryPoint = "FindWindowW", SetLastError = true, CharSet = CharSet.Unicode)]
+              private static extern IntPtr FindWindow(string className, string windowName);
+
+              [DllImport("user32.dll", SetLastError = true)]
+              private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+              public static IntPtr TaskbarWindow() { return FindWindow("Shell_TrayWnd", null); }
+              public static uint TaskbarProcessId(IntPtr window)
+              {
+                  if (window == IntPtr.Zero) return 0;
+                  uint processId;
+                  GetWindowThreadProcessId(window, out processId);
+                  return processId;
+              }
+          }
+          '@
+
+          $nativeLoaded = $false
+          $nativeError = $null
+          $sessions = @()
+          $activeConsoleSessionId = [uint32]::MaxValue
+          $processWindowStation = $null
+          $threadDesktop = $null
+          $inputDesktop = $null
+          $taskbarHandle = [IntPtr]::Zero
+          $taskbarProcessId = 0
+          try {
+            Add-Type -TypeDefinition $nativeSource -ErrorAction Stop
+            $nativeLoaded = $true
+            $activeConsoleSessionId = [EBR_SERVER_CONSOLE_NATIVE]::WTSGetActiveConsoleSessionId()
+            $sessions = @([EBR_SERVER_CONSOLE_NATIVE]::EnumerateSessions() | ForEach-Object {
+              [pscustomobject]@{SessionId=$_.SessionId;Station=$_.Station;State=$_.State}
+            })
+            $processWindowStation = [EBR_SERVER_CONSOLE_NATIVE]::ProcessWindowStationName()
+            $threadDesktop = [EBR_SERVER_CONSOLE_NATIVE]::ThreadDesktopName()
+            $inputDesktop = [EBR_SERVER_CONSOLE_NATIVE]::InputDesktopName()
+            $taskbarHandle = [EBR_SERVER_CONSOLE_NATIVE]::TaskbarWindow()
+            $taskbarProcessId = [EBR_SERVER_CONSOLE_NATIVE]::TaskbarProcessId($taskbarHandle)
+          } catch {
+            $nativeError = $_.Exception.Message
+            $probeErrors.Add("Native WTS/desktop query: $nativeError")
+          }
+
+          $os = $null
+          $computer = $null
+          $processors = @()
+          try { $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop } catch { $probeErrors.Add("Operating system query: $($_.Exception.Message)") }
+          try { $computer = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop } catch { $probeErrors.Add("Computer system query: $($_.Exception.Message)") }
+          try { $processors = @(Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -ExpandProperty Architecture -Unique) } catch { $probeErrors.Add("Processor architecture query: $($_.Exception.Message)") }
+
+          $process = Get-Process -Id $PID -ErrorAction Stop
+          $processSessionId = [int]$process.SessionId
+          $sessionName = [string]$env:SESSIONNAME
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+          $isAdministrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          $userInteractive = [Environment]::UserInteractive
+          $consoleSession = @($sessions | Where-Object { [uint32]$_.SessionId -eq $activeConsoleSessionId -and $_.Station -ieq 'Console' } | Select-Object -First 1)
+          $consoleSessionActive = ($activeConsoleSessionId -ne [uint32]::MaxValue -and $consoleSession.Count -eq 1 -and $consoleSession[0].State -eq 'Active')
+          $processInActiveConsole = ($consoleSessionActive -and $activeConsoleSessionId -ne [uint32]::MaxValue -and [int64]$processSessionId -eq [int64]$activeConsoleSessionId)
+          $windowStationConfirmed = ($processWindowStation -ieq 'WinSta0')
+          $threadDesktopConfirmed = ($threadDesktop -ieq 'Default')
+          $inputDesktopConfirmed = ($inputDesktop -ieq 'Default')
+          $explorer = @(Get-Process -Name explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq $processSessionId } | Select-Object Id,SessionId,ProcessName)
+          $taskbarProcess = $null
+          if ($taskbarProcessId -gt 0) { $taskbarProcess = Get-Process -Id ([int]$taskbarProcessId) -ErrorAction SilentlyContinue }
+          $taskbarSameSession = ($taskbarHandle -ne [IntPtr]::Zero -and $taskbarProcess -and $taskbarProcess.SessionId -eq $processSessionId)
+          $shellSameSession = ($explorer.Count -gt 0 -and $taskbarSameSession)
+
+          $runnerContextValid = ($env:GITHUB_ACTIONS -ceq 'true' -and $env:RUNNER_ENVIRONMENT -ceq 'github-hosted' -and $env:RUNNER_OS -ceq 'Windows' -and $env:RUNNER_ARCH -ieq 'X64' -and $env:GITHUB_SERVER_URL -ceq 'https://github.com' -and $env:GITHUB_REPOSITORY -ieq 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER')
+          $osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          $processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+          $nativeAmd64 = ($os -and $os.Caption -match 'Windows Server 2025' -and $osArchitecture -eq 'X64' -and $processArchitecture -eq 'X64' -and 9 -in $processors)
+          $consoleDesktopConfirmed = ($runnerContextValid -and $nativeAmd64 -and $consoleSessionActive -and $processInActiveConsole -and $userInteractive -and $windowStationConfirmed -and $threadDesktopConfirmed -and $inputDesktopConfirmed -and $shellSameSession)
+          $probeOutcome = if ($consoleDesktopConfirmed) { 'CONSOLE_DESKTOP_OBSERVED' } elseif (-not $runnerContextValid -or -not $nativeAmd64) { 'REQUIRED_HOST_CONTEXT_NOT_OBSERVED' } else { 'CONSOLE_DESKTOP_NOT_ESTABLISHED' }
+
+          $report = [ordered]@{
+            Probe='Windows Server 2025 hosted Console desktop capability only'
+            ProbeOutcome=$probeOutcome
+            AcceptanceResult='NOT_RUN'
+            CandidateDownloaded=$false
+            CandidateLaunched=$false
+            CandidateArtifactId=$null
+            CandidateSHA256=$null
+            SystemConfigurationChanged=$false
+            SessionOrPowerActionPerformed=$false
+            GitHubContext=[pscustomobject]@{IsHostedProjectRunner=$runnerContextValid;Actions=$env:GITHUB_ACTIONS;RunnerEnvironment=$env:RUNNER_ENVIRONMENT;RunnerOS=$env:RUNNER_OS;RunnerArchitecture=$env:RUNNER_ARCH;RunnerName=$env:RUNNER_NAME;Repository=$env:GITHUB_REPOSITORY;RunId=$env:GITHUB_RUN_ID}
+            OperatingSystem=[pscustomobject]@{Caption=if($os){$os.Caption}else{$null};Version=if($os){$os.Version}else{$null};Build=if($os){$os.BuildNumber}else{$null};OSArchitecture=$osArchitecture;ProcessArchitecture=$processArchitecture;ProcessorArchitectureCodes=$processors;NativeAmd64=$nativeAmd64;ComputerSystemType=if($computer){$computer.SystemType}else{$null};HypervisorPresent=if($computer){$computer.HypervisorPresent}else{$null}}
+            ProcessSession=[pscustomobject]@{ProcessId=$PID;SessionId=$processSessionId;SessionName=$sessionName;User=$identity.Name;UserSid=$identity.User.Value;IsAdministrator=$isAdministrator;UserInteractive=$userInteractive}
+            WTS=[pscustomobject]@{ActiveConsoleSessionId=$activeConsoleSessionId;Sessions=$sessions;MatchingConsoleSession=if($consoleSession.Count){$consoleSession[0]}else{$null};ActiveConsoleSession=$consoleSessionActive;CurrentProcessIsActiveConsole=$processInActiveConsole}
+            Desktop=[pscustomobject]@{ProcessWindowStation=$processWindowStation;ThreadDesktop=$threadDesktop;InputDesktop=$inputDesktop;WinSta0Confirmed=$windowStationConfirmed;DefaultThreadDesktopConfirmed=$threadDesktopConfirmed;DefaultInputDesktopAccessible=$inputDesktopConfirmed;NativeInteropLoaded=$nativeLoaded;NativeInteropError=$nativeError}
+            Shell=[pscustomobject]@{ExplorerProcesses=$explorer;TaskbarWindowHandle=if($taskbarHandle-ne[IntPtr]::Zero){'0x{0:X}'-f$taskbarHandle.ToInt64()}else{$null};TaskbarProcessId=$taskbarProcessId;TaskbarProcessSessionId=if($taskbarProcess){$taskbarProcess.SessionId}else{$null};TaskbarInCurrentSession=$taskbarSameSession;ExplorerAndTaskbarPresentInCurrentSession=$shellSameSession}
+            ConsoleDesktopConfirmed=$consoleDesktopConfirmed
+            StandardUserContextObserved=(-not $isAdministrator)
+            Errors=@($probeErrors.ToArray())
+            ObservedUtc=[DateTime]::UtcNow.ToString('o')
+          }
+
+          $resultPath = Join-Path $evidenceDirectory 'windows-server-console-desktop-preflight.json'
+          $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resultPath -Encoding utf8
+          $summary = @(
+            '**Read-only hosted Windows Server console desktop preflight (not an acceptance result)**'
+            ''
+            "Observation: $probeOutcome"
+            "OS/native architecture: $($report.OperatingSystem.Caption) / $osArchitecture / $processArchitecture; processor codes: $($processors -join ',')"
+            "Process session: $processSessionId ($sessionName); active WTS console session: $activeConsoleSessionId; matching Console state Active: $consoleSessionActive"
+            "Identity: $($identity.Name); administrator token: $isAdministrator; UserInteractive: $userInteractive"
+            "Window station/thread/input desktop: $processWindowStation / $threadDesktop / $inputDesktop"
+            "Explorer/taskbar in process session: $shellSameSession; console desktop conditions observed: $consoleDesktopConfirmed"
+            'No candidate was downloaded or launched. No session, display, power, audio, or system setting was changed.'
+            "JSON evidence: $resultPath"
+          ) -join "`n"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary
+          Write-Output $summary
+
+      - name: Retain read-only console desktop capability evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-server-console-desktop-preflight-${{ github.run_id }}
+          path: remaining-coverage-evidence/server-console-preflight/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  settings-uninstall-windows-server-x64:
+    name: Exact candidate via temporary Windows Server localhost RDP desktop (native x64)
+    if: contains(github.event.pull_request.labels.*.name, 'retry-server-rdp-lock-after-env-change')
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Verify all seven retained candidate files and provenance
+        id: identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Join-Path $PWD 'production-candidate-artifact/final-candidate'
+          $evidence = Join-Path $PWD 'production-candidate-artifact/final-candidate-evidence'
+          $expected = @{
+            'EyeBreakReminder.exe' = @{Bytes=2889728; SHA256='07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'}
+            'EyeBreakReminder-Setup-x64.exe' = @{Bytes=1395896; SHA256='a15fc525557603dbed1ef0dccb8d128e500dfee91c6416b478513de790dd5c9b'}
+            'EyeBreakReminder-Portable-x64.zip' = @{Bytes=1573754; SHA256='a579b0e3cd7573f4214b0df4ff25dee99801735123658afd70e455886189c2be'}
+            'EyeBreakReminder-Source.zip' = @{Bytes=2650888; SHA256='a915342af6e50122a2d511e4cb91eb036de9b4fbf21889d6ecfcb9de1c8c140d'}
+            'EyeBreakReminder-SHA256.txt' = @{Bytes=382; SHA256='5fc0ed3317c3e4e0ad1b57ffc2cef435031db8024d7a1ca024ff14d1b46a9538'}
+            'EyeBreakReminder-UpdateManifest.json' = @{Bytes=682; SHA256='e599ff055613366133ba8a03bae3f7acff9ac383d24214cc0c620a7efbe9a682'}
+            'EyeBreakReminder-UpdateManifest.sig' = @{Bytes=64; SHA256='411372a2b5a1836968d60b6f1c3e3c7d21830df3c43d92728366653833f6b8c8'}
+          }
+          $files = @(Get-ChildItem -LiteralPath $release -File)
+          if ($files.Count -ne 7) { throw "Authoritative artifact must contain seven files; found $($files.Count)." }
+          $actual = foreach ($name in ($expected.Keys | Sort-Object)) {
+            $path = Join-Path $release $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate file missing: $name" }
+            $file = Get-Item -LiteralPath $path
+            $sha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($file.Length -ne $expected[$name].Bytes -or $sha -cne $expected[$name].SHA256) { throw "Artifact 14695418078 identity mismatch: $name" }
+            [pscustomobject]@{Name=$name;Bytes=$file.Length;SHA256=$sha}
+          }
+          $provenance = Get-Content -LiteralPath (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          $verification = Get-Content -LiteralPath (Join-Path $evidence 'candidate-verification.json') -Raw | ConvertFrom-Json
+          if ($provenance.Status -cne 'PASS' -or $provenance.FinalizationRunId -ne '44875679345' -or $provenance.CandidateSourceCommit -cne '491bd2ed29f84f4d434b884fc723144db2d6f294') { throw 'Candidate provenance does not match the authoritative finalizer and source commit.' }
+          if ($verification.status -cne 'PASS' -or -not $verification.manifest_signature_verified_against_embedded_key -or -not $verification.signed_payloads_verified) { throw 'Retained candidate signature verification evidence is incomplete.' }
+          $os = Get-CimInstance Win32_OperatingSystem
+          if ($os.Caption -notmatch 'Windows Server 2025' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [Runtime.InteropServices.Architecture]::X64) { throw "Expected native Windows Server 2025 x64 test runner; found $($os.Caption), $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)." }
+          $record = [pscustomobject]@{Requirement='UN-009';ArtifactId='14695418078';FinalizerRunId='44875679345';CandidateSourceCommit=$provenance.CandidateSourceCommit;CandidateEXESHA256=$expected['EyeBreakReminder.exe'].SHA256;OS=$os.Caption;OSVersion=$os.Version;OSBuild=$os.BuildNumber;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();CandidateArchitecture='x64 native';NativeOrEmulated='Native';Environment='GitHub-hosted disposable Windows Server 2025 x64 runner; interactive localhost RDP session required';Files=$actual;VerifiedUtc=[DateTime]::UtcNow.ToString('o')}
+          New-Item -ItemType Directory -Force -Path 'remaining-coverage-evidence/settings-uninstall' | Out-Null
+          $record | ConvertTo-Json -Depth 7 | Set-Content 'remaining-coverage-evidence/settings-uninstall/candidate-identity.json' -Encoding UTF8
+          $record | ConvertTo-Json -Depth 7
+
+      - name: Inspect genuine sleep and display capabilities on the disposable Windows guest (read-only)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $os = Get-CimInstance Win32_OperatingSystem
+          $osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          $processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+          if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or $os.Caption -notmatch 'Windows Server 2025' -or $osArchitecture -cne 'X64' -or $processArchitecture -cne 'X64') { throw 'This capability probe is restricted to the GitHub-hosted disposable Windows Server 2025 x64 runner.' }
+          $powerStates = (& powercfg.exe /a 2>&1 | Out-String).Trim()
+          $wakeTimers = (& powercfg.exe /waketimers 2>&1 | Out-String).Trim()
+          $wakeArmedDevices = (& powercfg.exe /devicequery wake_armed 2>&1 | Out-String).Trim()
+          $activeScheme = (& powercfg.exe /getactivescheme 2>&1 | Out-String).Trim()
+          $wakeTimerSettings = (& powercfg.exe /query SCHEME_CURRENT SUB_SLEEP RTCWAKE 2>&1 | Out-String).Trim()
+          $computer = Get-CimInstance Win32_ComputerSystem
+          $screens = @()
+          try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+            $screens = @([System.Windows.Forms.Screen]::AllScreens | ForEach-Object { [pscustomobject]@{DeviceName=$_.DeviceName;Primary=$_.Primary;Bounds=@($_.Bounds.X,$_.Bounds.Y,$_.Bounds.Width,$_.Bounds.Height);WorkingArea=@($_.WorkingArea.X,$_.WorkingArea.Y,$_.WorkingArea.Width,$_.WorkingArea.Height)} })
+          } catch { $screenError = $_.Exception.Message }
+          $process = Get-Process -Id $PID
+          $report = [pscustomobject]@{Purpose='Capability evidence only; no sleep, wake, display, or power setting was changed.';Environment='Fresh GitHub-hosted disposable Windows Server 2025 x64 runner';OperatingSystem=$os.Caption;Version=$os.Version;Build=$os.BuildNumber;OSArchitecture=$osArchitecture;ProcessArchitecture=$processArchitecture;HypervisorPresent=$computer.HypervisorPresent;SessionId=$process.SessionId;SessionName=$env:SESSIONNAME;UserInteractive=[Environment]::UserInteractive;ActivePowerScheme=$activeScheme;WakeTimerSettings=$wakeTimerSettings;WakeArmedDevices=$wakeArmedDevices;SleepStates=$powerStates;WakeTimers=$wakeTimers;VisibleDisplayCount=$screens.Count;Displays=$screens;DisplayQueryError=$screenError;ObservedUtc=[DateTime]::UtcNow.ToString('o')}
+          New-Item -ItemType Directory -Force -Path 'remaining-coverage-evidence/guest-capabilities' | Out-Null
+          $report | ConvertTo-Json -Depth 8 | Set-Content 'remaining-coverage-evidence/guest-capabilities/power-and-display-capabilities.json' -Encoding UTF8
+          @("**Disposable guest capability probe (not an acceptance PASS)**","","Environment: $($report.Environment)","OS: $($report.OperatingSystem) $($report.Version) build $($report.Build); OS/process architecture $($report.OSArchitecture)/$($report.ProcessArchitecture); hypervisor present: $($report.HypervisorPresent)","Interactive: $($report.UserInteractive); session $($report.SessionId); session name $($report.SessionName); visible displays reported: $($report.VisibleDisplayCount)","Read-only powercfg queries only; no sleep/wake, display, or power setting was invoked.","Active scheme: $activeScheme","Allow-wake-timer settings:",'```text',$wakeTimerSettings,'```',"",'Wake-armed devices:',$wakeArmedDevices,"",'```text',$powerStates,'```',"",'Active wake timers:','```text',$wakeTimers,'```') | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          Write-Host 'Disposable guest power/display capability report written; no power-state action was attempted.'
+
+      - name: Create a loopback-only interactive RDP session and use Windows Settings > Apps > Installed Apps
+        id: settings-uninstall
+        shell: pwsh
+        env:
+          EBR_RUNNER_ENVIRONMENT_CONTEXT: ${{ runner.environment }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Join-Path $PWD 'production-candidate-artifact/final-candidate'
+          $evidence = Join-Path $PWD 'remaining-coverage-evidence/settings-uninstall'
+          $harnessError = ''
+          try {
+            & .\tests\windows_settings_uninstall_loopback_rdp.ps1 `
+            -InstallerPath (Join-Path $release 'EyeBreakReminder-Setup-x64.exe') `
+            -ExecutablePath (Join-Path $release 'EyeBreakReminder.exe') `
+            -EvidenceDirectory $evidence
+          } catch { $harnessError = $_.Exception.Message; Write-Warning $harnessError }
+          $resultPath = Join-Path $evidence 'settings-uninstall-rdp-results.json'
+          if (-not (Test-Path -LiteralPath $resultPath)) {
+            "UN-009 NOT TESTED: the loopback RDP harness produced no result file. $harnessError" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            exit 0
+          }
+          $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+          $summary = "Requirement: UN-009`nCandidate: artifact 14695418078, EXE SHA-256 $($result.CandidateExecutableSHA256)`nOS: $($result.OS) build $($result.OSBuild), OS architecture $($result.OSArchitecture), candidate native x64`nEnvironment: $($result.Environment)`nUN-009 result: $($result.Status)`nRDP session ID: $($result.RdpSessionId)`nUN-009 reason: $($result.Reason)`nREG-008 RDP audio attempt: $($result.AudioAttemptStatus) — $($result.AudioAttemptReason)`nGUI-016 Narrator attempt: $($result.NarratorAttemptStatus) — $($result.NarratorAttemptReason)`nENV-009 Shell attempt: $($result.ShellAttemptStatus) — $($result.ShellAttemptReason)`nENV-009 Shell visibility subtest: $($result.ShellReport.ShellNotificationVisibilityStatus) — $($result.ShellReport.ShellNotificationVisibilityReason)`nENV-009 notification audio: $($result.ShellReport.Audio.Status); physical output verified: $($result.ShellReport.Audio.PhysicalAudioVerified)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($result.Status -eq 'FAIL') { throw "Exact-candidate Settings uninstall harness found a real failure: $($result.Reason)" }
+          if ($result.AudioAttemptStatus -eq 'FAIL') { throw "Exact-candidate REG-008 audio harness found a real failure: $($result.AudioAttemptReason)" }
+          if ($result.NarratorAttemptStatus -eq 'FAIL') { throw "Exact-candidate GUI-016 Narrator harness found a real failure: $($result.NarratorAttemptReason)" }
+          if ($result.ShellAttemptStatus -eq 'FAIL') { throw "Exact-candidate ENV-009 Shell harness found a real failure: $($result.ShellAttemptReason)" }
+          if ($result.Status -ne 'PASS') { Write-Warning 'UN-009 remains unresolved; raw RDP/UIA logs and screenshots are retained.'; exit 0 }
+          Write-Host 'PASS: exact production candidate removed through Windows Settings Installed Apps with retained user data verified.'
+
+      - name: Recheck the seven artifact files stayed byte-identical
+        if: always() && steps.identity.outcome == 'success'
+        shell: pwsh
+        run: |
+          $identity = Get-Content 'remaining-coverage-evidence/settings-uninstall/candidate-identity.json' -Raw | ConvertFrom-Json
+          foreach ($file in $identity.Files) {
+            $path = Join-Path 'production-candidate-artifact/final-candidate' $file.Name
+            if (-not (Test-Path -LiteralPath $path) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.SHA256) { throw "Candidate bytes changed during the test: $($file.Name)" }
+          }
+          Write-Host 'PASS: all seven downloaded production candidate files remain byte-identical.'
+
+      - name: Retain Settings UIA logs, screenshots, and candidate provenance
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-un-009-settings-uninstall-${{ github.run_id }}
+          path: |
+            remaining-coverage-evidence/settings-uninstall/**
+            remaining-coverage-evidence/guest-capabilities/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  settings-uninstall-windows-server-console-standard-user-x64:
+    name: Exact candidate Settings uninstall from guarded Windows Server console
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Prove this job has an active interactive Console desktop before candidate download
+        id: console_preflight
+        shell: pwsh
+        run: |
+          & .\tests\windows_server_console_desktop_preflight.ps1 -EvidenceDirectory '.\remaining-coverage-evidence\standard-user-console'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Download authoritative production candidate artifact
+        if: steps.console_preflight.outputs.desktop_ready == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Verify exact artifact 14695418078 identity and retained signature evidence
+        id: candidate_identity
+        if: steps.console_preflight.outputs.desktop_ready == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Join-Path $PWD 'production-candidate-artifact/final-candidate'
+          $evidence = Join-Path $PWD 'production-candidate-artifact/final-candidate-evidence'
+          $expected = @{
+            'EyeBreakReminder.exe' = @{Bytes=2889728; SHA256='07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'}
+            'EyeBreakReminder-Setup-x64.exe' = @{Bytes=1395896; SHA256='a15fc525557603dbed1ef0dccb8d128e500dfee91c6416b478513de790dd5c9b'}
+            'EyeBreakReminder-Portable-x64.zip' = @{Bytes=1573754; SHA256='a579b0e3cd7573f4214b0df4ff25dee99801735123658afd70e455886189c2be'}
+            'EyeBreakReminder-Source.zip' = @{Bytes=2650888; SHA256='a915342af6e50122a2d511e4cb91eb036de9b4fbf21889d6ecfcb9de1c8c140d'}
+            'EyeBreakReminder-SHA256.txt' = @{Bytes=382; SHA256='5fc0ed3317c3e4e0ad1b57ffc2cef435031db8024d7a1ca024ff14d1b46a9538'}
+            'EyeBreakReminder-UpdateManifest.json' = @{Bytes=682; SHA256='e599ff055613366133ba8a03bae3f7acff9ac383d24214cc0c620a7efbe9a682'}
+            'EyeBreakReminder-UpdateManifest.sig' = @{Bytes=64; SHA256='411372a2b5a1836968d60b6f1c3e3c7d21830df3c43d92728366653833f6b8c8'}
+          }
+          $files = @(Get-ChildItem -LiteralPath $release -File)
+          if ($files.Count -ne 7) { throw "Authoritative artifact must contain seven files; found $($files.Count)." }
+          $actual = foreach ($name in ($expected.Keys | Sort-Object)) {
+            $path = Join-Path $release $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate file missing: $name" }
+            $file = Get-Item -LiteralPath $path
+            $sha = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($file.Length -ne $expected[$name].Bytes -or $sha -cne $expected[$name].SHA256) { throw "Artifact 14695418078 identity mismatch: $name" }
+            [pscustomobject]@{Name=$name;Bytes=$file.Length;SHA256=$sha}
+          }
+          $provenance = Get-Content -LiteralPath (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          $verification = Get-Content -LiteralPath (Join-Path $evidence 'candidate-verification.json') -Raw | ConvertFrom-Json
+          if ($provenance.Status -cne 'PASS' -or $provenance.FinalizationRunId -ne '44875679345' -or $provenance.CandidateSourceCommit -cne '491bd2ed29f84f4d434b884fc723144db2d6f294') { throw 'Candidate provenance does not match the authoritative finalizer and source commit.' }
+          if ($verification.status -cne 'PASS' -or -not $verification.manifest_signature_verified_against_embedded_key -or -not $verification.signed_payloads_verified) { throw 'Retained candidate signature verification evidence is incomplete.' }
+          $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+          if ($os.Caption -notmatch 'Windows Server 2025' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [Runtime.InteropServices.Architecture]::X64 -or [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -ne [Runtime.InteropServices.Architecture]::X64) { throw "Expected native Windows Server 2025 x64; found $($os.Caption), OS $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture), process $([Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)." }
+          $record = [pscustomobject]@{Requirement='UN-009';ArtifactId='14695418078';FinalizerRunId='44875679345';CandidateSourceCommit=$provenance.CandidateSourceCommit;CandidateEXESHA256=$expected['EyeBreakReminder.exe'].SHA256;OS=$os.Caption;OSVersion=$os.Version;OSBuild=$os.BuildNumber;OSArchitecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString();ProcessArchitecture=[Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString();CandidateArchitecture='x64 native';NativeOrEmulated='Native';Environment='GitHub-hosted disposable Windows Server 2025 x64 active console desktop; standard-user Settings UI acceptance';Files=$actual;VerifiedUtc=[DateTime]::UtcNow.ToString('o')}
+          $evidenceDirectory = Join-Path $PWD 'remaining-coverage-evidence/standard-user-console'
+          New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null
+          $record | ConvertTo-Json -Depth 7 | Set-Content (Join-Path $evidenceDirectory 'candidate-identity.json') -Encoding utf8
+          $record | ConvertTo-Json -Depth 7
+
+      - name: Run the guarded standard-user Windows Settings uninstall harness
+        id: standard_user_harness
+        if: steps.candidate_identity.outcome == 'success'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          EBR_RUNNER_ENVIRONMENT_CONTEXT: ${{ runner.environment }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Join-Path $PWD 'production-candidate-artifact/final-candidate'
+          $evidence = Join-Path $PWD 'remaining-coverage-evidence/standard-user-console'
+          $identity = Get-Content -LiteralPath (Join-Path $evidence 'candidate-identity.json') -Raw | ConvertFrom-Json
+          $exe = Join-Path $release 'EyeBreakReminder.exe'
+          if ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $identity.CandidateEXESHA256) { throw 'Candidate executable changed after the seven-file identity check.' }
+          & .\tests\windows_standard_user_acceptance.ps1 `
+            -InstallerPath (Join-Path $release 'EyeBreakReminder-Setup-x64.exe') `
+            -ExecutablePath $exe `
+            -EvidenceDirectory $evidence `
+            -DisableWholeDesktopCaptures
+
+      - name: Summarize the active-console Settings uninstall result
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $PWD 'remaining-coverage-evidence/standard-user-console'
+          $preflightPath = Join-Path $evidence 'server-console-standard-user-preflight.json'
+          if (-not (Test-Path -LiteralPath $preflightPath -PathType Leaf)) { throw 'Same-job console preflight report is missing.' }
+          $preflight = Get-Content -LiteralPath $preflightPath -Raw | ConvertFrom-Json
+          if (-not $preflight.ReadyForCandidateTest) {
+            $summary = "Requirement: UN-009`nCandidate: not downloaded or launched`nEnvironment: $($preflight.OperatingSystem.Caption) / $($preflight.OperatingSystem.OSArchitecture)`nConsole preflight: BLOCKED — $($preflight.Outcome)`nProcess session: $($preflight.Process.SessionId) ($($preflight.Process.SessionName)); active WTS console session: $($preflight.WTS.ActiveConsoleSessionId)`nReason: active interactive Console/WinSta0/Default, Shell, administrator, or native Server 2025 x64 preconditions were not all observed.`n"
+            $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            Write-Warning 'UN-009 remains blocked before candidate download and app execution.'
+            return
+          }
+          $resultPath = Join-Path $evidence 'standard-user-results.json'
+          if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) { throw 'Standard-user harness produced no result report after an eligible host preflight.' }
+          $result = Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+          $identityPath = Join-Path $evidence 'candidate-identity.json'
+          $identity = Get-Content -LiteralPath $identityPath -Raw | ConvertFrom-Json
+          $settingsAppsStatus = [string]$result.SettingsAppsUninstall
+          if ($settingsAppsStatus -notin @('PASS', 'FAIL', 'BLOCKED', 'NOT TESTED')) { $settingsAppsStatus = 'NOT TESTED' }
+          $settingsRetention = @($result.Events | Where-Object { $_.Name -eq 'Windows Settings uninstall preserves settings/history and unrelated file byte-for-byte' } | Select-Object -First 1)
+          $settingsRetentionStatus = if ($settingsRetention.Count) { [string]$settingsRetention[0].Status } else { 'NOT TESTED' }
+          $un009Status = switch ($settingsAppsStatus) {
+            'PASS' {
+              if ($settingsRetentionStatus -eq 'PASS') { 'PASS' }
+              elseif ($settingsRetentionStatus -eq 'FAIL') { 'FAIL' }
+              elseif ($settingsRetentionStatus -eq 'BLOCKED') { 'BLOCKED' }
+              else { 'NOT TESTED' }
+            }
+            'FAIL' { 'FAIL' }
+            'BLOCKED' { 'BLOCKED' }
+            default { 'NOT TESTED' }
+          }
+          $un009Reason = [string]$result.SettingsAppsUninstallReason
+          if ($settingsAppsStatus -eq 'PASS' -and $settingsRetentionStatus -eq 'FAIL') {
+            $un009Reason = 'Windows Settings removed the app, but byte-identical settings/history retention verification failed.'
+          } elseif ($settingsAppsStatus -eq 'PASS' -and $settingsRetentionStatus -ne 'PASS') {
+            $un009Reason = 'Windows Settings removal was reported, but the required byte-identical settings/history retention result is missing or incomplete.'
+          } elseif (-not $un009Reason) {
+            $un009Reason = 'The standard-user harness did not record a Windows Settings > Apps uninstall result.'
+          }
+          $summary = "Requirement: UN-009`nCandidate: artifact $($identity.ArtifactId), EXE SHA-256 $($identity.CandidateEXESHA256)`nOS: $($identity.OS) build $($identity.OSBuild); OS/native process architecture $($identity.OSArchitecture)/$($identity.ProcessArchitecture)`nEnvironment: GitHub-hosted disposable Windows Server 2025 x64 active console desktop; temporary standard-user account`nConsole session: $($preflight.Process.SessionId) ($($preflight.Process.SessionName)); active WTS Console session: $($preflight.WTS.ActiveConsoleSessionId)`nWhole desktop captures disabled: $($result.WholeDesktopCapturesDisabled)`nUN-009 result: $un009Status`nUN-009 reason: $un009Reason`nSettings Apps UI result: $settingsAppsStatus — $($result.SettingsAppsUninstallReason)`nSettings/history retention result: $settingsRetentionStatus`nBroader standard-user harness status: $($result.Status) — $($result.Failure)`nTemporary account removed: $($result.AccountRemoved); staging removed: $($result.StageRemoved); cleanup errors: $(@($result.CleanupErrors).Count)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($un009Status -eq 'FAIL') { throw "Standard-user Windows Settings uninstall acceptance failed: $un009Reason" }
+          if ($un009Status -ne 'PASS') {
+            Write-Warning "UN-009 remains $un009Status; the broader standard-user harness status does not substitute for the Settings Apps result."
+          } else {
+            Write-Host 'PASS: the exact production candidate was removed through the Settings Apps UI and the required settings/history bytes were preserved.'
+          }
+          if ($result.Status -eq 'FAIL') { throw "The broader standard-user harness also found a failure: $($result.Failure) (UN-009 result: $un009Status)." }
+
+      - name: Retry the real Settings route with the active Console owner token
+        id: active_console_owner_settings
+        if: always() && steps.candidate_identity.outcome == 'success' && steps.console_preflight.outputs.desktop_ready == 'true'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          EBR_RUNNER_ENVIRONMENT_CONTEXT: ${{ runner.environment }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_active_console_settings_uninstall.ps1 `
+            -InstallerPath 'production-candidate-artifact/final-candidate/EyeBreakReminder-Setup-x64.exe' `
+            -ExecutablePath 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe' `
+            -EvidenceDirectory 'remaining-coverage-evidence/standard-user-console/active-console-owner'
+
+      - name: Recheck the seven candidate files remain byte-identical
+        if: always() && steps.candidate_identity.outcome == 'success'
+        shell: pwsh
+        run: |
+          $identity = Get-Content 'remaining-coverage-evidence/standard-user-console/candidate-identity.json' -Raw | ConvertFrom-Json
+          foreach ($file in $identity.Files) {
+            $path = Join-Path 'production-candidate-artifact/final-candidate' $file.Name
+            if (-not (Test-Path -LiteralPath $path) -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.SHA256) { throw "Candidate bytes changed during the test: $($file.Name)" }
+          }
+          Write-Host 'PASS: all seven downloaded production candidate files remain byte-identical.'
+
+      - name: Retain active-console preflight, standard-user logs, screenshots, and candidate identity
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-un-009-console-standard-user-${{ github.run_id }}
+          path: remaining-coverage-evidence/standard-user-console/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  shell-notification-owner-matched-windows-server-console:
+    name: Exact candidate Shell notification in its Console owner’s session
+    if: contains(github.event.pull_request.labels.*.name, 'run-shell-quiet-time-probe')
+    runs-on: windows-2025
+    timeout-minutes: 105
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Verify the exact retained x64 executable
+        id: candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Authoritative production executable is missing.' }
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "ENV-009 owner-matched Shell candidate hash mismatch: $actual" }
+          $pe = [IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($pe, 0x3C)
+          $machine = [BitConverter]::ToUInt16($pe, $peOffset + 4)
+          if ($machine -ne 0x8664) { throw ('Expected AMD64 PE 0x8664; found 0x{0:X4}.' -f $machine) }
+          "sha256=$actual" >> $env:GITHUB_OUTPUT
+          Write-Host 'PASS: artifact 14695418078 executable hash and native AMD64 PE identity match.'
+
+      - name: Test the exact candidate against the Shell owned by the active Console user
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $process = Get-Process -Id $PID -ErrorAction Stop
+          $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $evidence = Join-Path $env:RUNNER_TEMP 'env-009-owner-matched-shell-evidence'
+          & .\tests\windows_shell_notification_acceptance.ps1 `
+            -ExecutablePath $exe `
+            -EvidenceDirectory $evidence `
+            -ServerConsoleOwnerSession `
+            -WaitForQuietTimeExit `
+            -ExpectedSessionId $process.SessionId `
+            -ExpectedSessionName 'Console' `
+            -ExpectedUser $user
+          $reportPath = Join-Path $evidence 'env-009-shell-notification-results.json'
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'Owner-matched Shell harness produced no result report.' }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          $desktop = $report.Environment.ConsoleDesktopEvidence
+          $checks = if ($desktop) { $desktop.Checks } else { $null }
+          $ownerPreflightVerified = [bool]($checks -and $checks.ExpectedUserAndSession -and $checks.ActiveWtsConsole -and $checks.Interactive -and $checks.Desktop -and $checks.TaskbarOwnedByExplorer -and $checks.ShellOwnerMatchesCurrentUser)
+          $ownerPreflightText = if ($ownerPreflightVerified) { 'verified' } else { 'not verified; see recorded checks' }
+          $adminText = if ($null -ne $desktop -and $null -ne $desktop.IsAdministrator) { [string][bool]$desktop.IsAdministrator } else { 'not recorded' }
+          $wait = $report.NotificationEligibilityWait
+          $quietWaitText = if ($wait) { "requested=$($wait.Requested); result=$($wait.Status); seconds=$($wait.WaitedSeconds); initial=$($wait.InitialState.StateName); final=$($wait.FinalState.StateName)" } else { 'not recorded' }
+          $summary = "Requirement: ENV-009`nCandidate EXE: artifact 14695418078, SHA-256 $($report.Candidate.SHA256), native PE $($report.Candidate.Identity.PEMachine) (EXE identity checked)`nOS: $($report.OperatingSystem.Caption) $($report.OperatingSystem.Version) build $($report.OperatingSystem.Build)`nEnvironment: GitHub-hosted Windows Server 2025 x64; requested owner-matched active Console mode`nConsole/session/Shell-owner preflight: $ownerPreflightText`nCurrent token is administrator: $adminText`nQuiet-time readiness: $quietWaitText`nShell visibility subtest: $($report.ShellNotificationVisibilityStatus) — $($report.ShellNotificationVisibilityReason)`nNotification audio: $($report.Audio.Status); physical output verified: $($report.Audio.PhysicalAudioVerified)`nOverall ENV-009: $($report.Status) — $($report.Reason)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($report.Status -eq 'FAIL') { throw "Owner-matched Windows Shell acceptance found a failure: $($report.Reason)" }
+          if ($report.Status -ne 'PASS') { Write-Warning "ENV-009 remains $($report.Status); inspect actual Shell/audio subresults before changing acceptance status." }
+
+      - name: Preserve owner-matched Shell UIA, logs, and screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-env-009-owner-matched-shell-${{ github.run_id }}
+          path: ${{ runner.temp }}/env-009-owner-matched-shell-evidence/**
+          if-no-files-found: warn
+          retention-days: 90
+
+  isolated-lock-unlock-windows-server-x64:
+    name: Exact candidate lock/unlock in a separate disposable Windows Server x64 guest
+    if: contains(github.event.pull_request.labels.*.name, 'retry-server-rdp-lock-after-env-change')
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out the PR test harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Download authoritative production candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-44875679345
+          run-id: 44875679345
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          github-token: ${{ github.token }}
+          path: production-candidate-artifact
+
+      - name: Run exact-candidate lock/unlock in a loopback-only temporary RDP session
+        shell: pwsh
+        env:
+          EBR_RUNNER_ENVIRONMENT_CONTEXT: ${{ runner.environment }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:EBR_RUNNER_ENVIRONMENT_CONTEXT -cne 'github-hosted' -or $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64') { throw 'ENV-006 harness requires a fresh GitHub-hosted Windows x64 runner.' }
+          $exe = Join-Path $PWD 'production-candidate-artifact/final-candidate/EyeBreakReminder.exe'
+          $expected = '07f6c1eaee5818df9f5c024310883ca94b8274a4f451186a8123974fb5e5f720'
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "ENV-006 candidate hash mismatch: $actual" }
+          $evidence = Join-Path $env:RUNNER_TEMP 'env006-lock-unlock-evidence'
+          & .\tests\windows_server_rdp_lock_unlock_acceptance.ps1 -CandidateExecutable $exe -EvidenceDirectory $evidence
+          $reportPath = Join-Path $evidence 'env006-lock-unlock-results.json'
+          if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw 'ENV-006 harness produced no evidence report.' }
+          $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+          $summary = "Requirement: ENV-006`nCandidate: artifact $($report.CandidateArtifactId), SHA-256 $($report.CandidateSHA256)`nOS: $($report.OS) version $($report.OSVersion) build $($report.OSBuild)`nOS/native CPU: $($report.OSArchitecture) / $($report.ProcessArchitecture)`nEnvironment: $($report.Environment)`nRDP session: $($report.RdpSessionId); temporary user SID: $($report.TemporaryUserSid)`nStatus: $($report.Status)`nReason: $($report.Reason)`nCleanup errors: $(@($report.CleanupErrors).Count)`n"
+          $summary | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host $summary
+          if ($report.Status -eq 'FAIL') { throw "Exact-candidate ENV-006 harness found a product failure: $($report.Reason)" }
+          if ($report.Status -ne 'PASS') { Write-Warning 'ENV-006 remains blocked; actual session-lock evidence and cleanup results are retained.' }
+
+      - name: Preserve lock/unlock screenshots, session evidence, and cleanup records
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1.4.0-env-006-lock-unlock-${{ github.run_id }}
+          path: ${{ runner.temp }}/env006-lock-unlock-evidence/**
+          if-no-files-found: warn
+          retention-days: 90

@@ -1,0 +1,98 @@
+name: Windows v1.4.0 updater resource loops
+
+on:
+  push:
+    branches:
+      - feature/v1.4.0-automatic-updater
+    paths:
+      - '.github/workflows/windows-v1.4.0-updater-resource-loops.yml'
+      - 'scripts/v1.4.0-updater-resource-loops.ps1'
+      - 'tests/updater_windows_tests.cpp'
+      - 'src/app.cpp'
+      - 'src/update_client.hpp'
+      - 'src/update_coordinator.hpp'
+      - 'src/update_checker.hpp'
+      - 'src/update_manifest.hpp'
+      - 'src/update_signature_win.hpp'
+      - 'src/update_trust.hpp'
+      - 'src/update_accessibility.hpp'
+      - 'src/windows_services.hpp'
+      - 'src/resources.rc'
+      - 'src/app.manifest'
+      - 'assets/**'
+      - 'VERSION'
+      - 'Makefile'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gui-resource-loops:
+    name: Repeated update check, cancellation, hash failure and coordinator lifecycle
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - name: Check out feature-branch source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install native Windows test compiler
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-python
+
+      - name: Build only the isolated GUI test executable
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          if ! command -v x86_64-w64-mingw32-strip >/dev/null 2>&1; then
+            cp "$(command -v strip)" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          fi
+          # Compile the production-root rejection test with the real embedded
+          # key, then build the isolated GUI test application with a fail-closed
+          # trust header so its per-run disposable key is usable only by this
+          # EYEBREAK_TEST_BUILD binary.
+          make build/updater-windows-tests.exe HOST_CXX=g++
+          saved_trust=build/production-update-trust.hpp
+          cp src/update_trust.hpp "$saved_trust"
+          restore_production_trust() { cp "$saved_trust" src/update_trust.hpp; }
+          trap restore_production_trust EXIT
+          cat > src/update_trust.hpp <<'EOF'
+          #pragma once
+          #include <array>
+          #include <string_view>
+          namespace eye::updates {
+          // Used only by EYEBREAK_TEST_BUILD GUI integration binaries.
+          inline constexpr bool ProductionUpdateKeyProvisioned=false;
+          inline constexpr std::string_view ProductionUpdateKeyId="";
+          inline constexpr std::array<unsigned char,64> ProductionUpdatePublicKey{};
+          }
+          EOF
+          make -B gui-test \
+            CROSS_CXX='x86_64-w64-mingw32-g++ -DWINVER=0x0A00 -D_WIN32_WINNT=0x0A00' \
+            WINDRES=windres \
+            STRIP=strip
+          restore_production_trust
+          trap - EXIT
+          python -c 'from pathlib import Path; import sys; sys.exit(0 if Path(sys.argv[1]).read_bytes() == Path(sys.argv[2]).read_bytes() else 1)' src/update_trust.hpp "$saved_trust"
+
+      - name: Measure repeated updater resource paths
+        shell: pwsh
+        run: ./scripts/v1.4.0-updater-resource-loops.ps1
+
+      - name: Retain time series and per-launch evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.0-updater-resource-loops-${{ github.run_id }}
+          path: build/v1.4.0-updater-resource-loops-*/evidence/
+          if-no-files-found: warn
+          retention-days: 30

@@ -12,5 +12,11 @@ This process uses a local Linux build and consumes no GitHub Actions minutes.
 6. Publish a GitHub Release for that tag, with a short description of the changes and validation. Attach `EyeBreakReminder-Setup-x64.exe`, `EyeBreakReminder.exe`, `EyeBreakReminder-Portable-x64.zip`, `EyeBreakReminder-Source.zip` and `EyeBreakReminder-SHA256.txt` from the same build. Do not mix artifacts from different builds.
 7. Confirm the release tag points at the source commit and the attached artifact hashes match the manifest. Keep the installer available in the chat response as well.
 
+## Updater-compatible release requirements
+
+The integrated updater uses the public `/releases/latest` API and requires a published stable release with exactly named `EyeBreakReminder.exe` and `EyeBreakReminder-Setup-x64.exe` assets. GitHub's API must return a valid SHA-256 `digest` for each. Do not change those names, remove asset digests, or reuse a tag. The updater does not use GitHub credentials. The Source ZIP, Portable ZIP and SHA-256 manifest remain part of the five-artifact contract.
+
+Before creating any release/tag, obtain the repository owner's explicit approval for that specific publication. Prepare and independently hash-verify the exact candidate first. Keep the one-time v1.3.0 to v1.4.0 manual transition documented because v1.3.0 cannot install an update from inside the app.
+
 Never force-push or replace repository history for a routine release. Repository visibility, access permissions and source licensing are owner decisions. Signing requires the owner's legitimate certificate and must happen before regenerating packages/hashes.
 

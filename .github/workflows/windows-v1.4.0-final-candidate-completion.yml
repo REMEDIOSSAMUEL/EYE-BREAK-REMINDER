@@ -1,0 +1,218 @@
+name: Windows v1.4.0 targeted candidate completion
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  complete-x64:
+    name: Retest timeout and soak the exact retained x64 candidate
+    runs-on: windows-2025
+    timeout-minutes: 240
+    steps:
+      - name: Check out verification harnesses
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install tools for the isolated HTTPS timeout probe
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+
+      - name: Download the exact candidate and existing acceptance evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: eye-break-reminder-v1.4.0-candidate-44498562317
+          repository: ${{ github.repository }}
+          run-id: '44498562317'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: candidate-input
+
+      - name: Verify the retained candidate identities and reusable passing evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = 'candidate-input/release'
+          $evidence = 'candidate-input/build/v1.4.0-updater-evidence'
+          $expected = @{
+            'EyeBreakReminder.exe' = @{ Bytes = 2831872L; SHA256 = 'ade9b8207895cf78be50e3198fd0d38b055bd004d8751789a35b342dc3725a66' }
+            'EyeBreakReminder-Setup-x64.exe' = @{ Bytes = 1378106L; SHA256 = '71437a6078121212b704cb52fb6a1ed60fa83bc0e20989b5b04b25339befadfe' }
+            'EyeBreakReminder-Portable-x64.zip' = @{ Bytes = 1548686L; SHA256 = 'a5bd7610c273ee86d33225d0491646ab356b15748c7e25bd64941489495c0b78' }
+            'EyeBreakReminder-Source.zip' = @{ Bytes = 2530289L; SHA256 = '340115fd90bbb9ab59c82a6bbad7ba8d76e1e27b54d380a85f23ad84ef7f6024' }
+            'EyeBreakReminder-SHA256.txt' = @{ Bytes = 382L; SHA256 = '762b2056b1e5a87cf0c5fbca2c40d8d930237686a8b6194599708fbdd9208711' }
+          }
+          $files = @(Get-ChildItem -LiteralPath $release -Force)
+          if ($files.Count -ne 5 -or @($files | Where-Object PSIsContainer).Count -ne 0 -or (($files.Name | Sort-Object) -join "`n") -cne (($expected.Keys | Sort-Object) -join "`n")) { throw 'Retained candidate has an unexpected file set.' }
+          foreach ($name in $expected.Keys) {
+            $file = Get-Item -LiteralPath (Join-Path $release $name)
+            $sha = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($file.Length -ne $expected[$name].Bytes -or $sha -cne $expected[$name].SHA256) { throw "Retained candidate identity mismatch: $name" }
+          }
+          $manifest = @(Get-Content -LiteralPath (Join-Path $release 'EyeBreakReminder-SHA256.txt'))
+          if ($manifest.Count -ne 4) { throw 'Retained checksum manifest must have exactly four payload entries.' }
+          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip')) {
+            if (@($manifest | Where-Object { $_ -ceq ($expected[$name].SHA256 + '  ' + $name) }).Count -ne 1) { throw "Manifest mismatch: $name" }
+          }
+          $provenance = Get-Content -LiteralPath (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          if ($provenance.RunId -ne '44498562317' -or $provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.PRHeadCommit -cne 'f764f2f24edafb9ac254f302ec958a648e99bd15') { throw 'Candidate provenance does not match the failed-gate run and exact product-source head.' }
+          $gate = Get-Content -LiteralPath (Join-Path $evidence 'windows-acceptance-gate.json') -Raw | ConvertFrom-Json
+          $reusable = @('Candidate','Fixtures','ProductionUpdateFixture','NetworkInterruption','LegacyV130Upgrade','Gui','StandardUser','Updater','PortableRecovery','ProductionBinaryUpdate','CoordinatorBackupFailure','ResourceTelemetry','CandidateIdentity')
+          foreach ($key in $reusable) { if ($gate.$key -cne 'success') { throw "Existing passing acceptance evidence is not reusable: $key=$($gate.$key)" } }
+          if ($gate.DownloadBodyTimeout -cne 'failure' -or $gate.ResourceSoak -cne 'skipped') { throw 'Reference run is not the expected timeout-harness false-negative with soak gated.' }
+          $production = Get-Content -LiteralPath (Join-Path $evidence 'production-update-acceptance-successful-update-results.json') -Raw | ConvertFrom-Json
+          if ($production.Status -cne 'PASS' -or $production.Scenario -cne 'All' -or $production.Assertions -lt 60) { throw 'Exact candidate production update acceptance did not pass in the reference run.' }
+          $backupResult = Get-Content -LiteralPath (Join-Path $evidence 'production-update-acceptance-results.json') -Raw | ConvertFrom-Json
+          if ($backupResult.Status -cne 'PASS' -or $backupResult.Scenario -cne 'CoordinatorBackupFailure' -or $backupResult.Assertions -lt 40 -or -not $backupResult.TemporaryTestRootRemoved -or -not $backupResult.HostsRestoredByteIdentically) { throw 'Exact candidate coordinator backup-failure recovery evidence is not passing.' }
+          New-Item -ItemType Directory -Force -Path 'build/v1.4.0-final-candidate-completion' | Out-Null
+          [pscustomobject]@{Status='PASS';ReferenceRunId='44498562317';ReferenceRunUrl='https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/44498562317';ProductSourceCommit='f764f2f24edafb9ac254f302ec958a648e99bd15';SourceSnapshotCommit=$provenance.SourceCommit;CandidateFiles=@(foreach($name in ($expected.Keys|Sort-Object)){[pscustomobject]@{Name=$name;Bytes=$expected[$name].Bytes;SHA256=$expected[$name].SHA256}});ReusedAcceptance=@{ProductionUpdate=$gate.ProductionBinaryUpdate;CoordinatorBackupFailure=$gate.CoordinatorBackupFailure;GUI=$gate.Gui;InstallerAndMigration=$gate.LegacyV130Upgrade;PortableRecovery=$gate.PortableRecovery};TimeoutHarness='PENDING';ProductionBinaryResourceSoak='PENDING';Published=$false;Tagged=$false;Merged=$false} | ConvertTo-Json -Depth 8 | Set-Content 'build/v1.4.0-final-candidate-completion/completion.json' -Encoding UTF8
+
+      - name: Rerun only the actual HTTPS body-stall timeout test
+        id: timeout
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_download_stall_timeout_acceptance.ps1 -EvidencePath '.\build\v1.4.0-final-candidate-completion\download-stall-timeout.json'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $result = Get-Content -LiteralPath '.\build\v1.4.0-final-candidate-completion\download-stall-timeout.json' -Raw | ConvertFrom-Json
+          if ($result.status -cne 'PASS' -or -not $result.nativeResult.timeout_error_reported -or -not $result.nativeResult.partial_and_final_download_files_removed -or -not $result.nativeResult.preexisting_sentinel_preserved_byte_for_byte -or $result.nativeResult.elapsed_ms -ge 12000 -or -not $result.cleanup.runnerTempTestDirectoryRemoved) { throw 'Targeted HTTPS body-stall timeout assertions or cleanup failed.' }
+
+      - name: Run the 110-cycle soak against the unchanged retained production executable
+        id: soak
+        if: ${{ steps.timeout.outcome == 'success' }}
+        timeout-minutes: 180
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\windows_break_user_resource_soak.ps1 `
+            -ExecutablePath '.\candidate-input\release\EyeBreakReminder.exe' `
+            -EvidenceDirectory '.\build\v1.4.0-final-candidate-completion\resource-soak' `
+            -Cycles 110 -ExpectedProductVersion '1.4.0' -ExpectedResourceBehavior NoGrowth
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\tests\windows_resource_soak_summary_tests.ps1 `
+            -EvidenceDirectory '.\build\v1.4.0-final-candidate-completion\resource-soak' `
+            -ExecutablePath '.\candidate-input\release\EyeBreakReminder.exe'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $summary = Get-Content -LiteralPath '.\build\v1.4.0-final-candidate-completion\resource-soak\soak-summary.json' -Raw | ConvertFrom-Json
+          $hash = (Get-FileHash -LiteralPath '.\candidate-input\release\EyeBreakReminder.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($summary.Application -cne 'Eye Break Reminder' -or $summary.Version -cne '1.4.0' -or $summary.RequestedCycles -ne 110 -or $summary.CompletedCycles -ne 110 -or $summary.Pass -lt 250 -or $summary.Fail -ne 0 -or $summary.NotTested -ne 0 -or -not $summary.DiagnosticTelemetryComplete -or $summary.SHA256 -cne $hash) { throw 'The exact-candidate 110-cycle soak or resource-trend evidence did not pass.' }
+          & .\tests\write_v140_completion_evidence.ps1 `
+            -CompletionPath '.\build\v1.4.0-final-candidate-completion\completion.json' `
+            -ExecutableSHA256 $hash -SoakCycles 110
+
+      - name: Upload the unchanged exact candidate and completion evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.4.0-candidate-completion-${{ github.run_id }}
+          path: |
+            candidate-input/**
+            build/v1.4.0-final-candidate-completion/**
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  independent-download-audit:
+    name: Independently download and hash the completed candidate
+    needs: complete-x64
+    if: ${{ needs.complete-x64.result == 'success' }}
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Download the retained candidate from the completed x64 job
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-candidate-completion-${{ github.run_id }}
+          path: clean-download
+
+      - name: Verify files, version, manifest, and completed exact-binary evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = 'clean-download/candidate-input/release'
+          $evidence = 'clean-download/candidate-input/build/v1.4.0-updater-evidence'
+          $completionPath = 'clean-download/build/v1.4.0-final-candidate-completion/completion.json'
+          $expected = @{
+            'EyeBreakReminder.exe' = @{ Bytes = 2831872L; SHA256 = 'ade9b8207895cf78be50e3198fd0d38b055bd004d8751789a35b342dc3725a66' }
+            'EyeBreakReminder-Setup-x64.exe' = @{ Bytes = 1378106L; SHA256 = '71437a6078121212b704cb52fb6a1ed60fa83bc0e20989b5b04b25339befadfe' }
+            'EyeBreakReminder-Portable-x64.zip' = @{ Bytes = 1548686L; SHA256 = 'a5bd7610c273ee86d33225d0491646ab356b15748c7e25bd64941489495c0b78' }
+            'EyeBreakReminder-Source.zip' = @{ Bytes = 2530289L; SHA256 = '340115fd90bbb9ab59c82a6bbad7ba8d76e1e27b54d380a85f23ad84ef7f6024' }
+            'EyeBreakReminder-SHA256.txt' = @{ Bytes = 382L; SHA256 = '762b2056b1e5a87cf0c5fbca2c40d8d930237686a8b6194599708fbdd9208711' }
+          }
+          $files = @(Get-ChildItem -LiteralPath $release -File | Sort-Object Name)
+          if ($files.Count -ne 5 -or (($files.Name -join "`n") -cne (($expected.Keys | Sort-Object) -join "`n"))) { throw 'Independently downloaded artifact has an unexpected release file set.' }
+          foreach ($name in $expected.Keys) {
+            $file = Get-Item -LiteralPath (Join-Path $release $name)
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($file.Length -ne $expected[$name].Bytes -or $hash -cne $expected[$name].SHA256) { throw "Independent downloaded artifact mismatch: $name" }
+          }
+          $manifest = @(Get-Content -LiteralPath (Join-Path $release 'EyeBreakReminder-SHA256.txt'))
+          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip')) { if (@($manifest | Where-Object { $_ -ceq ($expected[$name].SHA256 + '  ' + $name) }).Count -ne 1) { throw "Independent manifest mismatch: $name" } }
+          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe')) { if ((Get-Item -LiteralPath (Join-Path $release $name)).VersionInfo.ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw "Wrong downloaded product version: $name" } }
+          Add-Type -AssemblyName System.IO.Compression
+          $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $release 'EyeBreakReminder-Portable-x64.zip'))
+          try { $entry = $zip.GetEntry('EyeBreakReminder.exe'); if (-not $entry) { throw 'Portable ZIP does not include the application executable.' }; $stream = $entry.Open(); $sha = [Security.Cryptography.SHA256]::Create(); try { $portableHash = [Convert]::ToHexString($sha.ComputeHash($stream)).ToLowerInvariant() } finally { $sha.Dispose(); $stream.Dispose() } } finally { $zip.Dispose() }
+          if ($portableHash -cne $expected['EyeBreakReminder.exe'].SHA256) { throw 'Portable embedded executable differs from the exact standalone candidate.' }
+          $completion = Get-Content -LiteralPath $completionPath -Raw | ConvertFrom-Json
+          if ($completion.TimeoutHarness -cne 'PASS' -or $completion.ProductionBinaryResourceSoak -cne 'PASS' -or $completion.SoakedExecutableSHA256 -cne $expected['EyeBreakReminder.exe'].SHA256 -or $completion.SoakCycles -ne 110) { throw 'Downloaded completion evidence is not bound to the exact candidate.' }
+          $prior = Get-Content -LiteralPath (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          if ($prior.PRHeadCommit -cne 'f764f2f24edafb9ac254f302ec958a648e99bd15' -or $prior.SourceCommit -cne '67e8ed69686b1b6ec129f689b2a9944012a9b2c6') { throw 'Downloaded source provenance is unexpected.' }
+          [pscustomobject]@{Status='PASS';CleanDownload=$true;ReleaseFiles=@(foreach($name in ($expected.Keys|Sort-Object)){[pscustomobject]@{Name=$name;Bytes=$expected[$name].Bytes;SHA256=$expected[$name].SHA256}});ProductSourceCommit=$prior.PRHeadCommit;SourceSnapshotCommit=$prior.SourceCommit;ResourceSoakSHA256=$completion.SoakedExecutableSHA256;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 8 | Set-Content 'clean-download/independent-candidate-audit.json' -Encoding UTF8
+
+  windows-11-arm64-emulation:
+    name: Exact retained candidate on Windows 11 ARM64 x64 emulation
+    needs: complete-x64
+    if: ${{ needs.complete-x64.result == 'success' }}
+    runs-on: windows-11-arm
+    timeout-minutes: 40
+    steps:
+      - name: Check out the ARM64 acceptance harness
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Download the completed, exact candidate artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-candidate-completion-${{ github.run_id }}
+          path: .
+
+      - name: Verify identity and run Windows 11 ARM64 x64-emulation acceptance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sourceRelease = '.\candidate-input\release'
+          New-Item -ItemType Directory -Force -Path '.\release' | Out-Null
+          Get-ChildItem -LiteralPath $sourceRelease -File | Copy-Item -Destination '.\release' -Force
+          $release = '.\release'
+          $evidence = '.\candidate-input\build\v1.4.0-updater-evidence'
+          $completion = Get-Content '.\build\v1.4.0-final-candidate-completion\completion.json' -Raw | ConvertFrom-Json
+          if ($completion.TimeoutHarness -cne 'PASS' -or $completion.ProductionBinaryResourceSoak -cne 'PASS') { throw 'The x64 targeted completion gate is incomplete.' }
+          $id = Get-Content (Join-Path $evidence 'candidate-provenance.json') -Raw | ConvertFrom-Json
+          $expectedHash = [string](@(Get-Content (Join-Path $evidence 'release-artifact-identities.json') -Raw | ConvertFrom-Json | Where-Object Name -CEQ 'EyeBreakReminder.exe')[0].SHA256)
+          if ((Get-FileHash (Join-Path $release 'EyeBreakReminder.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedHash -or $completion.SoakedExecutableSHA256 -cne $expectedHash) { throw 'ARM64 candidate bytes differ from the exact soaked executable.' }
+          & .\tests\windows_arm64_emulation_acceptance.ps1 `
+            -InstallerPath (Join-Path $release 'EyeBreakReminder-Setup-x64.exe') `
+            -StandaloneExecutable (Join-Path $release 'EyeBreakReminder.exe') `
+            -PortableArchive (Join-Path $release 'EyeBreakReminder-Portable-x64.zip') `
+            -EvidenceDirectory '.\build\arm64-final-candidate-evidence' `
+            -CandidateSourceCommit $id.PRHeadCommit -ExpectedVersion '1.4.0'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Retain Windows 11 ARM64 emulation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.4.0-arm64-emulation-${{ github.run_id }}
+          path: build/arm64-final-candidate-evidence/**
+          if-no-files-found: warn
+          retention-days: 90

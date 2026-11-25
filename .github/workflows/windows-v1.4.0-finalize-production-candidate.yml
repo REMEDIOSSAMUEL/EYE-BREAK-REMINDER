@@ -1,0 +1,628 @@
+name: Finalize signed v1.4.0 production candidate
+
+on:
+  push:
+    branches:
+      - feature/v1.4.0-automatic-updater
+    paths:
+      - 'release-inputs/v1.4.0/candidate-provenance.json'
+      - 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json'
+      - 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig'
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful Windows acceptance run that built and tested the exact candidate
+        required: true
+        type: string
+      candidate_source_commit:
+        description: Full 40-character source commit used by that candidate run
+        required: true
+        type: string
+      manifest_base64:
+        description: Base64 of the public canonical signed update manifest; never enter a private key or passphrase
+        required: true
+        type: string
+      signature_base64:
+        description: Base64 of the public 64-byte raw ECDSA signature
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+
+jobs:
+  finalize:
+    if: ${{ github.ref == 'refs/heads/feature/v1.4.0-automatic-updater' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push') }}
+    name: Assemble and authenticate the exact signed candidate
+    runs-on: windows-2025
+    timeout-minutes: 25
+    outputs:
+      candidate_run_id: ${{ steps.verify-candidate.outputs.candidate_run_id }}
+      candidate_source_commit: ${{ steps.verify-candidate.outputs.candidate_source_commit }}
+      signed_artifact_id: ${{ steps.signed-candidate.outputs.artifact-id }}
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    steps:
+      - name: Check out the exact production trust configuration
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the public metadata verification tools
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+
+      - name: Verify candidate run identity, branch, artifact retention, and embedded key
+        id: verify-candidate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_SOURCE_COMMIT: ${{ inputs.candidate_source_commit }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pointer = Get-Content -LiteralPath 'release-inputs/v1.4.0/candidate-provenance.json' -Raw | ConvertFrom-Json
+          $revalidateFrozen = $null -ne $pointer.candidate_revalidation_run_id
+          if ($revalidateFrozen -and ($env:GITHUB_EVENT_NAME -cne 'push' -or
+              [string]$pointer.candidate_run_id -cne '45624936126' -or
+              [string]$pointer.candidate_source_commit -cne 'dfd8018b319bdfde498d4f23b2d1ca96d0a99145' -or
+              [string]$pointer.candidate_artifact_id -cne '15029531496' -or
+              [string]$pointer.candidate_revalidation_run_id -cne '45628377723')) {
+            throw 'Frozen-candidate revalidation is pinned to the one retained candidate and its one verification run.'
+          }
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            $env:CANDIDATE_RUN_ID = [string]$pointer.candidate_run_id
+            $env:CANDIDATE_SOURCE_COMMIT = [string]$pointer.candidate_source_commit
+            if ($env:CANDIDATE_SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$') { throw 'Candidate pointer must identify a full source commit.' }
+            git merge-base --is-ancestor $env:CANDIDATE_SOURCE_COMMIT $env:GITHUB_SHA
+            if ($LASTEXITCODE -ne 0) { throw 'The candidate source commit must be an ancestor of the metadata-only finalization commit.' }
+            $changedPaths = @(git diff --name-only $env:CANDIDATE_SOURCE_COMMIT $env:GITHUB_SHA)
+            $expectedPaths = @('release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json','release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig','release-inputs/v1.4.0/candidate-provenance.json')
+            if ($revalidateFrozen) {
+              $expectedPaths += @('.github/workflows/windows-v1.4.0-finalize-production-candidate.yml','scripts/verify_frozen_candidate_revalidation.ps1')
+            }
+            $changedPathText = ($changedPaths | Sort-Object) -join "`n"
+            $expectedPathText = ($expectedPaths | Sort-Object) -join "`n"
+            if ($changedPathText -cne $expectedPathText) { throw 'The candidate source may only be followed by the three public signed-metadata input files.' }
+          } else {
+            if ($env:CANDIDATE_SOURCE_COMMIT -cne $env:GITHUB_SHA) {
+              git merge-base --is-ancestor $env:CANDIDATE_SOURCE_COMMIT $env:GITHUB_SHA
+              if ($LASTEXITCODE -ne 0) { throw 'The dispatched candidate source commit must be an ancestor of the finalization commit.' }
+              $pointer = Get-Content -LiteralPath 'release-inputs/v1.4.0/candidate-provenance.json' -Raw | ConvertFrom-Json
+              if ([string]$pointer.candidate_run_id -cne $env:CANDIDATE_RUN_ID -or [string]$pointer.candidate_source_commit -cne $env:CANDIDATE_SOURCE_COMMIT) { throw 'Dispatched candidate inputs must match the committed candidate pointer.' }
+              $changedPaths = @(git diff --name-only $env:CANDIDATE_SOURCE_COMMIT $env:GITHUB_SHA)
+              $expectedPaths = @('release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json','release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig','release-inputs/v1.4.0/candidate-provenance.json','.github/workflows/windows-v1.4.0-finalize-production-candidate.yml','tests/updater_windows_tests.cpp','tests/windows_signed_update_gui_acceptance.ps1')
+              $changedPathText = ($changedPaths | Sort-Object) -join "`n"
+              $expectedPathText = ($expectedPaths | Sort-Object) -join "`n"
+              if ($changedPathText -cne $expectedPathText) { throw 'Dispatched finalization allows only the three public metadata files, the reviewed finalizer gate, and the two pinned Windows test-harness files after the candidate source.' }
+              $updaterTestBlob = (git rev-parse "$($env:GITHUB_SHA):tests/updater_windows_tests.cpp").Trim()
+              $signedGuiTestBlob = (git rev-parse "$($env:GITHUB_SHA):tests/windows_signed_update_gui_acceptance.ps1").Trim()
+              if ($updaterTestBlob -cne '62628414956e77242d89f61f4c9db908ada0389f' -or $signedGuiTestBlob -cne '1ec911248660dfce82592e5f5b3707ecfe7a6ba7') { throw 'The post-candidate Windows test harnesses must match the exact reviewed 16-sample bounded warm-up and production-key-guard corrections.' }
+            }
+          }
+          if ($env:CANDIDATE_RUN_ID -notmatch '^\d{5,}$') { throw 'Candidate run ID must be a decimal GitHub Actions run ID.' }
+          if ($env:CANDIDATE_SOURCE_COMMIT -notmatch '^[0-9a-f]{40}$') { throw 'Candidate source commit must be a full Git SHA.' }
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          $base = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY"
+          $candidate = Invoke-RestMethod -Headers $headers -Uri "$base/actions/runs/$env:CANDIDATE_RUN_ID"
+          $expectedConclusion = if ($revalidateFrozen) { 'failure' } else { 'success' }
+          if ($candidate.name -cne 'Windows v1.4.0 updater and release-candidate acceptance' -or $candidate.status -cne 'completed' -or $candidate.conclusion -cne $expectedConclusion -or $candidate.head_branch -cne 'feature/v1.4.0-automatic-updater' -or $candidate.head_sha -cne $env:CANDIDATE_SOURCE_COMMIT) { throw 'Candidate build identity or recorded conclusion differs from the expected workflow run.' }
+          if ($revalidateFrozen) {
+            $validationId = [string]$pointer.candidate_revalidation_run_id
+            $validationHead = '0af9f24d71ab003f82bd18e9146d0da8038973c4'
+            $validation = Invoke-RestMethod -Headers $headers -Uri "$base/actions/runs/$validationId"
+            if ($validation.name -cne 'Revalidate exact unsigned candidate 15029531496' -or
+                $validation.head_branch -cne 'codex/revalidate-candidate-45624936126' -or
+                $validation.head_sha -cne $validationHead -or $validation.status -cne 'completed' -or
+                $validation.conclusion -cne 'success' -or $validation.event -cne 'push') {
+              throw 'Revalidation run must have succeeded on its reviewed test-only commit.'
+            }
+            $comparison = Invoke-RestMethod -Headers $headers -Uri "$base/compare/$($env:CANDIDATE_SOURCE_COMMIT)...$validationHead"
+            $expectedDiff = @('.github/workflows/windows-frozen-candidate-revalidation.yml','tests/updater_windows_tests.cpp')
+            if ($comparison.merge_base_commit.sha -cne $env:CANDIDATE_SOURCE_COMMIT -or
+                (@($comparison.files.filename | Sort-Object) -join '|') -cne (@($expectedDiff | Sort-Object) -join '|')) {
+              throw 'Revalidation must leave the frozen production tree unchanged.'
+            }
+            $jobs = Invoke-RestMethod -Headers $headers -Uri "$base/actions/runs/$validationId/jobs?per_page=100"
+            $expectedJobs = @('Diagnose and rerun only the failed WinHTTP test','Fresh 110-cycle soak on the retained exact executable')
+            foreach ($name in $expectedJobs) {
+              $job = @($jobs.jobs | Where-Object name -CEQ $name)
+              if ($job.Count -ne 1 -or $job[0].status -cne 'completed' -or $job[0].conclusion -cne 'success' -or
+                  @($job[0].steps | Where-Object conclusion -NE 'success').Count) { throw "Revalidation job incomplete: $name" }
+            }
+            $validationArtifacts = Invoke-RestMethod -Headers $headers -Uri "$base/actions/runs/$validationId/artifacts?per_page=100"
+            $network = @($validationArtifacts.artifacts | Where-Object { $_.name -ceq "frozen-candidate-network-$validationId" -and -not $_.expired })
+            $soak = @($validationArtifacts.artifacts | Where-Object { $_.name -ceq "frozen-candidate-soak-$validationId" -and -not $_.expired })
+            if ($network.Count -ne 1 -or $soak.Count -ne 1 -or [string]$network[0].id -cne '15029466773' -or
+                [string]$soak[0].id -cne [string]$pointer.candidate_soak_artifact_id) {
+              throw 'The exact revalidation network or soak artifact is missing, expired, or ambiguous.'
+            }
+            "revalidation_run_id=$validationId" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            "revalidation_network_artifact_id=$($network[0].id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            "revalidation_soak_artifact_id=$($soak[0].id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            "CANDIDATE_REVALIDATION_RUN_ID=$validationId" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "CANDIDATE_REVALIDATION_SOAK_ARTIFACT_ID=$($soak[0].id)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+          $checks = Invoke-RestMethod -Headers $headers -Uri "$base/commits/$env:CANDIDATE_SOURCE_COMMIT/check-runs?filter=latest&per_page=100"
+          $requiredCheck = @($checks.check_runs | Where-Object { $_.name -ceq 'Core tests and Windows package' -and $_.head_sha -ceq $env:CANDIDATE_SOURCE_COMMIT })
+          if ($requiredCheck.Count -ne 1 -or $requiredCheck[0].status -cne 'completed' -or $requiredCheck[0].conclusion -cne 'success') { throw 'The exact candidate commit must have a successful latest Core tests and Windows package check.' }
+          $env:REQUIRED_CHECK_RUN_ID = [string]$requiredCheck[0].id
+          $env:REQUIRED_CHECK_URL = [string]$requiredCheck[0].html_url
+          "REQUIRED_CHECK_RUN_ID=$env:REQUIRED_CHECK_RUN_ID" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "REQUIRED_CHECK_URL=$env:REQUIRED_CHECK_URL" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CANDIDATE_RUN_ID=$env:CANDIDATE_RUN_ID" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CANDIDATE_SOURCE_COMMIT=$env:CANDIDATE_SOURCE_COMMIT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "candidate_run_id=$env:CANDIDATE_RUN_ID" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "candidate_source_commit=$env:CANDIDATE_SOURCE_COMMIT" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "candidate_artifact_name=eye-break-reminder-v1.4.0-candidate-$env:CANDIDATE_RUN_ID" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $artifacts = Invoke-RestMethod -Headers $headers -Uri "$base/actions/runs/$env:CANDIDATE_RUN_ID/artifacts?per_page=100"
+          $artifactName = "eye-break-reminder-v1.4.0-candidate-$env:CANDIDATE_RUN_ID"
+          $artifact = @($artifacts.artifacts | Where-Object { $_.name -ceq $artifactName -and -not $_.expired })
+          if ($artifact.Count -ne 1) { throw 'The exact successful Windows acceptance artifact is missing, expired, or ambiguous.' }
+          $candidatePointer = Get-Content -LiteralPath 'release-inputs/v1.4.0/candidate-provenance.json' -Raw | ConvertFrom-Json
+          if ([string]$candidatePointer.candidate_artifact_id -cne [string]$artifact[0].id) { throw 'The public candidate pointer must identify the exact retained GitHub artifact ID.' }
+          $trust = Get-Content -LiteralPath 'src/update_trust.hpp' -Raw
+          if ($trust -notmatch 'ProductionUpdateKeyProvisioned\s*=\s*true\s*;' -or $trust -notmatch 'ProductionUpdateKeyId\s*=\s*"p256-[0-9a-f]{16}"') { throw 'The feature source does not embed a provisioned production P-256 trust key.' }
+          if ($trust -match 'TestUpdateKey|TestPublicKey|EYBREAK_TEST_BUILD') { throw 'Production trust configuration contains a test-root marker.' }
+          $env:PRODUCTION_KEY_ID = [regex]::Match($trust, 'ProductionUpdateKeyId\s*=\s*"(p256-[0-9a-f]{16})"').Groups[1].Value
+          if (-not $env:PRODUCTION_KEY_ID) { throw 'Could not identify the embedded production key.' }
+          "PRODUCTION_KEY_ID=$env:PRODUCTION_KEY_ID" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Download the exact candidate and Windows acceptance evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ steps.verify-candidate.outputs.candidate_artifact_name }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.verify-candidate.outputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: candidate-input
+
+      - name: Download immutable network revalidation evidence
+        if: steps.verify-candidate.outputs.revalidation_run_id != ''
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.verify-candidate.outputs.revalidation_run_id }}
+          artifact-ids: ${{ steps.verify-candidate.outputs.revalidation_network_artifact_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: candidate-revalidation/network
+
+      - name: Download immutable fresh soak evidence
+        if: steps.verify-candidate.outputs.revalidation_run_id != ''
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.verify-candidate.outputs.revalidation_run_id }}
+          artifact-ids: ${{ steps.verify-candidate.outputs.revalidation_soak_artifact_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: candidate-revalidation/soak
+
+      - name: Verify every retained candidate gate from original and revalidation evidence
+        if: steps.verify-candidate.outputs.revalidation_run_id != ''
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/verify_frozen_candidate_revalidation.ps1 -CandidateRoot 'candidate-input' `
+            -NetworkRoot 'candidate-revalidation/network' -SoakRoot 'candidate-revalidation/soak' `
+            -SoakArtifactId $env:CANDIDATE_REVALIDATION_SOAK_ARTIFACT_ID `
+            -ReportPath 'candidate-revalidation/verified-candidate-gates.json'
+
+      - name: Decode the public manifest and signature without logging their contents
+        shell: pwsh
+        env:
+          MANIFEST_BASE64: ${{ inputs.manifest_base64 }}
+          SIGNATURE_BASE64: ${{ inputs.signature_base64 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            $manifestBytes = [IO.File]::ReadAllBytes((Join-Path $PWD 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json'))
+            $signatureBytes = [IO.File]::ReadAllBytes((Join-Path $PWD 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig'))
+          } else {
+            if ($env:MANIFEST_BASE64 -notmatch '^[A-Za-z0-9+/]+={0,2}$' -or ($env:MANIFEST_BASE64.Length % 4) -ne 0) { throw 'Manifest input is not canonical base64.' }
+            if ($env:SIGNATURE_BASE64 -notmatch '^[A-Za-z0-9+/]+={0,2}$' -or ($env:SIGNATURE_BASE64.Length % 4) -ne 0) { throw 'Signature input is not canonical base64.' }
+            $manifestBytes = [Convert]::FromBase64String($env:MANIFEST_BASE64)
+            $signatureBytes = [Convert]::FromBase64String($env:SIGNATURE_BASE64)
+            $committedManifest = [IO.File]::ReadAllBytes((Join-Path $PWD 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.json'))
+            $committedSignature = [IO.File]::ReadAllBytes((Join-Path $PWD 'release-inputs/v1.4.0/EyeBreakReminder-UpdateManifest.sig'))
+            if ([Convert]::ToBase64String($manifestBytes) -cne [Convert]::ToBase64String($committedManifest) -or [Convert]::ToBase64String($signatureBytes) -cne [Convert]::ToBase64String($committedSignature)) { throw 'Dispatched public metadata must exactly match the committed production manifest and signature.' }
+          }
+          if ($manifestBytes.Length -lt 1 -or $manifestBytes.Length -gt 16384 -or $signatureBytes.Length -ne 64) { throw 'Manifest or raw ECDSA signature length is invalid.' }
+          $metadata = Join-Path $PWD 'build/v1.4.0-finalized-evidence/signed-input'
+          New-Item -ItemType Directory -Path $metadata -ErrorAction Stop | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $metadata 'EyeBreakReminder-UpdateManifest.json'), $manifestBytes)
+          [IO.File]::WriteAllBytes((Join-Path $metadata 'EyeBreakReminder-UpdateManifest.sig'), $signatureBytes)
+
+      - name: Verify the authentic production signature with Windows CNG
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          make build/updater-windows-tests.exe
+          ./build/updater-windows-tests.exe --verify-production-manifest \
+            build/v1.4.0-finalized-evidence/signed-input/EyeBreakReminder-UpdateManifest.json \
+            build/v1.4.0-finalized-evidence/signed-input/EyeBreakReminder-UpdateManifest.sig \
+            v1.4.0 1.3.0
+          python - <<'PY'
+          import hashlib, json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          root = Path('build/v1.4.0-finalized-evidence/signed-input')
+          report = {'Status':'PASS','Verifier':'Windows CNG ECDSA P-256/SHA-256','ProductionKeyId':os.environ['PRODUCTION_KEY_ID'],'ManifestSHA256':hashlib.sha256((root/'EyeBreakReminder-UpdateManifest.json').read_bytes()).hexdigest(),'SignatureSHA256':hashlib.sha256((root/'EyeBreakReminder-UpdateManifest.sig').read_bytes()).hexdigest(),'ExpectedReleaseTag':'v1.4.0','InstalledVersionFloor':'1.3.0','PrivateKeyAccessed':False,'VerifiedUtc':datetime.now(timezone.utc).isoformat()}
+          Path('build/v1.4.0-finalized-evidence/production-cng-signature-verification.json').write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
+          PY
+
+      - name: Confirm payload versions and unsigned-bootstrap disclosure
+        shell: pwsh
+        env:
+          CANDIDATE_SOURCE_COMMIT: ${{ steps.verify-candidate.outputs.candidate_source_commit }}
+          CANDIDATE_RUN_ID: ${{ steps.verify-candidate.outputs.candidate_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = 'candidate-input/release'
+          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe')) {
+            $path = Join-Path $release $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Candidate payload is missing: $name" }
+            if ((Get-Item -LiteralPath $path).VersionInfo.ProductVersion -notmatch '^1\.4\.0(\.0)?$') { throw "Wrong product version in $name" }
+            if ((Get-AuthenticodeSignature -LiteralPath $path).Status -ne [Management.Automation.SignatureStatus]::NotSigned) { throw "This candidate was expected to remain Authenticode unsigned under the approved policy: $name" }
+          }
+          $provenance = Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
+          $gate = Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/windows-acceptance-gate.json' -Raw | ConvertFrom-Json
+          if ($env:CANDIDATE_REVALIDATION_RUN_ID) {
+            $revalidated = Get-Content -LiteralPath 'candidate-revalidation/verified-candidate-gates.json' -Raw | ConvertFrom-Json
+            $accepted = $revalidated.Status -ceq 'PASS' -and $revalidated.CandidateSource -ceq $env:CANDIDATE_SOURCE_COMMIT -and
+              $revalidated.OriginalBuildRun -eq $env:CANDIDATE_RUN_ID -and $revalidated.RevalidationRun -eq $env:CANDIDATE_REVALIDATION_RUN_ID
+          } else {
+            $accepted = $gate.Status -ceq 'PASS' -and $gate.Scope -in @('ProductionCandidateOnly','All')
+          }
+          if ($provenance.Application -cne 'Eye Break Reminder' -or $provenance.Version -cne '1.4.0' -or $provenance.SourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.RunId -ne $env:CANDIDATE_RUN_ID -or $provenance.Branch -cne 'feature/v1.4.0-automatic-updater' -or -not $accepted) { throw 'Candidate provenance or production-candidate acceptance gate does not match the requested source and run.' }
+          $expectedNames = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $identities = @(Get-Content -LiteralPath 'candidate-input/build/v1.4.0-updater-evidence/release-artifact-identities.json' -Raw | ConvertFrom-Json)
+          $actualFiles = @(Get-ChildItem -LiteralPath $release -File)
+          if ($identities.Count -ne 5 -or $actualFiles.Count -ne 5 -or @(Get-ChildItem -LiteralPath $release -Directory).Count -ne 0) { throw 'The candidate artifact identity and release directory must contain exactly five files.' }
+          if ((@($actualFiles | Sort-Object Name | Select-Object -ExpandProperty Name) -join "`n") -cne (($expectedNames | Sort-Object) -join "`n")) { throw 'The candidate release file set is unexpected.' }
+          foreach ($name in $expectedNames) {
+            $record = @($identities | Where-Object { $_.Name -ceq $name })
+            if ($record.Count -ne 1) { throw "Candidate identity is missing or duplicated: $name" }
+            $path = Join-Path $release $name
+            $file = Get-Item -LiteralPath $path
+            if ($file.Length -ne [long]$record[0].Bytes -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$record[0].SHA256) { throw "Candidate bytes differ from the tested identity: $name" }
+          }
+
+      - name: Assemble seven release assets and verify signature, payloads, and source archive
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          python scripts/finalize_candidate.py \
+            --assemble \
+            --release-dir candidate-input/release \
+            --manifest build/v1.4.0-finalized-evidence/signed-input/EyeBreakReminder-UpdateManifest.json \
+            --signature build/v1.4.0-finalized-evidence/signed-input/EyeBreakReminder-UpdateManifest.sig \
+            --trust-header src/update_trust.hpp \
+            --report build/v1.4.0-finalized-evidence/candidate-verification.json
+          mkdir -p final-candidate final-candidate-evidence
+          cp candidate-input/release/EyeBreakReminder.exe final-candidate/
+          cp candidate-input/release/EyeBreakReminder-Setup-x64.exe final-candidate/
+          cp candidate-input/release/EyeBreakReminder-Portable-x64.zip final-candidate/
+          cp candidate-input/release/EyeBreakReminder-Source.zip final-candidate/
+          cp candidate-input/release/EyeBreakReminder-SHA256.txt final-candidate/
+          cp candidate-input/release/EyeBreakReminder-UpdateManifest.json final-candidate/
+          cp candidate-input/release/EyeBreakReminder-UpdateManifest.sig final-candidate/
+          cp build/v1.4.0-finalized-evidence/candidate-verification.json final-candidate-evidence/
+          if test -f candidate-revalidation/verified-candidate-gates.json; then
+            cp candidate-revalidation/verified-candidate-gates.json final-candidate-evidence/
+          fi
+          cp build/v1.4.0-finalized-evidence/production-cng-signature-verification.json final-candidate-evidence/
+
+      - name: Record exact candidate provenance and retain signed files
+        shell: pwsh
+        env:
+          CANDIDATE_RUN_ID: ${{ steps.verify-candidate.outputs.candidate_run_id }}
+          CANDIDATE_SOURCE_COMMIT: ${{ steps.verify-candidate.outputs.candidate_source_commit }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = Get-Content -LiteralPath 'final-candidate-evidence/candidate-verification.json' -Raw | ConvertFrom-Json
+          $cng = Get-Content -LiteralPath 'final-candidate-evidence/production-cng-signature-verification.json' -Raw | ConvertFrom-Json
+          $manifestHash = $identity.release_files.PSObject.Properties['EyeBreakReminder-UpdateManifest.json'].Value.sha256
+          $signatureHash = $identity.release_files.PSObject.Properties['EyeBreakReminder-UpdateManifest.sig'].Value.sha256
+          if ($identity.status -cne 'PASS' -or $identity.production_key_id -cne $env:PRODUCTION_KEY_ID -or $cng.Status -cne 'PASS' -or $cng.Verifier -cne 'Windows CNG ECDSA P-256/SHA-256' -or $cng.ProductionKeyId -cne $env:PRODUCTION_KEY_ID -or $cng.ManifestSHA256 -cne $manifestHash -or $cng.SignatureSHA256 -cne $signatureHash -or $cng.PrivateKeyAccessed) { throw 'OpenSSL or Windows CNG production signature verification did not match the embedded trust root and final metadata bytes.' }
+          [pscustomobject]@{Status='PASS';Application=$identity.application;Version=$identity.version;RequiredCheckName='Core tests and Windows package';RequiredCheckRunId=$env:REQUIRED_CHECK_RUN_ID;RequiredCheckUrl=$env:REQUIRED_CHECK_URL;CandidateAcceptanceRunId=$env:CANDIDATE_RUN_ID;CandidateAcceptanceRunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:CANDIDATE_RUN_ID";CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;FinalizationRunId=$env:GITHUB_RUN_ID;FinalizationSourceCommit=$env:GITHUB_SHA;ProductionKeyId=$identity.production_key_id;ManifestSignatureVerified=$true;WindowsCngProductionSignatureVerified=$true;Authenticode='NotSigned (owner-approved for v1.4.0; unsigned initial bootstrap must be disclosed)';Published=$false;Tagged=$false;Merged=$false;ReleaseFiles=$identity.release_files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'final-candidate-evidence/candidate-provenance.json' -Encoding UTF8
+          if ($env:CANDIDATE_REVALIDATION_RUN_ID) {
+            $path = 'final-candidate-evidence/candidate-provenance.json'
+            $provenance = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
+            $proof = Get-Content -LiteralPath 'candidate-revalidation/verified-candidate-gates.json' -Raw | ConvertFrom-Json
+            $provenance.OriginalWorkflowConclusion = $proof.OriginalWorkflowConclusion
+            $provenance.CandidateRevalidationRunId = $proof.RevalidationRun
+            $provenance.CandidateNetworkEvidenceArtifact = $proof.NetworkArtifact
+            $provenance.CandidateFreshSoakEvidenceArtifact = $proof.SoakArtifact
+            $provenance.VerifiedCandidateGatesSHA256 = (Get-FileHash -LiteralPath 'candidate-revalidation/verified-candidate-gates.json').Hash.ToLowerInvariant()
+            $provenance | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $path -Encoding UTF8
+          }
+
+      - name: Upload the exact signed candidate for publication review
+        id: signed-candidate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-${{ github.run_id }}
+          path: |
+            final-candidate/**
+            final-candidate-evidence/**
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  independent-audit:
+    needs: finalize
+    if: ${{ needs.finalize.result == 'success' }}
+    name: Independently download and verify the retained signed candidate
+    runs-on: windows-2025
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the same embedded production verification key
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install independent public verification tools
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+
+      - name: Download the exact retained production candidate into a clean directory
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-${{ github.run_id }}
+          path: clean-download
+
+      - name: Reverify every artifact and the embedded-key manifest signature
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          python scripts/finalize_candidate.py \
+            --verify-existing \
+            --release-dir clean-download/final-candidate \
+            --trust-header src/update_trust.hpp \
+            --report clean-download/final-candidate-evidence/independent-verification.json
+          test "$(find clean-download/final-candidate -maxdepth 1 -type f | wc -l)" -eq 7
+          ! find clean-download/final-candidate -mindepth 1 -maxdepth 1 -type d | grep -q .
+
+      - name: Independently verify the production signature with Windows CNG
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          make build/updater-windows-tests.exe
+          ./build/updater-windows-tests.exe --verify-production-manifest \
+            clean-download/final-candidate/EyeBreakReminder-UpdateManifest.json \
+            clean-download/final-candidate/EyeBreakReminder-UpdateManifest.sig \
+            v1.4.0 1.3.0
+          python - <<'PY'
+          import hashlib, json, re
+          from datetime import datetime, timezone
+          from pathlib import Path
+          trust = Path('src/update_trust.hpp').read_text(encoding='ascii')
+          match = re.search(r'ProductionUpdateKeyId\s*=\s*"(p256-[0-9a-f]{16})"', trust)
+          if not match:
+              raise SystemExit('Embedded production key identifier is absent.')
+          manifest = Path('clean-download/final-candidate/EyeBreakReminder-UpdateManifest.json').read_bytes()
+          signature = Path('clean-download/final-candidate/EyeBreakReminder-UpdateManifest.sig').read_bytes()
+          report = {'Status':'PASS','Verifier':'Windows CNG ECDSA P-256/SHA-256','ProductionKeyId':match.group(1),'ManifestSHA256':hashlib.sha256(manifest).hexdigest(),'SignatureSHA256':hashlib.sha256(signature).hexdigest(),'PrivateKeyAccessed':False,'VerifiedUtc':datetime.now(timezone.utc).isoformat()}
+          Path('clean-download/final-candidate-evidence/independent-production-cng-verification.json').write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
+          PY
+
+      - name: Confirm exact source and candidate provenance
+        shell: pwsh
+        env:
+          CANDIDATE_SOURCE_COMMIT: ${{ needs.finalize.outputs.candidate_source_commit }}
+          CANDIDATE_RUN_ID: ${{ needs.finalize.outputs.candidate_run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = Get-Content -LiteralPath 'clean-download/final-candidate-evidence/independent-verification.json' -Raw | ConvertFrom-Json
+          $provenance = Get-Content -LiteralPath 'clean-download/final-candidate-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
+          $cng = Get-Content -LiteralPath 'clean-download/final-candidate-evidence/independent-production-cng-verification.json' -Raw | ConvertFrom-Json
+          $manifestHash = $identity.release_files.PSObject.Properties['EyeBreakReminder-UpdateManifest.json'].Value.sha256
+          $signatureHash = $identity.release_files.PSObject.Properties['EyeBreakReminder-UpdateManifest.sig'].Value.sha256
+          if ($identity.status -cne 'PASS' -or $identity.production_key_id -cne $provenance.ProductionKeyId -or -not $provenance.WindowsCngProductionSignatureVerified -or $cng.Status -cne 'PASS' -or $cng.ProductionKeyId -cne $provenance.ProductionKeyId -or $cng.ManifestSHA256 -cne $manifestHash -or $cng.SignatureSHA256 -cne $signatureHash -or $cng.PrivateKeyAccessed -or $provenance.RequiredCheckName -cne 'Core tests and Windows package' -or -not $provenance.RequiredCheckRunId -or -not $provenance.RequiredCheckUrl -or $provenance.CandidateSourceCommit -cne $env:CANDIDATE_SOURCE_COMMIT -or $provenance.CandidateAcceptanceRunId -cne $env:CANDIDATE_RUN_ID -or $provenance.FinalizationSourceCommit -cne $env:GITHUB_SHA) { throw 'Independent artifact provenance or embedded-key verification did not match.' }
+          $expectedFiles = @{}
+          foreach ($entry in $provenance.ReleaseFiles.PSObject.Properties) { $expectedFiles[$entry.Name] = $entry.Value }
+          $identityFiles = @($identity.release_files.PSObject.Properties)
+          foreach ($entry in $identityFiles) {
+            $expected = $expectedFiles[$entry.Name]
+            if (-not $expected -or $expected.bytes -ne $entry.Value.bytes -or $expected.sha256 -cne $entry.Value.sha256) { throw "Independent artifact bytes differ from their first verified identities: $($entry.Name)" }
+            $expectedFiles.Remove($entry.Name)
+          }
+          if ($expectedFiles.Count -ne 0 -or $identityFiles.Length -ne 7) { throw 'Independent candidate file identities are missing or unexpected.' }
+          if ($provenance.CandidateRevalidationRunId) {
+            $path = 'clean-download/final-candidate-evidence/verified-candidate-gates.json'
+            $proof = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            if ((Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() -cne $provenance.VerifiedCandidateGatesSHA256 -or
+                $proof.Status -cne 'PASS' -or $proof.OriginalWorkflowConclusion -cne 'failure' -or
+                $proof.OriginalBuildRun -ne $provenance.CandidateAcceptanceRunId -or
+                $proof.CandidateSource -cne $provenance.CandidateSourceCommit -or
+                $proof.RevalidationRun -ne $provenance.CandidateRevalidationRunId -or
+                $proof.NetworkArtifact -ne $provenance.CandidateNetworkEvidenceArtifact -or
+                $proof.SoakArtifact -ne $provenance.CandidateFreshSoakEvidenceArtifact -or @($proof.VerifiedFiles).Count -ne 5) {
+              throw 'Retained-candidate gate provenance is incomplete or inconsistent.'
+            }
+            foreach ($file in $proof.VerifiedFiles) {
+              $asset = $identity.release_files.PSObject.Properties[$file.Name]
+              if (-not $asset -or $asset.Value.bytes -ne $file.Bytes -or $asset.Value.sha256 -cne $file.SHA256) {
+                throw "Hosted revalidation does not bind final file: $($file.Name)"
+              }
+            }
+          }
+
+      - name: Retain independent verification evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.4.0-independent-candidate-verification-${{ github.run_id }}
+          path: |
+            clean-download/final-candidate-evidence/independent-verification.json
+            clean-download/final-candidate-evidence/independent-production-cng-verification.json
+          if-no-files-found: error
+          retention-days: 90
+
+  production-signed-transaction:
+    needs: [finalize, independent-audit]
+    if: ${{ needs.finalize.result == 'success' && needs.independent-audit.result == 'success' }}
+    name: Exact signed production transaction (${{ matrix.case.name }})
+    runs-on: windows-2025
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        case:
+          - { name: Preserve, kind: installed, choice: preserve }
+          - { name: CleanKeepHistory, kind: installed, choice: clean-preserve-history }
+          - { name: CleanDeleteHistory, kind: installed, choice: clean-delete-history }
+          - { name: Portable, kind: portable, choice: preserve }
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the exact public production trust configuration
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Install Windows build tools for the isolated baseline
+        uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+
+      - name: Expose MinGW strip under the cross-tool alias expected by the baseline script
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          strip_tool="$(command -v strip)"
+          test -x "$strip_tool"
+          cp "$strip_tool" /mingw64/bin/x86_64-w64-mingw32-strip.exe
+          test -x /mingw64/bin/x86_64-w64-mingw32-strip.exe
+
+      - name: Install pinned NSIS 3.11.7461.309 x86 Unicode build
+        uses: negrutiu/nsis-install@9c575d44c2938a43e38a305caeb403de90303c60 # v3
+        with:
+          version: v3.11.7461.309
+
+      - name: Record the MSYS2 tool directory
+        shell: msys2 {0}
+        run: printf 'MSYS2_ROOT=%s\n' "$(cygpath -aw /)" >> "$GITHUB_ENV"
+
+      - name: Download the exact independently verified production candidate
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: EyeBreakReminder-v1.4.0-production-candidate-${{ github.run_id }}
+          path: signed-candidate
+
+      - name: Build test-hook-only v1.3.0 baseline with production trust
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tests\build_production_trust_baseline.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $baseline = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-ProductionTrust-Baseline-1.3.0\release\EyeBreakReminder.exe'
+          if (-not (Test-Path -LiteralPath $baseline -PathType Leaf) -or (Get-Item -LiteralPath $baseline).VersionInfo.ProductVersion -notmatch '^1\.3\.0(\.0)?$') { throw 'The production-trust v1.3.0 update baseline was not built.' }
+
+      - name: Build the CNG production verifier and disposable test-key helper
+        shell: msys2 {0}
+        run: make build/updater-windows-tests.exe
+
+      - name: Run the authentic v1.4.0 signature through installer, relaunch, and data-preservation transaction
+        timeout-minutes: 12
+        shell: pwsh
+        env:
+          PACKAGE_KIND: ${{ matrix.case.kind }}
+          UPDATE_CHOICE: ${{ matrix.case.choice }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path '.\build\v1.4.0-updater-evidence' -Force | Out-Null
+          $release = Join-Path $PWD 'signed-candidate\final-candidate'
+          $baseline = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-ProductionTrust-Baseline-1.3.0\release\EyeBreakReminder.exe'
+          # The harness throws on failed assertions; its expected test-key rejection sets LASTEXITCODE nonzero.
+          & .\tests\windows_signed_update_gui_acceptance.ps1 `
+            -TestApplication $baseline `
+            -SuccessorInstaller (Join-Path $release 'EyeBreakReminder-Setup-x64.exe') `
+            -SuccessorApplication (Join-Path $release 'EyeBreakReminder.exe') `
+            -SignatureTool '.\build\updater-windows-tests.exe' `
+            -ProductionManifest (Join-Path $release 'EyeBreakReminder-UpdateManifest.json') `
+            -ProductionSignature (Join-Path $release 'EyeBreakReminder-UpdateManifest.sig') `
+            -PackageKind $env:PACKAGE_KIND `
+            -UpdateChoice $env:UPDATE_CHOICE `
+            -BaselineVersion '1.3.0' `
+            -UpdateVersion '1.4.0' `
+            -EvidencePath '.\build\v1.4.0-updater-evidence\production-signed-gui-update.json'
+          # A successful harness consumes the expected rejected-test-key exit code internally.
+          $global:LASTEXITCODE = 0
+
+      - name: Interrupt the exact signed replacement before relaunch
+        if: matrix.case.name == 'Preserve'
+        shell: pwsh
+        env:
+          SIGNED_ARTIFACT_ID: ${{ needs.finalize.outputs.signed_artifact_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stable = Join-Path $env:RUNNER_TEMP 'stable-setup.exe'
+          Invoke-WebRequest -Uri 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.3.0/EyeBreakReminder-Setup-x64.exe' -OutFile $stable
+          ./tests/windows_exact_candidate_recovery.ps1 -Phase Interrupt -FaultBoundary BeforeRelaunch `
+            -CandidateDirectory 'signed-candidate/final-candidate' -BaselineInstaller $stable `
+            -BaselineApplication "$env:RUNNER_TEMP/EyeBreakReminder-ProductionTrust-Baseline-1.3.0/release/EyeBreakReminder.exe" `
+            -VerifiedCandidateProvenance 'signed-candidate/final-candidate-evidence/candidate-provenance.json' `
+            -VerifiedCandidateArtifact $env:SIGNED_ARTIFACT_ID `
+            -EvidencePath 'build/v1.4.0-updater-evidence/exact-final-interruption.json'
+
+      - name: Verify exact rollback, live settings protection, and guarded repair
+        if: matrix.case.name == 'Preserve'
+        shell: pwsh
+        env:
+          SIGNED_ARTIFACT_ID: ${{ needs.finalize.outputs.signed_artifact_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./tests/windows_exact_candidate_recovery.ps1 -Phase Recover -FaultBoundary BeforeRelaunch `
+            -CandidateDirectory 'signed-candidate/final-candidate' -BaselineInstaller "$env:RUNNER_TEMP/stable-setup.exe" `
+            -BaselineApplication "$env:RUNNER_TEMP/EyeBreakReminder-ProductionTrust-Baseline-1.3.0/release/EyeBreakReminder.exe" `
+            -VerifiedCandidateProvenance 'signed-candidate/final-candidate-evidence/candidate-provenance.json' `
+            -VerifiedCandidateArtifact $env:SIGNED_ARTIFACT_ID `
+            -GuardedRepairInstaller 'signed-candidate/final-candidate/EyeBreakReminder-Setup-x64.exe' `
+            -EvidencePath 'build/v1.4.0-updater-evidence/exact-final-recovery.json'
+
+      - name: Retain production-trust signed-transaction evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: EyeBreakReminder-v1.4.0-production-signed-transaction-${{ matrix.case.name }}-${{ github.run_id }}
+          path: |
+            build/v1.4.0-updater-evidence/production-signed-gui-update.json
+            build/v1.4.0-updater-evidence/exact-final-interruption.json
+            build/v1.4.0-updater-evidence/exact-final-recovery.json
+          if-no-files-found: warn
+          retention-days: 90
