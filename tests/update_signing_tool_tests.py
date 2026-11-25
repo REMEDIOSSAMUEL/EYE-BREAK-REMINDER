@@ -292,7 +292,7 @@ class SigningToolTests(unittest.TestCase):
                            check=True, stdout=subprocess.DEVNULL)
             point = signing.point_from_public_pem(public)
             manifest = valid_manifest(signing.key_id(point))
-            manifest["version"] = "1.4.0"
+            manifest["version"] = candidate.EXPECTED_VERSION
             manifest["assets"][0]["size"] = installer.stat().st_size
             manifest["assets"][0]["sha256"] = candidate.sha256(installer)
             manifest["assets"][1]["size"] = standalone.stat().st_size
@@ -349,6 +349,7 @@ class SigningToolTests(unittest.TestCase):
             signing.write_trust_header(public, header)
             point = signing.point_from_public_pem(public)
             manifest = valid_manifest(signing.key_id(point))
+            manifest["version"] = candidate.EXPECTED_VERSION
             raw = signing.canonical_json(manifest)
             manifest_path.write_bytes(raw)
             der = root / "signature.der"

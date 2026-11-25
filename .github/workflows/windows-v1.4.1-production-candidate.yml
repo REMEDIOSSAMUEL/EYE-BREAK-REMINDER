@@ -3,13 +3,13 @@ name: Build v1.4.1 production candidate
 on:
   push:
     branches: [release/v1.4.1-update-validation]
+    paths: [VERSION, tests/update_signing_tool_tests.py, .github/workflows/windows-v1.4.1-production-candidate.yml]
 
 permissions:
   contents: read
 
 jobs:
   candidate:
-    if: ${{ github.event.created }}
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
@@ -34,6 +34,9 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="/c/Program Files (x86)/NSIS:$PATH"
+          g++ --version
+          windres --version
+          makensis -VERSION
           make package HOST_CXX=g++ CROSS_CXX=g++ WINDRES=windres STRIP=strip PYTHON=python
       - name: Verify Windows versions and record provenance
         shell: pwsh

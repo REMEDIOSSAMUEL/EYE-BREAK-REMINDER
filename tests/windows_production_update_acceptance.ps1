@@ -4,9 +4,12 @@ param(
   [Parameter(Mandatory=$true)][string]$ControlledInstaller,
   [Parameter(Mandatory=$true)][string]$ControlledExecutable,
   [string]$CoordinatorFailureInstaller,
-  [Parameter(Mandatory=$true)][string]$LaunchSentinelExecutable,
+  [string]$LaunchSentinelExecutable,
+  [string]$ProductionManifest,
+  [string]$ProductionSignature,
+  [ValidateSet('installed','portable')][string]$PackageKind = 'installed',
   [string]$EvidenceDirectory = 'build/v1.4.0-updater-evidence',
-  [ValidateSet('All','CoordinatorBackupFailure')][string]$Scenario = 'All'
+  [ValidateSet('All','CoordinatorBackupFailure','SignedPreserve')][string]$Scenario = 'All'
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'This production-binary update transaction runs only on a disposable GitHub Actions Windows runner.' }
@@ -22,8 +25,19 @@ if ($Scenario -eq 'CoordinatorBackupFailure') {
   if ((Get-Item -LiteralPath $coordinatorFailureInstallerPath).VersionInfo.ProductVersion -notmatch '^1\.4\.1(\.0)?$') { throw 'Coordinator failure fixture must identify as controlled version 1.4.1.' }
   $feedSetupPath = $coordinatorFailureInstallerPath
 } elseif ($coordinatorFailureInstallerPath) { throw 'The test-only failure installer is accepted only by the CoordinatorBackupFailure scenario.' }
- $launchSentinelPath = [IO.Path]::GetFullPath($LaunchSentinelExecutable)
-foreach ($path in @($candidateInstallerPath, $candidateExecutablePath, $controlledInstallerPath, $controlledExecutablePath, $launchSentinelPath)) {
+$signedPreserve = $Scenario -eq 'SignedPreserve'
+$portableRoute = $PackageKind -eq 'portable'
+$requiredPaths = @($candidateInstallerPath, $candidateExecutablePath, $controlledInstallerPath, $controlledExecutablePath)
+if ($signedPreserve) {
+  $ProductionManifest = [IO.Path]::GetFullPath($ProductionManifest)
+  $ProductionSignature = [IO.Path]::GetFullPath($ProductionSignature)
+  $requiredPaths += @($ProductionManifest, $ProductionSignature)
+} else {
+  if ($ProductionManifest -or $ProductionSignature -or $portableRoute) { throw 'Signed metadata and the portable route require SignedPreserve.' }
+  $launchSentinelPath = [IO.Path]::GetFullPath($LaunchSentinelExecutable)
+  $requiredPaths += $launchSentinelPath
+}
+foreach ($path in $requiredPaths) {
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required production-update transaction input is missing: $path" }
 }
 $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP)
@@ -38,7 +52,8 @@ $startupValueAdded = $false
 $runKeyCreated = $false
 $startupCommand = $null
 $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
-$allowedEvidence = [IO.Path]::GetFullPath((Join-Path (Get-Location) 'build/v1.4.0-updater-evidence'))
+$evidenceRoot = if ($signedPreserve) { 'build/v1.4.1-updater-evidence' } else { 'build/v1.4.0-updater-evidence' }
+$allowedEvidence = [IO.Path]::GetFullPath((Join-Path (Get-Location) $evidenceRoot))
 if ($EvidenceDirectory -ine $allowedEvidence) { throw "Evidence path must be the isolated build folder: $allowedEvidence" }
 if ($dataDir -ine $expectedDataDir -or (Test-Path -LiteralPath $dataDir)) { throw "Refusing to use an existing or unexpected app-data profile: $dataDir" }
 if (Test-Path -LiteralPath $installDir) { throw "Refusing to reuse an install folder: $installDir" }
@@ -91,6 +106,15 @@ public static class EBR_PROD_UI {
  public static string Title(IntPtr hwnd){var text=new StringBuilder(512);GetWindowTextW(hwnd,text,text.Capacity);return text.ToString();}
  public static IntPtr[] Windows(int pid){var list=new List<IntPtr>();EnumProc cb=delegate(IntPtr hwnd,IntPtr data){uint owner;GetWindowThreadProcessId(hwnd,out owner);if(owner==(uint)pid&&IsWindowVisible(hwnd))list.Add(hwnd);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return list.ToArray();}
  public static IntPtr[] WindowsAll(){var list=new List<IntPtr>();EnumProc cb=delegate(IntPtr hwnd,IntPtr data){if(IsWindowVisible(hwnd))list.Add(hwnd);return true;};EnumWindows(cb,IntPtr.Zero);GC.KeepAlive(cb);return list.ToArray();}
+ [DllImport("user32.dll")] static extern IntPtr GetDlgItem(IntPtr hwnd, int id);
+ [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr wp, StringBuilder text);
+ [DllImport("user32.dll")] public static extern uint GetGuiResources(IntPtr process, uint flag);
+ public static string Countdown(IntPtr hwnd) {
+   var child=GetDlgItem(hwnd,40);
+   var text=new StringBuilder(64);
+   if(child!=IntPtr.Zero)SendMessageW(child,0x000D,(IntPtr)text.Capacity,text);
+   return text.ToString();
+ }
  public static bool ExitWindow(IntPtr hwnd){uint message=RegisterWindowMessageW("EyeBreakReminder.Exit.Native.1");return PostMessageW(hwnd,message,IntPtr.Zero,IntPtr.Zero);}
 }
 '@
@@ -297,11 +321,115 @@ try {
 
   $scriptPath=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'production_update_test_feed.py'))
   $serverArgs=@($scriptPath,'--certificate',$leafCertificatePath,'--private-key',$leafPrivateKeyPath,'--setup',$feedSetupPath,'--app',$controlledExecutablePath,'--request-log',$requestLogPath,'--ready-file',$readyPath,'--redirect-marker',$redirectMarkerPath)
+  if($signedPreserve){$serverArgs += @('--manifest',$ProductionManifest,'--signature',$ProductionSignature)}
   $serverStopped=$false
   $serverProcess=Start-Process -FilePath $python -ArgumentList $serverArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $serverStdout -RedirectStandardError $serverStderr
   $listenWatch=[Diagnostics.Stopwatch]::StartNew()
   while($listenWatch.Elapsed.TotalSeconds-lt15-and-not(Test-Path -LiteralPath $readyPath)){if($serverProcess.HasExited){throw "Loopback TLS feed exited before it became ready. $([IO.File]::ReadAllText($serverStderr))"};Start-Sleep -Milliseconds 100}
   if(-not(Test-Path -LiteralPath $readyPath)){throw 'Loopback TLS feed did not become ready on IPv4 and IPv6 loopback port 443.'}
+  if ($signedPreserve) {
+    [void][IO.Directory]::CreateDirectory($installDir)
+    $installedExe = Join-Path $installDir 'EyeBreakReminder.exe'
+    $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder'
+    if ($portableRoute) {
+      Copy-Item -LiteralPath $candidateExecutablePath -Destination $installedExe
+    } else {
+      $setup = Start-Process -FilePath $candidateInstallerPath -ArgumentList @('/S',"/D=$installDir") -PassThru
+      Assert ($setup.WaitForExit(90000) -and $setup.ExitCode -eq 0) 'Public v1.4.0 setup installed the predecessor in the disposable profile'
+      Assert ((Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion -ceq '1.4.0') 'Predecessor Installed Apps version'
+    }
+    Assert ((Get-FileHash $installedExe).Hash -ceq '90880BE4B515AF59967FF221E379AB5958D84C2E98F2EF50AC4CC5AECC9DC6A9') 'Exact public v1.4.0 executable SHA-256'
+    [void][IO.Directory]::CreateDirectory($dataDir)
+    $settingsPath = Join-Path $dataDir 'settings.ini'
+    $historyPath = Join-Path $dataDir 'history.dat'
+    Set-Content -LiteralPath $settingsPath -Encoding ascii -Value @('workMinutes=37','breakSeconds=33','volume=32','theme=2','alarm=0','autoStart=1','history=1','schedule=0','autoCheckUpdates=0','autoDownloadUpdates=0')
+    $settingsBefore = Read-SettingsMap $settingsPath
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    [IO.File]::WriteAllText($historyPath, "$($now-120) 1 20" + [char]10)
+    $historyHash = (Get-FileHash $historyPath).Hash
+    $appProcess = Start-Process -FilePath $installedExe -PassThru
+    Invoke-Button (Find-Dialog 'Eye Break Reminder' $appProcess.Id 30) 'Settings'
+    Invoke-Button (Find-Dialog 'About' $appProcess.Id 15) 'About'
+    $about = Find-Dialog 'Check for Updates' $appProcess.Id 20
+    $check = Find-Button $about 'Check for Updates'
+    if ($check.Current.IsEnabled) { Invoke-Button $about 'Check for Updates' }
+    $choice = Find-Dialog 'Eye Break Reminder Update Available' $appProcess.Id 60
+    $choiceText = $choice.Names -join ' | '
+    Assert ($choiceText.Contains('Current version: 1.4.0') -and $choiceText.Contains('Available version: v1.4.1')) 'Production v1.4.0 discovered the newer signed offer' $choiceText
+    $preserve = Find-Button $choice 'Preserve my settings (Recommended)'
+    $selection = $null
+    Assert ($preserve.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$selection) -and $selection.Current.IsSelected) 'Preserve Settings is selected'
+    Save-Screenshot $choice 'signed-update-offer.png'
+    Invoke-Button $choice 'Download & Install'
+    Save-Screenshot (Find-Dialog 'Downloading Eye Break Reminder' $appProcess.Id 30) 'signed-update-progress.png'
+    $ready = Find-Dialog 'Ready to install.' $appProcess.Id 45
+    $readyText = $ready.Names -join ' | '
+    Assert ($readyText.Contains('(100%)') -and $readyText.Contains('SHA-256 digest matches GitHub')) 'Download reached 100% and the UI confirmed SHA-256 verification' $readyText
+    Save-Screenshot $ready 'signed-update-ready.png'
+    $assetName = if ($portableRoute) { 'EyeBreakReminder.exe' } else { 'EyeBreakReminder-Setup-x64.exe' }
+    $payload = if ($portableRoute) { $controlledExecutablePath } else { $controlledInstallerPath }
+    $staged = @(Get-ChildItem -LiteralPath (Join-Path $dataDir 'updates') -File -Recurse -Filter $assetName)
+    Assert ($staged.Count -eq 1 -and (Get-FileHash $staged[0].FullName).Hash -ceq (Get-FileHash $payload).Hash) 'Staged payload matches the production-signed candidate bytes'
+    Invoke-Button $ready 'Install Update'
+    $success = Find-Dialog 'Update complete.' 0 150
+    Save-Screenshot $success 'signed-update-complete.png'
+    Invoke-Button $success 'Close'
+    Assert ($appProcess.WaitForExit(15000)) 'The exact predecessor process shut down during handoff'
+
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+      $running = @(Get-CimInstance Win32_Process -Filter "Name='EyeBreakReminder.exe'" | Where-Object { $_.ExecutablePath -ieq $installedExe })
+      if ($running.Count) { break }
+      Start-Sleep -Milliseconds 200
+    } while ($watch.Elapsed.TotalSeconds -lt 30)
+    Assert ($running.Count -eq 1 -and $running[0].ProcessId -ne $appProcess.Id) 'Coordinator automatically relaunched the successor'
+    Assert ((Get-Item $installedExe).VersionInfo.ProductVersion -ceq '1.4.1' -and (Get-FileHash $installedExe).Hash -ceq (Get-FileHash $controlledExecutablePath).Hash) 'Relaunched version and executable digest match the exact v1.4.1 candidate'
+    if ($portableRoute) {
+      Assert (-not (Test-Path -LiteralPath $uninstallKey)) 'Portable replacement created no Installed Apps entry'
+    } else {
+      Assert ((Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion -ceq '1.4.1' -and (Test-Path (Join-Path $installDir 'Uninstall.exe'))) 'NSIS handoff set Installed Apps version and retained the uninstaller'
+    }
+    $settingsAfter = Read-SettingsMap $settingsPath
+    $changed = @($settingsBefore.Keys | Where-Object { $settingsBefore[$_] -cne $settingsAfter[$_] })
+    Assert ($changed.Count -eq 0) 'Preserve Settings kept every seeded setting value' $changed
+    Assert ((Get-FileHash $historyPath).Hash -ceq $historyHash) 'History remained byte-for-byte identical'
+    $updated = Get-Process -Id $running[0].ProcessId
+    $mainAfter = Find-Dialog 'Eye Break Reminder' $updated.Id 25
+    $initial = [EBR_PROD_UI]::Countdown($mainAfter.Handle)
+    Assert ($initial -match '^\d+:\d{2}$') 'The relaunched timer displayed a countdown' $initial
+    $samples = @(for ($i = 0; $i -lt 6; $i++) {
+      $updated.Refresh()
+      [pscustomobject]@{
+        USER=[EBR_PROD_UI]::GetGuiResources($updated.Handle,1)
+        GDI=[EBR_PROD_UI]::GetGuiResources($updated.Handle,0)
+        Handles=$updated.HandleCount
+        PrivateBytes=$updated.PrivateMemorySize64
+      }
+      Start-Sleep -Seconds 1
+    })
+    Assert (@($samples | Where-Object { $_.USER -le 0 -or $_.GDI -le 0 -or $_.Handles -le 0 -or $_.PrivateBytes -le 0 }).Count -eq 0) 'Focused resource smoke collected live USER, GDI, handle and private memory samples' $samples
+    $current = [EBR_PROD_UI]::Countdown($mainAfter.Handle)
+    Assert ($current -match '^\d+:\d{2}$' -and [TimeSpan]::Parse("00:$current") -lt [TimeSpan]::Parse("00:$initial")) 'The relaunched timer advanced' "$initial to $current"
+
+    $recoveryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
+    $updatesRoot = Join-Path $dataDir 'updates'
+    $watch.Restart()
+    do {
+      $stageRemains = (Test-Path -LiteralPath $updatesRoot) -and @(Get-ChildItem -LiteralPath $updatesRoot -Force).Count -gt 0
+      $recoveryRemains = $null -ne (Get-ItemProperty -LiteralPath $recoveryKey -Name '!EyeBreakReminderUpdateRecovery' -ErrorAction SilentlyContinue)
+      if (-not ($stageRemains -or $recoveryRemains)) { break }
+      Start-Sleep -Milliseconds 200
+    } while ($watch.Elapsed.TotalSeconds -lt 30)
+    Assert (-not ($stageRemains -or $recoveryRemains)) 'Update stage and recovery registration were cleared'
+    $requests = @(Get-Content -LiteralPath $requestLogPath | ForEach-Object { $_ | ConvertFrom-Json })
+    foreach ($name in @('EyeBreakReminder-UpdateManifest.json','EyeBreakReminder-UpdateManifest.sig',$assetName)) {
+      $path = "/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/$name"
+      Assert (@($requests | Where-Object { $_.host -ceq 'github.com' -and $_.path -ceq $path -and $_.response_status -eq 200 }).Count -gt 0) "Unmodified production updater requested $name from isolated HTTPS"
+    }
+    $script:resultStatus = 'PASS'
+    return
+  }
+
   # First remove the test-only issuer and prove Windows rejects the endpoint.
   # The production application will exercise the same WinHTTP certificate
   # validation path below. Reinstall the temporary root only after rejection.
@@ -602,7 +730,7 @@ finally {
       $trustRootCleanupStatus='PASS';Record 'Remove temporary TLS trust root' 'PASS' $rootThumbprint
     }catch{$trustRootCleanupStatus='FAIL';Record 'Remove temporary TLS trust root' 'FAIL' $_.Exception.Message}
   }else{$trustRootCleanupStatus='NOT CREATED'}
-  if(Test-Path -LiteralPath $installDir){
+  if((Test-Path -LiteralPath $installDir) -and -not $portableRoute){
     try{
       $uninstaller=Join-Path $installDir 'Uninstall.exe'
       if(-not(Test-Path -LiteralPath $uninstaller)){throw 'The candidate installer did not register its normal uninstaller.'}
@@ -649,4 +777,5 @@ finally {
   $report=[pscustomobject]@{Status=$script:resultStatus;Scenario=$Scenario;Assertions=$script:assertions;RunId=$env:GITHUB_RUN_ID;SourceCommit=$env:GITHUB_SHA;StartedUtc=$startedUtc.ToString('o');CompletedUtc=[DateTime]::UtcNow.ToString('o');CandidateBaselineVersion='1.4.0';ControlledSuccessorVersion='1.4.1';TestTrustAnchor=$rootThumbprint;TemporaryTestRootRemoved=($trustRootCleanupStatus-eq'PASS');HostsRestoredByteIdentically=($hostsRestoreStatus-eq'PASS');ProductionTestEndpointOverrideCompiled=$false;Events=@($script:events)}
   $report|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'production-update-acceptance-results.json') -Encoding UTF8
   try{Stop-Transcript|Out-Null}catch{}
+  if ($signedPreserve -and $script:resultStatus -ne 'PASS') { throw 'Exact signed transaction or isolated host cleanup did not pass. See the evidence report.' }
 }
