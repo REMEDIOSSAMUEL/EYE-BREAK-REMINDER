@@ -3,7 +3,9 @@ name: Finalize signed v1.4.1 production candidate
 on:
   push:
     branches: [release/v1.4.1-update-validation]
-    paths: ['release-inputs/v1.4.1/**']
+    paths:
+      - 'release-inputs/v1.4.1/**'
+      - '.github/workflows/windows-v1.4.1-finalize-production-candidate.yml'
 
 permissions:
   actions: read
