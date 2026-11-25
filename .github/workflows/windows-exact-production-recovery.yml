@@ -20,7 +20,14 @@ jobs:
     timeout-minutes: 14
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(contains(github.event.head_commit.message, '[repair-only]') && '{"include":[{"scenario":"ManualRepairRegression"}]}' || '{"include":[{"scenario":"InstallerStart","boundary":"InstallerStart"},{"scenario":"BeforeRelaunch","boundary":"BeforeRelaunch"},{"scenario":"ReinstallWithPendingRecovery","boundary":"BeforeRelaunch","reinstall":true},{"scenario":"ManualRepairRegression"}]}') }}
+      matrix: >-
+        ${{ fromJSON(
+          contains(github.event.head_commit.message, '[repair-only]') &&
+            '{"include":[{"scenario":"ManualRepairRegression"}]}' ||
+          contains(github.event.head_commit.message, '[damaged-recovery-only]') &&
+            '{"include":[{"scenario":"MissingCoordinator","boundary":"BeforeRelaunch","damage":"MissingCoordinator"},{"scenario":"MissingBackup","boundary":"BeforeRelaunch","damage":"MissingBackup"},{"scenario":"CorruptBackup","boundary":"BeforeRelaunch","damage":"CorruptBackup"}]}' ||
+          '{"include":[{"scenario":"InstallerStart","boundary":"InstallerStart"},{"scenario":"BeforeRelaunch","boundary":"BeforeRelaunch"},{"scenario":"ReinstallWithPendingRecovery","boundary":"BeforeRelaunch","reinstall":true},{"scenario":"ManualRepairRegression"}]}'
+        ) }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -98,9 +105,11 @@ jobs:
         env:
           FAULT_BOUNDARY: ${{ matrix.boundary }}
           REINSTALL_FIRST: ${{ matrix.reinstall || false }}
+          RECOVERY_DAMAGE: ${{ matrix.damage }}
         run: |
           $mode = @{}
           if ($env:REINSTALL_FIRST -eq 'true') { $mode.ReinstallBeforeRecovery = $true }
+          if ($env:RECOVERY_DAMAGE) { $mode.RecoveryDamage = $env:RECOVERY_DAMAGE }
           ./tests/windows_exact_candidate_recovery.ps1 -Phase Recover -FaultBoundary $env:FAULT_BOUNDARY `
             -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
             -BaselineInstaller "$env:RUNNER_TEMP/stable-setup.exe" `

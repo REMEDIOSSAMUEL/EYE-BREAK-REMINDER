@@ -6,12 +6,16 @@ param(
   [Parameter(Mandatory)][string]$BaselineInstaller,
   [Parameter(Mandatory)][string]$BaselineApplication,
   [Parameter(Mandatory)][string]$EvidencePath,
-  [switch]$ReinstallBeforeRecovery
+  [switch]$ReinstallBeforeRecovery,
+  [ValidateSet('None','MissingCoordinator','MissingBackup','CorruptBackup')][string]$RecoveryDamage = 'None'
 )
 
 $ErrorActionPreference = 'Stop'
 if ($ReinstallBeforeRecovery -and ($Phase -cne 'Recover' -or $FaultBoundary -cne 'BeforeRelaunch')) {
   throw 'The pending-recovery reinstall probe requires the post-install interruption.'
+}
+if ($RecoveryDamage -cne 'None' -and ($Phase -cne 'Recover' -or $FaultBoundary -cne 'BeforeRelaunch' -or $ReinstallBeforeRecovery)) {
+  throw 'The damaged-transaction probe requires a separate post-install interruption.'
 }
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
     $env:GITHUB_SERVER_URL -cne 'https://github.com' -or
@@ -261,20 +265,23 @@ public static class EbrRestartObservation
 '@
 Add-Type -TypeDefinition $native
 
-function Confirm-Timer($Entry) {
+function Confirm-Timer($Entry, [int]$MaximumSeconds = $seedCountdownSeconds) {
   $id = $Entry.Process.Id
   $first = Wait-For {
     $value = [EbrRestartObservation]::Countdown($id)
-    if ($value -match '^(\d{1,2}):(\d\d)$' -and ([int]$Matches[1] * 60 + [int]$Matches[2]) -le $seedCountdownSeconds) { $value }
-  } 'owned native timer with distinct checkpoint'
+    if ($value -match '^(\d{1,3}):(\d\d)$' -and ([int]$Matches[1] * 60 + [int]$Matches[2]) -le $MaximumSeconds) { $value }
+  } 'owned native timer'
   $second = Wait-For {
     $value = [EbrRestartObservation]::Countdown($id)
-    if ($value -match '^\d{1,2}:\d\d$' -and $value -ne $first) { $value }
+    if ($value -match '^\d{1,3}:\d\d$' -and $value -ne $first) { $value }
   } 'timer advancement'
   $before = [int]($first -split ':')[0] * 60 + [int]($first -split ':')[1]
   $after = [int]($second -split ':')[0] * 60 + [int]($second -split ':')[1]
-  Confirm ($after -lt $before -and $before -le $seedCountdownSeconds) 'Application loads the distinct seeded timer checkpoint and its countdown advances' (
-    @{ Pid = $id; SeedSeconds = $seedCountdownSeconds; Before = $first; After = $second })
+  $name = if ($MaximumSeconds -eq $seedCountdownSeconds) {
+    'Application loads the distinct seeded timer checkpoint and its countdown advances'
+  } else { 'Reinstalled exact application opens and its default countdown advances' }
+  Confirm ($after -lt $before -and $before -le $MaximumSeconds) $name (
+    @{ Pid = $id; MaximumSeconds = $MaximumSeconds; Before = $first; After = $second })
 }
 
 
@@ -348,7 +355,7 @@ $report = [ordered]@{
   Status = 'FAIL'; Phase = $Phase; Boundary = $FaultBoundary; RunId = $env:GITHUB_RUN_ID; WorkflowCommit = $env:GITHUB_SHA
   CandidateArtifactId = 15007651099; CandidateSource = '0f49949a9e753fcca390c25affc99d7698b1ecde'; KeyId = 'p256-0aff97759ea95258'
   OS = $os.Caption; OSBuild = $os.BuildNumber; UserSid = $sid; SessionId = $sessionId; BootUtc = $boot; HarnessPid = $PID
-  GenuineWindowsReboot = $false; WindowsSignInInvocation = $false
+  GenuineWindowsReboot = $false; WindowsSignInInvocation = $false; RecoveryDamage = $RecoveryDamage
   Baseline = 'Published v1.3.0 setup and install metadata with a separately identified v1.3.0 version-adjusted fixture app that implements startup confirmation.'
   Scope = 'Harness supplies staged transaction input. Exact production image performs coordinator and rollback. Production signature verification remains active.'
 }
@@ -440,6 +447,89 @@ try {
       Confirm ((Get-Sha (Join-Path $stage $name)) -ceq $candidateFiles[$name]) "Staged production authentication material is unchanged: $name"
     }
     Confirm-ExactBackups $stage $prior
+    if ($RecoveryDamage -cne 'None') {
+      $report.DamagedTransaction = [ordered]@{ Status = 'INCOMPLETE'; Damage = $RecoveryDamage }
+      $damagedFile = if ($RecoveryDamage -ceq 'MissingCoordinator') { $command.Image } else { Join-Path $stage 'previous.exe' }
+      $damagedFile = Assert-Child $damagedFile $stage
+      $hashBefore = Get-Sha $damagedFile
+      if ($RecoveryDamage -ceq 'CorruptBackup') {
+        [IO.File]::WriteAllBytes($damagedFile, [byte[]]@())
+        Confirm ((Get-Item -LiteralPath $damagedFile).Length -eq 0 -and (Get-Sha $damagedFile) -cne $hashBefore) 'Previous executable backup is an existing truncated file'
+      } else {
+        [IO.File]::Delete($damagedFile)
+        Confirm (-not (Test-Path -LiteralPath $damagedFile)) 'Selected transaction file is genuinely missing'
+      }
+      $report.DamagedTransaction.BeforeDamageSHA256 = $hashBefore
+      $report.DamagedTransaction.AfterDamageSHA256 = if (Test-Path -LiteralPath $damagedFile) { Get-Sha $damagedFile } else { $null }
+
+      $targetPath = Assert-Child $target $testRoot
+      [IO.File]::Delete($targetPath)
+      Confirm (-not (Test-Path -LiteralPath $target) -and
+        (Read-Reg $runOnceKey $valueName).Value -ceq $command.Command) 'Installed executable is missing while the genuine recovery registration remains'
+      $installerPath = Join-Path $candidateRoot 'EyeBreakReminder-Setup-x64.exe'
+      $repair = Start-Exact $installerPath $testRoot @() -RawArguments "/S /D=$install"
+      Confirm ($repair.Process.WaitForExit(120000) -and $repair.Process.ExitCode -eq 0 -and
+        (Get-Sha $target) -ceq $candidateFiles['EyeBreakReminder.exe'] -and
+        (Read-Reg $uninstallKey 'DisplayVersion').Value -ceq '1.4.0' -and
+        (Get-Sha (Join-Path $data 'unrelated.txt')) -ceq $prior.Neighbor) 'Ordinary exact reinstall restores v1.4.0 and preserves the unrelated file'
+      $report.DamagedTransaction.InstalledSHA256 = Get-Sha $target
+      $report.DamagedTransaction.Version = (Read-Reg $uninstallKey 'DisplayVersion').Value
+      Confirm (-not (Test-Path -LiteralPath (Join-Path $data 'settings.ini')) -and
+        -not (Test-Path -LiteralPath (Join-Path $data 'history.dat'))) 'Ordinary reinstall does not reconstruct settings or history removed before interruption'
+
+      if ($RecoveryDamage -ceq 'MissingCoordinator') {
+        Confirm (-not (Test-Path -LiteralPath $command.Image) -and (Read-Reg $runOnceKey $valueName).Value -ceq $command.Command) 'Exact saved RunOnce name still targets the missing coordinator'
+        $report.DamagedTransaction.RunOnceReplay = 'BLOCKED_MISSING_REGISTERED_IMAGE'
+      } else {
+        $traceSource = "ebr-recovery-$PID"
+        $trace = Register-CimIndicationEvent -Query 'SELECT * FROM Win32_ProcessStartTrace' -SourceIdentifier $traceSource
+        try {
+          $failure = Start-Exact $command.Image $retryCwd @() -RawArguments $command.RawArguments
+          [void](Wait-For {
+            $failure.Process.Refresh()
+            -not $failure.Process.HasExited -and $failure.Process.MainWindowTitle -ceq 'Eye Break Reminder Recovery'
+          } 'exact recovery error dialog for the damaged executable backup')
+          $native = Get-CimInstance Win32_Process -Filter "ProcessId=$($failure.Process.Id)"
+          Confirm ($native.ExecutablePath -ieq $command.Image -and $native.CommandLine -ceq $command.Command) 'Exact saved RunOnce command was replayed after the backup failure'
+          Confirm ($failure.Process.CloseMainWindow() -and $failure.Process.WaitForExit(10000) -and
+            $failure.Process.ExitCode -eq 1) 'Exact production recovery reports failure and exits with code 1'
+          $startedChildren = @(Get-Event -SourceIdentifier $traceSource -ErrorAction SilentlyContinue |
+            Where-Object { $_.SourceEventArgs.NewEvent.ParentProcessID -eq $failure.Process.Id })
+          $helperEvent = @(Get-Event -SourceIdentifier $traceSource -ErrorAction SilentlyContinue |
+            Where-Object { $_.SourceEventArgs.NewEvent.ProcessID -eq $failure.Process.Id -and
+              $_.SourceEventArgs.NewEvent.ProcessName -ceq 'coordinator.exe' })
+          Confirm ($helperEvent.Count -eq 1 -and $startedChildren.Count -eq 0) 'Runner process-start trace observes the recovery helper and no child process'
+          $report.DamagedTransaction.RunOnceReplay = 'RECOVERY_REJECTED_UNUSABLE_BACKUP'
+        } finally {
+          Unregister-Event -SourceIdentifier $traceSource
+          Remove-Event -SourceIdentifier $traceSource -ErrorAction SilentlyContinue
+        }
+      }
+
+      Confirm ((Read-Reg $runOnceKey $valueName).Value -ceq $command.Command -and
+        (Get-Sha (Join-Path $stage 'transaction-state.ini')) -ceq $original.Handoff.JournalHash -and
+        (Get-Sha (Join-Path $stage 'transaction.ini')) -ceq $original.Handoff.TransactionHash -and
+        (Get-Sha (Join-Path $stage 'EyeBreakReminder-UpdateManifest.json')) -ceq $candidateFiles['EyeBreakReminder-UpdateManifest.json'] -and
+        (Get-Sha (Join-Path $stage 'EyeBreakReminder-UpdateManifest.sig')) -ceq $candidateFiles['EyeBreakReminder-UpdateManifest.sig'] -and
+        (Get-Sha (Join-Path $stage 'EyeBreakReminder-Setup-x64.exe')) -ceq $candidateFiles['EyeBreakReminder-Setup-x64.exe']) 'Genuine pending registration, stage, and signed update inputs survive reinstall and recovery rejection'
+      for ($i = 0; $i -lt $profileNames.Count; $i++) {
+        Confirm ((Get-Sha (Join-Path $stage "backup-$i.dat")) -ceq $prior.Profile[$profileNames[$i]]) "Verified transaction data backup still matches original: $($profileNames[$i])"
+      }
+      Confirm ((Get-Sha $target) -ceq $candidateFiles['EyeBreakReminder.exe'] -and
+        (Read-Reg $uninstallKey 'DisplayVersion').Value -ceq '1.4.0' -and
+        -not (Test-Path -LiteralPath (Join-Path $data 'settings.ini')) -and
+        -not (Test-Path -LiteralPath (Join-Path $data 'history.dat'))) 'Recovery rejection performs no rollback and restores no missing live settings or history'
+      $installedApp = Start-Exact $target $install @()
+      Confirm ($installedApp.Process.Path -ieq $target -and
+        (Get-Sha $target) -ceq $candidateFiles['EyeBreakReminder.exe']) 'Ordinary launch runs the exact reinstalled candidate image'
+      Confirm-Timer $installedApp 3600
+      Confirm ([EbrRestartObservation]::Close($installedApp.Process.Id) -and $installedApp.Process.WaitForExit(10000)) 'Reinstalled exact app exits normally'
+      Confirm ((Get-Sha (Join-Path $data 'unrelated.txt')) -ceq $prior.Neighbor -and
+        (Read-Reg $runOnceKey $valueName).Value -ceq $command.Command) 'Ordinary launch does not clean the pending update or change the unrelated file'
+      $report.DamagedTransaction.Status = 'APP_REPAIRED_PENDING_RECOVERY_UNRESOLVED'
+      $report.Status = 'PASS'
+      return
+    }
     if ($ReinstallBeforeRecovery) {
       $report.ReinstallBeforeRecovery = [ordered]@{ Status = 'INCOMPLETE' }
       $installerPath = Join-Path $candidateRoot 'EyeBreakReminder-Setup-x64.exe'
