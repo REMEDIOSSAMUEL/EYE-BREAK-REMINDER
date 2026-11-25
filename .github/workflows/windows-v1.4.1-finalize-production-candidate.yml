@@ -35,7 +35,8 @@ jobs:
           if ($LASTEXITCODE) { throw 'Frozen build source is not an ancestor of finalization.' }
           $paths = @(git diff --name-only $source $env:GITHUB_SHA)
           $expected = @('release-inputs/v1.4.1/EyeBreakReminder-UpdateManifest.json','release-inputs/v1.4.1/EyeBreakReminder-UpdateManifest.sig','release-inputs/v1.4.1/candidate-provenance.json')
-          if (Compare-Object $expected $paths -CaseSensitive) { throw 'Only the signed metadata and provenance pointer may follow the freeze.' }
+          $expected += '.github/workflows/windows-v1.4.1-finalize-production-candidate.yml'
+          if (Compare-Object $expected $paths -CaseSensitive) { throw 'Only the signed metadata, provenance pointer, and reviewed post-freeze finalization workflow may follow the freeze.' }
           $base = "repos/$env:GITHUB_REPOSITORY"
           $build = gh api "$base/actions/runs/$run" | ConvertFrom-Json
           if ($LASTEXITCODE -or $build.conclusion -cne 'success' -or $build.head_sha -cne $source -or
@@ -124,7 +125,13 @@ jobs:
           set -euo pipefail
           python scripts/finalize_candidate.py --verify-existing --release-dir signed-candidate/release \
             --report build/v1.4.1-updater-evidence/independent-verification.json
-          cmp signed-candidate/candidate-evidence/assembled.json build/v1.4.1-updater-evidence/independent-verification.json
+          python - <<'PY'
+          from pathlib import Path
+          assembled = Path('signed-candidate/candidate-evidence/assembled.json').read_bytes()
+          verified = Path('build/v1.4.1-updater-evidence/independent-verification.json').read_bytes()
+          if assembled != verified:
+              raise SystemExit('Independent seven-file identity report differs from the assembly report.')
+          PY
           make build/updater-windows-tests.exe
           ./build/updater-windows-tests.exe --verify-production-manifest \
             signed-candidate/release/EyeBreakReminder-UpdateManifest.json \
