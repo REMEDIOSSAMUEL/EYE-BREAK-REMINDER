@@ -41,6 +41,7 @@ jobs:
     outputs:
       candidate_run_id: ${{ steps.verify-candidate.outputs.candidate_run_id }}
       candidate_source_commit: ${{ steps.verify-candidate.outputs.candidate_source_commit }}
+      signed_artifact_id: ${{ steps.signed-candidate.outputs.artifact-id }}
     permissions:
       actions: read
       checks: read
@@ -251,6 +252,7 @@ jobs:
           [pscustomobject]@{Status='PASS';Application=$identity.application;Version=$identity.version;RequiredCheckName='Core tests and Windows package';RequiredCheckRunId=$env:REQUIRED_CHECK_RUN_ID;RequiredCheckUrl=$env:REQUIRED_CHECK_URL;CandidateAcceptanceRunId=$env:CANDIDATE_RUN_ID;CandidateAcceptanceRunUrl="$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:CANDIDATE_RUN_ID";CandidateSourceCommit=$env:CANDIDATE_SOURCE_COMMIT;FinalizationRunId=$env:GITHUB_RUN_ID;FinalizationSourceCommit=$env:GITHUB_SHA;ProductionKeyId=$identity.production_key_id;ManifestSignatureVerified=$true;WindowsCngProductionSignatureVerified=$true;Authenticode='NotSigned (owner-approved for v1.4.0; unsigned initial bootstrap must be disclosed)';Published=$false;Tagged=$false;Merged=$false;ReleaseFiles=$identity.release_files;VerifiedUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath 'final-candidate-evidence/candidate-provenance.json' -Encoding UTF8
 
       - name: Upload the exact signed candidate for publication review
+        id: signed-candidate
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: EyeBreakReminder-v1.4.0-production-candidate-${{ github.run_id }}
@@ -365,9 +367,17 @@ jobs:
   production-signed-transaction:
     needs: [finalize, independent-audit]
     if: ${{ needs.finalize.result == 'success' && needs.independent-audit.result == 'success' }}
-    name: Install exact production payload through embedded-key signed update
+    name: Exact signed production transaction (${{ matrix.case.name }})
     runs-on: windows-2025
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        case:
+          - { name: Preserve, kind: installed, choice: preserve }
+          - { name: CleanKeepHistory, kind: installed, choice: clean-preserve-history }
+          - { name: CleanDeleteHistory, kind: installed, choice: clean-delete-history }
+          - { name: Portable, kind: portable, choice: preserve }
     permissions:
       actions: read
       contents: read
@@ -430,6 +440,9 @@ jobs:
       - name: Run the authentic v1.4.0 signature through installer, relaunch, and data-preservation transaction
         timeout-minutes: 12
         shell: pwsh
+        env:
+          PACKAGE_KIND: ${{ matrix.case.kind }}
+          UPDATE_CHOICE: ${{ matrix.case.choice }}
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path '.\build\v1.4.0-updater-evidence' -Force | Out-Null
@@ -443,17 +456,53 @@ jobs:
             -SignatureTool '.\build\updater-windows-tests.exe' `
             -ProductionManifest (Join-Path $release 'EyeBreakReminder-UpdateManifest.json') `
             -ProductionSignature (Join-Path $release 'EyeBreakReminder-UpdateManifest.sig') `
+            -PackageKind $env:PACKAGE_KIND `
+            -UpdateChoice $env:UPDATE_CHOICE `
             -BaselineVersion '1.3.0' `
             -UpdateVersion '1.4.0' `
             -EvidencePath '.\build\v1.4.0-updater-evidence\production-signed-gui-update.json'
           # A successful harness consumes the expected rejected-test-key exit code internally.
           $global:LASTEXITCODE = 0
 
+      - name: Interrupt the exact signed replacement before relaunch
+        if: matrix.case.name == 'Preserve'
+        shell: pwsh
+        env:
+          SIGNED_ARTIFACT_ID: ${{ needs.finalize.outputs.signed_artifact_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stable = Join-Path $env:RUNNER_TEMP 'stable-setup.exe'
+          Invoke-WebRequest -Uri 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.3.0/EyeBreakReminder-Setup-x64.exe' -OutFile $stable
+          ./tests/windows_exact_candidate_recovery.ps1 -Phase Interrupt -FaultBoundary BeforeRelaunch `
+            -CandidateDirectory 'signed-candidate/final-candidate' -BaselineInstaller $stable `
+            -BaselineApplication "$env:RUNNER_TEMP/EyeBreakReminder-ProductionTrust-Baseline-1.3.0/release/EyeBreakReminder.exe" `
+            -VerifiedCandidateProvenance 'signed-candidate/final-candidate-evidence/candidate-provenance.json' `
+            -VerifiedCandidateArtifact $env:SIGNED_ARTIFACT_ID `
+            -EvidencePath 'build/v1.4.0-updater-evidence/exact-final-interruption.json'
+
+      - name: Verify exact rollback, live settings protection, and guarded repair
+        if: matrix.case.name == 'Preserve'
+        shell: pwsh
+        env:
+          SIGNED_ARTIFACT_ID: ${{ needs.finalize.outputs.signed_artifact_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./tests/windows_exact_candidate_recovery.ps1 -Phase Recover -FaultBoundary BeforeRelaunch `
+            -CandidateDirectory 'signed-candidate/final-candidate' -BaselineInstaller "$env:RUNNER_TEMP/stable-setup.exe" `
+            -BaselineApplication "$env:RUNNER_TEMP/EyeBreakReminder-ProductionTrust-Baseline-1.3.0/release/EyeBreakReminder.exe" `
+            -VerifiedCandidateProvenance 'signed-candidate/final-candidate-evidence/candidate-provenance.json' `
+            -VerifiedCandidateArtifact $env:SIGNED_ARTIFACT_ID `
+            -GuardedRepairInstaller 'signed-candidate/final-candidate/EyeBreakReminder-Setup-x64.exe' `
+            -EvidencePath 'build/v1.4.0-updater-evidence/exact-final-recovery.json'
+
       - name: Retain production-trust signed-transaction evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: EyeBreakReminder-v1.4.0-production-signed-transaction-${{ github.run_id }}
-          path: build/v1.4.0-updater-evidence/production-signed-gui-update.json
+          name: EyeBreakReminder-v1.4.0-production-signed-transaction-${{ matrix.case.name }}-${{ github.run_id }}
+          path: |
+            build/v1.4.0-updater-evidence/production-signed-gui-update.json
+            build/v1.4.0-updater-evidence/exact-final-interruption.json
+            build/v1.4.0-updater-evidence/exact-final-recovery.json
           if-no-files-found: warn
           retention-days: 90

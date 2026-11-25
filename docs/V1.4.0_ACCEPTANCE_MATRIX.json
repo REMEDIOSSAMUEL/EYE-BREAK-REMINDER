@@ -6,6 +6,17 @@
   "branch_head": "ce54ab0c47643b238bf7c8aa8dbfaba1130485b4",
   "branch_head_scope": "Latest implementation and focused recovery test head: ce54ab0c47643b238bf7c8aa8dbfaba1130485b4. Required PR validation 45597959048 passed this head; recovery run 45597959067 executed synthetic merge 84fd7bfc653dfcc1f20baee515f57489b1bc759f and installed historical baseline artifact 14695418078 with test-key fixtures. The production candidate source is 0f49949a9e753fcca390c25affc99d7698b1ecde; signed-metadata finalizer source is 61a9d4732ae757f9e2cd0c2fd408140fe69db163; final signed candidate is artifact 15007651099. This matrix/report update is documentation-only and does not alter the tested binaries or workflows. The branch head identifies the latest tested code, not a later documentation-only commit.",
   "exact_production_recovery_and_repair": {
+    "final_correctness_campaign": {
+      "verified_implementation_head": "da352986fb9477b33c3b3db805d50bac080cb321",
+      "installer_guard_run_id": 45615601591,
+      "installer_guard_artifact_id": 15021274175,
+      "checkpoint_regression_artifact_id": 15021558528,
+      "fresh_recovery_run_id": 45615610788,
+      "fresh_recovery_artifacts": { "short": 15022915242, "long": 15021314259 },
+      "security_run_id": 45615610806,
+      "required_pr_validation_run_id": 45615610697,
+      "details": "Standalone setup defers before mutation with pending recovery. Fresh rollback protects different live settings/history and preflights backup digests. Corrected test-build process runs do not satisfy real reboot or sign-in. Artifact 15007651099 is historical and does not contain either correction."
+    },
     "report": "docs/V1.4.0_EXACT_PRODUCTION_RECOVERY_AND_REPAIR.md",
     "candidate_artifact_id": 15007651099,
     "candidate_source_commit": "0f49949a9e753fcca390c25affc99d7698b1ecde",

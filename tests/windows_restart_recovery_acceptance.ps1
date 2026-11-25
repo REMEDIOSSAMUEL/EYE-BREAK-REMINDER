@@ -55,6 +55,8 @@ $uninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakRem
 $startupKey = 'Software\Microsoft\Windows\CurrentVersion\Run'
 $startupCommand = '"' + $target + '" --startup'
 $profileNames = @('settings.ini', 'timer.dat', 'history.dat')
+$retainHistory = $PathLayout -ceq 'Long'
+$deletedByClean = if ($retainHistory) { $profileNames[0..1] } else { $profileNames }
 $installedNames = @('Uninstall.exe', 'README.md', 'PRIVACY.md', 'VERIFICATION.md')
 $seedCountdownSeconds = 420
 $ownerProcesses = [Collections.Generic.List[object]]::new()
@@ -247,7 +249,7 @@ function New-Transaction([string]$Stage, [int]$PreviousProcessId) {
     sha256 = Get-Sha $setup; applicationSha256 = Get-Sha $portable
     previousSha256 = Get-Sha $target; size = (Get-Item -LiteralPath $setup).Length
     backupMask = 0; ownedFileMask = 0; pid = $PreviousProcessId
-    clean = 1; deleteHistory = 1; dark = 0; forcedColors = 0; previousStartup = 1
+    clean = 1; deleteHistory = [int](-not $retainHistory); dark = 0; forcedColors = 0; previousStartup = 1
   }
   for ($i = 0; $i -lt 3; $i++) { $metadata["backupSha256$i"] = '' }
   for ($i = 0; $i -lt 4; $i++) { $metadata["ownedFileSha256$i"] = '' }
@@ -332,7 +334,8 @@ $report = [ordered]@{
   Runner = $env:ImageOS; OS = $os.Caption; OSBuild = $os.BuildNumber; UserSid = $sid; SessionId = $sessionId; BootUtc = $boot
   HarnessPid = $PID; HarnessStartUtc = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
   GenuineWindowsReboot = $false; WindowsSignInInvocation = $false
-  Scenario = 'Signed test-key installed clean update with explicit history deletion and repeated recovery interruption'
+  Scenario = 'Signed test-key installed clean update with selected history policy and repeated recovery interruption'
+  RetainHistory = $retainHistory
   RecoveryInterruptionMode = if ($PathLayout -ceq 'Long') { 'Recovery helper killed; restored application survives for retry' } else { 'Recovery helper and restored application killed before retry' }
   PathLayoutScope = 'Production-shaped LocalAppData staging. The Long layout varies the installed executable path.'
   CandidateArtifactId = 14695418078
@@ -404,12 +407,14 @@ try {
     $transaction = New-Transaction $stage $previous.Process.Id
     $coordinator = Start-Exact (Join-Path $stage 'coordinator.exe') $stage @('--update-coordinator',$transaction) -TestEnvironment @{ EBR_GUI_TEST_HOLD_AFTER_CLEAN_MS = '30000' }
     [void](Wait-For {
-      (Read-Phase $stage) -ceq 'cleaning' -and -not (Test-Path -LiteralPath (Join-Path $data 'history.dat')) -and
+      (Read-Phase $stage) -ceq 'cleaning' -and
+      @($deletedByClean | Where-Object { Test-Path -LiteralPath (Join-Path $data $_) }).Count -eq 0 -and
       $null -eq (Read-Reg $startupKey 'EyeBreakReminder')
     } 'post-clean installation state')
     Confirm ((Get-Sha $target) -ceq $report.Fixtures.TestSuccessor -and
       (Read-Reg $uninstallKey 'DisplayVersion').Value -ceq '1.4.1' -and
-      @($profileNames | Where-Object { Test-Path -LiteralPath (Join-Path $data $_) }).Count -eq 0) 'Actual successor installation and removal of the three selected profile files'
+      @($deletedByClean | Where-Object { Test-Path -LiteralPath (Join-Path $data $_) }).Count -eq 0 -and
+      (-not $retainHistory -or (Get-Sha (Join-Path $data 'history.dat')) -ceq $prior.Profile['history.dat'])) 'Actual successor installation applies only the selected clean policy'
     $command = Read-RunOnceCommand $stage
     Confirm-Backups $stage $prior
     $killed = Stop-Owned $coordinator
@@ -456,7 +461,9 @@ try {
       $backupBefore = Get-Sha $backup
       $changedLiveHash = $null
       $newValue = if ($index -eq 0) { "workMinutes=63`nhistory=1`n" } else { "$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) 1 40`n" }
-      Confirm (-not (Test-Path -LiteralPath $live)) "Expected original interrupted clean state: $mode"
+      $originalLive = if ($retainHistory -and $index -eq 2) { [IO.File]::ReadAllBytes($live) }
+      Confirm (($null -ne $originalLive -and (Get-Sha $live) -ceq $backupBefore) -or
+        ($null -eq $originalLive -and -not (Test-Path -LiteralPath $live))) "Expected original interrupted clean state: $mode"
       try {
         if ($mode.StartsWith('Changed')) {
           [IO.File]::WriteAllText($live, $newValue, $utf8)
@@ -486,10 +493,14 @@ try {
         if ($changedLiveHash) {
           Confirm ((Get-Sha $live) -ceq $changedLiveHash -and (Get-Sha $backup) -ceq $backupBefore) "Both saved and different live data are intact: $mode"
         } else {
-          Confirm (-not (Test-Path -LiteralPath $live)) "Deferral performs no live data restoration: $mode"
+          Confirm (($null -ne $originalLive -and (Get-Sha $live) -ceq $backupBefore) -or
+            ($null -eq $originalLive -and -not (Test-Path -LiteralPath $live))) "Deferral preserves the original live data state: $mode"
         }
       } finally {
-        if ($changedLiveHash) { [IO.File]::Delete($live) }
+        if ($mode.StartsWith('Changed')) {
+          if ($null -ne $originalLive) { [IO.File]::WriteAllBytes($live, [byte[]]$originalLive) }
+          else { [IO.File]::Delete($live) }
+        }
         elseif ($mode.StartsWith('Missing') -or $mode.StartsWith('Corrupt')) {
           [IO.File]::WriteAllBytes($backup, $originalBackup)
         }
@@ -512,9 +523,10 @@ try {
         if ($process) { $process.Refresh(); if (-not $process.HasExited -and $process.MainWindowTitle -ceq 'Eye Break Reminder Recovery') { $process.MainWindowTitle } }
       } 'recovery error dialog after the locked installer-owned file blocks replacement'
       $displayVersion = (Read-Reg $uninstallKey 'DisplayVersion').Value
-      $remainingProfileFiles = @($profileNames | Where-Object { Test-Path -LiteralPath (Join-Path $data $_) })
+      $remainingProfileFiles = @($deletedByClean | Where-Object { Test-Path -LiteralPath (Join-Path $data $_) })
       Confirm ((Read-Phase $stage) -ceq 'cleaning' -and (Get-Sha $target) -ceq $prior.Executable -and
         (Get-Sha $lockedPath) -ceq $lockedPathBefore -and $remainingProfileFiles.Count -eq 0 -and
+        (-not $retainHistory -or (Get-Sha (Join-Path $data 'history.dat')) -ceq $prior.Profile['history.dat']) -and
         $displayVersion -ceq '1.4.1' -and (Read-Reg $runOnceKey $valueName).Value -ceq $command.Command) 'Locked owned-file restore stops after executable rollback, preserves later files, data and exact retry registration' (
         @{ DialogTitle = $recoveryError; DisplayVersion = $displayVersion; Executable = Get-Sha $target; LockedOwnedFile = Get-Sha $lockedPath; RemainingProfileFiles = $remainingProfileFiles; RunOnce = $command.Command })
       Confirm-Backups $stage $prior

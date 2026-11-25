@@ -8,6 +8,8 @@ param(
   [Parameter(Mandatory)][string]$EvidencePath,
   [switch]$ReinstallBeforeRecovery,
   [string]$GuardedRepairInstaller,
+  [string]$VerifiedCandidateProvenance,
+  [long]$VerifiedCandidateArtifact,
   [ValidateSet('None','MissingCoordinator','MissingBackup','CorruptBackup')][string]$RecoveryDamage = 'None'
 )
 
@@ -356,9 +358,28 @@ $candidateFiles = [ordered]@{
   'EyeBreakReminder-UpdateManifest.json' = '88ec256d6c4bb8f0c52946b947cf8778e0966f8cfe84c9f83c551f9a61af84a6'
   'EyeBreakReminder-UpdateManifest.sig' = 'c0906144d52623a4d428df0d69208a849102df731877bbcdb9d366d1f4031992'
 }
+$artifactId = 15007651099
+$candidateSource = '0f49949a9e753fcca390c25affc99d7698b1ecde'
+if ($VerifiedCandidateProvenance) {
+  $verifiedPath = Assert-Child $VerifiedCandidateProvenance $workspace
+  $verified = Get-Content -LiteralPath $verifiedPath -Raw | ConvertFrom-Json
+  if ($VerifiedCandidateArtifact -le 0 -or $verified.Status -cne 'PASS' -or
+      $verified.FinalizationRunId -ne $env:GITHUB_RUN_ID -or $verified.FinalizationSourceCommit -cne $env:GITHUB_SHA -or
+      $verified.ProductionKeyId -cne 'p256-0aff97759ea95258' -or $verified.WindowsCngProductionSignatureVerified -ne $true -or
+      $verified.CandidateSourceCommit -notmatch '^[a-f0-9]{40}$' -or @($verified.ReleaseFiles.PSObject.Properties).Count -ne 7) {
+    throw 'The replacement input must be supplied by the current authenticated finalizer run.'
+  }
+  foreach ($name in @($candidateFiles.Keys)) {
+    $identity = $verified.ReleaseFiles.PSObject.Properties[$name]
+    if (-not $identity -or $identity.Value.sha256 -cnotmatch '^[a-f0-9]{64}$') { throw "Invalid candidate identity: $name" }
+    $candidateFiles[$name] = $identity.Value.sha256
+  }
+  $artifactId = $VerifiedCandidateArtifact
+  $candidateSource = $verified.CandidateSourceCommit
+}
 $report = [ordered]@{
   Status = 'FAIL'; Phase = $Phase; Boundary = $FaultBoundary; RunId = $env:GITHUB_RUN_ID; WorkflowCommit = $env:GITHUB_SHA
-  CandidateArtifactId = 15007651099; CandidateSource = '0f49949a9e753fcca390c25affc99d7698b1ecde'; KeyId = 'p256-0aff97759ea95258'
+  CandidateArtifactId = $artifactId; CandidateSource = $candidateSource; KeyId = 'p256-0aff97759ea95258'
   OS = $os.Caption; OSBuild = $os.BuildNumber; UserSid = $sid; SessionId = $sessionId; BootUtc = $boot; HarnessPid = $PID
   GenuineWindowsReboot = $false; WindowsSignInInvocation = $false; RecoveryDamage = $RecoveryDamage
   Baseline = 'Published v1.3.0 setup and install metadata with a separately identified v1.3.0 version-adjusted fixture app that implements startup confirmation.'
@@ -367,7 +388,7 @@ $report = [ordered]@{
 try {
   foreach ($name in $candidateFiles.Keys) {
     $hash = Get-Sha (Assert-Child (Join-Path $candidateRoot $name) $candidateRoot)
-    Confirm ($hash -ceq $candidateFiles[$name]) "Candidate artifact 15007651099 matches $name" $hash
+    Confirm ($hash -ceq $candidateFiles[$name]) "Candidate artifact $artifactId matches $name" $hash
   }
   Confirm ((Get-Sha $BaselineInstaller) -ceq '67c7bb338e83397e17007fa0afff9b4ad06f0a2d7924bb016198d9d38e3a76b4' -and
     (Get-Item -LiteralPath $BaselineApplication).VersionInfo.ProductVersion -match '^1\.3\.0(\.0)?$') 'Pinned published v1.3.0 setup and distinct confirmation-capable test fixture were supplied' (Get-Sha $BaselineApplication)
@@ -452,9 +473,34 @@ try {
       Confirm ((Get-Sha (Join-Path $stage $name)) -ceq $candidateFiles[$name]) "Staged production authentication material is unchanged: $name"
     }
     Confirm-ExactBackups $stage $prior
+    if ($VerifiedCandidateProvenance -and $FaultBoundary -ceq 'BeforeRelaunch') {
+      $file = Join-Path $data 'settings.ini'
+      Confirm (-not (Test-Path -LiteralPath $file)) 'Original clean policy removed live settings before the interruption'
+      $successorBefore = Get-Sha $target
+      try {
+        [IO.File]::WriteAllText($file, "workMinutes=51`nrestore=1`n", $utf8)
+        $newHash = Get-Sha $file
+        Confirm ($newHash -cne $prior.Profile['settings.ini']) 'Induced different live settings from the saved backup'
+        $deferred = Start-Exact $command.Image $retryCwd @() -RawArguments $command.RawArguments
+        [void](Wait-For {
+          $deferred.Process.Refresh()
+          -not $deferred.Process.HasExited -and $deferred.Process.MainWindowTitle -ceq 'Eye Break Reminder Recovery'
+        } 'production recovery warning protecting different settings')
+        Confirm ($deferred.Process.CloseMainWindow() -and $deferred.Process.WaitForExit(10000) -and $deferred.Process.ExitCode -eq 1) 'Exact replacement recovery explicitly defers on different live settings'
+        Confirm ((Get-Sha $file) -ceq $newHash -and (Get-Sha $target) -ceq $successorBefore -and
+          (Get-Sha (Join-Path $stage 'transaction.ini')) -ceq $original.Handoff.TransactionHash -and
+          (Read-Reg $runOnceKey $valueName).Value -ceq $command.Command) 'Exact replacement leaves both live settings and the pending transaction intact'
+      } finally {
+        [IO.File]::Delete($file)
+      }
+    }
     if ($GuardedRepairInstaller) {
       $repairHash = Get-Sha $GuardedRepairInstaller
-      Confirm ($repairHash -cne $candidateFiles['EyeBreakReminder-Setup-x64.exe']) 'Repair guard is tested with a separately identified installer' $repairHash
+      if ($VerifiedCandidateProvenance) {
+        Confirm ($repairHash -ceq $candidateFiles['EyeBreakReminder-Setup-x64.exe']) 'Repair guard is tested with the exact signed replacement installer' $repairHash
+      } else {
+        Confirm ($repairHash -cne $candidateFiles['EyeBreakReminder-Setup-x64.exe']) 'Repair guard is tested with a separately identified installer' $repairHash
+      }
       $liveBefore = @{}
       foreach ($name in $profileNames) {
         $file = Join-Path $data $name
