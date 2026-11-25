@@ -4,8 +4,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repository = 'REMEDIOSSAMUEL/EYE-BREAK-REMINDER'
-$latestTag = 'v1.3.0'
-$downloadRoot = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-v1.3.0-public-acceptance'
+$latestTag = 'v1.4.0'
+$downloadRoot = Join-Path $env:RUNNER_TEMP 'EyeBreakReminder-v1.4.0-public-acceptance'
 $localAppData = [IO.Path]::GetFullPath([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData))
 $dataPath = [IO.Path]::GetFullPath((Join-Path $localAppData 'EyeBreakReminder'))
 $ownedData = $false
@@ -15,6 +15,7 @@ $summary = @{
   Application = 'Eye Break Reminder'
   Test = 'Focused published binary launch and live update checker acceptance'
   LatestStableTag = $null
+  OfficialReleaseUrl = $null
   Downloads = @()
   PortableInnerExecutableSHA256 = $null
   Results = @()
@@ -166,7 +167,8 @@ function Invoke-PublishedUpdateCheck([string]$Version, [string]$ExecutablePath, 
     Click-AppControl $window $processId 135 'About section'
     $installed = Get-StaticControl $window $processId "Installed version: $Version" 'Installed version'
     $latest = Get-StaticControl $window $processId 'Latest stable version: not checked' 'Initial latest stable version'
-    $status = Get-StaticControl $window $processId 'Select Check for Updates to query the official public GitHub Releases API.' 'Initial update status'
+    $initialStatus = if ($Version -eq '1.4.0') { 'Check for Updates queries the official public GitHub Releases API.' } else { 'Select Check for Updates to query the official public GitHub Releases API.' }
+    $status = Get-StaticControl $window $processId $initialStatus 'Initial update status'
     Click-AppControl $window $processId 160 'Check for Updates'
 
     $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -181,10 +183,15 @@ function Invoke-PublishedUpdateCheck([string]$Version, [string]$ExecutablePath, 
     $statusText = Get-WindowText $status.Handle
     $checkButton = Get-AppControl $window $processId 160 'Check for Updates'
     $releaseButton = Get-AppControl $window $processId 161 'Open Official Release'
-    if ($latestText -cne 'Latest stable version: 1.3.0') { throw "v$Version displayed an unexpected latest version: $latestText" }
+    if ($latestText -cne 'Latest stable version: 1.4.0') { throw "v$Version displayed an unexpected latest version: $latestText" }
     if (-not $checkButton.Enabled) { throw "v$Version update request did not return and re-enable its button." }
     if ($statusText -notmatch [regex]::Escape($ExpectedResult)) { throw "v$Version returned unexpected update status: $statusText" }
-    if (($ExpectedResult -eq 'update is available') -ne $releaseButton.Enabled) { throw "v$Version official release button state did not match '$ExpectedResult'." }
+    if (-not $releaseButton.Enabled) { throw "v$Version official release button was disabled after successful discovery." }
+    $officialReleaseInvoked = $false
+    if ($Version -eq '1.3.0') {
+      Click-AppControl $window $processId 161 'Open Official Release'
+      $officialReleaseInvoked = $true
+    }
 
     $results.Add([pscustomobject]@{
       Version = $Version
@@ -196,6 +203,7 @@ function Invoke-PublishedUpdateCheck([string]$Version, [string]$ExecutablePath, 
       LatestLabel = $latestText
       Status = $statusText
       OfficialReleaseButtonEnabled = $releaseButton.Enabled
+      OfficialReleaseButtonInvoked = $officialReleaseInvoked
       ExpectedResult = $ExpectedResult
       Pass = $true
     })
@@ -225,19 +233,17 @@ try {
   }
   $summary.LatestStableTag = $latestRelease.tag_name
 
-  $previous = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$repository/releases/tags/v1.2.1" -TimeoutSec 30 -Headers @{ 'User-Agent' = 'EyeBreakReminder-PublishedAcceptance' }
-  $previousExe = @($previous.assets | Where-Object { $_.name -eq 'EyeBreakReminder.exe' })
-  if ($previousExe.Count -ne 1 -or $previousExe[0].digest -cne 'sha256:894dccf65fdbb4ccf311be2cb180c007b6b2dbb9f2e4103395a8ad01fde2c6ad') {
-    throw 'The unchanged v1.2.1 public executable does not match its recorded release digest.'
-  }
+  $officialUrl = 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.4.0'
+  if ($latestRelease.html_url -cne $officialUrl) { throw 'Latest stable release returned an unexpected official URL.' }
+  $summary.OfficialReleaseUrl = $officialUrl
   $v130Release = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$repository/releases/tags/v1.3.0" -TimeoutSec 30 -Headers @{ 'User-Agent' = 'EyeBreakReminder-PublishedAcceptance' }
   if ($v130Release.draft -or $v130Release.prerelease) { throw 'v1.3.0 is not a published stable release.' }
 
   New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
-  $oldExe = Download-PublicAsset 'v1.2.1-EyeBreakReminder.exe' $previousExe[0].browser_download_url '894dccf65fdbb4ccf311be2cb180c007b6b2dbb9f2e4103395a8ad01fde2c6ad'
-  $newExe = Download-PublicAsset 'v1.3.0-EyeBreakReminder.exe' 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.3.0/EyeBreakReminder.exe' '3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66'
-  $portableZip = Download-PublicAsset 'v1.3.0-EyeBreakReminder-Portable-x64.zip' 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.3.0/EyeBreakReminder-Portable-x64.zip' '30407d37be7f3cb7438eaa42645b3db814bfa92d76bc4f709e09e0456e9b0da7'
-  $portablePath = Join-Path $downloadRoot 'v1.3.0-portable'
+  $oldExe = Download-PublicAsset 'v1.3.0-EyeBreakReminder.exe' 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.3.0/EyeBreakReminder.exe' '3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66'
+  $newExe = Download-PublicAsset 'v1.4.0-EyeBreakReminder.exe' 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.0/EyeBreakReminder.exe' '90880be4b515af59967ff221e379ab5958d84c2e98f2ef50ac4cc5aecc9dc6a9'
+  $portableZip = Download-PublicAsset 'v1.4.0-EyeBreakReminder-Portable-x64.zip' 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.0/EyeBreakReminder-Portable-x64.zip' 'f1a34c4fa79044264aa7f9c8a3ef9734c727ae7af42971b75baeae60225f78ca'
+  $portablePath = Join-Path $downloadRoot 'v1.4.0-portable'
   Expand-Archive -LiteralPath $portableZip.Path -DestinationPath $portablePath
   $portableExe = Join-Path $portablePath 'EyeBreakReminder.exe'
   $portableHash = (Get-FileHash -LiteralPath $portableExe -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -248,8 +254,8 @@ try {
   }
   $summary.PortableInnerExecutableSHA256 = $portableHash
   $ownedData = $true
-  Invoke-PublishedUpdateCheck '1.2.1' $oldExe.Path '894dccf65fdbb4ccf311be2cb180c007b6b2dbb9f2e4103395a8ad01fde2c6ad' 'update is available'
-  Invoke-PublishedUpdateCheck '1.3.0' $newExe.Path '3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66' 'up to date'
+  Invoke-PublishedUpdateCheck '1.3.0' $oldExe.Path '3ca3133559de29d78f7a1054542d757d24877e93b4409c731081ebf6d1846d66' 'update is available'
+  Invoke-PublishedUpdateCheck '1.4.0' $newExe.Path '90880be4b515af59967ff221e379ab5958d84c2e98f2ef50ac4cc5aecc9dc6a9' 'up to date'
 
   $summary.Status = 'PASS'
   Write-Output 'Focused published binary and live update checker acceptance: PASS'
