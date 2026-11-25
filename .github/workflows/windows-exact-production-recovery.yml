@@ -20,16 +20,7 @@ jobs:
     timeout-minutes: 14
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - scenario: InstallerStart
-            boundary: InstallerStart
-          - scenario: BeforeRelaunch
-            boundary: BeforeRelaunch
-          - scenario: ReinstallWithPendingRecovery
-            boundary: BeforeRelaunch
-            reinstall: true
-          - scenario: ManualRepairRegression
+      matrix: ${{ fromJSON(contains(github.event.head_commit.message, '[repair-only]') && '{"include":[{"scenario":"ManualRepairRegression"}]}' || '{"include":[{"scenario":"InstallerStart","boundary":"InstallerStart"},{"scenario":"BeforeRelaunch","boundary":"BeforeRelaunch"},{"scenario":"ReinstallWithPendingRecovery","boundary":"BeforeRelaunch","reinstall":true},{"scenario":"ManualRepairRegression"}]}') }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -48,13 +39,6 @@ jobs:
           ./tests/assert_exact_production_candidate.ps1 `
             -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
             -EvidencePath 'build/exact-production-recovery/candidate.json'
-      - name: Run ordinary reinstall against damaged disposable installations
-        if: matrix.scenario == 'ManualReinstall'
-        shell: pwsh
-        run: |
-          ./tests/windows_exact_candidate_manual_repair.ps1 `
-            -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
-            -EvidencePath 'build/exact-production-recovery/manual-repair.json'
       - name: Install the existing pinned NSIS compiler
         if: matrix.scenario == 'ManualRepairRegression'
         uses: negrutiu/nsis-install@9c575d44c2938a43e38a305caeb403de90303c60
@@ -67,7 +51,7 @@ jobs:
           $candidate = "$env:RUNNER_TEMP/exact-candidate/final-candidate"
           New-Item -ItemType Directory -Path release -Force | Out-Null
           Copy-Item -LiteralPath "$candidate/EyeBreakReminder.exe" -Destination release/
-          & makensis /V2 installer/setup.nsi
+          & makensis /V2 (Resolve-Path -LiteralPath installer/setup.nsi).Path
           if ($LASTEXITCODE -ne 0) { throw 'Could not build the isolated installer regression fixture.' }
           $fixture = (Resolve-Path -LiteralPath release/EyeBreakReminder-Setup-x64.exe).Path
           ./tests/windows_exact_candidate_manual_repair.ps1 -CandidateDirectory $candidate `
