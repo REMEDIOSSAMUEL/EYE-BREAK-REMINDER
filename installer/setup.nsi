@@ -104,7 +104,7 @@ Function GuardPendingUpdate
   StrCmp $0 1 allowed busy
   standalone:
     ; Query presence independently of the value type and content.
-    System::Call 'advapi32::RegOpenKeyExW(p 0x80000001, w "${EB_RUNONCE_KEY}", i 0, i 1, *p .r0) i.r1'
+    System::Call 'advapi32::RegOpenKeyExW(p 0x80000001, w "${EB_RUNONCE_KEY}", i 0, i 0x101, *p .r0) i.r1'
     StrCmp $1 2 scan_journals
     StrCmp $1 0 0 pending
     System::Call 'advapi32::RegQueryValueExW(p r0, w "${EB_RECOVERY_VALUE}", p 0, p 0, p 0, p 0) i.r1'
@@ -188,7 +188,7 @@ Function GetLiveParentImage
     Push $7
 FunctionEnd
 ; Windows may already have consumed RunOnce after an unsuccessful attempt.
-; Recognize the app's nonterminal journal without running the saved command.
+; Keep unresolved app-owned evidence without running the saved command.
 Function HasInterruptedJournal
   StrCpy $5 0
   StrCpy $6 "$LOCALAPPDATA\EyeBreakReminder\updates"
@@ -201,24 +201,46 @@ Function HasInterruptedJournal
   next_stage:
     StrLen $2 $1
     StrCmp $2 38 0 advance_stage
+    StrCpy $2 $1 1
+    StrCmp $2 "{" 0 advance_stage
+    StrCpy $2 $1 1 37
+    StrCmp $2 "}" 0 advance_stage
     StrCpy $3 "$6\$1"
     System::Call 'kernel32::GetFileAttributesW(w r3) i.r2'
     IntOp $2 $2 & 0x410
     StrCmp $2 16 0 advance_stage
-    IfFileExists "$3\transaction.ini" 0 advance_stage
-    StrCpy $3 "$3\transaction-state.ini"
-    System::Call 'kernel32::GetFileAttributesW(w r3) i.r2'
+    System::Call 'kernel32::GetFileAttributesW(w "$3\transaction.ini") i.r2 ?e'
+    Pop $7
+    ${If} $2 = -1
+      StrCmp $7 2 advance_stage
+      StrCmp $7 3 advance_stage journal_pending
+    ${EndIf}
     IntOp $2 $2 & 0x410
-    StrCmp $2 0 0 advance_stage
+    StrCmp $2 0 0 journal_pending
+    StrCpy $3 "$3\transaction-state.ini"
+    System::Call 'kernel32::GetFileAttributesW(w r3) i.r2 ?e'
+    Pop $7
+    ${If} $2 = -1
+      ; A transaction file can exist before its first journal is created.
+      StrCmp $7 2 advance_stage
+      StrCmp $7 3 advance_stage journal_pending
+    ${EndIf}
+    IntOp $2 $2 & 0x410
+    StrCmp $2 0 0 journal_pending
     ClearErrors
     FileOpen $2 "$3" r
-    IfErrors advance_stage
+    IfErrors journal_pending
+    ClearErrors
     FileRead $2 $4 64
+    IfErrors close_unreadable
     FileClose $2
-    StrCmpS $4 "phase=installing$\n" journal_pending
-    StrCmpS $4 "phase=installed$\n" journal_pending
-    StrCmpS $4 "phase=cleaning$\n" journal_pending
-    StrCmpS $4 "phase=starting$\n" journal_pending
+    StrCmpS $4 "phase=waiting$\n" advance_stage
+    StrCmpS $4 "phase=verified$\n" advance_stage
+    StrCmpS $4 "phase=complete$\n" advance_stage
+    StrCmpS $4 "phase=recovered$\n" advance_stage journal_pending
+  close_unreadable:
+    FileClose $2
+    Goto journal_pending
   advance_stage:
     ClearErrors
     FindNext $0 $1

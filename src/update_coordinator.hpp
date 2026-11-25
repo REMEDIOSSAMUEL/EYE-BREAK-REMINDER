@@ -332,21 +332,87 @@ inline bool restoreInstalledFiles(const Transaction&t){
     }
     discardPreparedRestores(prepared);return true;
 }
-inline bool restoreData(const Transaction&t,bool restoringClean){
-    const wchar_t*names[]={L"settings.ini",L"timer.dat",L"history.dat"};
+inline constexpr std::array<const wchar_t*,3> RecoveryDataNames={L"settings.ini",L"timer.dat",L"history.dat"};
+inline constexpr std::uint64_t RecoveryDataLimit=32ull*1024*1024;
+enum class FreshRecoveryDataStatus { Ready, LiveConflict, InvalidBackup };
+enum class FreshRecoveryLiveFile { Missing, MatchesBackup, Conflict };
+inline FreshRecoveryLiveFile freshRecoveryLiveFile(const Transaction&t,unsigned i){
+    const auto path=t.dataDirectory+L"\\"+RecoveryDataNames[i];
+    const DWORD attr=GetFileAttributesW(path.c_str());
+    if(attr==INVALID_FILE_ATTRIBUTES)
+        return GetLastError()==ERROR_FILE_NOT_FOUND?FreshRecoveryLiveFile::Missing:FreshRecoveryLiveFile::Conflict;
+    std::string digest;
+    return (t.backupMask&(1u<<i))&&safeFile(path,RecoveryDataLimit)&&hashFile(path,digest)&&digest==t.backupSha256[i]
+        ?FreshRecoveryLiveFile::MatchesBackup:FreshRecoveryLiveFile::Conflict;
+}
+inline bool freshRecoveryLiveDataMatches(const Transaction&t){
+    // A countdown is a checkpoint and can change as the app shuts down.
+    // Protect settings and history that rollback would replace or remove.
+    for(unsigned i:{0u,2u}){
+        const bool backed=(t.backupMask&(1u<<i))!=0;
+        const bool cleanAffected=t.clean&&(i==0||t.deleteHistory);
+        if(!backed&&!cleanAffected)continue;
+        if(freshRecoveryLiveFile(t,i)==FreshRecoveryLiveFile::Conflict)return false;
+    }
+    return true;
+}
+inline bool recoveryBackupMatches(const std::wstring&path,const std::string&expected,std::uint64_t maximum){
+    std::string digest;
+    return safeFile(path,maximum)&&hashFile(path,digest)&&digest==expected;
+}
+inline FreshRecoveryDataStatus checkFreshRecoveryData(const Transaction&t){
+    if(!freshRecoveryLiveDataMatches(t))return FreshRecoveryDataStatus::LiveConflict;
+    for(unsigned i=0;i<RecoveryDataNames.size();++i){
+        if(!(t.backupMask&(1u<<i)))continue;
+        const auto path=t.stagingDirectory+L"\\backup-"+std::to_wstring(i)+L".dat";
+        if(!recoveryBackupMatches(path,t.backupSha256[i],RecoveryDataLimit))
+            return FreshRecoveryDataStatus::InvalidBackup;
+    }
+    if(t.kind=="installed"){
+        for(unsigned i=0;i<t.ownedFileSha256.size();++i){
+            if(!(t.ownedFileMask&(1u<<i)))continue;
+            const auto path=t.stagingDirectory+L"\\previous-owned-"+std::to_wstring(i)+L".dat";
+            if(!recoveryBackupMatches(path,t.ownedFileSha256[i],512ull*1024*1024))
+                return FreshRecoveryDataStatus::InvalidBackup;
+        }
+    }
+    return FreshRecoveryDataStatus::Ready;
+}
+inline bool restoreData(const Transaction&t,bool restoringClean,FreshRecoveryDataStatus*freshStatus=nullptr){
     std::array<std::wstring,4>prepared{};std::array<std::wstring,3>targets{};std::array<bool,3>affected{};
     for(unsigned i=0;i<3;++i){
         affected[i]=restoringClean&&(i<2||t.deleteHistory);if(!affected[i]&&!(t.backupMask&(1u<<i)))continue;
-        targets[i]=t.dataDirectory+L"\\"+names[i];const DWORD attr=GetFileAttributesW(targets[i].c_str());
+        targets[i]=t.dataDirectory+L"\\"+RecoveryDataNames[i];const DWORD attr=GetFileAttributesW(targets[i].c_str());
         if(t.backupMask&(1u<<i)){
             const std::wstring backup=t.stagingDirectory+L"\\backup-"+std::to_wstring(i)+L".dat";
-            if(!prepareVerifiedRestore(t,backup,targets[i],t.backupSha256[i],32ull*1024*1024,prepared[i])){discardPreparedRestores(prepared);return false;}
+            if(!prepareVerifiedRestore(t,backup,targets[i],t.backupSha256[i],RecoveryDataLimit,prepared[i])){discardPreparedRestores(prepared);return false;}
         }else if(affected[i]&&attr!=INVALID_FILE_ATTRIBUTES){
-            if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(targets[i],32ull*1024*1024)){discardPreparedRestores(prepared);return false;}
+            if((attr&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY))||!safeFile(targets[i],RecoveryDataLimit)){discardPreparedRestores(prepared);return false;}
         }else if(affected[i]&&GetLastError()!=ERROR_FILE_NOT_FOUND){discardPreparedRestores(prepared);return false;}
+    }
+    if(freshStatus&&!freshRecoveryLiveDataMatches(t)){
+        *freshStatus=FreshRecoveryDataStatus::LiveConflict;discardPreparedRestores(prepared);return false;
     }
     for(unsigned i=0;i<3;++i){
         if(!affected[i]&&!(t.backupMask&(1u<<i)))continue;
+        if(freshStatus&&i!=1){
+            const auto live=freshRecoveryLiveFile(t,i);
+            if(live==FreshRecoveryLiveFile::Conflict){
+                *freshStatus=FreshRecoveryDataStatus::LiveConflict;discardPreparedRestores(prepared);return false;
+            }
+            // Retain an existing matching file. A concurrent writer can also
+            // create the path after this check, so a restore must never replace
+            // an existing settings/history file, even at the rename boundary.
+            if(live==FreshRecoveryLiveFile::Missing&&!prepared[i].empty()){
+                if(!MoveFileExW(prepared[i].c_str(),targets[i].c_str(),MOVEFILE_WRITE_THROUGH)){
+                    if(freshRecoveryLiveFile(t,i)==FreshRecoveryLiveFile::Conflict)
+                        *freshStatus=FreshRecoveryDataStatus::LiveConflict;
+                    discardPreparedRestores(prepared);return false;
+                }
+                prepared[i].clear();
+            }
+            continue;
+        }
         const bool ok=(t.backupMask&(1u<<i))?commitPreparedRestore(prepared[i],targets[i]):DeleteFileW(targets[i].c_str())||GetLastError()==ERROR_FILE_NOT_FOUND;
         if(!ok){discardPreparedRestores(prepared);return false;}
         prepared[i].clear();
@@ -392,15 +458,24 @@ inline bool stopRunningApplication(const Transaction&t){
     SendMessageTimeoutW(window,quit,0,0,SMTO_ABORTIFHUNG,5000,&ignored);
     const DWORD wait=WaitForSingleObject(process,60000);CloseHandle(process);return wait==WAIT_OBJECT_0;
 }
-inline bool restorePreviousVersion(const Transaction&t){
+inline bool restorePreviousVersion(const Transaction&t,FreshRecoveryDataStatus*freshStatus=nullptr){
     const std::wstring backup=t.stagingDirectory+L"\\previous.exe";std::string digest;
     if(!safeFile(backup)||productVersion(backup)!=t.previousVersion||!hashFile(backup,digest)||digest!=t.previousSha256)return false;
+    if(freshStatus){
+        *freshStatus=checkFreshRecoveryData(t);
+        if(*freshStatus!=FreshRecoveryDataStatus::Ready)return false;
+    }
     if(!stopRunningApplication(t))return false;
+    // A graceful exit saves current settings, including a changed window position.
+    if(freshStatus){
+        *freshStatus=checkFreshRecoveryData(t);
+        if(*freshStatus!=FreshRecoveryDataStatus::Ready)return false;
+    }
     std::wstring prepared;
     if(!prepareVerifiedRestore(t,backup,t.targetExecutable,t.previousSha256,512ull*1024*1024,prepared))return false;
     if(!commitPreparedRestore(prepared,t.targetExecutable)){DeleteFileW(prepared.c_str());return false;}
     const bool filesRestored=restoreInstalledFiles(t);
-    const bool dataRestored=filesRestored&&restoreData(t,t.clean);
+    const bool dataRestored=filesRestored&&restoreData(t,t.clean,freshStatus);
     const bool versionRestored=dataRestored&&(t.kind!="installed"||writeVersionRegistry(t.previousVersion));
     const bool startupRestored=versionRestored&&(!t.clean||setStartupRegistration(t,t.previousStartup));
     if(!startupRestored)return false;
@@ -450,8 +525,15 @@ inline int runRecovery(const std::wstring&transactionPath,const std::wstring&coo
         const int choice=MessageBoxW(nullptr,prompt.c_str(),L"Eye Break Reminder Manual Recovery",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2);
         if(choice!=IDYES){CloseHandle(single);return 2;}
     }
-    const bool restored=restorePreviousVersion(t);
+    auto dataStatus=FreshRecoveryDataStatus::Ready;
+    const bool restored=restorePreviousVersion(t,&dataStatus);
     CloseHandle(single);
+    if(dataStatus==FreshRecoveryDataStatus::LiveConflict){
+        MessageBoxW(nullptr,L"Update recovery stopped to protect current settings or history that differ from the saved backup or could not be verified. Keep the recovery folder and contact support before retrying.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONWARNING);return 1;
+    }
+    if(dataStatus==FreshRecoveryDataStatus::InvalidBackup){
+        MessageBoxW(nullptr,L"Update recovery stopped before changing the installed application because a saved backup is missing or invalid. Keep the recovery folder and contact support.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONWARNING);return 1;
+    }
     if(!restored){MessageBoxW(nullptr,L"Eye Break Reminder could not finish automatic recovery. The previous application and data backups remain in the updates folder. Close Eye Break Reminder and run the saved coordinator again, or contact support with the recovery folder contents.",L"Eye Break Reminder Recovery",MB_OK|MB_ICONERROR);return 1;}
     return 0;
 }

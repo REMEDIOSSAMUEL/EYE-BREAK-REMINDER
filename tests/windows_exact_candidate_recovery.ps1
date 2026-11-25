@@ -469,12 +469,16 @@ try {
       try {
         Confirm (-not (Read-Reg $runOnceKey $otherValue)) 'Unrelated test registration does not preexist'
         $registry.SetValue($otherValue, $foreign)
-        foreach ($mode in 'Owned','Repeated','Foreign','Missing','StagedManual') {
+        foreach ($mode in 'Owned','Repeated','Foreign','Missing','MalformedJournal','MissingHelper','CorruptHelper','Busy','StagedManual') {
           if ($mode -ceq 'Foreign') { $registry.SetValue($valueName, $foreign) }
           if ($mode -ceq 'Missing') { $registry.DeleteValue($valueName) }
-          if ($mode -ceq 'StagedManual') { $registry.SetValue($valueName, $command.Command) }
+          if ($mode -ceq 'MissingHelper') { $registry.SetValue($valueName, $command.Command) }
           $expected = (Read-Reg $runOnceKey $valueName).Value
           $image = $GuardedRepairInstaller
+          $savedJournal = $null
+          $savedHelper = $null
+          $mutex = $null
+          $journalPath = Join-Path $stage 'transaction-state.ini'
           if ($mode -ceq 'StagedManual') {
             $image = Join-Path $stage 'EyeBreakReminder-Setup-x64.exe'
             $savedSetup = Join-Path $testRoot 'original-signed-setup.exe'
@@ -482,10 +486,32 @@ try {
           }
           try {
             if ($mode -ceq 'StagedManual') { Copy-Item -LiteralPath $GuardedRepairInstaller -Destination $image -Force }
+            if ($mode -ceq 'MalformedJournal') {
+              $savedJournal = [IO.File]::ReadAllBytes($journalPath)
+              [IO.File]::WriteAllText($journalPath, "phase=unrecognized`n", $utf8)
+            }
+            if ($mode -in 'MissingHelper','CorruptHelper') {
+              $savedHelper = [IO.File]::ReadAllBytes($command.Image)
+              if ($mode -ceq 'MissingHelper') { [IO.File]::Delete($command.Image) }
+              else { [IO.File]::WriteAllBytes($command.Image, [byte[]]@(0,1,2,3)) }
+            }
+            if ($mode -ceq 'Busy') {
+              $created = $false
+              $mutex = [Threading.Mutex]::new($false, 'Local\EyeBreakReminder.UpdateCoordinator.1', [ref]$created)
+              Confirm $created 'Busy case reserves the actual coordinator mutex in this disposable session'
+            }
+            $expectedJournal = Get-Sha $journalPath
             $repair = Start-Exact $image $testRoot @() -RawArguments "/S /D=$install"
-            Confirm ($repair.Process.WaitForExit(20000) -and $repair.Process.ExitCode -eq 20) "Guarded repair defers without reporting success: $mode" $repair.Process.ExitCode
+            $expectedExit = if ($mode -ceq 'Busy') { 21 } else { 20 }
+            Confirm ($repair.Process.WaitForExit(20000) -and $repair.Process.ExitCode -eq $expectedExit) "Guarded repair defers without reporting success: $mode" $repair.Process.ExitCode
+            Confirm ((Get-Sha $journalPath) -ceq $expectedJournal) "Refusal does not modify the journal: $mode"
+            if ($mode -ceq 'MissingHelper') { Confirm (-not (Test-Path -LiteralPath $command.Image)) 'Refusal does not fabricate a missing helper' }
+            if ($mode -ceq 'CorruptHelper') { Confirm ((Get-Item -LiteralPath $command.Image).Length -eq 4) 'Refusal does not replace the corrupt helper' }
           } finally {
             if ($mode -ceq 'StagedManual') { Copy-Item -LiteralPath $savedSetup -Destination $image -Force }
+            if ($null -ne $savedJournal) { [IO.File]::WriteAllBytes($journalPath, $savedJournal) }
+            if ($null -ne $savedHelper) { [IO.File]::WriteAllBytes($command.Image, $savedHelper) }
+            if ($mutex) { $mutex.Dispose() }
           }
           Confirm ((Read-Reg $runOnceKey $valueName).Value -ceq $expected -and
             (Read-Reg $runOnceKey $otherValue).Value -ceq $foreign -and
@@ -625,6 +651,13 @@ try {
         Confirm-ExactBackups $stage $prior
         $killed = Stop-Owned $locked
         Confirm ($null -eq (Find-TransactionProcesses $stage)) 'Failed recovery process exits before unlocking and retry' $killed
+        if ($GuardedRepairInstaller) {
+          $repair = Start-Exact $GuardedRepairInstaller $testRoot @() -RawArguments "/S /D=$install"
+          Confirm ($repair.Process.WaitForExit(20000) -and $repair.Process.ExitCode -eq 20 -and
+            (Read-Reg $runOnceKey $valueName).Value -ceq $command.Command -and
+            (Get-Sha $target) -ceq $prior.Executable -and
+            (Get-Sha $lockedPath) -ceq $lockedHash) 'Guarded repair defers without modifying a partial locked-file rollback'
+        }
       } finally { $stream.Dispose() }
     }
     $recovery = Start-Exact $command.Image $retryCwd @() -RawArguments $command.RawArguments

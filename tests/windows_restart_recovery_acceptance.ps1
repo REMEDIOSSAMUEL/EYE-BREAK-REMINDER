@@ -39,11 +39,14 @@ $workspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE)
 $testRoot = Assert-Child (Join-Path $runnerTemp "ebr-r-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)-$PathLayout") $runnerTemp
 $EvidencePath = Assert-Child $EvidencePath $workspace
 $handoff = Join-Path $testRoot 'handoff.json'
-$install = Join-Path $testRoot 'installed'
+$installName = if ($PathLayout -ceq 'Long') { 'installed-' + [char]0x00C5 + '-' + ('x' * 48) } else { 'installed' }
+$install = Join-Path $testRoot $installName
 $target = Join-Path $install 'EyeBreakReminder.exe'
-$folder = 'profile ' + [char]0x00C5
-if ($PathLayout -ceq 'Long') { $folder += '-' + ('x' * 48) }
-$data = Join-Path $testRoot $folder
+$localAppData = [Environment]::GetFolderPath('LocalApplicationData')
+if (-not $localAppData -or [IO.Path]::GetFullPath($localAppData) -ine [IO.Path]::GetFullPath($env:LOCALAPPDATA)) {
+  throw 'Disposable runner LocalAppData and its Known Folder differ.'
+}
+$data = Assert-Child (Join-Path $localAppData 'EyeBreakReminder') $localAppData
 $retryCwd = Join-Path $testRoot 'fresh working directory'
 $runOnceKey = 'Software\Microsoft\Windows\CurrentVersion\RunOnce'
 $valueName = '!EyeBreakReminderUpdateRecovery'
@@ -171,8 +174,7 @@ function Read-RunOnceCommand([string]$Stage) {
   $compact = '"' + $helper + '" --update-recover'
   $value = Read-Reg $runOnceKey $valueName
   $expected = if ($full.Length -le 260) { $full } else { $compact }
-  Confirm ($value.Kind -ceq 'String' -and $value.Value -ceq $expected -and $expected.Length -le 260 -and
-      ($PathLayout -cne 'Long' -or $full.Length -gt 260)) 'HKCU RunOnce stores the exact quoted recovery command within 260 characters' (
+  Confirm ($value.Kind -ceq 'String' -and $value.Value -ceq $expected -and $expected.Length -le 260) 'HKCU RunOnce stores the exact quoted recovery command within 260 characters' (
     @{ Key = "HKCU\$runOnceKey"; Name = $valueName; Command = $value.Value; Kind = $value.Kind; FullFormLength = $full.Length; Length = $expected.Length; Sid = $sid })
   return [pscustomobject]@{
     Image = $helper
@@ -332,6 +334,7 @@ $report = [ordered]@{
   GenuineWindowsReboot = $false; WindowsSignInInvocation = $false
   Scenario = 'Signed test-key installed clean update with explicit history deletion and repeated recovery interruption'
   RecoveryInterruptionMode = if ($PathLayout -ceq 'Long') { 'Recovery helper killed; restored application survives for retry' } else { 'Recovery helper and restored application killed before retry' }
+  PathLayoutScope = 'Production-shaped LocalAppData staging. The Long layout varies the installed executable path.'
   CandidateArtifactId = 14695418078
 }
 try {
@@ -440,6 +443,59 @@ try {
       (Get-Sha $target) -ceq $report.Fixtures.TestSuccessor -and
       $null -eq (Find-TransactionProcesses $stage)) 'Persisted journal, metadata, trust material and installed successor survive original process loss'
     Confirm ((Get-Sha $command.Image) -ceq $report.Fixtures.TestBaseline) 'Registered helper is the recorded test baseline image'
+    $targetBefore = Get-Sha $target
+    $journal = Join-Path $stage 'transaction-state.ini'
+    $transaction = Join-Path $stage 'transaction.ini'
+    $uninstallerBefore = Get-Sha (Join-Path $install 'Uninstall.exe')
+    $timer = Join-Path $data 'timer.dat'
+    foreach ($mode in 'ChangedLiveSettings','ChangedLiveHistory','MissingSettingsBackup','MissingHistoryBackup','CorruptSettingsBackup','CorruptHistoryBackup') {
+      $index = if ($mode.EndsWith('Settings') -or $mode.EndsWith('SettingsBackup')) { 0 } else { 2 }
+      $live = Join-Path $data $profileNames[$index]
+      $backup = Join-Path $stage "backup-$index.dat"
+      $originalBackup = [IO.File]::ReadAllBytes($backup)
+      $backupBefore = Get-Sha $backup
+      $changedLiveHash = $null
+      $newValue = if ($index -eq 0) { "workMinutes=63`nhistory=1`n" } else { "$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) 1 40`n" }
+      Confirm (-not (Test-Path -LiteralPath $live)) "Expected original interrupted clean state: $mode"
+      try {
+        if ($mode.StartsWith('Changed')) {
+          [IO.File]::WriteAllText($live, $newValue, $utf8)
+          $changedLiveHash = Get-Sha $live
+          Confirm ($changedLiveHash -cne $backupBefore) "Induced distinct live data: $mode"
+        } elseif ($mode.StartsWith('Missing')) {
+          [IO.File]::Delete($backup)
+          Confirm (-not (Test-Path -LiteralPath $backup)) "Induced missing saved data: $mode"
+        } else {
+          [IO.File]::WriteAllText($backup, 'damaged fixture', $utf8)
+          Confirm ((Get-Sha $backup) -cne $backupBefore) "Induced corrupt saved data: $mode"
+        }
+        $rejected = Start-Exact $command.Image $retryCwd @() -RawArguments $command.RawArguments
+        [void](Wait-For {
+          $rejected.Process.Refresh()
+          -not $rejected.Process.HasExited -and $rejected.Process.MainWindowTitle -ceq 'Eye Break Reminder Recovery'
+        } "real recovery deferral for $mode")
+        Confirm ($rejected.Process.CloseMainWindow() -and $rejected.Process.WaitForExit(10000) -and $rejected.Process.ExitCode -eq 1) "Recovery explicitly deferred: $mode"
+        Confirm ((Get-Sha $target) -ceq $targetBefore -and
+          (Get-Sha (Join-Path $install 'Uninstall.exe')) -ceq $uninstallerBefore -and
+          (Get-Sha $journal) -ceq $interruption.Handoff.JournalSHA256 -and
+          (Get-Sha $transaction) -ceq $interruption.Handoff.TransactionSHA256 -and
+          (Read-Reg $runOnceKey $valueName).Value -ceq $command.Command -and
+          (Read-Reg $uninstallKey 'DisplayVersion').Value -ceq '1.4.1' -and
+          (Get-Sha (Join-Path $data 'unrelated.txt')) -ceq $prior.Neighbor -and
+          -not (Test-Path -LiteralPath $timer) -and $null -eq (Find-TransactionProcesses $stage)) "Deferral leaves executable, registration, journal and unrelated data unchanged: $mode"
+        if ($changedLiveHash) {
+          Confirm ((Get-Sha $live) -ceq $changedLiveHash -and (Get-Sha $backup) -ceq $backupBefore) "Both saved and different live data are intact: $mode"
+        } else {
+          Confirm (-not (Test-Path -LiteralPath $live)) "Deferral performs no live data restoration: $mode"
+        }
+      } finally {
+        if ($changedLiveHash) { [IO.File]::Delete($live) }
+        elseif ($mode.StartsWith('Missing') -or $mode.StartsWith('Corrupt')) {
+          [IO.File]::WriteAllBytes($backup, $originalBackup)
+        }
+      }
+      Confirm ((Get-Sha $backup) -ceq $backupBefore) "Control case starts from the original saved fixture: $mode"
+    }
     $lockedPath = Join-Path $install 'Uninstall.exe'
     $lockedPathBefore = Get-Sha $lockedPath
     $lockedStream = [IO.File]::Open($lockedPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)

@@ -664,6 +664,45 @@ int main(int argc,char**argv){
     const bool dataBackupComplete=eye::updates::backupData(dataRecovery)&&dataRecovery.backupMask==7&&eye::updates::backupDigestMetadataValid(dataRecovery);
     eye::updates::Transaction persistedDataRecovery;const bool dataDigestsPersisted=eye::updates::readTransaction(validationStage+L"\\transaction.ini",persistedDataRecovery)&&persistedDataRecovery.backupSha256==dataRecovery.backupSha256&&persistedDataRecovery.backupMask==dataRecovery.backupMask;
     ok&=check(dataBackupComplete&&dataDigestsPersisted,"backup settings, timer and history and persist each SHA-256 in the transaction record");
+    using FreshDataStatus=eye::updates::FreshRecoveryDataStatus;
+    ok&=check(eye::updates::checkFreshRecoveryData(persistedDataRecovery)==FreshDataStatus::Ready,
+              "fresh recovery accepts live settings and history matching intact saved data");
+    auto noHistoryBackup=persistedDataRecovery;
+    noHistoryBackup.backupMask&=~4u;noHistoryBackup.backupSha256[2].clear();
+    noHistoryBackup.clean=false;noHistoryBackup.deleteHistory=false;
+    ok&=check(eye::updates::checkFreshRecoveryData(noHistoryBackup)==FreshDataStatus::Ready,
+              "fresh recovery allows a live unbacked history file when rollback would leave it untouched");
+    noHistoryBackup.clean=true;noHistoryBackup.deleteHistory=true;
+    ok&=check(eye::updates::checkFreshRecoveryData(noHistoryBackup)==FreshDataStatus::LiveConflict,
+              "fresh recovery defers when Clean rollback would delete live history that was absent from its backups");
+    ok&=check(writeBytes(settingsPath,"theme=changed-after-interruption\n")&&
+              eye::updates::checkFreshRecoveryData(persistedDataRecovery)==FreshDataStatus::LiveConflict&&writeBytes(settingsPath,originalSettings),
+              "fresh recovery defers on settings changed after the saved snapshot");
+    ok&=check(writeBytes(historyPath,"new-history-after-interruption\n")&&
+              eye::updates::checkFreshRecoveryData(persistedDataRecovery)==FreshDataStatus::LiveConflict&&writeBytes(historyPath,originalHistory),
+              "fresh recovery defers on history changed after the saved snapshot");
+    ok&=check(writeBytes(timerPath,"changed-checkpoint\n")&&
+              eye::updates::checkFreshRecoveryData(persistedDataRecovery)==FreshDataStatus::Ready&&writeBytes(timerPath,originalTimer),
+              "a naturally advancing live checkpoint does not obstruct fresh settings and history recovery");
+    const auto timerBackup=validationStage+L"\\backup-1.dat";
+    ok&=check(DeleteFileW(timerBackup.c_str())&&
+              eye::updates::checkFreshRecoveryData(persistedDataRecovery)==FreshDataStatus::InvalidBackup&&writeBytes(timerBackup,originalTimer),
+              "fresh recovery detects a missing expected timer backup before changing the executable");
+    const auto historyBackup=validationStage+L"\\backup-2.dat";
+    ok&=check(writeBytes(historyBackup,"corrupt-expected-backup\n")&&
+              eye::updates::checkFreshRecoveryData(persistedDataRecovery)==FreshDataStatus::InvalidBackup&&writeBytes(historyBackup,originalHistory),
+              "fresh recovery detects a corrupted expected history backup before changing the executable");
+    auto installedPreflight=persistedDataRecovery;
+    installedPreflight.kind="installed";installedPreflight.ownedFileMask=1;
+    const auto ownedBackup=validationStage+L"\\previous-owned-0.dat";
+    ok&=check(writeBytes(ownedBackup,"prior owned uninstaller bytes")&&
+              eye::updates::hashFile(ownedBackup,installedPreflight.ownedFileSha256[0])&&
+              eye::updates::checkFreshRecoveryData(installedPreflight)==FreshDataStatus::Ready,
+              "fresh installed recovery accepts a verified saved installer-owned file");
+    ok&=check(writeBytes(ownedBackup,"corrupted owned backup")&&
+              eye::updates::checkFreshRecoveryData(installedPreflight)==FreshDataStatus::InvalidBackup&&DeleteFileW(ownedBackup.c_str())&&
+              eye::updates::checkFreshRecoveryData(installedPreflight)==FreshDataStatus::InvalidBackup,
+              "fresh installed recovery rejects corrupted or missing owned backups before changing the executable");
     const std::string partialSettings="theme=partial-migration\n",partialTimer="incomplete=true\n",partialHistory="partial-history\n";
     ok&=check(writeBytes(settingsPath,partialSettings)&&writeBytes(timerPath,partialTimer)&&writeBytes(historyPath,partialHistory),"simulate an interrupted settings and history migration");
     const std::wstring preexistingRestoreTemp=settingsPath+L".update-restore";
@@ -689,6 +728,19 @@ int main(int argc,char**argv){
     const bool repairedDataRestored=eye::updates::restoreData(persistedDataRecovery,false);
     unchanged.clear();
     ok&=check(repairedDataRestored&&eye::win::read(settingsPath,unchanged,128)&&unchanged==originalSettings&&eye::win::read(timerPath,unchanged,128)&&unchanged==originalTimer&&eye::win::read(historyPath,unchanged,128)&&unchanged==originalHistory,"restore all original settings, timer and history after a valid retry");
+    auto lateConflict=FreshDataStatus::Ready;
+    ok&=check(writeBytes(historyPath,"history-changed-before-copy-commit\n")&&
+              !eye::updates::restoreData(persistedDataRecovery,false,&lateConflict)&&
+              lateConflict==FreshDataStatus::LiveConflict&&eye::win::read(historyPath,unchanged,128)&&
+              unchanged=="history-changed-before-copy-commit\n"&&writeBytes(historyPath,originalHistory),
+              "fresh recovery rechecks current data before committing prepared copies and preserves a conflicting live file");
+    HANDLE matchingSettingsLock=CreateFileW(settingsPath.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    auto matchingSettingsStatus=FreshDataStatus::Ready;
+    const bool matchingSettingsKept=matchingSettingsLock!=INVALID_HANDLE_VALUE&&
+        eye::updates::restoreData(persistedDataRecovery,false,&matchingSettingsStatus)&&matchingSettingsStatus==FreshDataStatus::Ready;
+    if(matchingSettingsLock!=INVALID_HANDLE_VALUE)CloseHandle(matchingSettingsLock);
+    ok&=check(matchingSettingsKept&&eye::win::read(settingsPath,unchanged,128)&&unchanged==originalSettings,
+              "fresh recovery leaves an identical settings file in place even when its open handle forbids replacement");
     ok&=check(GetFileAttributesW(settingsScratch.c_str())==INVALID_FILE_ATTRIBUTES&&
               GetFileAttributesW(timerScratch.c_str())==INVALID_FILE_ATTRIBUTES&&
               eye::win::read(preexistingRestoreTemp,unchanged,128)&&unchanged=="preexisting-temporary-sentinel",
@@ -704,6 +756,9 @@ int main(int argc,char**argv){
     dataRecovery.deleteHistory=true;
     const bool cleanDeletesOnlyAppData=eye::updates::applyCleanPolicy(dataRecovery)&&GetFileAttributesW(settingsPath.c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW(timerPath.c_str())==INVALID_FILE_ATTRIBUTES&&GetFileAttributesW(historyPath.c_str())==INVALID_FILE_ATTRIBUTES&&eye::win::read(sentinel,sentinelContents,128)&&sentinelContents=="unrelated-user-file";
     ok&=check(cleanDeletesOnlyAppData,"explicit history deletion removes only the three Eye Break Reminder data files");
+    ok&=check(eye::updates::checkFreshRecoveryData(dataRecovery)==FreshDataStatus::Ready&&
+              writeBytes(settingsPath,originalSettings)&&eye::updates::checkFreshRecoveryData(dataRecovery)==FreshDataStatus::Ready,
+              "fresh clean recovery allows both deleted originals and byte-identical files from a partial retry");
     const bool destructiveCleanRecovery=eye::updates::restoreData(dataRecovery,true);unchanged.clear();
     ok&=check(destructiveCleanRecovery&&eye::win::read(settingsPath,unchanged,128)&&unchanged==originalSettings&&eye::win::read(timerPath,unchanged,128)&&unchanged==originalTimer&&eye::win::read(historyPath,unchanged,128)&&unchanged==originalHistory,"rollback after history deletion restores verified settings and history backups");
     SetEnvironmentVariableW(L"EBR_GUI_TEST_DATA_DIRECTORY",nullptr);DeleteFileW(sentinel.c_str());RemoveDirectoryW(sentinelDirectory.c_str());DeleteFileW(portableTarget.c_str());RemoveDirectoryW(portableDirectory.c_str());DeleteFileW(settingsPath.c_str());DeleteFileW(timerPath.c_str());DeleteFileW(historyPath.c_str());DeleteFileW((settingsPath+L".update-restore").c_str());DeleteFileW((timerPath+L".update-restore").c_str());DeleteFileW((historyPath+L".update-restore").c_str());if(validationStageCreated){DeleteFileW((validationStage+L"\\EyeBreakReminder-UpdateManifest.json").c_str());DeleteFileW((validationStage+L"\\EyeBreakReminder-UpdateManifest.sig").c_str());DeleteFileW((validationStage+L"\\test-update-public-key.bin").c_str());DeleteFileW((validationStage+L"\\backup-0.dat").c_str());DeleteFileW((validationStage+L"\\backup-1.dat").c_str());DeleteFileW((validationStage+L"\\backup-2.dat").c_str());DeleteFileW((validationStage+L"\\transaction.ini").c_str());DeleteFileW((validationStage+L"\\transaction.ini.tmp").c_str());DeleteFileW((validationStage+L"\\transaction-state.ini").c_str());RemoveDirectoryW(validationStage.c_str());}RemoveDirectoryW(updatesRoot.c_str());RemoveDirectoryW(validationData.c_str());
