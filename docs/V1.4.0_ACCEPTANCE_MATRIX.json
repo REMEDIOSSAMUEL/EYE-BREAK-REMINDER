@@ -5,11 +5,41 @@
   "branch": "feature/v1.4.0-automatic-updater",
   "branch_head": "ce54ab0c47643b238bf7c8aa8dbfaba1130485b4",
   "branch_head_scope": "Latest implementation and focused recovery test head: ce54ab0c47643b238bf7c8aa8dbfaba1130485b4. Required PR validation 45597959048 passed this head; recovery run 45597959067 executed synthetic merge 84fd7bfc653dfcc1f20baee515f57489b1bc759f and installed historical baseline artifact 14695418078 with test-key fixtures. The production candidate source is 0f49949a9e753fcca390c25affc99d7698b1ecde; signed-metadata finalizer source is 61a9d4732ae757f9e2cd0c2fd408140fe69db163; final signed candidate is artifact 15007651099. This matrix/report update is documentation-only and does not alter the tested binaries or workflows. The branch head identifies the latest tested code, not a later documentation-only commit.",
+  "exact_production_recovery_and_repair": {
+    "report": "docs/V1.4.0_EXACT_PRODUCTION_RECOVERY_AND_REPAIR.md",
+    "candidate_artifact_id": 15007651099,
+    "candidate_source_commit": "0f49949a9e753fcca390c25affc99d7698b1ecde",
+    "candidate_executable_sha256": "3dd3fa4c8e9f6200780c7bf0c2340435c7b127ce6b6202b24857105f01f3719a",
+    "plain_reinstall_run_id": 45608037818,
+    "plain_reinstall_artifact_id": 15017969194,
+    "exact_process_recovery_run_id": 45608474782,
+    "exact_process_recovery_artifacts": {
+      "installer_start": 15019251948,
+      "after_replacement_before_relaunch": 15017834312,
+      "reinstall_with_pending_recovery": 15018552810
+    },
+    "exact_process_recovery_outcome": "Exact signed candidate coordinator and recovery helper used authentic v1.4.0 authorization with a lower-version confirmation-capable baseline fixture. Both fault boundaries and locked-file partial rollback, retry, repeated replay, restoration and cleanup as modeled passed. Reinstall with pending rollback restored the executable but left the captured command able to roll back the install.",
+    "repair_checkpoint_defect": "The exact candidate setup deletes the active timer checkpoint when the executable is absent from an otherwise registered installation. Settings and history are preserved. A narrow installer source correction passed a separate fixture check; artifact 15007651099 contains the original setup.",
+    "repair_correction_run_id": 45610331146,
+    "repair_correction_artifact_id": 15018533905,
+    "missing_recovery_coordinator_run_id": 45610728833,
+    "missing_recovery_coordinator_artifact_id": 15019568947,
+    "unusable_executable_backup_run_id": 45611194829,
+    "unusable_executable_backup_artifacts": {
+      "missing": 15019384278,
+      "corrupt": 15020087642
+    },
+    "damaged_recovery_outcome": "Ordinary reinstall restored and launched the exact application with an advancing timer, but did not resolve the genuine pending transaction or restore removed live settings/history. The exact helper rejected missing or corrupt executable backup. Missing helper prevented replay. Unrelated data and remaining backups survived.",
+    "candidate_replacement_required_for_installer_fix": true,
+    "genuine_windows_reboot": false,
+    "automatic_sign_in_dispatch": false,
+    "official_acceptance_rows_changed": 0
+  },
   "current_release_candidate": {
     "status": "Current seven-file signed candidate is independently verified and source-bound; acceptance/environment blockers remain.",
     "candidate_class": "PRODUCTION-AUTHENTICATED UPDATE CANDIDATE (Authenticode unsigned)",
     "publication_ready": false,
-    "readiness_scope": "The replacement candidate is signed and independently verified, but the full acceptance matrix remains 224 PASS / 0 FAIL / 1 NOT TESTED / 7 BLOCKED / 2 NOT APPLICABLE. FAIL-024 and ENV-005 still require a genuine guest reboot and automatic sign-in recovery. UN-009 remains NOT TESTED. Do not merge or publish while these project requirements remain unresolved.",
+    "readiness_scope": "The exact candidate is signed and independently verified. Its original setup reproduces a timer checkpoint loss on missing-EXE repair. A separately tested source correction requires a replacement signed candidate to ship. The matrix remains 224 PASS / 0 FAIL / 1 NOT TESTED / 7 BLOCKED / 2 NOT APPLICABLE. FAIL-024 and ENV-005 still require genuine guest reboot and automatic sign-in recovery. UN-009 remains NOT TESTED. Do not merge or publish.",
     "run_id": 45582714164,
     "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45582714164",
     "artifact_id": 15007651099,
