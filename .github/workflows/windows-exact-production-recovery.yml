@@ -22,6 +22,8 @@ jobs:
       fail-fast: false
       matrix: >-
         ${{ fromJSON(
+          contains(github.event.head_commit.message, '[repair-guard-only]') &&
+            '{"include":[{"scenario":"GuardedPendingRepair","boundary":"BeforeRelaunch","guarded":true},{"scenario":"ManualRepairRegression"}]}' ||
           contains(github.event.head_commit.message, '[repair-only]') &&
             '{"include":[{"scenario":"ManualRepairRegression"}]}' ||
           contains(github.event.head_commit.message, '[bad-backups-only]') &&
@@ -49,12 +51,12 @@ jobs:
             -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
             -EvidencePath 'build/exact-production-recovery/candidate.json'
       - name: Install the existing pinned NSIS compiler
-        if: matrix.scenario == 'ManualRepairRegression'
+        if: matrix.scenario == 'ManualRepairRegression' || matrix.guarded
         uses: negrutiu/nsis-install@9c575d44c2938a43e38a305caeb403de90303c60
         with:
           version: v3.11.7461.309
-      - name: Compile only the installer regression fixture and test checkpoint preservation
-        if: matrix.scenario == 'ManualRepairRegression'
+      - name: Compile only the installer regression fixture
+        if: matrix.scenario == 'ManualRepairRegression' || matrix.guarded
         shell: pwsh
         run: |
           $candidate = "$env:RUNNER_TEMP/exact-candidate/final-candidate"
@@ -62,6 +64,11 @@ jobs:
           Copy-Item -LiteralPath "$candidate/EyeBreakReminder.exe" -Destination release/
           & makensis /V2 (Resolve-Path -LiteralPath installer/setup.nsi).Path
           if ($LASTEXITCODE -ne 0) { throw 'Could not build the isolated installer regression fixture.' }
+      - name: Test checkpoint preservation on the installer regression fixture
+        if: matrix.scenario == 'ManualRepairRegression'
+        shell: pwsh
+        run: |
+          $candidate = "$env:RUNNER_TEMP/exact-candidate/final-candidate"
           $fixture = (Resolve-Path -LiteralPath release/EyeBreakReminder-Setup-x64.exe).Path
           ./tests/windows_exact_candidate_manual_repair.ps1 -CandidateDirectory $candidate `
             -RepairInstaller $fixture -EvidencePath 'build/exact-production-recovery/manual-repair-regression.json'
@@ -108,10 +115,12 @@ jobs:
           FAULT_BOUNDARY: ${{ matrix.boundary }}
           REINSTALL_FIRST: ${{ matrix.reinstall || false }}
           RECOVERY_DAMAGE: ${{ matrix.damage }}
+          GUARDED_REPAIR: ${{ matrix.guarded || false }}
         run: |
           $mode = @{}
           if ($env:REINSTALL_FIRST -eq 'true') { $mode.ReinstallBeforeRecovery = $true }
           if ($env:RECOVERY_DAMAGE) { $mode.RecoveryDamage = $env:RECOVERY_DAMAGE }
+          if ($env:GUARDED_REPAIR -eq 'true') { $mode.GuardedRepairInstaller = (Resolve-Path -LiteralPath release/EyeBreakReminder-Setup-x64.exe).Path }
           ./tests/windows_exact_candidate_recovery.ps1 -Phase Recover -FaultBoundary $env:FAULT_BOUNDARY `
             -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
             -BaselineInstaller "$env:RUNNER_TEMP/stable-setup.exe" `

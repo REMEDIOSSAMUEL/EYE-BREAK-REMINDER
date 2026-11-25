@@ -7,6 +7,7 @@ param(
   [Parameter(Mandatory)][string]$BaselineApplication,
   [Parameter(Mandatory)][string]$EvidencePath,
   [switch]$ReinstallBeforeRecovery,
+  [string]$GuardedRepairInstaller,
   [ValidateSet('None','MissingCoordinator','MissingBackup','CorruptBackup')][string]$RecoveryDamage = 'None'
 )
 
@@ -16,6 +17,9 @@ if ($ReinstallBeforeRecovery -and ($Phase -cne 'Recover' -or $FaultBoundary -cne
 }
 if ($RecoveryDamage -cne 'None' -and ($Phase -cne 'Recover' -or $FaultBoundary -cne 'BeforeRelaunch' -or $ReinstallBeforeRecovery)) {
   throw 'The damaged-transaction probe requires a separate post-install interruption.'
+}
+if ($GuardedRepairInstaller -and ($Phase -cne 'Recover' -or $FaultBoundary -cne 'BeforeRelaunch' -or $RecoveryDamage -cne 'None' -or $ReinstallBeforeRecovery)) {
+  throw 'The guarded repair regression requires its own post-install interruption.'
 }
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
     $env:GITHUB_SERVER_URL -cne 'https://github.com' -or
@@ -47,6 +51,7 @@ $testRoot = Assert-Child (Join-Path $runnerTemp "ebr-exact-$($env:GITHUB_RUN_ID)
 $EvidencePath = Assert-Child $EvidencePath $workspace
 $BaselineInstaller = Assert-Child $BaselineInstaller $runnerTemp
 $BaselineApplication = Assert-Child $BaselineApplication $runnerTemp
+if ($GuardedRepairInstaller) { $GuardedRepairInstaller = Assert-Child $GuardedRepairInstaller $workspace }
 $candidatePrefix = $runnerTemp.TrimEnd('\') + '\'
 $candidateRoot = if ([IO.Path]::GetFullPath($CandidateDirectory).StartsWith($candidatePrefix,[StringComparison]::OrdinalIgnoreCase)) {
   Assert-Child $CandidateDirectory $runnerTemp
@@ -447,6 +452,65 @@ try {
       Confirm ((Get-Sha (Join-Path $stage $name)) -ceq $candidateFiles[$name]) "Staged production authentication material is unchanged: $name"
     }
     Confirm-ExactBackups $stage $prior
+    if ($GuardedRepairInstaller) {
+      $repairHash = Get-Sha $GuardedRepairInstaller
+      Confirm ($repairHash -cne $candidateFiles['EyeBreakReminder-Setup-x64.exe']) 'Repair guard is tested with a separately identified installer' $repairHash
+      $liveBefore = @{}
+      foreach ($name in $profileNames) {
+        $file = Join-Path $data $name
+        if (Test-Path -LiteralPath $file) { $liveBefore[$name] = Get-Sha $file }
+      }
+      $exeBefore = Get-Sha $target
+      $uninstallerBefore = Get-Sha (Join-Path $install 'Uninstall.exe')
+      $uninstallBefore = (Read-Reg $uninstallKey 'DisplayVersion').Value
+      $otherValue = 'EyeBreakReminderHarnessUnrelated'
+      $foreign = '"C:\Missing-EBR-Harness\not-run.exe"'
+      $registry = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($runOnceKey, $true)
+      try {
+        Confirm (-not (Read-Reg $runOnceKey $otherValue)) 'Unrelated test registration does not preexist'
+        $registry.SetValue($otherValue, $foreign)
+        foreach ($mode in 'Owned','Repeated','Foreign','Missing','StagedManual') {
+          if ($mode -ceq 'Foreign') { $registry.SetValue($valueName, $foreign) }
+          if ($mode -ceq 'Missing') { $registry.DeleteValue($valueName) }
+          if ($mode -ceq 'StagedManual') { $registry.SetValue($valueName, $command.Command) }
+          $expected = (Read-Reg $runOnceKey $valueName).Value
+          $image = $GuardedRepairInstaller
+          if ($mode -ceq 'StagedManual') {
+            $image = Join-Path $stage 'EyeBreakReminder-Setup-x64.exe'
+            $savedSetup = Join-Path $testRoot 'original-signed-setup.exe'
+            Copy-Item -LiteralPath $image -Destination $savedSetup
+          }
+          try {
+            if ($mode -ceq 'StagedManual') { Copy-Item -LiteralPath $GuardedRepairInstaller -Destination $image -Force }
+            $repair = Start-Exact $image $testRoot @() -RawArguments "/S /D=$install"
+            Confirm ($repair.Process.WaitForExit(20000) -and $repair.Process.ExitCode -eq 20) "Guarded repair defers without reporting success: $mode" $repair.Process.ExitCode
+          } finally {
+            if ($mode -ceq 'StagedManual') { Copy-Item -LiteralPath $savedSetup -Destination $image -Force }
+          }
+          Confirm ((Read-Reg $runOnceKey $valueName).Value -ceq $expected -and
+            (Read-Reg $runOnceKey $otherValue).Value -ceq $foreign -and
+            (Read-Reg $uninstallKey 'DisplayVersion').Value -ceq $uninstallBefore -and
+            (Get-Sha $target) -ceq $exeBefore -and
+            (Get-Sha (Join-Path $install 'Uninstall.exe')) -ceq $uninstallerBefore -and
+            (Get-Sha (Join-Path $data 'unrelated.txt')) -ceq $prior.Neighbor -and
+            (Get-Sha (Join-Path $stage 'transaction-state.ini')) -ceq $original.Handoff.JournalHash -and
+            (Get-Sha (Join-Path $stage 'transaction.ini')) -ceq $original.Handoff.TransactionHash) "Refusal preserves installed files, registry, journal and unrelated data: $mode"
+          foreach ($name in $profileNames) {
+            $file = Join-Path $data $name
+            if ($liveBefore.ContainsKey($name)) {
+              Confirm ((Get-Sha $file) -ceq $liveBefore[$name]) "Refusal preserves live $name during $mode"
+            } else {
+              Confirm (-not (Test-Path -LiteralPath $file)) "Refusal leaves absent $name alone during $mode"
+            }
+          }
+        }
+      } finally {
+        $registry.SetValue($valueName, $command.Command)
+        $registry.DeleteValue($otherValue, $false)
+        $registry.Dispose()
+      }
+      Confirm-ExactBackups $stage $prior
+    }
     if ($RecoveryDamage -cne 'None') {
       $report.DamagedTransaction = [ordered]@{ Status = 'INCOMPLETE'; Damage = $RecoveryDamage }
       $damagedFile = if ($RecoveryDamage -ceq 'MissingCoordinator') { $command.Image } else { Join-Path $stage 'previous.exe' }
@@ -597,6 +661,21 @@ try {
     [void](Wait-For { -not (Test-Path -LiteralPath $stage) } 'restored app cleanup after the harness models Windows RunOnce deletion')
     Confirm (-not (Read-Reg $runOnceKey $valueName)) 'Recovery stage and exact registration are absent after modelled post-command removal'
     Confirm ([EbrRestartObservation]::Close($app.Process.Id) -and $app.Process.WaitForExit(10000)) 'Restored app exits normally'
+    if ($GuardedRepairInstaller) {
+      $timerBeforeRepair = Get-Sha (Join-Path $data 'timer.dat')
+      $repair = Start-Exact $GuardedRepairInstaller $testRoot @() -RawArguments "/S /D=$install"
+      Confirm ($repair.Process.WaitForExit(20000) -and $repair.Process.ExitCode -eq 0 -and
+        (Get-Sha $target) -ceq $candidateFiles['EyeBreakReminder.exe'] -and
+        (Read-Reg $uninstallKey 'DisplayVersion').Value -ceq '1.4.0') 'Guarded installer repairs and upgrades the executable after rollback finishes'
+      Confirm ((Get-Sha (Join-Path $data 'settings.ini')) -ceq $prior.Profile['settings.ini'] -and
+        (Get-Sha (Join-Path $data 'history.dat')) -ceq $prior.Profile['history.dat'] -and
+        (Get-Sha (Join-Path $data 'timer.dat')) -ceq $timerBeforeRepair -and
+        (Get-Sha (Join-Path $data 'unrelated.txt')) -ceq $prior.Neighbor -and
+        -not (Read-Reg $runOnceKey $valueName) -and -not (Test-Path -LiteralPath $stage)) 'Completed repair preserves restored data and checkpoint with no pending rollback'
+      $installed = Start-Exact $target $install @()
+      Confirm-Timer $installed 3600
+      Confirm ([EbrRestartObservation]::Close($installed.Process.Id) -and $installed.Process.WaitForExit(10000)) 'Repaired exact app exits normally'
+    }
     $report.Status = 'PASS'
   }
 } catch {

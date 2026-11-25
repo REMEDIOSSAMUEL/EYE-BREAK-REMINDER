@@ -5,7 +5,11 @@ Target x86-unicode
 !include "nsDialogs.nsh"
 !include "x64.nsh"
 !include "WinVer.nsh"
+!include "FileFunc.nsh"
 !define EB_PROJECT_ROOT "${__FILEDIR__}\.."
+!define EB_COORDINATOR_MUTEX "Local\EyeBreakReminder.UpdateCoordinator.1"
+!define EB_RUNONCE_KEY "Software\Microsoft\Windows\CurrentVersion\RunOnce"
+!define EB_RECOVERY_VALUE "!EyeBreakReminderUpdateRecovery"
 Name "Eye Break Reminder"
 OutFile "${EB_PROJECT_ROOT}\release\EyeBreakReminder-Setup-x64.exe"
 InstallDir "$LOCALAPPDATA\Programs\EyeBreakReminder"
@@ -38,6 +42,7 @@ UninstPage custom un.UserDataPageCreate un.UserDataPageLeave
 Var UnKeepDataRadio
 Var UnRemoveDataRadio
 Var UnRemoveUserData
+Var InstallMutex
 Function .onInit
   SetRegView 64
   ${IfNot} ${IsNativeAMD64}
@@ -86,6 +91,145 @@ Function un.UserDataPageLeave
     StrCpy $UnRemoveUserData 0
   ${EndIf}
 FunctionEnd
+; Keep the mutex handle open for the life of setup. The coordinator uses the
+; existence of this same named object to serialize updates and rollback.
+Function GuardPendingUpdate
+  System::Call 'kernel32::CreateMutexW(p 0, i 0, w "${EB_COORDINATOR_MUTEX}") p.r0 ?e'
+  Pop $1
+  StrCpy $InstallMutex $0
+  StrCmp $0 0 busy
+  StrCmp $1 183 0 standalone
+  Call IsCoordinatorSetup
+  Pop $0
+  StrCmp $0 1 allowed busy
+  standalone:
+    ; Query presence independently of the value type and content.
+    System::Call 'advapi32::RegOpenKeyExW(p 0x80000001, w "${EB_RUNONCE_KEY}", i 0, i 1, *p .r0) i.r1'
+    StrCmp $1 2 scan_journals
+    StrCmp $1 0 0 pending
+    System::Call 'advapi32::RegQueryValueExW(p r0, w "${EB_RECOVERY_VALUE}", p 0, p 0, p 0, p 0) i.r1'
+    System::Call 'advapi32::RegCloseKey(p r0) i'
+    StrCmp $1 2 scan_journals pending
+  scan_journals:
+    Call HasInterruptedJournal
+    Pop $0
+    StrCmp $0 1 pending allowed
+  pending:
+    SetErrorLevel 20
+    MessageBox MB_OK|MB_ICONINFORMATION "Eye Break Reminder has pending update recovery. Setup has made no changes. Let Windows finish recovery or contact support before reinstalling." /SD IDOK
+    Quit
+  busy:
+    SetErrorLevel 21
+    MessageBox MB_OK|MB_ICONINFORMATION "Another Eye Break Reminder setup, update, or recovery is running. Close it before running setup again." /SD IDOK
+    Quit
+  allowed:
+FunctionEnd
+; The authenticated coordinator already verified the signed package. Ordinary
+; setup cannot opt into this path with a command-line switch.
+Function IsCoordinatorSetup
+  ${GetFileName} "$EXEPATH" $0
+  StrCmp $0 "EyeBreakReminder-Setup-x64.exe" 0 rejected
+  ${GetParent} "$EXEDIR" $0
+  StrCmp $0 "$LOCALAPPDATA\EyeBreakReminder\updates" 0 rejected
+  System::Call 'kernel32::GetFileAttributesW(w r0) i.r1'
+  IntOp $1 $1 & 0x400
+  StrCmp $1 0 0 rejected
+  System::Call 'kernel32::GetFileAttributesW(w "$EXEDIR") i.r1'
+  IntOp $1 $1 & 0x400
+  StrCmp $1 0 0 rejected
+  ReadRegStr $1 HKCU "${EB_RUNONCE_KEY}" "${EB_RECOVERY_VALUE}"
+  StrCpy $2 '$\"$EXEDIR\coordinator.exe$\" --update-recover'
+  StrCmpS $1 $2 check_parent
+  StrCpy $2 '$2 $\"$EXEDIR\transaction.ini$\"'
+  StrCmpS $1 $2 0 rejected
+  check_parent:
+    Call GetLiveParentImage
+    Pop $0
+    StrCmp $0 "$EXEDIR\coordinator.exe" 0 rejected
+    Push 1
+    Return
+  rejected:
+    Push 0
+FunctionEnd
+Function GetLiveParentImage
+  StrCpy $7 ""
+  System::Call 'kernel32::GetCurrentProcessId() i.r0'
+  System::Call 'kernel32::CreateToolhelp32Snapshot(i 2, i 0) p.r1'
+  StrCmp $1 -1 done
+  ; This installer is x86 Unicode. PROCESSENTRY32W is 9 32-bit fields
+  ; followed by wchar_t[MAX_PATH].
+  System::Alloc 556
+  Pop $2
+  StrCmp $2 0 close_snapshot
+  System::Call '*$2(i 556)'
+  System::Call 'kernel32::Process32FirstW(p r1, p r2) i.r3'
+  next_process:
+    StrCmp $3 0 release_entry
+    System::Call '*$2(i, i, i.r4, i, i, i, i.r5)'
+    StrCmp $4 $0 query_parent
+    System::Call 'kernel32::Process32NextW(p r1, p r2) i.r3'
+    Goto next_process
+  query_parent:
+    StrCmp $5 0 release_entry
+    System::Call 'kernel32::OpenProcess(i 0x101000, i 0, i r5) p.r6'
+    StrCmp $6 0 release_entry
+    System::Call 'kernel32::WaitForSingleObject(p r6, i 0) i.r8'
+    StrCmp $8 258 0 close_parent
+    System::Call 'kernel32::QueryFullProcessImageNameW(p r6, i 0, w .r7, *i ${NSIS_MAX_STRLEN}) i.r8'
+    StrCmp $8 0 0 close_parent
+    StrCpy $7 ""
+  close_parent:
+    System::Call 'kernel32::CloseHandle(p r6) i'
+  release_entry:
+    System::Free $2
+  close_snapshot:
+    System::Call 'kernel32::CloseHandle(p r1) i'
+  done:
+    Push $7
+FunctionEnd
+; Windows may already have consumed RunOnce after an unsuccessful attempt.
+; Recognize the app's nonterminal journal without running the saved command.
+Function HasInterruptedJournal
+  StrCpy $5 0
+  StrCpy $6 "$LOCALAPPDATA\EyeBreakReminder\updates"
+  System::Call 'kernel32::GetFileAttributesW(w r6) i.r2'
+  IntOp $2 $2 & 0x400
+  StrCmp $2 0 0 journal_done
+  ClearErrors
+  FindFirst $0 $1 "$6\*"
+  IfErrors journal_done
+  next_stage:
+    StrLen $2 $1
+    StrCmp $2 38 0 advance_stage
+    StrCpy $3 "$6\$1"
+    System::Call 'kernel32::GetFileAttributesW(w r3) i.r2'
+    IntOp $2 $2 & 0x410
+    StrCmp $2 16 0 advance_stage
+    IfFileExists "$3\transaction.ini" 0 advance_stage
+    StrCpy $3 "$3\transaction-state.ini"
+    System::Call 'kernel32::GetFileAttributesW(w r3) i.r2'
+    IntOp $2 $2 & 0x410
+    StrCmp $2 0 0 advance_stage
+    ClearErrors
+    FileOpen $2 "$3" r
+    IfErrors advance_stage
+    FileRead $2 $4 64
+    FileClose $2
+    StrCmpS $4 "phase=installing$\n" journal_pending
+    StrCmpS $4 "phase=installed$\n" journal_pending
+    StrCmpS $4 "phase=cleaning$\n" journal_pending
+    StrCmpS $4 "phase=starting$\n" journal_pending
+  advance_stage:
+    ClearErrors
+    FindNext $0 $1
+    IfErrors close_search next_stage
+  journal_pending:
+    StrCpy $5 1
+  close_search:
+    FindClose $0
+  journal_done:
+    Push $5
+FunctionEnd
 !macro CloseRunningApp
   FindWindow $0 "EyeBreakReminder.Native"
   ${If} $0 != 0
@@ -103,6 +247,7 @@ Section "Eye Break Reminder (required)" MainSection
   SectionIn RO
   SetShellVarContext current
   SetRegView 64
+  Call GuardPendingUpdate
   !insertmacro CloseRunningApp
   ; A fresh install must not resume a timer left by an older uninstaller.
   ; Direct upgrades and repairs of the registered installation keep the timer.
