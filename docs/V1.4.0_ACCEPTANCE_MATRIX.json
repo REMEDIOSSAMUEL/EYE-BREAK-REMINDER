@@ -3,8 +3,8 @@
   "generated_on": "2026-11-25",
   "repository": "REMEDIOSSAMUEL/EYE-BREAK-REMINDER",
   "branch": "feature/v1.4.0-automatic-updater",
-  "branch_head": "ce54ab0c47643b238bf7c8aa8dbfaba1130485b4",
-  "branch_head_scope": "Latest implementation and focused recovery test head: ce54ab0c47643b238bf7c8aa8dbfaba1130485b4. Required PR validation 45597959048 passed this head; recovery run 45597959067 executed synthetic merge 84fd7bfc653dfcc1f20baee515f57489b1bc759f and installed historical baseline artifact 14695418078 with test-key fixtures. The production candidate source is 0f49949a9e753fcca390c25affc99d7698b1ecde; signed-metadata finalizer source is 61a9d4732ae757f9e2cd0c2fd408140fe69db163; final signed candidate is artifact 15007651099. This matrix/report update is documentation-only and does not alter the tested binaries or workflows. The branch head identifies the latest tested code, not a later documentation-only commit.",
+  "branch_head": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+  "branch_head_scope": "Frozen implementation/test source dfd8018b319bdfde498d4f23b2d1ca96d0a99145. Signed public metadata and verifier head 89510472a47c82862c313cb87d26fd74dd773153 passed required PR run 45650932354. The documentation snapshot uses those separate identities.",
   "exact_production_recovery_and_repair": {
     "final_correctness_campaign": {
       "verified_implementation_head": "da352986fb9477b33c3b3db805d50bac080cb321",
@@ -12,7 +12,10 @@
       "installer_guard_artifact_id": 15021274175,
       "checkpoint_regression_artifact_id": 15021558528,
       "fresh_recovery_run_id": 45615610788,
-      "fresh_recovery_artifacts": { "short": 15022915242, "long": 15021314259 },
+      "fresh_recovery_artifacts": {
+        "short": 15022915242,
+        "long": 15021314259
+      },
       "security_run_id": 45615610806,
       "required_pr_validation_run_id": 45615610697,
       "details": "Standalone setup defers before mutation with pending recovery. Fresh rollback protects different live settings/history and preflights backup digests. Corrected test-build process runs do not satisfy real reboot or sign-in. Artifact 15007651099 is historical and does not contain either correction."
@@ -41,33 +44,49 @@
       "corrupt": 15020087642
     },
     "damaged_recovery_outcome": "Ordinary reinstall restored and launched the exact application with an advancing timer, but did not resolve the genuine pending transaction or restore removed live settings/history. The exact helper rejected missing or corrupt executable backup. Missing helper prevented replay. Unrelated data and remaining backups survived.",
-    "candidate_replacement_required_for_installer_fix": true,
+    "candidate_replacement_required_for_installer_fix": false,
     "genuine_windows_reboot": false,
     "automatic_sign_in_dispatch": false,
-    "official_acceptance_rows_changed": 0
+    "official_acceptance_rows_changed": 0,
+    "campaign_historical_candidate_scope": "The original reinstall, fault injection and damage results in this object refer to artifact 15007651099.",
+    "final_signed_replacement": {
+      "artifact_id": 15041400454,
+      "candidate_source_commit": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+      "windows_finalizer_run_id": 45650942950,
+      "reports": {
+        "interruption": {
+          "assertions": 26,
+          "sha256": "7a1667a3e274c5a0df88364b36821c49503a2bde785ba49a8d5902c1e21ac13e"
+        },
+        "recovery": {
+          "assertions": 121,
+          "sha256": "41b57d14bb8d865de35a0f4df5543c250168451f5c276c8d476cd469a0627c8d"
+        }
+      }
+    }
   },
   "current_release_candidate": {
-    "status": "Current seven-file signed candidate is independently verified and source-bound; acceptance/environment blockers remain.",
+    "status": "Signed frozen replacement verified. Acceptance environment blockers remain.",
     "candidate_class": "PRODUCTION-AUTHENTICATED UPDATE CANDIDATE (Authenticode unsigned)",
     "publication_ready": false,
-    "readiness_scope": "The exact candidate is signed and independently verified. Its original setup reproduces a timer checkpoint loss on missing-EXE repair. A separately tested source correction requires a replacement signed candidate to ship. The matrix remains 224 PASS / 0 FAIL / 1 NOT TESTED / 7 BLOCKED / 2 NOT APPLICABLE. FAIL-024 and ENV-005 still require genuine guest reboot and automatic sign-in recovery. UN-009 remains NOT TESTED. Do not merge or publish.",
-    "run_id": 45582714164,
-    "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45582714164",
-    "artifact_id": 15007651099,
-    "artifact_download_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45582714164/artifacts/15007651099",
-    "artifact_bytes": 8861636,
+    "readiness_scope": "Publication remains held. FAIL-024 and ENV-005 require genuine isolated reboot and automatic sign-in recovery. UN-009 remains NOT TESTED. The official matrix remains 224 PASS, 0 FAIL, 1 NOT TESTED, 7 BLOCKED and 2 NOT APPLICABLE.",
+    "run_id": 45650942950,
+    "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45650942950",
+    "artifact_id": 15041400454,
+    "artifact_download_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45650942950/artifacts/15041400454",
+    "artifact_bytes": 8930754,
     "artifact_expired": false,
-    "artifact_expires_at": "2027-02-23T09:09:26Z",
-    "candidate_build_run_id": 45575765880,
-    "candidate_build_artifact_id": 15005217160,
-    "candidate_build_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45575765880/artifacts/15005217160",
-    "candidate_source_commit": "0f49949a9e753fcca390c25affc99d7698b1ecde",
-    "source_archive_commit": "0f49949a9e753fcca390c25affc99d7698b1ecde",
-    "finalization_source_commit": "61a9d4732ae757f9e2cd0c2fd408140fe69db163",
+    "artifact_expires_at": "2027-02-23T16:05:24Z",
+    "candidate_build_run_id": 45624936126,
+    "candidate_build_artifact_id": 15029531496,
+    "candidate_build_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45624936126/artifacts/15029531496",
+    "candidate_source_commit": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+    "source_archive_commit": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+    "finalization_source_commit": "89510472a47c82862c313cb87d26fd74dd773153",
     "tested_pr_head": null,
     "production_manifest_key_provisioned": true,
     "production_key_id": "p256-0aff97759ea95258",
-    "production_manifest_signature": "Present and independently verified; ECDSA P-256/SHA-256, 64-byte raw P1363; manifest SHA-256 88ec256d6c4bb8f0c52946b947cf8778e0966f8cfe84c9f83c551f9a61af84a6; signature SHA-256 c0906144d52623a4d428df0d69208a849102df731877bbcdb9d366d1f4031992.",
+    "production_manifest_signature": "PASS, embedded production key and Windows CNG, ECDSA P-256/SHA-256 raw 64-byte P1363. Manifest SHA-256 59b14f7c752459b2e4b3a844155acae6762842cea81fa817bfcda118cfdfd8f3; signature SHA-256 0194e9bf4506491741934626d7e47042e3d03fd814b937a1a534095b78587ead.",
     "owner_key_backup_status": "Owner confirms encrypted production-key backup. Independent backup restoration not performed.",
     "authenticode": {
       "EyeBreakReminder.exe": "NotSigned",
@@ -75,89 +94,88 @@
     },
     "files": [
       {
-        "name": "EyeBreakReminder.exe",
-        "bytes": 2901504,
-        "sha256": "3dd3fa4c8e9f6200780c7bf0c2340435c7b127ce6b6202b24857105f01f3719a",
-        "product_version": "1.4.0"
-      },
-      {
-        "name": "EyeBreakReminder-Setup-x64.exe",
-        "bytes": 1401842,
-        "sha256": "7df5c6f61cbb56d813e4eee989637e6fcf692d1879f1446d4776da5928e49c2a",
-        "product_version": "1.4.0"
-      },
-      {
         "name": "EyeBreakReminder-Portable-x64.zip",
-        "bytes": 1579253,
-        "sha256": "9337550cf5a2fc2b685672205654d8c674fb8440b01a0ce97c8762bd065f6341",
-        "product_version": null
-      },
-      {
-        "name": "EyeBreakReminder-Source.zip",
-        "bytes": 2971803,
-        "sha256": "c8971b3d32b8aad2bf634e40cf753f33b2430f7167effd93063c578e0e05480c",
+        "bytes": 1580566,
+        "sha256": "f1a34c4fa79044264aa7f9c8a3ef9734c727ae7af42971b75baeae60225f78ca",
         "product_version": null
       },
       {
         "name": "EyeBreakReminder-SHA256.txt",
         "bytes": 382,
-        "sha256": "ae6032f9810e7362a27a0b0b15405537aab4ff2fb7ce6efc3c4e97b42e7796df",
+        "sha256": "45819b9540d00c64534b919a7f9e0eec467f1910e81cc129ce960a7ea70dc7f2",
+        "product_version": null
+      },
+      {
+        "name": "EyeBreakReminder-Setup-x64.exe",
+        "bytes": 1403205,
+        "sha256": "c1d30c9d7f5ecf070fda86711eda7130c5f662fc27d98eab7b6ce9e7a6b6865a",
+        "product_version": "1.4.0"
+      },
+      {
+        "name": "EyeBreakReminder-Source.zip",
+        "bytes": 3032615,
+        "sha256": "e465c88c7deb76399bf2b166420294c622ff2c6b9f8e26bc05aecfc5196181d9",
         "product_version": null
       },
       {
         "name": "EyeBreakReminder-UpdateManifest.json",
         "bytes": 682,
-        "sha256": "88ec256d6c4bb8f0c52946b947cf8778e0966f8cfe84c9f83c551f9a61af84a6",
+        "sha256": "59b14f7c752459b2e4b3a844155acae6762842cea81fa817bfcda118cfdfd8f3",
         "product_version": null
       },
       {
         "name": "EyeBreakReminder-UpdateManifest.sig",
         "bytes": 64,
-        "sha256": "c0906144d52623a4d428df0d69208a849102df731877bbcdb9d366d1f4031992",
+        "sha256": "0194e9bf4506491741934626d7e47042e3d03fd814b937a1a534095b78587ead",
         "product_version": null
+      },
+      {
+        "name": "EyeBreakReminder.exe",
+        "bytes": 2905088,
+        "sha256": "90880be4b515af59967ff221e379ab5958d84c2e98f2ef50ac4cc5aecc9dc6a9",
+        "product_version": "1.4.0"
       }
     ],
-    "required_check_run_id": 138839527474,
-    "required_check_run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45505498411/job/138839527474",
+    "required_check_run_id": 139213621899,
+    "required_check_run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45616637987/job/139213621899",
     "required_check_name": "Core tests and Windows package",
-    "required_check_head_sha": "0f49949a9e753fcca390c25affc99d7698b1ecde",
-    "independent_verification_run_id": 45582714164,
-    "independent_verification_artifact_id": 15007920934,
-    "independent_verification_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45582714164/artifacts/15007920934",
-    "independent_verification": "PASS. A clean Windows runner downloaded all seven files, matched their exact identities, verified the embedded manifest key and Windows CNG signature, scanned the source archive, and matched the portable executable to the standalone EXE. An independent reviewer separately verified the clean-download report.",
-    "production_signed_transaction_artifact_id": 15007776608,
-    "production_signed_transaction_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45582714164/artifacts/15007776608",
-    "production_signed_transaction": "PASS, 21 assertions on a disposable GitHub-hosted Windows runner. The authentic manifest was accepted, a disposable test-key signature was rejected, the exact setup installed 1.3.0 to 1.4.0, settings/history/unrelated data were preserved, the application relaunched and the timer advanced. HostRebooted=false.",
-    "resource_soak_run_id": 45499840097,
-    "resource_soak_artifact_id": 14979951493,
-    "resource_soak_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45499840097/artifacts/14979951493",
-    "resource_soak": "PASS and exact-hash reuse verified by candidate run 45575765880: EXE SHA-256 3dd3fa4c8e9f6200780c7bf0c2340435c7b127ce6b6202b24857105f01f3719a; 110/110 cycles, 264 PASS, 0 FAIL, 0 NOT TESTED. The replacement candidate did not rerun the soak.",
-    "production_readiness": "Not ready for publication: FAIL-024 and ENV-005 remain blocked on genuine reboot/sign-in evidence and UN-009 remains not tested. The signed candidate itself is verified. No release/tag/merge occurred.",
+    "required_check_head_sha": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+    "independent_verification_run_id": 45650942950,
+    "independent_verification_artifact_id": 15039729368,
+    "independent_verification_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45650942950/artifacts/15039729368",
+    "independent_verification": "PASS. Separate Windows clean download and local review matched all seven hashes; CNG and embedded-key verification passed. The source archive matches frozen Git objects up to line endings.",
+    "production_signed_transaction_artifact_id": 15040891894,
+    "production_signed_transaction_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45650942950/artifacts/15040891894",
+    "production_signed_transaction": "PASS, four signed GUI updates, 91 assertions. Exact post-replacement interruption and manual RunOnce rollback plus guarded repair passed 26 and 121 assertions.",
+    "resource_soak_run_id": 45628377723,
+    "resource_soak_artifact_id": 15039728056,
+    "resource_soak_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45628377723/artifacts/15039728056",
+    "resource_soak": "PASS, exact EXE 90880be4b515af59967ff221e379ab5958d84c2e98f2ef50ac4cc5aecc9dc6a9; fresh 110/110 cycles, 264 PASS, 0 FAIL, 0 NOT TESTED.",
+    "production_readiness": "Publication remains held. FAIL-024 and ENV-005 require genuine isolated reboot and automatic sign-in recovery. UN-009 remains NOT TESTED. The official matrix remains 224 PASS, 0 FAIL, 1 NOT TESTED, 7 BLOCKED and 2 NOT APPLICABLE.",
     "production_candidate_finalizer_jobs": {
-      "run_id": 45582714164,
+      "run_id": 45650942950,
       "status": "success",
-      "jobs": 3,
-      "steps": 36,
-      "skipped_steps": 0
+      "jobs": 6,
+      "conditional_recovery_steps_skipped": 6
     },
     "production_candidate_acceptance_run": {
-      "run_id": 45575765880,
-      "status": "success",
-      "candidate_source_commit": "0f49949a9e753fcca390c25affc99d7698b1ecde",
-      "artifact_id": 15005217160,
-      "required_check_run_id": 138839527474
+      "run_id": 45624936126,
+      "status": "failure",
+      "candidate_source_commit": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+      "artifact_id": 15029531496,
+      "required_check_run_id": 139213621899
     },
     "pr_validation_after_metadata_commit": {
-      "run_id": 45582725377,
+      "run_id": 45650932354,
       "status": "success",
-      "head_sha": "61a9d4732ae757f9e2cd0c2fd408140fe69db163"
+      "head_sha": "89510472a47c82862c313cb87d26fd74dd773153"
     },
     "pr_status": {
       "number": 7,
       "state": "OPEN",
       "draft": true,
-      "head_sha": "8ab2a7948f966914cbdfd7829703f9a541fdafd4",
-      "head_sha_scope": "Head verified by required PR validation run 45602191178 after the documentation-only update; latest implementation-test head remains separately recorded at top level.",
+      "head_sha": "89510472a47c82862c313cb87d26fd74dd773153",
+      "head_sha_scope": "Required validation passed on the signed metadata commit before this documentation-only snapshot.",
       "merged": false
     },
     "published": false,
@@ -165,8 +183,46 @@
     "merged": false,
     "candidate_workflow_trigger": "workflow_dispatch",
     "candidate_workflow_branch": "feature/v1.4.0-automatic-updater",
-    "candidate_workflow_branch_head": "0f49949a9e753fcca390c25affc99d7698b1ecde",
-    "candidate_workflow_pr_head": null
+    "candidate_workflow_branch_head": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+    "candidate_workflow_pr_head": null,
+    "production_signed_transactions": {
+      "Preserve": {
+        "artifact_id": 15040891894,
+        "assertions": 21,
+        "sha256": "dca7769f363d0a517f2a966b02a9387b4b87703df15bcedb647cf3cd6c7ebf95"
+      },
+      "CleanKeepHistory": {
+        "artifact_id": 15040331792,
+        "assertions": 24,
+        "sha256": "8ef054197c97ae7f9a3f0b9a1e0744adaa10c0bf2d094e4510baa4f047d4649c"
+      },
+      "CleanDeleteHistory": {
+        "artifact_id": 15040647062,
+        "assertions": 25,
+        "sha256": "f4435b18a297b30d482b21c7ca797c1d830fd2b12e6e05284f4895d5e3cd812b"
+      },
+      "Portable": {
+        "artifact_id": 15040666350,
+        "assertions": 21,
+        "sha256": "420cbeaeb6d09a57effd7a8189577a946eb112a8d4915d58736051b57c5fcfc5"
+      }
+    },
+    "exact_signed_recovery": {
+      "interruption": {
+        "assertions": 26,
+        "sha256": "7a1667a3e274c5a0df88364b36821c49503a2bde785ba49a8d5902c1e21ac13e"
+      },
+      "recovery": {
+        "assertions": 121,
+        "sha256": "41b57d14bb8d865de35a0f4df5543c250168451f5c276c8d476cd469a0627c8d"
+      }
+    },
+    "candidate_revalidation": {
+      "run_id": 45628377723,
+      "status": "success",
+      "network_artifact_id": 15029466773,
+      "soak_artifact_id": 15039728056
+    }
   },
   "status_legend": [
     "PASS",
@@ -177,8 +233,8 @@
   ],
   "warning": "The matrix contains 224 PASS, 0 FAIL, 1 NOT TESTED, 7 BLOCKED and 2 NOT APPLICABLE. Final signed candidate artifact 15007651099 is independently verified and source-bound; publication is not ready because FAIL-024 and ENV-005 lack genuine reboot/sign-in evidence and UN-009 remains NOT TESTED. Latest supplemental recovery run 45597959067 used historical baseline 14695418078 and test-key fixtures, not the final signed candidate, and does not change official statuses. The resumed personal-desktop preflight for REG-008 and ENV-009 stopped before candidate launch because the Local AppData directory already exists; no personal data was changed. Publication also requires separate owner approval. branch_head identifies the latest tested code head; current repository HEAD is reported separately.",
   "current_security_completion": {
-    "source_commit": "ce54ab0c47643b238bf7c8aa8dbfaba1130485b4",
-    "candidate_source_commit": "0f49949a9e753fcca390c25affc99d7698b1ecde",
+    "source_commit": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+    "candidate_source_commit": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
     "working_tree_changes_committed": true,
     "pushed": true,
     "github_authentication": "PASS: authenticated access as REMEDIOSSAMUEL. The latest implementation/test head ce54ab0c47643b238bf7c8aa8dbfaba1130485b4 is pushed; PR #7 remains OPEN and DRAFT. No merge, tag, or release publication occurred.",
@@ -188,14 +244,14 @@
     "sec_028": "Historical previous-candidate result, run 44882543550: 25/25 rejection paths with actual process/filesystem/registry/settings-history/staging/coordinator observations; unchanged executable/data, zero helper launches and responsive application.",
     "fail_001": "Historical previous-candidate result, run 44882543550: genuine WinHTTP DNS failure against reserved .invalid origin, distinct from HTTP; actual GUI stayed responsive, timer advanced, executable/settings/history remained unchanged, no installer launched, and later official GitHub retry succeeded. The bounded 128-request resolver warm-up stabilized before leak measurement.",
     "un_009": "NOT TESTED. The latest Settings report used historical candidate artifact 14695418078 and the hosted disposable Windows session did not expose Settings > Apps > Installed Apps through UI Automation. Direct uninstaller execution does not satisfy the UI requirement; personal installation was not touched.",
-    "final_candidate": "Current authoritative seven-file production-authenticated candidate: finalizer run 45582714164 artifact 15007651099; candidate source/source archive commit 0f49949a9e753fcca390c25affc99d7698b1ecde; production key p256-0aff97759ea95258; standalone EXE SHA-256 3dd3fa4c8e9f6200780c7bf0c2340435c7b127ce6b6202b24857105f01f3719a. Independent clean-download verification artifact 15007920934; signed update transaction artifact 15007776608; exact-hash 110-cycle soak run 45499840097 artifact 14979951493. Artifact 14695418078 is historical recovery baseline only.",
+    "final_candidate": "Current authoritative artifact 15041400454 from frozen source dfd8018b319bdfde498d4f23b2d1ca96d0a99145. All seven hashes, production trust and current evidence IDs are in current_release_candidate.",
     "authenticode": "Not established: both PE files are Authenticode NotSigned. Optional under owner-approved v1.4.0 policy; SignPath approval is not a prerequisite. Initial installer trust limitation is documented.",
     "production_key_provisioning": "PASS. Existing owner-provisioned encrypted production identity and public key pair were verified; key ID p256-0aff97759ea95258 is embedded. Owner confirms encrypted production-key backup; independent restoration was not performed. Private key remains outside repository and GitHub workflows.",
     "publication_ready": false,
     "owner_policy_decision": "Owner-approved policy: ECDSA P-256/SHA-256 signed manifests and production verification mandatory; Authenticode optional; SignPath approval optional; unsigned initial installer allowed with clear disclosure.",
-    "production_manifest_verification": "PASS locally with public PEM and embedded root and independently on a clean GitHub runner with Windows CNG for current candidate artifact 15007651099. Its manifest/signature hashes are in current_release_candidate.",
-    "production_signed_transaction": "Current candidate transaction: PASS, 21 assertions on the finalizer run 45582714164 using signed candidate artifact 15007651099. It accepted the authentic production manifest, rejected a disposable test-key signature, installed 1.3.0 to 1.4.0, preserved settings/history/unrelated data, relaunched the application, and advanced the timer. Earlier portable and Clean Install transactions below used historical candidate artifact 14695418078 and are not attributed to the replacement binary.",
-    "production_candidate_workflow": "PASS: current finalizer run 45582714164 retained exact seven-file candidate artifact 15007651099 and independent clean-download verification with Windows CNG passed; signed update transaction passed 21 assertions. Candidate source is 0f49949a9e753fcca390c25affc99d7698b1ecde. Earlier security transactions below apply to the earlier candidate and remain historical evidence. Private key was not used in CI.",
+    "production_manifest_verification": "PASS with the embedded root and independently on a clean Windows runner using CNG (artifact 15039729368).",
+    "production_signed_transaction": "PASS, four signed GUI updates, 91 assertions. Exact post-replacement interruption and manual RunOnce rollback plus guarded repair passed 26 and 121 assertions.",
+    "production_candidate_workflow": "PASS: finalizer 45650942950. Six successful jobs produced the exact signed artifact, clean-download verification and four signed transactions. Private key was used only by protected local signing.",
     "harness_failure_and_fix": "Run 44881910064 exposed a test-harness assumption that settings.ini must exist after Clean Install; the app correctly removed the seeded file. The harness now accepts removal and verifies old settings do not survive. Run 44882169999 then observed one-time WinHTTP handles appear (204 to 208) near sample 90 of the 100-request warm-up. The bounded window was extended to 128 samples. In run 44882543550, DNS, SEC-028, portable update and both clean-install/history scenarios all passed; no product defect or candidate binary change occurred."
   },
   "requirements": [
@@ -2114,7 +2170,7 @@
       "implementation_status": "ENVIRONMENT BLOCKED: the requested native Windows 11 x64 or guest reboot capability is not available on the authorized test systems.",
       "required_tests": "Genuine reboot/re-sign-in and RunOnce execution",
       "actual_verification_evidence": "Actual OS-restart recovery still requires an authorized persistent guest. No self-hosted runner, suitable licensed Windows media, or authorized persistent Windows 11 x64 desktop/guest is available. The hosted Windows Server 2025 process-recovery workflow does not reboot Windows and cannot satisfy FAIL-024. Latest process recovery run 45597959067 completed on Windows Server 2025 in the same boot; raw Short/Long reports explicitly record GenuineWindowsReboot=false and WindowsSignInInvocation=false. No authorized persistent Windows 11 x64 guest or licensed media is available. Status remains BLOCKED.",
-      "supplemental_verification_evidence": "Source review and strict syntax checks plus focused Windows Server 2025 Short/Unicode-long process-recovery runs passed at source/test head e2ca0d5f259aeb23e8665d22f7b35ae0063fea48: run 45494673431, artifacts 14968257225 and 14968575694. Independent raw-report review counted 122 unique recovery assertions, exact registered command replay, process termination/retry, backup and user-data integrity, final app identity and timer progression. Genuine reboot was false; this is supplemental evidence, not a FAIL-024 PASS. Details and report hashes are in docs/V1.4.0_RESTART_RECOVERY_AND_RUNONCE_VERIFICATION.md. A future guest reboot needs an authorized persistent guest and explicit approval before the deliberate reboot. Repeat run 45582725295 (Short 43/43, Long 45/45 recovery assertions) re-exercised fresh-process recovery, locked-file partial restore, backup/user-data verification, and exact command replay; report hashes are recorded in docs/V1.4.0_RESTART_RECOVERY_AND_RUNONCE_VERIFICATION.md. It uses historical baseline artifact 14695418078 and test-key successor fixtures, duplicates earlier scenarios, and adds no unique acceptance row. GenuineWindowsReboot=false; FAIL-024 remains BLOCKED. Latest focused recovery run 45597959067 at tested PR head ce54ab0c47643b238bf7c8aa8dbfaba1130485b4 used synthetic merge 84fd7bfc653dfcc1f20baee515f57489b1bc759f, historical installed baseline artifact 14695418078, and disposable test-key fixtures. Short reports 17/17 interruption plus 43/43 recovery assertions; Long reports 17/17 plus 45/45. Each pair used the same boot/session and distinct processes; GenuineWindowsReboot=false and WindowsSignInInvocation=false. Raw report hashes are in the recovery verification report. No automatic Windows dispatch or official PASS.",
+      "supplemental_verification_evidence": "Source review and strict syntax checks plus focused Windows Server 2025 Short/Unicode-long process-recovery runs passed at source/test head e2ca0d5f259aeb23e8665d22f7b35ae0063fea48: run 45494673431, artifacts 14968257225 and 14968575694. Independent raw-report review counted 122 unique recovery assertions, exact registered command replay, process termination/retry, backup and user-data integrity, final app identity and timer progression. Genuine reboot was false; this is supplemental evidence, not a FAIL-024 PASS. Details and report hashes are in docs/V1.4.0_RESTART_RECOVERY_AND_RUNONCE_VERIFICATION.md. A future guest reboot needs an authorized persistent guest and explicit approval before the deliberate reboot. Repeat run 45582725295 (Short 43/43, Long 45/45 recovery assertions) re-exercised fresh-process recovery, locked-file partial restore, backup/user-data verification, and exact command replay; report hashes are recorded in docs/V1.4.0_RESTART_RECOVERY_AND_RUNONCE_VERIFICATION.md. It uses historical baseline artifact 14695418078 and test-key successor fixtures, duplicates earlier scenarios, and adds no unique acceptance row. GenuineWindowsReboot=false; FAIL-024 remains BLOCKED. Latest focused recovery run 45597959067 at tested PR head ce54ab0c47643b238bf7c8aa8dbfaba1130485b4 used synthetic merge 84fd7bfc653dfcc1f20baee515f57489b1bc759f, historical installed baseline artifact 14695418078, and disposable test-key fixtures. Short reports 17/17 interruption plus 43/43 recovery assertions; Long reports 17/17 plus 45/45. Each pair used the same boot/session and distinct processes; GenuineWindowsReboot=false and WindowsSignInInvocation=false. Raw report hashes are in the recovery verification report. No automatic Windows dispatch or official PASS. Final signed artifact 15041400454, finalizer 45650942950, report artifact 15040891894: 26 interruption and 121 recovery/repair assertions passed. Same boot/session and manual replay. GenuineWindowsReboot=false and WindowsSignInInvocation=false.",
       "environment": "GitHub-hosted Windows Server 2025 Datacenter x64 build 26100; disposable user profile and test-signed update fixture. Fresh processes within one boot; no restart. No destructive host action. Repeat workflow run 45582725295 at PR head 61a9d47 used synthetic merge commit 36e9cbca4046ea5bd3ce7efb2be87c45ec38f792, the historical installed candidate artifact 14695418078, and test-key successor fixtures; one Windows boot/session per job. Latest repeat: test PR head ce54ab0c47643b238bf7c8aa8dbfaba1130485b4, recovery merge 84fd7bfc653dfcc1f20baee515f57489b1bc759f, historical baseline 14695418078 and test-key fixtures; no reboot/sign-in.",
       "tested_source_commit": null,
       "tested_binary_sha256": null,
@@ -3322,7 +3378,7 @@
       "implementation_status": "ENVIRONMENTAL VALIDATION REQUIREMENT; not an application feature.",
       "required_tests": "Actual reboot, sign-in and RunOnce evidence",
       "actual_verification_evidence": "No authorized persistent Windows 11 x64 guest with real sign-in control was available for actual reboot/sign-in testing. Windows did not automatically invoke RunOnce in any test. Runs 45494673431 used fresh processes inside a single Windows Server 2025 job and never restarted or signed out. The personal laptop was not restarted. Latest process recovery run 45597959067 records WindowsSignInInvocation=false and GenuineWindowsReboot=false in both layouts; it used the historical baseline and test-key fixtures in one boot, with no Windows sign-in dispatch. The exact HKCU RunOnce command was manually replayed; Windows did not dispatch it at sign-in. No authorized persistent Windows 11 x64 guest is available. Status remains BLOCKED.",
-      "supplemental_verification_evidence": "At source/test head e2ca0d5f259aeb23e8665d22f7b35ae0063fea48, run 45494673431 captured the exact RunOnce value created by the real coordinator in both path layouts and manually executed the actual value in a fresh process; the command recovered successfully and was independently reviewed in artifacts 14968257225 and 14968575694. This proves command validity and recovery only, not automatic Windows invocation. FAIL-024/ENV-005 remain BLOCKED. See docs/V1.4.0_RESTART_RECOVERY_AND_RUNONCE_VERIFICATION.md. Repeat run 45582725295 reports exact registered commands and successful manual replay in fresh processes, with 43/43 and 45/45 recovery assertions. Report hashes and compact/full command lengths are recorded in docs/V1.4.0_RESTART_RECOVERY_AND_RUNONCE_VERIFICATION.md. This repeats prior scenarios and is not automatic Windows sign-in evidence. No reboot or sign-in occurred; ENV-005 remains BLOCKED. Latest focused recovery run 45597959067 at tested PR head ce54ab0c47643b238bf7c8aa8dbfaba1130485b4 used synthetic merge 84fd7bfc653dfcc1f20baee515f57489b1bc759f, historical installed baseline artifact 14695418078, and disposable test-key fixtures. Short reports 17/17 interruption plus 43/43 recovery assertions; Long reports 17/17 plus 45/45. Each pair used the same boot/session and distinct processes; GenuineWindowsReboot=false and WindowsSignInInvocation=false. Raw report hashes are in the recovery verification report. No automatic Windows dispatch or official PASS.",
+      "supplemental_verification_evidence": "At source/test head e2ca0d5f259aeb23e8665d22f7b35ae0063fea48, run 45494673431 captured the exact RunOnce value created by the real coordinator in both path layouts and manually executed the actual value in a fresh process; the command recovered successfully and was independently reviewed in artifacts 14968257225 and 14968575694. This proves command validity and recovery only, not automatic Windows invocation. FAIL-024/ENV-005 remain BLOCKED. See docs/V1.4.0_RESTART_RECOVERY_AND_RUNONCE_VERIFICATION.md. Repeat run 45582725295 reports exact registered commands and successful manual replay in fresh processes, with 43/43 and 45/45 recovery assertions. Report hashes and compact/full command lengths are recorded in docs/V1.4.0_RESTART_RECOVERY_AND_RUNONCE_VERIFICATION.md. This repeats prior scenarios and is not automatic Windows sign-in evidence. No reboot or sign-in occurred; ENV-005 remains BLOCKED. Latest focused recovery run 45597959067 at tested PR head ce54ab0c47643b238bf7c8aa8dbfaba1130485b4 used synthetic merge 84fd7bfc653dfcc1f20baee515f57489b1bc759f, historical installed baseline artifact 14695418078, and disposable test-key fixtures. Short reports 17/17 interruption plus 43/43 recovery assertions; Long reports 17/17 plus 45/45. Each pair used the same boot/session and distinct processes; GenuineWindowsReboot=false and WindowsSignInInvocation=false. Raw report hashes are in the recovery verification report. No automatic Windows dispatch or official PASS. Final signed artifact 15041400454, finalizer 45650942950, report artifact 15040891894: 26 interruption and 121 recovery/repair assertions passed. Same boot/session and manual replay. GenuineWindowsReboot=false and WindowsSignInInvocation=false.",
       "environment": "GitHub-hosted Windows Server 2025 Datacenter x64 build 26100; single boot/session per job; manual exact-command invocation only. No reboot, sign-out, or personal host action. Repeat workflow run 45582725295 at PR head 61a9d47 used synthetic merge commit 36e9cbca4046ea5bd3ce7efb2be87c45ec38f792 and completed in one Windows Server 2025 boot/session per job. The actual registered RunOnce command was manually executed; no sign-in dispatch. Latest repeat: test PR head ce54ab0c47643b238bf7c8aa8dbfaba1130485b4, recovery merge 84fd7bfc653dfcc1f20baee515f57489b1bc759f, historical baseline 14695418078 and test-key fixtures; no reboot/sign-in.",
       "tested_source_commit": null,
       "tested_binary_sha256": null,
@@ -3944,10 +4000,10 @@
       "description": "Final candidate exact identity and hashes",
       "implementation_status": "REPOSITORY/CI STATE REQUIREMENT; verified remote evidence is tracked separately.",
       "required_tests": "Clean downloaded artifacts, full manifest, version and source snapshot",
-      "actual_verification_evidence": "PASS: current exact seven-file production-authenticated candidate is finalizer run 45582714164 artifact 15007651099. Independent clean-runner verification artifact 15007920934 and a separate local rehash matched all seven recorded sizes and SHA-256 values. Source archive provenance is commit 0f49949a9e753fcca390c25affc99d7698b1ecde; canonical manifest and ECDSA P-256/SHA-256 signature verified against embedded production key p256-0aff97759ea95258 using Windows CNG; portable executable matches standalone; setup and portable asset identities match; source archive scan passed. Exact values are in current_release_candidate.files. Authenticode is NotSigned under approved policy. Historical artifact 14695418078 is not the final candidate.",
-      "environment": "Finalizer run 45582714164 on GitHub Actions; independent clean Windows runner artifact 15007920934; local fresh-directory rehash of all seven candidate files.",
-      "tested_source_commit": "0f49949a9e753fcca390c25affc99d7698b1ecde",
-      "tested_binary_sha256": "3dd3fa4c8e9f6200780c7bf0c2340435c7b127ce6b6202b24857105f01f3719a",
+      "actual_verification_evidence": "PASS. Exact signed candidate 15041400454 from source dfd8018b319bdfde498d4f23b2d1ca96d0a99145. Independent clean download artifact 15039729368 and local verifier matched all seven hashes, production manifest signature, source archive and portable executable. Finalizer run 45650942950.",
+      "environment": "GitHub Actions Windows independent audit artifact 15039729368 and local artifact review.",
+      "tested_source_commit": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+      "tested_binary_sha256": "90880be4b515af59967ff221e379ab5958d84c2e98f2ef50ac4cc5aecc9dc6a9",
       "status": "PASS",
       "implementation_evidence": [
         ".github/workflows/",
@@ -4203,48 +4259,48 @@
   },
   "generated_at_utc": "2026-11-25T11:18:31Z",
   "latest_validation": {
-    "latest_implementation_test_head": "ce54ab0c47643b238bf7c8aa8dbfaba1130485b4",
-    "candidate_source_commit": "0f49949a9e753fcca390c25affc99d7698b1ecde",
-    "candidate_acceptance_run_id": 45575765880,
-    "candidate_acceptance_run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45575765880",
-    "candidate_acceptance_status": "PASS: all required candidate gates passed; exact 110-cycle soak reuse was validated against the matching executable hash. Windows Settings uninstall remains NOT TESTED.",
-    "required_ci_run_id": 138839527474,
-    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45505498411/job/138839527474",
-    "required_ci_status": "PASS: Core tests and Windows package on candidate source commit 0f49949a9e753fcca390c25affc99d7698b1ecde.",
-    "pr_validation_run_id": 45597959048,
-    "pr_validation_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45597959048",
-    "pr_validation_status": "PASS: required Core tests and Windows package on test-only PR head ce54ab0c47643b238bf7c8aa8dbfaba1130485b4.",
+    "latest_implementation_test_head": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+    "candidate_source_commit": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+    "candidate_acceptance_run_id": 45624936126,
+    "candidate_acceptance_run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45624936126",
+    "candidate_acceptance_status": "Original release discovery gate failed before transfer. Scoped retained-artifact WinHTTP validation and fresh exact-executable soak passed in run 45628377723.",
+    "required_ci_run_id": 139213621899,
+    "required_ci_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45616637987/job/139213621899",
+    "required_ci_status": "PASS: core and Windows package on frozen source dfd8018b319bdfde498d4f23b2d1ca96d0a99145.",
+    "pr_validation_run_id": 45650932354,
+    "pr_validation_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45650932354",
+    "pr_validation_status": "PASS on public signing metadata and verifier head 89510472a47c82862c313cb87d26fd74dd773153.",
     "latest_documentation_pr_validation_run_id": 45602191178,
     "latest_documentation_pr_validation_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45602191178",
     "latest_documentation_pr_validation_head": "8ab2a7948f966914cbdfd7829703f9a541fdafd4",
     "latest_documentation_pr_validation_status": "PASS: Core tests and Windows package on the documentation-only commit. This workflow did not rebuild or replace the authoritative production candidate.",
-    "security_validation_run_id": 45591900988,
-    "security_validation_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45591900988",
-    "security_validation_status": "Latest completed security run 45591900988 passed on prior test-only head 3594d94; artifact 15012335521 contains transactions using historical candidate 14695418078. It is separate from the current candidate's finalizer transaction artifact 15007776608. A duplicate security run after test-only commit ce54ab0 was canceled.",
-    "recovery_validation_run_id": 45597959067,
-    "recovery_validation_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45597959067",
-    "recovery_pr_head": "ce54ab0c47643b238bf7c8aa8dbfaba1130485b4",
-    "recovery_workflow_merge_commit": "84fd7bfc653dfcc1f20baee515f57489b1bc759f",
+    "security_validation_run_id": 45650932307,
+    "security_validation_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45650932307",
+    "security_validation_status": "PASS on signing-metadata PR head. Final exact candidate runtime assurance comes from finalizer 45650942950 and its independent and signed transaction artifacts.",
+    "recovery_validation_run_id": 45616637804,
+    "recovery_validation_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45616637804",
+    "recovery_pr_head": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+    "recovery_workflow_merge_commit": "e8684fdb4d64b71bd2daf67805da5e29f52c306d",
     "recovery_candidate_artifact_id": 14695418078,
-    "recovery_validation_status": "PASS supplemental only: Short 17/17 interruption + 43/43 recovery; Long 17/17 + 45/45. Both jobs completed every step, each ran 184 Windows updater assertions and 76 portable integration assertions. Historical baseline artifact 14695418078, ephemeral test-key fixtures, and synthetic merge 84fd7bfc653dfcc1f20baee515f57489b1bc759f; same boot/session per path pair, fresh recovery process, exact captured RunOnce command manually replayed. No OS dispatch, reboot, or sign-in. Three added negative guard assertions passed. No official acceptance row changed.",
+    "recovery_validation_status": "PASS supplemental: Short delete-history 17/79; Long retain-history 17/81. Same boot and session with fresh process and test-key fixtures. Long retained seeded history byte-for-byte through the locked-file retry.",
     "recovery_report_hashes": {
-      "ShortInterrupted": "12159b582bad94aa99e7b9b967e7ce233487cb80e24e0ae8b5e2f1ce4901dc2e",
-      "ShortRecovered": "aa0c5722ce2401b3a33e5a7916ba544ff1369684d162c7b0fd42b5c8e8a91c6a",
-      "LongInterrupted": "26b6e7fc16fc452a4555a0cc32649162f9f456cd9680614d5fb8b44a5ba74485",
-      "LongRecovered": "fa2c2ed5a3bdf3b27f3ab00673d6bc12ede29589f95ca90c503fd867ae5d019a"
+      "ShortInterrupted": "b7ee58bf2d7d8b9372238796442aeca8766dc478d4bcff8c2f7faee885533187",
+      "ShortRecovered": "46ff7872e3f24db8f13f5706de184e9613cac17b22d001d533e6dfa2db01e993",
+      "LongInterrupted": "1c69a57f4bb0f9a91fd462d8f28549d2c2008234f4b09b883429fb59560e9bbf",
+      "LongRecovered": "35163f285143ad281aff53195f59c5861eb7d73353d20aa7e4dcba14f4d1c84d"
     },
-    "production_candidate_finalizer_run_id": 45582714164,
-    "production_candidate_finalizer_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45582714164",
-    "candidate_artifact_id": 15007651099,
-    "candidate_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45582714164/artifacts/15007651099",
-    "unsigned_candidate_artifact_id": 15005217160,
-    "independent_verification_artifact_id": 15007920934,
-    "production_transaction_artifact_id": 15007776608,
-    "manifest_sha256": "88ec256d6c4bb8f0c52946b947cf8778e0966f8cfe84c9f83c551f9a61af84a6",
-    "signature_sha256": "c0906144d52623a4d428df0d69208a849102df731877bbcdb9d366d1f4031992",
-    "resource_soak_run_id": 45499840097,
-    "resource_soak_artifact_id": 14979951493,
-    "resource_soak_status": "PASS: exact executable hash, 110/110 cycles, 264 PASS, reused by the successful candidate run.",
+    "production_candidate_finalizer_run_id": 45650942950,
+    "production_candidate_finalizer_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45650942950",
+    "candidate_artifact_id": 15041400454,
+    "candidate_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45650942950/artifacts/15041400454",
+    "unsigned_candidate_artifact_id": 15029531496,
+    "independent_verification_artifact_id": 15039729368,
+    "production_transaction_artifact_id": 15040891894,
+    "manifest_sha256": "59b14f7c752459b2e4b3a844155acae6762842cea81fa817bfcda118cfdfd8f3",
+    "signature_sha256": "0194e9bf4506491741934626d7e47042e3d03fd814b937a1a534095b78587ead",
+    "resource_soak_run_id": 45628377723,
+    "resource_soak_artifact_id": 15039728056,
+    "resource_soak_status": "PASS, exact EXE 90880be4b515af59967ff221e379ab5958d84c2e98f2ef50ac4cc5aecc9dc6a9; fresh 110/110 cycles, 264 PASS, 0 FAIL, 0 NOT TESTED.",
     "settings_uninstall_run_id": 45602191169,
     "settings_uninstall_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45602191169",
     "settings_uninstall_artifact_id": 15016595854,
@@ -4258,35 +4314,35 @@
       "Exact candidate Shell notification display and activation probe"
     ],
     "main_ruleset": "Ruleset 27397921 active, required Core tests and Windows package, strict checks, no bypass actors.",
-    "pull_request": "PR #7 is OPEN/DRAFT at workflow head ce54ab0c47643b238bf7c8aa8dbfaba1130485b4; no merge.",
+    "pull_request": "PR #7 open and draft. Required validation passed on 89510472a47c82862c313cb87d26fd74dd773153.",
     "publication": "No v1.4.0 tag or release exists; stable remains v1.3.0.",
-    "security_validation_artifact_id": 15012335521,
     "recovery_artifact_ids": {
-      "Short": 15014626638,
-      "Long": 15013324449
-    }
+      "Short": 15022308173,
+      "Long": 15022626793
+    },
+    "historical_security_validation_artifact_id": 15012335521
   },
   "current_campaign_validation": {
-    "tested_pr_head": "ce54ab0c47643b238bf7c8aa8dbfaba1130485b4",
-    "candidate_source_commit": "0f49949a9e753fcca390c25affc99d7698b1ecde",
-    "finalization_source_commit": "61a9d4732ae757f9e2cd0c2fd408140fe69db163",
-    "candidate_acceptance_run_id": 45575765880,
-    "candidate_acceptance_status": "PASS: replacement production candidate gates passed at candidate source commit 0f49949; final executable hash is 3dd3fa4c8e9f6200780c7bf0c2340435c7b127ce6b6202b24857105f01f3719a.",
-    "finalizer_run_id": 45582714164,
-    "finalizer_artifact_id": 15007651099,
-    "finalizer_status": "PASS: three jobs, 36 steps, zero skipped; signed candidate, clean-download independent audit, and production signed transaction passed.",
-    "security_run_id": 45591900988,
-    "security_status": "Latest completed security run 45591900988 passed on prior docs-only head 3594d94; its separate signed transactions use historical candidate 14695418078. A duplicate security workflow triggered by the test-only commit was canceled; current candidate production transaction remains finalizer 45582714164/artifact 15007776608.",
-    "recovery_run_id": 45597959067,
-    "recovery_status": "PASS supplemental only: Short 17/17 + 43/43; Long 17/17 + 45/45. Each path ran 184 Windows updater and 76 portable integration assertions. Historical baseline 14695418078, test-key fixtures, synthetic merge 84fd7bfc653dfcc1f20baee515f57489b1bc759f; same boot/session and fresh-process recovery, exact command manually replayed. Genuine reboot/sign-in/automatic dispatch false. Three new guard assertions passed. No acceptance status changed.",
-    "recovery_pr_head": "ce54ab0c47643b238bf7c8aa8dbfaba1130485b4",
-    "recovery_workflow_merge_commit": "84fd7bfc653dfcc1f20baee515f57489b1bc759f",
+    "tested_pr_head": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+    "candidate_source_commit": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+    "finalization_source_commit": "89510472a47c82862c313cb87d26fd74dd773153",
+    "candidate_acceptance_run_id": 45624936126,
+    "candidate_acceptance_status": "Original release discovery gate failed before transfer. Scoped retained-artifact WinHTTP validation and fresh exact-executable soak passed in run 45628377723.",
+    "finalizer_run_id": 45650942950,
+    "finalizer_artifact_id": 15041400454,
+    "finalizer_status": "PASS. Six jobs succeeded and all four signed scenarios passed. Six fault-only steps were intentionally inapplicable outside Preserve.",
+    "security_run_id": 45650932307,
+    "security_status": "PASS on signing-metadata PR head. Final exact candidate runtime assurance comes from finalizer 45650942950 and its independent and signed transaction artifacts.",
+    "recovery_run_id": 45616637804,
+    "recovery_status": "PASS supplemental: Short delete-history 17/79; Long retain-history 17/81. Same boot and session with fresh process and test-key fixtures. Long retained seeded history byte-for-byte through the locked-file retry.",
+    "recovery_pr_head": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
+    "recovery_workflow_merge_commit": "e8684fdb4d64b71bd2daf67805da5e29f52c306d",
     "recovery_candidate_artifact_id": 14695418078,
     "recovery_report_sha256": {
-      "ShortInterrupted": "12159b582bad94aa99e7b9b967e7ce233487cb80e24e0ae8b5e2f1ce4901dc2e",
-      "ShortRecovered": "aa0c5722ce2401b3a33e5a7916ba544ff1369684d162c7b0fd42b5c8e8a91c6a",
-      "LongInterrupted": "26b6e7fc16fc452a4555a0cc32649162f9f456cd9680614d5fb8b44a5ba74485",
-      "LongRecovered": "fa2c2ed5a3bdf3b27f3ab00673d6bc12ede29589f95ca90c503fd867ae5d019a"
+      "ShortInterrupted": "b7ee58bf2d7d8b9372238796442aeca8766dc478d4bcff8c2f7faee885533187",
+      "ShortRecovered": "46ff7872e3f24db8f13f5706de184e9613cac17b22d001d533e6dfa2db01e993",
+      "LongInterrupted": "1c69a57f4bb0f9a91fd462d8f28549d2c2008234f4b09b883429fb59560e9bbf",
+      "LongRecovered": "35163f285143ad281aff53195f59c5861eb7d73353d20aa7e4dcba14f4d1c84d"
     },
     "settings_uninstall_run_id": 45591900759,
     "settings_uninstall_artifact_id": 15012021964,
@@ -4330,10 +4386,25 @@
     "recovery_artifact_ids": {
       "Short": 15014626638,
       "Long": 15013324449
+    },
+    "final_signed_recovery": {
+      "artifact_id": 15040891894,
+      "genuine_windows_reboot": false,
+      "automatic_sign_in_dispatch": false,
+      "reports": {
+        "interruption": {
+          "assertions": 26,
+          "sha256": "7a1667a3e274c5a0df88364b36821c49503a2bde785ba49a8d5902c1e21ac13e"
+        },
+        "recovery": {
+          "assertions": 121,
+          "sha256": "41b57d14bb8d865de35a0f4df5543c250168451f5c276c8d476cd469a0627c8d"
+        }
+      }
     }
   },
-  "latest_pr_head_sha": "8ab2a7948f966914cbdfd7829703f9a541fdafd4",
-  "latest_pr_head_sha_scope": "Latest PR head whose required validation completed when this matrix snapshot was prepared. The latest implementation-test head remains ce54ab0c47643b238bf7c8aa8dbfaba1130485b4; candidate source remains 0f49949a9e753fcca390c25affc99d7698b1ecde.",
+  "latest_pr_head_sha": "89510472a47c82862c313cb87d26fd74dd773153",
+  "latest_pr_head_sha_scope": "Required PR validation on the authenticated metadata and verifier commit before this documentation-only snapshot.",
   "latest_pr_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7",
   "historical_release_candidate_pre_security": {
     "status": "No authoritative production candidate for the signed-manifest source exists. The historical candidate remains valid only for its recorded pre-security tests. Current source is fail-closed because the production trust key is unprovisioned. Current CI and focused security/resource tests pass, and signed test-key transactions pass, but production metadata and a complete final asset set are unavailable.",
