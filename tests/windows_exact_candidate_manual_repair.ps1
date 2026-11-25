@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$CandidateDirectory,
-    [Parameter(Mandatory)][string]$EvidencePath
+    [Parameter(Mandatory)][string]$EvidencePath,
+    [string]$RepairInstaller
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,6 +92,13 @@ foreach ($name in $expected.Keys) {
     Assert-Fact ($observed[$name] -ceq $expected[$name]) "Candidate hash mismatch: $name"
 }
 $setup = [IO.Path]::GetFullPath((Join-Path $CandidateDirectory 'EyeBreakReminder-Setup-x64.exe'))
+$repairSetup = $setup
+$repairSetupHash = $expected['EyeBreakReminder-Setup-x64.exe']
+if ($RepairInstaller) {
+    $repairSetup = Assert-ChildPath $RepairInstaller $env:GITHUB_WORKSPACE
+    $repairSetupHash = Get-Sha $repairSetup
+    Assert-Fact ($repairSetupHash -and $repairSetupHash -cne $expected['EyeBreakReminder-Setup-x64.exe']) 'Expected a separately built installer regression fixture.'
+}
 $install = Join-Path $runRoot 'installed'
 $exe = Join-Path $install 'EyeBreakReminder.exe'
 $utf8 = [Text.UTF8Encoding]::new($false)
@@ -149,10 +157,12 @@ public static class EbrManualRepairWindow
 }
 "@
 
-function Invoke-Setup {
-    Assert-Fact ((Get-Sha $setup) -ceq $expected['EyeBreakReminder-Setup-x64.exe']) 'Setup changed before execution.'
-    $process = Start-Process -FilePath $setup -ArgumentList "/S /D=$install" -WindowStyle Hidden -PassThru
-    Assert-Fact ($process.WaitForExit(60000) -and $process.ExitCode -eq 0) 'Ordinary setup failed or timed out.'
+function Invoke-Setup([string]$Installer = $setup, [string]$InstallerHash = $expected['EyeBreakReminder-Setup-x64.exe']) {
+    Assert-Fact ((Get-Sha $Installer) -ceq $InstallerHash) 'Setup changed before execution.'
+    $process = Start-Process -FilePath $Installer -ArgumentList "/S /D=$install" -WindowStyle Hidden -PassThru
+    try {
+        Assert-Fact ($process.WaitForExit(60000) -and $process.ExitCode -eq 0) 'Ordinary setup failed or timed out.'
+    } finally { $process.Dispose() }
 }
 
 function Observe-Countdown($AppProcess) {
@@ -172,6 +182,8 @@ $report = [ordered]@{
     CandidateArtifactId = 15007651099
     CandidateSourceCommit = '0f49949a9e753fcca390c25affc99d7698b1ecde'
     CandidateFileSha256 = $observed
+    RepairInstallerSha256 = $repairSetupHash
+    RepairInstallerIsSeparateFixture = [bool]$RepairInstaller
     Procedure = 'Ordinary per-user NSIS setup, silent wizard invocation targeting the existing installation directory'
     GenuineInterruptedUpdate = $false
     GenuineRebootOrSignIn = $false
@@ -220,7 +232,7 @@ try {
             Assert-Fact ($case.DamagedHash -cne $expected['EyeBreakReminder.exe']) 'Expected failure condition was not reached.'
             Assert-Fact (($scenario -ceq 'MissingExecutable') -eq (-not (Test-Path -LiteralPath $exe))) 'Executable presence does not match the failure fixture.'
 
-            Invoke-Setup
+            Invoke-Setup $repairSetup $repairSetupHash
             $case.RepairedHash = Get-Sha $exe
             $case.ProductVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe).ProductVersion
             $case.RegisteredVersion = Read-Value $uninstallKey 'DisplayVersion'
@@ -232,6 +244,9 @@ try {
             $case.AfterSetup = [ordered]@{}
             foreach ($name in $paths.Keys) { $case.AfterSetup[$name] = Get-Sha $paths[$name] }
             $case.TimerCheckpointPreserved = $case.Before.Timer -ceq $case.AfterSetup.Timer
+            if ($RepairInstaller) {
+                Assert-Fact $case.TimerCheckpointPreserved "Installer regression fixture reset the countdown during $scenario."
+            }
             foreach ($name in @('Settings', 'History', 'UnrelatedData', 'UnrelatedInstall')) {
                 Assert-Fact ($case.Before[$name] -ceq $case.AfterSetup[$name]) "Reinstall changed $name."
             }
@@ -247,6 +262,9 @@ try {
                     if ($seconds -lt $case.CountdownBeforeSeconds) { $seconds }
                 }
             } 'Native countdown advancement'
+            if ($RepairInstaller) {
+                Assert-Fact ($case.CountdownBeforeSeconds -le 420) 'Installer regression fixture did not resume the seeded checkpoint.'
+            }
             Assert-Fact ([EbrManualRepairWindow]::Close($app.Id) -and $app.WaitForExit(10000) -and $app.ExitCode -eq 0) 'Installed app did not exit through its owned window.'
             $app.Dispose()
             $app = $null
@@ -255,6 +273,26 @@ try {
             $case.Error = $_.Exception.Message
             throw
         }
+    }
+    if ($RepairInstaller) {
+        $case = [ordered]@{ Scenario = 'FreshInstallClearsStaleTimer'; Status = 'FAIL' }
+        $report.Cases += $case
+        $uninstaller = Assert-ChildPath (Join-Path $install 'Uninstall.exe') $runRoot
+        Assert-Fact ((Read-Value $uninstallKey 'UninstallString') -ieq ('"' + $uninstaller + '"')) 'Disposable uninstall registration does not reference the expected path.'
+        $uninstall = Start-Process -FilePath $uninstaller -ArgumentList "/S _?=$install" -WindowStyle Hidden -PassThru
+        try {
+            Assert-Fact ($uninstall.WaitForExit(60000) -and $uninstall.ExitCode -eq 0) 'Could not reset disposable install for the fresh-install control.'
+        } finally { $uninstall.Dispose() }
+        Assert-Fact (-not (Test-Path -LiteralPath $exe) -and -not (Read-Value $productKey 'InstallDir') -and
+            -not (Read-Value $uninstallKey 'InstallLocation')) 'Fresh-install control still has an executable or active registration.'
+        [IO.File]::WriteAllText($paths.Timer, "0 0 420 2220 7 $([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())", $utf8)
+        $case.SeededTimer = Get-Sha $paths.Timer
+        Invoke-Setup $repairSetup $repairSetupHash
+        $case.TimerAfterFreshSetup = Get-Sha $paths.Timer
+        $case.RepairedHash = Get-Sha $exe
+        Assert-Fact ($case.SeededTimer -and -not $case.TimerAfterFreshSetup -and
+            $case.RepairedHash -ceq $expected['EyeBreakReminder.exe']) 'Fresh setup did not clear the old checkpoint or did not install the exact app.'
+        $case.Status = 'PASS'
     }
     $report.Status = 'PASS'
 } finally {

@@ -105,8 +105,21 @@ Section "Eye Break Reminder (required)" MainSection
   SetRegView 64
   !insertmacro CloseRunningApp
   ; A fresh install must not resume a timer left by an older uninstaller.
-  ; Direct upgrades keep the active countdown, preferences and history.
-  IfFileExists "$INSTDIR\EyeBreakReminder.exe" keep_timer fresh_install
+  ; Direct upgrades and repairs of the registered installation keep the timer.
+  IfFileExists "$INSTDIR\EyeBreakReminder.exe" keep_timer
+  IfFileExists "$INSTDIR\Uninstall.exe" 0 fresh_install
+  ReadRegStr $0 HKCU "Software\EyeBreakReminder" "InstallDir"
+  ReadRegStr $1 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder" "InstallLocation"
+  StrCmp $0 "" fresh_install
+  StrCmp $1 "" fresh_install
+  ; Compare the existing uninstaller's normalized path, so differences in
+  ; directory spelling or a trailing separator do not turn repair into install.
+  GetFullPathName /SHORT $2 "$INSTDIR\Uninstall.exe"
+  GetFullPathName /SHORT $0 "$0\Uninstall.exe"
+  GetFullPathName /SHORT $1 "$1\Uninstall.exe"
+  StrCmp $2 "" fresh_install
+  StrCmp $0 $2 0 fresh_install
+  StrCmp $1 $2 keep_timer
   fresh_install:
     Delete "$LOCALAPPDATA\EyeBreakReminder\timer.dat"
   keep_timer:
