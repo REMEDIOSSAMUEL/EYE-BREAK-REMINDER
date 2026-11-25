@@ -12,6 +12,12 @@ The integrated updater passes `/S` only after the user confirms installation. Be
 
 Clean Install is an updater policy, not a separate installation scope. It is never the default. The updater first backs up the app executable and known user-data files; only after the new application has been installed and verified does it remove `settings.ini` and `timer.dat`. The user must separately confirm the unchecked history/statistics removal option to delete `history.dat`. Startup registration owned by this application is reset. A failed or unconfirmed new start restores the previous version and recoverable data when Windows permits it.
 
+## Recovery and repair
+
+If rollback is still pending, ordinary setup defers to protect the transaction and current data. Once rollback completes, run the authentic installer in the same installation directory to replace missing or damaged application files. Existing registration and the uninstaller help setup identify a repair and retain an eligible timer checkpoint. The repair path cannot recreate absent user data.
+
+Recovery checks required backup files before replacing the application. It rejects missing or corrupt backups, protects different live settings or history, and leaves a file that appears during restoration in place. If the journal, coordinator or backup is unusable, or if recovery stops because live data differ, keep the transaction folder and surviving data and contact support before retrying.
+
 ## Uninstall
 
 Windows Settings → Installed Apps invokes the registered per-user `Uninstall.exe`. Interactive uninstall asks the user to keep or remove settings/history; either choice ends the active timer session. The uninstaller deletes only known app files, shortcuts and per-user registration. It does not recursively delete the Local AppData directory or unrelated portable-folder contents.

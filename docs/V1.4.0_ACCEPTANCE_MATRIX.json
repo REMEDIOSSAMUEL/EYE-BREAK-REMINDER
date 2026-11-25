@@ -69,7 +69,7 @@
     "status": "Signed frozen replacement verified. Acceptance environment blockers remain.",
     "candidate_class": "PRODUCTION-AUTHENTICATED UPDATE CANDIDATE (Authenticode unsigned)",
     "publication_ready": false,
-    "readiness_scope": "Publication remains held. FAIL-024 and ENV-005 require genuine isolated reboot and automatic sign-in recovery. UN-009 remains NOT TESTED. The official matrix remains 224 PASS, 0 FAIL, 1 NOT TESTED, 7 BLOCKED and 2 NOT APPLICABLE.",
+    "readiness_scope": "Ready for publication approval. On 2026-11-25 the owner explicitly accepted the residual risk for FAIL-024 and ENV-005 and deferred UN-009, REG-008, ENV-006, ENV-007, ENV-008 and ENV-009. Actual Windows restart ordering, automatic sign-in recovery and physical power-loss durability remain unverified. The official matrix remains 224 PASS, 0 FAIL, 1 NOT TESTED, 7 BLOCKED and 2 NOT APPLICABLE. Separate explicit publication approval remains required.",
     "run_id": 45650942950,
     "run_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45650942950",
     "artifact_id": 15041400454,
@@ -151,7 +151,7 @@
     "resource_soak_artifact_id": 15039728056,
     "resource_soak_artifact_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45628377723/artifacts/15039728056",
     "resource_soak": "PASS, exact EXE 90880be4b515af59967ff221e379ab5958d84c2e98f2ef50ac4cc5aecc9dc6a9; fresh 110/110 cycles, 264 PASS, 0 FAIL, 0 NOT TESTED.",
-    "production_readiness": "Publication remains held. FAIL-024 and ENV-005 require genuine isolated reboot and automatic sign-in recovery. UN-009 remains NOT TESTED. The official matrix remains 224 PASS, 0 FAIL, 1 NOT TESTED, 7 BLOCKED and 2 NOT APPLICABLE.",
+    "production_readiness": "Ready for publication approval. On 2026-11-25 the owner explicitly accepted the residual risk for FAIL-024 and ENV-005 and deferred UN-009, REG-008, ENV-006, ENV-007, ENV-008 and ENV-009. Actual Windows restart ordering, automatic sign-in recovery and physical power-loss durability remain unverified. The official matrix remains 224 PASS, 0 FAIL, 1 NOT TESTED, 7 BLOCKED and 2 NOT APPLICABLE. Separate explicit publication approval remains required.",
     "production_candidate_finalizer_jobs": {
       "run_id": 45650942950,
       "status": "success",
@@ -231,7 +231,7 @@
     "BLOCKED",
     "NOT APPLICABLE"
   ],
-  "warning": "The matrix contains 224 PASS, 0 FAIL, 1 NOT TESTED, 7 BLOCKED and 2 NOT APPLICABLE. Final signed candidate artifact 15007651099 is independently verified and source-bound; publication is not ready because FAIL-024 and ENV-005 lack genuine reboot/sign-in evidence and UN-009 remains NOT TESTED. Latest supplemental recovery run 45597959067 used historical baseline 14695418078 and test-key fixtures, not the final signed candidate, and does not change official statuses. The resumed personal-desktop preflight for REG-008 and ENV-009 stopped before candidate launch because the Local AppData directory already exists; no personal data was changed. Publication also requires separate owner approval. branch_head identifies the latest tested code head; current repository HEAD is reported separately.",
+  "warning": "Current authoritative candidate 15041400454 from frozen source dfd8018b319bdfde498d4f23b2d1ca96d0a99145. Ready for publication approval. The owner explicitly accepted residual FAIL-024 and ENV-005 risk and deferred the six other outstanding cases on 2026-11-25. Separate explicit publication approval remains required. Acceptance statuses remain 224 PASS, 0 FAIL, 1 NOT TESTED, 7 BLOCKED and 2 NOT APPLICABLE. Historical candidates and fixtures retain their original evidence scope.",
   "current_security_completion": {
     "source_commit": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
     "candidate_source_commit": "dfd8018b319bdfde498d4f23b2d1ca96d0a99145",
@@ -4403,8 +4403,8 @@
       }
     }
   },
-  "latest_pr_head_sha": "89510472a47c82862c313cb87d26fd74dd773153",
-  "latest_pr_head_sha_scope": "Required PR validation on the authenticated metadata and verifier commit before this documentation-only snapshot.",
+  "latest_pr_head_sha": "4402330c99cefc694faa3224feda90dc0e60660e",
+  "latest_pr_head_sha_scope": "Authenticated local, remote and PR head at the production freeze audit. Required job 139339706145 in run 45652293660 passed on this exact head.",
   "latest_pr_url": "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/pull/7",
   "historical_release_candidate_pre_security": {
     "status": "No authoritative production candidate for the signed-manifest source exists. The historical candidate remains valid only for its recorded pre-security tests. Current source is fail-closed because the production trust key is unprovisioned. Current CI and focused security/resource tests pass, and signed test-key transactions pass, but production metadata and a complete final asset set are unavailable.",

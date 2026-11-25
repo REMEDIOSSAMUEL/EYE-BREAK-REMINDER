@@ -16,6 +16,8 @@ Download progress is based on bytes actually written. The user can cancel until 
 
 Network/API, rate-limit, redirect, size, SHA-256, permissions, low-space and installer errors are reported as failures; the app does not treat malformed responses as “up to date.” Download and verification failures leave the current app unchanged. Failed installations attempt transaction rollback. If Windows prevents rollback, the previous executable/data backups and durable recovery state are retained and an actionable message is shown.
 
+If recovery is pending, let it finish before trying repair. If the app cannot complete rollback, preserve the transaction folder and contact support. See [Recovery and repair](INSTALLER.md#recovery-and-repair) for when same-directory setup can repair the application.
+
 ## First transition
 
-Published v1.3.0 does not contain the integrated downloader/coordinator. Its check-only UI cannot automatically install v1.4.0. The one-time upgrade to v1.4.0 uses the ordinary downloaded v1.4.0 Setup executable. Updates after v1.4.0 can be installed from within the app.
+Published v1.3.0 does not contain the integrated downloader/coordinator. Its check-only UI cannot automatically install v1.4.0. Download v1.4.0 from the official release and run Setup manually, or close a portable copy and replace its executable with the one from the new portable ZIP. The initial setup and executable are Authenticode unsigned. Windows may show an unknown-publisher or SmartScreen warning. Later signed updates can be installed from within the app.
