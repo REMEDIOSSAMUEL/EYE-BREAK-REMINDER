@@ -1,5 +1,23 @@
 # Update signing and key management
 
+## Current v1.4.0 signed candidate — 2026-11-25
+
+Candidate run [45575765880](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45575765880) built the replacement from source commit `0f49949a9e753fcca390c25affc99d7698b1ecde`, after the recovery cleanup-handoff defect was corrected. The owner completed the existing protected local signing procedure; the passphrase was entered only at the visible local OpenSSL prompt and was not sent in chat. Key `p256-0aff97759ea95258` signed the v1.4.0 manifest using ECDSA P-256/SHA-256 and a raw 64-byte P1363 signature. Manifest SHA-256: `88ec256d6c4bb8f0c52946b947cf8778e0966f8cfe84c9f83c551f9a61af84a6`. Signature SHA-256: `c0906144d52623a4d428df0d69208a849102df731877bbcdb9d366d1f4031992`.
+
+Finalizer [45582714164](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45582714164) completed successfully with three jobs, 36 steps, and zero skipped steps. Authoritative final seven-file artifact: [15007651099](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45582714164/artifacts/15007651099). Independent clean-download verification artifact: [15007920934](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45582714164/artifacts/15007920934). Production signed update transaction artifact: [15007776608](https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/actions/runs/45582714164/artifacts/15007776608), 21 passing assertions. Windows CNG and the embedded production trust key verified the manifest; the test-key signature was rejected. The transaction updated an isolated v1.3.0 installation, preserved settings/history/unrelated files, relaunched the app, and advanced its timer. Authenticode remains unsigned under the approved policy.
+
+| Candidate file | Bytes | SHA-256 |
+|---|---:|---|
+| `EyeBreakReminder.exe` | 2,901,504 | `3dd3fa4c8e9f6200780c7bf0c2340435c7b127ce6b6202b24857105f01f3719a` |
+| `EyeBreakReminder-Setup-x64.exe` | 1,401,842 | `7df5c6f61cbb56d813e4eee989637e6fcf692d1879f1446d4776da5928e49c2a` |
+| `EyeBreakReminder-Portable-x64.zip` | 1,579,253 | `9337550cf5a2fc2b685672205654d8c674fb8440b01a0ce97c8762bd065f6341` |
+| `EyeBreakReminder-Source.zip` | 2,971,803 | `c8971b3d32b8aad2bf634e40cf753f33b2430f7167effd93063c578e0e05480c` |
+| `EyeBreakReminder-SHA256.txt` | 382 | `ae6032f9810e7362a27a0b0b15405537aab4ff2fb7ce6efc3c4e97b42e7796df` |
+| `EyeBreakReminder-UpdateManifest.json` | 682 | `88ec256d6c4bb8f0c52946b947cf8778e0966f8cfe84c9f83c551f9a61af84a6` |
+| `EyeBreakReminder-UpdateManifest.sig` | 64 | `c0906144d52623a4d428df0d69208a849102df731877bbcdb9d366d1f4031992` |
+
+The finalization metadata was committed at `61a9d4732ae757f9e2cd0c2fd408140fe69db163`; it is distinct from the candidate source commit above. Earlier candidate artifact `14695418078` remains historical and preserved. Do not replace the current candidate without a genuine defect. The new candidate retained the matching 110-cycle soak from run `45499840097`, artifact `14979951493`; no new soak or rebuild followed signing. This record does not imply that FAIL-024 or ENV-005 passed: the later repeat recovery workflow used the historical installed baseline and did not reboot or observe automatic sign-in dispatch.
+
 ## Production identity and custody
 
 Eye Break Reminder update metadata uses ECDSA P-256 with SHA-256. The production key ID is `p256-0aff97759ea95258`; its public key is embedded in `src/update_trust.hpp`. Production verification cannot be overridden by an environment variable, command line, test configuration, or release asset.
