@@ -35,7 +35,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 install --no-install-recommends --yes build-essential g++-mingw-w64-x86-64-posix nsis python3
       - name: Build and verify the five frozen release files
         run: make package CROSS_CXX=x86_64-w64-mingw32-g++-posix
-      - name: Verify version resources and record candidate provenance
+      - name: Record deterministic package provenance
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -45,11 +45,6 @@ jobs:
           $files = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
           $identities = @(foreach ($name in $files) {
             $file = Get-Item -LiteralPath (Join-Path release $name)
-            if ($file.Extension -ceq '.exe') {
-              $v = $file.VersionInfo
-              if ($v.ProductVersion -cne $version -or $v.FileVersion -cne "$version.0" -or
-                  $v.FileVersionRaw.ToString() -cne "$version.0" -or $v.ProductVersionRaw.ToString() -cne "$version.0") { throw "Wrong Windows version resources: $name" }
-            }
             [ordered]@{Name=$name; Bytes=$file.Length; SHA256=(Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
           })
           [ordered]@{Status='PASS';Version=$version;Repository=$env:GITHUB_REPOSITORY;Branch=$env:GITHUB_REF_NAME;SourceCommit=$env:GITHUB_SHA;RunId=$env:GITHUB_RUN_ID;Files=$identities} | ConvertTo-Json -Depth 5 | Set-Content candidate-evidence/candidate-provenance.json
@@ -111,6 +106,19 @@ jobs:
           if ((Get-Item (Join-Path $root 'EyeBreakReminder.exe')).VersionInfo.ProductVersion -cne '1.4.1' -or
               (Get-Item (Join-Path $root 'EyeBreakReminder-Setup-x64.exe')).VersionInfo.ProductVersion -cne '1.4.1') { throw 'Downloaded predecessor version metadata mismatch.' }
           "PREDECESSOR=$root" >> $env:GITHUB_ENV
+      - name: Verify candidate Windows version resources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content VERSION -Raw).Trim()
+          foreach ($name in @('candidate/release/EyeBreakReminder.exe','candidate/release/EyeBreakReminder-Setup-x64.exe')) {
+            $v = (Get-Item -LiteralPath $name).VersionInfo
+            $actual = "ProductVersion=$($v.ProductVersion); FileVersion=$($v.FileVersion); FileVersionRaw=$($v.FileVersionRaw); ProductVersionRaw=$($v.ProductVersionRaw)"
+            if ($v.ProductVersion -cne $version -or $v.FileVersion -cne "$version.0" -or
+                $v.FileVersionRaw.ToString() -cne "$version.0" -or $v.ProductVersionRaw.ToString() -cne "$version.0") {
+              throw "Wrong Windows version resources for $name ($actual)"
+            }
+          }
       - name: Capture and record focused native updater screenshots
         shell: pwsh
         run: |
