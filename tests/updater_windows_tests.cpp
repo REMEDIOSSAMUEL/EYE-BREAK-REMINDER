@@ -369,6 +369,9 @@ int runHttpsInterruption(int argc,char**argv){
     const auto response=eye::updates::latestStableReleaseResponse();eye::updates::ReleaseDetails release;
     std::cerr<<"HTTPS test stage: GitHub release API request returned"<<std::endl;
     const auto checked=eye::updates::evaluate(response,"1.4.0",&release);
+    std::cerr<<"HTTPS discovery diagnostics: status="<<response.status
+             <<" transportFailure="<<static_cast<int>(response.failure)
+             <<" nativeError="<<response.errorCode<<" state="<<static_cast<int>(checked.state)<<std::endl;
     ok&=check(response.status==200&&checked.state==eye::updates::State::InstalledNewer&&release.tag=="v1.3.0","discover the current official stable release from the real GitHub API without credentials");
     const auto selected=eye::updates::selectAsset(release,eye::updates::PackageKind::Portable);
     ok&=check(selected.ok&&selected.asset.name=="EyeBreakReminder.exe"&&selected.asset.downloadUrl.rfind("https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.3.0/",0)==0,"select the official stable standalone release asset and validated digest");

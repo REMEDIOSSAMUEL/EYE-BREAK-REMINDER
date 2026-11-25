@@ -1,0 +1,114 @@
+name: Revalidate exact unsigned candidate 15029531496
+
+on:
+  push:
+    branches: [codex/revalidate-candidate-45624936126]
+    paths:
+      - '.github/workflows/windows-frozen-candidate-revalidation.yml'
+      - 'tests/updater_windows_tests.cpp'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  network:
+    name: Diagnose and rerun only the failed WinHTTP test
+    runs-on: windows-2025
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884
+        with:
+          msystem: MINGW64
+          update: true
+          install: make mingw-w64-x86_64-gcc
+      - name: Compile the standalone test executable only
+        shell: msys2 {0}
+        run: make build/updater-windows-tests.exe HOST_CXX=g++
+      - name: Run real public TLS interruption and fresh retry
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./tests/windows_updater_network_interruption.ps1 -TestExecutable 'build/updater-windows-tests.exe' -EvidencePath 'revalidation/https-interruption.json'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: frozen-candidate-network-${{ github.run_id }}
+          path: revalidation/https-interruption.json
+          if-no-files-found: error
+          retention-days: 90
+
+  soak:
+    name: Fresh 110-cycle soak on the retained exact executable
+    runs-on: windows-2025
+    timeout-minutes: 155
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: dfd8018b319bdfde498d4f23b2d1ca96d0a99145
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          run-id: 45624936126
+          artifact-ids: 15029531496
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: frozen
+      - name: Verify original build provenance and every package hash
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = @{
+            'EyeBreakReminder.exe' = '90880be4b515af59967ff221e379ab5958d84c2e98f2ef50ac4cc5aecc9dc6a9'
+            'EyeBreakReminder-Setup-x64.exe' = 'c1d30c9d7f5ecf070fda86711eda7130c5f662fc27d98eab7b6ce9e7a6b6865a'
+            'EyeBreakReminder-Portable-x64.zip' = 'f1a34c4fa79044264aa7f9c8a3ef9734c727ae7af42971b75baeae60225f78ca'
+            'EyeBreakReminder-Source.zip' = 'e465c88c7deb76399bf2b166420294c622ff2c6b9f8e26bc05aecfc5196181d9'
+            'EyeBreakReminder-SHA256.txt' = '45819b9540d00c64534b919a7f9e0eec467f1910e81cc129ce960a7ea70dc7f2'
+          }
+          $provenance = Get-Content -LiteralPath 'frozen/build/v1.4.0-updater-evidence/candidate-provenance.json' -Raw | ConvertFrom-Json
+          if ($provenance.RunId -ne '45624936126' -or $provenance.SourceCommit -cne 'dfd8018b319bdfde498d4f23b2d1ca96d0a99145' -or `
+              $provenance.Branch -cne 'feature/v1.4.0-automatic-updater' -or @(Get-ChildItem -LiteralPath frozen/release -Force).Count -ne 5 -or @($provenance.CandidateFiles).Count -ne 5) {
+            throw 'Frozen candidate provenance or immutable file set differs.'
+          }
+          foreach ($entry in $provenance.CandidateFiles) {
+            if (-not $expected.ContainsKey($entry.Name)) { throw 'Unexpected file in original build provenance.' }
+            $file = Get-Item -LiteralPath (Join-Path 'frozen/release' $entry.Name)
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -ne $entry.Bytes -or $hash -cne $expected[$entry.Name] -or $hash -cne $entry.SHA256) {
+              throw "Frozen candidate verification failed: $($entry.Name)"
+            }
+            $expected.Remove($entry.Name)
+          }
+          if ($expected.Count -ne 0) { throw 'Candidate provenance omitted an expected file.' }
+          New-Item -ItemType Directory -Path revalidation -Force | Out-Null
+          $provenance | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath revalidation/verified-origin.json
+      - name: Run scheduler and resource acceptance on the exact retained EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./tests/windows_resource_telemetry_tests.ps1 -EvidencePath 'revalidation/resource-telemetry-unit-tests.json' -ProbeLiveCmdlet
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./tests/windows_break_user_resource_soak.ps1 -ExecutablePath 'frozen/release/EyeBreakReminder.exe' `
+            -EvidenceDirectory 'revalidation/resource-soak' -Cycles 110 -ExpectedProductVersion '1.4.0' -ExpectedResourceBehavior NoGrowth
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Verify final executable identity and the raw soak assertions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./tests/windows_resource_soak_summary_tests.ps1 -EvidenceDirectory 'revalidation/resource-soak' -ExecutablePath 'frozen/release/EyeBreakReminder.exe'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $soak = Get-Content -LiteralPath 'revalidation/resource-soak/soak-summary.json' -Raw | ConvertFrom-Json
+          if ($soak.SHA256 -cne '90880be4b515af59967ff221e379ab5958d84c2e98f2ef50ac4cc5aecc9dc6a9' -or $soak.CompletedCycles -ne 110 -or $soak.Pass -le 0 -or $soak.Fail -ne 0 -or $soak.NotTested -ne 0) {
+            throw 'The exact executable did not pass all 110 cycles.'
+          }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: frozen-candidate-soak-${{ github.run_id }}
+          path: revalidation/
+          if-no-files-found: error
+          retention-days: 90
