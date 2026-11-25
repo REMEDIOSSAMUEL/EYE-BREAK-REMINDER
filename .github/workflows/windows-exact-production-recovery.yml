@@ -1,0 +1,98 @@
+name: Exact v1.4.0 production recovery and reinstall
+
+on:
+  push:
+    branches: [codex/exact-production-recovery-15007651099]
+    paths:
+      - '.github/workflows/windows-exact-production-recovery.yml'
+      - 'tests/windows_exact_candidate_*.ps1'
+      - 'tests/assert_exact_production_candidate.ps1'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify:
+    name: Exact candidate / ${{ matrix.scenario }}
+    runs-on: windows-2025
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [ManualReinstall]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          repository: REMEDIOSSAMUEL/EYE-BREAK-REMINDER
+          run-id: 45582714164
+          artifact-ids: 15007651099
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/exact-candidate
+      - name: Verify all seven files and authenticate the retained manifest
+        shell: pwsh
+        run: |
+          ./tests/assert_exact_production_candidate.ps1 `
+            -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
+            -EvidencePath 'build/exact-production-recovery/candidate.json'
+      - name: Run ordinary reinstall against damaged disposable installations
+        if: matrix.scenario == 'ManualReinstall'
+        shell: pwsh
+        run: |
+          ./tests/windows_exact_candidate_manual_repair.ps1 `
+            -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
+            -EvidencePath 'build/exact-production-recovery/manual-repair.json'
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884
+        if: matrix.scenario != 'ManualReinstall'
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils
+      - name: Record baseline compiler path
+        if: matrix.scenario != 'ManualReinstall'
+        shell: msys2 {0}
+        run: printf 'MSYS2_ROOT=%s\n' "$(cygpath -aw /)" >> "$GITHUB_ENV"
+      - name: Prepare the published installer and isolated v1.3.0 confirmation fixture
+        if: matrix.scenario != 'ManualReinstall'
+        shell: pwsh
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP 'stable-setup.exe'
+          Invoke-WebRequest -Uri 'https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.3.0/EyeBreakReminder-Setup-x64.exe' -OutFile $setup
+          if ((Get-FileHash -LiteralPath $setup).Hash.ToLowerInvariant() -cne '67c7bb338e83397e17007fa0afff9b4ad06f0a2d7924bb016198d9d38e3a76b4') {
+            throw 'Published v1.3.0 installer identity mismatch.'
+          }
+          ./tests/build_production_trust_baseline.ps1
+      - name: Observe the selected boundary and terminate the isolated processes
+        if: matrix.scenario != 'ManualReinstall'
+        shell: pwsh
+        env:
+          FAULT_BOUNDARY: ${{ matrix.scenario }}
+        run: |
+          ./tests/windows_exact_candidate_recovery.ps1 -Phase Interrupt -FaultBoundary $env:FAULT_BOUNDARY `
+            -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
+            -BaselineInstaller "$env:RUNNER_TEMP/stable-setup.exe" `
+            -BaselineApplication "$env:RUNNER_TEMP/EyeBreakReminder-ProductionTrust-Baseline-1.3.0/release/EyeBreakReminder.exe" `
+            -EvidencePath 'build/exact-production-recovery/interrupted.json'
+      - name: Replay the actual RunOnce command after original process loss
+        if: matrix.scenario != 'ManualReinstall'
+        shell: pwsh
+        env:
+          FAULT_BOUNDARY: ${{ matrix.scenario }}
+        run: |
+          ./tests/windows_exact_candidate_recovery.ps1 -Phase Recover -FaultBoundary $env:FAULT_BOUNDARY `
+            -CandidateDirectory "$env:RUNNER_TEMP/exact-candidate/final-candidate" `
+            -BaselineInstaller "$env:RUNNER_TEMP/stable-setup.exe" `
+            -BaselineApplication "$env:RUNNER_TEMP/EyeBreakReminder-ProductionTrust-Baseline-1.3.0/release/EyeBreakReminder.exe" `
+            -EvidencePath 'build/exact-production-recovery/recovered.json'
+      - name: Retain exact candidate and scenario reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: exact-production-${{ matrix.scenario }}-${{ github.run_id }}
+          path: build/exact-production-recovery/*.json
+          if-no-files-found: error
+          retention-days: 90
