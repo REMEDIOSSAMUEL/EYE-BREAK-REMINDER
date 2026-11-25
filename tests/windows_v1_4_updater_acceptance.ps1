@@ -5,7 +5,7 @@ param(
   [Parameter(Mandatory=$true)][string]$UpdateExecutable,
   [Parameter(Mandatory=$true)][string]$FailingInstaller,
   [string]$EvidenceDirectory='build/v1.4.0-updater-evidence',
-  [ValidateSet('All','UpdatePreferences','ActiveBreakDeferral','DialogThemes')][string]$Scenario='All'
+  [ValidateSet('All','UpdatePreferences','ActiveBreakDeferral','DialogThemes','VisualHotfix')][string]$Scenario='All'
 )
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true'-or$env:RUNNER_OS -ne 'Windows'-or$env:RUNNER_ENVIRONMENT -ne 'github-hosted'){throw 'Updater installation acceptance is restricted to a disposable GitHub-hosted Windows runner.'}
@@ -239,8 +239,8 @@ function Reset-Installation(){Stop-Application;if(Test-Path -LiteralPath (Join-P
 function Install-Baseline(){Reset-Installation;$p=Start-Process -FilePath ([IO.Path]::GetFullPath($BaselineInstaller)) -ArgumentList @('/S',"/D=$installDir") -PassThru -Wait;if($p.ExitCode-ne0){throw "The actual NSIS baseline installer returned $($p.ExitCode)."};$app=Join-Path $installDir 'EyeBreakReminder.exe';Assert ((Get-Item -LiteralPath $app).VersionInfo.ProductVersion-eq'1.4.0') 'baseline NSIS install has v1.4.0 product metadata';Assert ((Get-FileHash -LiteralPath $app -Algorithm SHA256).Hash.ToLowerInvariant()-eq(Get-FileHash -LiteralPath $BaselineExecutable -Algorithm SHA256).Hash.ToLowerInvariant()) 'baseline installed executable matches isolated test binary';$key=Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EyeBreakReminder' -ErrorAction Stop;Assert ($key.DisplayVersion-eq'1.4.0'-and(Test-Path -LiteralPath (Join-Path $installDir 'Uninstall.exe'))) 'Windows Installed Apps registry and uninstaller are registered'}
 function Seed-Profile([int]$Theme=2){[void][IO.Directory]::CreateDirectory($dataDir);$settings=@("workMinutes=37","breakSeconds=33","volume=32","theme=$Theme","alarm=0","repeat=1","notifications=0","snooze=0","autoStart=1","startup=0","history=1","breakModeColors=1","customWorkAccent=1","workAccentColor=3900150","customBreakAccent=1","breakAccentColor=16746496","autoCheckUpdates=1","autoDownloadUpdates=0","updateLastCheck=0","restore=1") -join "`n";[IO.File]::WriteAllText((Join-Path $dataDir 'settings.ini'),$settings+"`n",[Text.UTF8Encoding]::new($false));$now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();[IO.File]::WriteAllText((Join-Path $dataDir 'timer.dat'),"0 0 1200 1200 7 $now",[Text.UTF8Encoding]::new($false));$script:historyText="$($now-120) 1 20`n";[IO.File]::WriteAllText((Join-Path $dataDir 'history.dat'),$script:historyText,[Text.UTF8Encoding]::new($false))}
 function Read-SeededSettingsValues([string]$Path){$values=[ordered]@{};foreach($line in [IO.File]::ReadAllLines($Path)){$separator=$line.IndexOf('=');if($separator-le0){continue};$key=$line.Substring(0,$separator);if($key-eq'updateLastCheck'){continue};$values[$key]=$line.Substring($separator+1)};return $values}
-function New-ReleaseFixture([string]$SetupSource,[string]$AppSource){
-  $tag='v1.4.1';$version='1.4.1';$setup=(Get-Item -LiteralPath $SetupSource).Length;$app=(Get-Item -LiteralPath $AppSource).Length
+function New-ReleaseFixture([string]$SetupSource,[string]$AppSource,[string]$Version='1.4.1',[string]$ReleaseBody='Controlled local Windows updater fixture; no public release is created.'){
+  $tag="v$Version";$version=$Version;$setup=(Get-Item -LiteralPath $SetupSource).Length;$app=(Get-Item -LiteralPath $AppSource).Length
   $setupActualHash=(Get-FileHash -LiteralPath $SetupSource -Algorithm SHA256).Hash.ToLowerInvariant();$setupHash=$setupActualHash
   $appHash=(Get-FileHash -LiteralPath $AppSource -Algorithm SHA256).Hash.ToLowerInvariant()
   $root=Split-Path -Parent $PSScriptRoot;$signingTool=Join-Path $root 'build/updater-windows-tests.exe'
@@ -260,7 +260,7 @@ function New-ReleaseFixture([string]$SetupSource,[string]$AppSource){
     [pscustomobject]@{name='EyeBreakReminder-UpdateManifest.json';browser_download_url=($baseUrl+'EyeBreakReminder-UpdateManifest.json');size=$manifestSize;digest="sha256:$manifestHash"},
     [pscustomobject]@{name='EyeBreakReminder-UpdateManifest.sig';browser_download_url=($baseUrl+'EyeBreakReminder-UpdateManifest.sig');size=$signatureSize;digest="sha256:$signatureHash"}
   )
-  $release=[pscustomobject]@{tag_name=$tag;html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/$tag";draft=$false;prerelease=$false;body='Controlled local Windows updater fixture; no public release is created.';assets=$assets}
+  $release=[pscustomobject]@{tag_name=$tag;html_url="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/$tag";draft=$false;prerelease=$false;body=$ReleaseBody;assets=$assets}
   $fixture="status=200`r`nfailure=none`r`n`r`n"+($release|ConvertTo-Json -Compress -Depth 6);[IO.File]::WriteAllText((Join-Path $installDir 'test-update-response.txt'),$fixture,[Text.UTF8Encoding]::new($false))
   $script:setupSource=[IO.Path]::GetFullPath($SetupSource);$script:appSource=[IO.Path]::GetFullPath($AppSource);$script:setupDigest="sha256:$setupHash";$script:appDigest="sha256:$appHash"
   $manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
@@ -278,7 +278,7 @@ function Copy-TestSignedMetadata([string]$DestinationDirectory){
   }
 }
 function Start-TestApp([string]$AssetPath=$script:setupSource,[int]$Delay=0,[string]$SkipConfirmVersion='',[string]$ExecutablePath=(Join-Path $installDir 'EyeBreakReminder.exe'),[int]$HoldAfterCleanMs=0){$env:EBR_GUI_TEST_DATA_DIRECTORY=$dataDir;$env:EBR_GUI_TEST_UPDATE_ASSET_PATH=[IO.Path]::GetFullPath($AssetPath);$env:EBR_GUI_TEST_UPDATE_DELAY_MS=[string]$Delay;$env:EBR_GUI_TEST_CONFIRM_TIMEOUT_MS='1000';$env:EBR_GUI_TEST_SKIP_UPDATE_CONFIRM_VERSION=$SkipConfirmVersion;$env:EBR_GUI_TEST_HOLD_AFTER_CLEAN_MS=[string]$HoldAfterCleanMs;$p=Start-Process -FilePath $ExecutablePath -PassThru;return $p.Id}
-function Wait-UpdateChoice([int]$appProcessId,[string]$screenshotName='',[string]$ExpectedVersion='v1.4.1'){$dialog=Find-Dialog 'Eye Break Reminder Update Available' @($appProcessId) 45;Assert ($dialog.WindowTitle-eq'Eye Break Reminder Update') 'UI Automation targets the native update window' $dialog.WindowTitle;$names=@($dialog.Names);$summary=$names -join ' | ';$hasCurrent=@($names|Where-Object{$_.Contains('Current version: 1.4.0')}).Count-gt0;$hasAvailableLabel=@($names|Where-Object{$_.Contains('Available version:')}).Count-gt0;$hasAvailableVersion=@($names|Where-Object{$_.Contains($ExpectedVersion)}).Count-gt0;$hasReleaseNotes=@($names|Where-Object{$_.Contains('Release notes')}).Count-gt0;$hasDownloadInstallLabel=@($names|Where-Object{$_.Contains('Download & Install')}).Count-gt0;Assert ($hasCurrent-and$hasAvailableLabel-and$hasAvailableVersion-and$hasReleaseNotes-and$hasDownloadInstallLabel) 'update dialog shows current/available versions, install action and release notes' $summary;if($screenshotName){Screenshot $dialog $screenshotName};$radio=Find-Element $dialog 'Preserve my settings (Recommended)' 'ControlType.RadioButton';$pattern=$null;if(-not$radio.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$pattern)){throw 'Preserve settings radio lacks an accessible selection pattern.'};Assert ($pattern.Current.IsSelected) 'Preserve Settings is the selected default';return $dialog}
+function Wait-UpdateChoice([int]$appProcessId,[string]$screenshotName='',[string]$ExpectedVersion='v1.4.1',[string]$CurrentVersion='1.4.0'){$dialog=Find-Dialog 'Eye Break Reminder Update Available' @($appProcessId) 45;Assert ($dialog.WindowTitle-eq'Eye Break Reminder Update') 'UI Automation targets the native update window' $dialog.WindowTitle;$names=@($dialog.Names);$summary=$names -join ' | ';$hasCurrent=@($names|Where-Object{$_.Contains("Current version: $CurrentVersion")}).Count-gt0;$hasAvailableLabel=@($names|Where-Object{$_.Contains('Available version:')}).Count-gt0;$hasAvailableVersion=@($names|Where-Object{$_.Contains($ExpectedVersion)}).Count-gt0;$hasReleaseNotes=@($names|Where-Object{$_.Contains('Release notes')}).Count-gt0;$hasDownloadInstallLabel=@($names|Where-Object{$_.Contains('Download & Install')}).Count-gt0;Assert ($hasCurrent-and$hasAvailableLabel-and$hasAvailableVersion-and$hasReleaseNotes-and$hasDownloadInstallLabel) 'update dialog shows current/available versions, install action and release notes' $summary;if($screenshotName){Screenshot $dialog $screenshotName};$radio=Find-Element $dialog 'Preserve my settings (Recommended)' 'ControlType.RadioButton';$pattern=$null;if(-not$radio.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$pattern)){throw 'Preserve settings radio lacks an accessible selection pattern.'};Assert ($pattern.Current.IsSelected) 'Preserve Settings is the selected default';return $dialog}
 function Begin-Download([int]$appProcessId,[bool]$Clean=$false,[bool]$DeleteHistory=$false){$choice=Wait-UpdateChoice $appProcessId;if($Clean){[void](Select-Radio $choice 'Clean install — reset previous settings')};Screenshot $choice ("update-choice-{0}.png" -f $(if($Clean){'clean'}else{'preserve'}));Invoke-Element $choice 'Download & Install';if($Clean){$confirm=Find-Dialog 'Clean Installation' @($appProcessId) 15;$names=$confirm.Names -join ' | ';Assert ($names.Contains('history and statistics will be preserved')) 'clean-install confirmation explains history retention';$checkbox=Find-Element $confirm 'Also delete existing history and statistics' 'ControlType.CheckBox';$toggle=$null;if(-not$checkbox.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern,[ref]$toggle)){throw 'History-delete checkbox lacks an accessible toggle pattern.'};Assert ($toggle.Current.ToggleState-eq[System.Windows.Automation.ToggleState]::Off) 'history deletion is unchecked by default';if($DeleteHistory){[void](Toggle-Check $confirm 'Also delete existing history and statistics');$warningNames=Get-Names $confirm.Root;$confirm.Names=$warningNames;Assert (($warningNames -join ' ').Contains('will also be deleted from this Windows profile')) 'history deletion updates the explicit warning' ($warningNames -join ' | ');Screenshot $confirm 'clean-install-history-warning.png'};Invoke-Element $confirm 'Confirm Clean Install'};$progress=Find-Dialog 'Downloading Eye Break Reminder' @($appProcessId) 30;return $progress}
 function Complete-DownloadAndWait([int]$appProcessId,$Progress,[string]$CoordinatorMarker='Update complete.'){
   $ready=Find-Dialog 'Ready to install.' @($appProcessId) 120
@@ -358,6 +358,43 @@ function Run-DialogThemes(){
     foreach($theme in 0..4){$small=$script:updaterScaleMeasurements["$theme/125"];$large=$script:updaterScaleMeasurements["$theme/225"];Assert ($large.Height-gt$small.Height) "Windows text scaling changes the updater option height for theme $theme" ([pscustomobject]@{Theme=$theme;At125Percent=$small.Height;At225Percent=$large.Height})}
   }finally{try{Restore-RunnerTextScale $scaleSnapshot}finally{[void][EBR_UPD_NATIVE]::SetHighContrastState($oldHc)}}
   Record 'Update dialog theme, Forced Colors, accessibility and text-scale screenshots' 'PASS' ([pscustomobject]@{AppThemes=@('Follow Windows','Light','Dark','High Contrast Dark','High Contrast Light');SystemForcedColors=$true;TextScaleLevels=@(125,150,200,225);ThemeScaleCombinations=20;LongReleaseNotes=$true;TextScalePreferenceRestored=$true})
+}
+function Run-VisualHotfix([string]$HotfixTestApplication){
+  Reset-Installation
+  $testExe=Join-Path $installDir 'EyeBreakReminder.exe';Copy-Item -LiteralPath $HotfixTestApplication -Destination $testExe
+  $notes=@'
+# Eye Break Reminder v1.4.3
+
+This maintenance release retains the existing functionality and appearance.
+
+**Preserve my settings (Recommended)**
+
+## Windows security
+
+The update manifest is signed with the ECDSA P-256 production key.
+
+## Existing validation limitations
+
+- Historical classifications remain unchanged.
+- Release-note links are displayed as plain text.
+'@
+  New-ReleaseFixture $UpdateInstaller $UpdateExecutable '1.4.3' $notes
+  $scaleSnapshot=Get-RunnerTextScaleSnapshot;$expectedSize=([Math]::Round((Get-Item -LiteralPath $UpdateInstaller).Length/1MB,1)).ToString('0.0',[Globalization.CultureInfo]::InvariantCulture)+' MB'
+  try{
+    Set-RunnerTextScale 100
+    foreach($theme in @(1,2)){
+      Seed-Profile $theme;$appProcessId=Start-TestApp $script:appSource 0 '' $testExe;$name=if($theme-eq1){'light'}else{'dark'}
+      $dialog=Wait-UpdateChoice $appProcessId "update-available-$name.png" 'v1.4.3' '1.4.2';Assert (($dialog.Names -join ' ').Contains("Download size: $expectedSize")) "$name update offer uses the shared download-size formatter"
+      if($theme-eq2){[void](Select-Radio $dialog 'Clean install — reset previous settings');Screenshot $dialog 'update-options-clean-dark.png';[void](Select-Radio $dialog 'Preserve my settings (Recommended)');Screenshot $dialog 'update-options-preserve-dark.png'}
+      Invoke-Element $dialog 'Remind Me Later';Stop-Application
+    }
+    Set-RunnerTextScale 150;Seed-Profile 2;$appProcessId=Start-TestApp $script:appSource 0 '' $testExe;$scaled=Wait-UpdateChoice $appProcessId 'update-available-dark-text-scale-150.png' 'v1.4.3' '1.4.2';Assert (($scaled.Names -join ' ').Contains("Download size: $expectedSize")) '150% text-scale offer remains accessible and reports package size';Invoke-Element $scaled 'Remind Me Later';Stop-Application
+    Set-RunnerTextScale 100;Seed-Profile 2;$appProcessId=Start-TestApp $script:appSource 1200 '' $testExe;$choice=Wait-UpdateChoice $appProcessId '' 'v1.4.3' '1.4.2';Invoke-Element $choice 'Download & Install';$download=Find-Dialog 'Downloading Eye Break Reminder' @($appProcessId) 20;Screenshot $download 'download-active-dark.png'
+    $watch=[Diagnostics.Stopwatch]::StartNew();$readyText='';while($watch.Elapsed.TotalSeconds-lt60){$download.Names=Get-Names $download.Root;$readyText=$download.Names -join ' ';if($readyText.Contains('Ready to install.')-and$readyText.Contains('SHA-256 digest matches GitHub')){break};Start-Sleep -Milliseconds 100}
+    Assert ($readyText.Contains('Ready to install.')-and$readyText.Contains('SHA-256 digest matches GitHub')) 'download completion exposes its verified ready state' $readyText;Assert ($readyText.Contains("Downloaded: $expectedSize / $expectedSize")) 'offer and download completion show the same package size' $readyText;Screenshot $download 'download-ready-dark.png';$install=Find-Element $download 'Install Update' 'ControlType.Button';Assert ($install.Current.IsEnabled) 'Install Update is enabled only after the fixture download verifies';Invoke-Element $download 'Cancel';Stop-Application
+    foreach($outcome in @('success','failure')){$arguments="--test-coordinator-$outcome";$process=Start-Process -FilePath $testExe -ArgumentList $arguments -PassThru;$coordinator=Find-Dialog 'Eye Break Reminder Update' @($process.Id) 20;Start-Sleep -Milliseconds 500;$coordinator.Names=Get-Names $coordinator.Root;$visible=$coordinator.Names -join ' ';if($outcome-eq'success'){Assert ($visible.Contains('Update complete. The new version started successfully.')) 'coordinator success text matches its completed state'}else{Assert ($visible.Contains('The update failed. The previous version and its data were restored.')) 'coordinator failure text does not claim success'};$progress=Find-Element $coordinator 'Installation progress' 'ControlType.ProgressBar';Assert ($progress.Current.Name-eq'Installation progress') "$outcome coordinator keeps its named progress control";Screenshot $coordinator "coordinator-$outcome-dark.png";Invoke-Element $coordinator 'Close';if(-not$process.WaitForExit(5000)){throw "Coordinator $outcome visual fixture did not close."}}
+    Stop-Application;Reset-Installation;Record 'Focused updater visual hotfix screenshots' 'PASS' ([pscustomobject]@{Themes=@('Light','Dark');TextScalePercent=150;Screenshots=@('update-available-light.png','update-available-dark.png','update-options-clean-dark.png','update-options-preserve-dark.png','update-available-dark-text-scale-150.png','download-active-dark.png','download-ready-dark.png','coordinator-success-dark.png','coordinator-failure-dark.png');ProductionTrustBypassed=$false;OnlyLocalTestManifest=$true})
+  }finally{try{Stop-Application}catch{};Restore-RunnerTextScale $scaleSnapshot}
 }
 function Run-ActiveBreakDeferral(){
   Install-Baseline;Seed-Profile;$settingsPath=Join-Path $dataDir 'settings.ini';$settings=Get-Content -LiteralPath $settingsPath -Raw;# GUI-test monotonic time runs 10x; use the maximum supported break so UIA setup cannot consume the test interval.
@@ -605,7 +642,7 @@ function Run-InteractiveUninstall([bool]$RemoveData){
 try{
   Assert (-not(Test-Path -LiteralPath $dataDir)) 'disposable runner starts without Eye Break Reminder profile data' $dataDir
   Record 'Updater test fixture identities' 'INFO' $script:fixtureIdentities
-  Assert ((Get-Item -LiteralPath $BaselineInstaller).VersionInfo.ProductVersion-eq'1.4.0') 'baseline installer file version';Assert ((Get-Item -LiteralPath $UpdateInstaller).VersionInfo.ProductVersion-eq'1.4.1') 'test update installer file version';Assert ((Get-Item -LiteralPath $UpdateExecutable).VersionInfo.ProductVersion-eq'1.4.1') 'test update standalone file version';Assert ((Get-Item -LiteralPath $FailingInstaller).VersionInfo.ProductVersion-eq'1.4.1') 'controlled failing installer has the expected version resource'
+  if($Scenario-eq'VisualHotfix'){Assert ((Get-Item -LiteralPath $BaselineInstaller).VersionInfo.ProductVersion-eq'1.4.1') 'v1.4.1 baseline installer file version';Assert ((Get-Item -LiteralPath $BaselineExecutable).VersionInfo.ProductVersion-eq'1.4.1') 'v1.4.1 baseline application file version';Assert ((Get-Item -LiteralPath $UpdateInstaller).VersionInfo.ProductVersion-eq'1.4.2') 'v1.4.2 candidate installer file version';Assert ((Get-Item -LiteralPath $UpdateExecutable).VersionInfo.ProductVersion-eq'1.4.2') 'v1.4.2 candidate application file version'}else{Assert ((Get-Item -LiteralPath $BaselineInstaller).VersionInfo.ProductVersion-eq'1.4.0') 'baseline installer file version';Assert ((Get-Item -LiteralPath $UpdateInstaller).VersionInfo.ProductVersion-eq'1.4.1') 'test update installer file version';Assert ((Get-Item -LiteralPath $UpdateExecutable).VersionInfo.ProductVersion-eq'1.4.1') 'test update standalone file version';Assert ((Get-Item -LiteralPath $FailingInstaller).VersionInfo.ProductVersion-eq'1.4.1') 'controlled failing installer has the expected version resource'}
   if($Scenario-eq'UpdatePreferences'){
     Run-UpdatePreferenceRoundtrip
     Reset-Installation
@@ -617,6 +654,9 @@ try{
     Run-DialogThemes
     Reset-Installation
     Record 'Overall updater dialog themes' 'PASS' ([pscustomobject]@{Assertions=$script:assertions;Scenario=$Scenario;Version='1.4.1';OnlyLocalFixtureMetadata=$true;PublicReleaseCreated=$false})
+  }elseif($Scenario-eq'VisualHotfix'){
+    $testApplication=Join-Path (Split-Path -Parent $PSScriptRoot) 'build/gui-test/EyeBreakReminder.exe';if(-not(Test-Path -LiteralPath $testApplication -PathType Leaf)){throw 'Hotfix GUI test application is missing.'};Run-VisualHotfix $testApplication
+    Record 'Overall updater visual hotfix' 'PASS' ([pscustomobject]@{Assertions=$script:assertions;Scenario=$Scenario;Version='1.4.2';OnlyLocalTestMetadata=$true;PublicReleaseCreated=$false})
   }else{
     Run-UpdatePreferenceRoundtrip
     Run-NormalUpdate
@@ -643,7 +683,7 @@ try{
 finally{
   try{Stop-Application}catch{Record 'Safe process cleanup' 'FAIL' $_.Exception.Message}
   $hasFailures=@($script:events|Where-Object{$_.Status -eq 'FAIL'}).Count -gt 0
-  $completedSuccessfully=@($script:events|Where-Object{$_.Name -in @('Overall updater Windows integration','Overall updater preference roundtrip','Overall updater active-break deferral','Overall updater dialog themes')-and$_.Status -eq 'PASS'}).Count -gt 0
+  $completedSuccessfully=@($script:events|Where-Object{$_.Name -in @('Overall updater Windows integration','Overall updater preference roundtrip','Overall updater active-break deferral','Overall updater dialog themes','Overall updater visual hotfix')-and$_.Status -eq 'PASS'}).Count -gt 0
   if(-not$hasFailures-and(Test-Path -LiteralPath $scriptRoot)){
     $resolved=[IO.Path]::GetFullPath($scriptRoot)
     $prefix=$runnerTemp.TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar

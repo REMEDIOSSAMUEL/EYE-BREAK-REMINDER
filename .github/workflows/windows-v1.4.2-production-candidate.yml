@@ -1,0 +1,136 @@
+name: Build and visually verify the v1.4.2 candidate
+
+on:
+  push:
+    branches: [fix/v1.4.2-updater-ui]
+    paths:
+      - VERSION
+      - src/**
+      - installer/**
+      - assets/**
+      - scripts/**
+      - tests/**
+      - Makefile
+      - README.md
+      - CHANGELOG.md
+      - docs/V1.4.2_RELEASE_NOTES.md
+      - .github/workflows/windows-v1.4.2-production-candidate.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  build-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Install package toolchain
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 install --no-install-recommends --yes build-essential g++-mingw-w64-x86-64-posix nsis python3
+      - name: Build and verify the five frozen release files
+        run: make package CROSS_CXX=x86_64-w64-mingw32-g++-posix
+      - name: Verify version resources and record candidate provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content VERSION -Raw).Trim()
+          if ($version -cne '1.4.2') { throw 'Wrong candidate release version.' }
+          New-Item -ItemType Directory -Path candidate-evidence | Out-Null
+          $files = @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe','EyeBreakReminder-Portable-x64.zip','EyeBreakReminder-Source.zip','EyeBreakReminder-SHA256.txt')
+          $identities = @(foreach ($name in $files) {
+            $file = Get-Item -LiteralPath (Join-Path release $name)
+            if ($file.Extension -ceq '.exe') {
+              $v = $file.VersionInfo
+              if ($v.ProductVersion -cne $version -or $v.FileVersion -cne "$version.0" -or
+                  $v.FileVersionRaw.ToString() -cne "$version.0" -or $v.ProductVersionRaw.ToString() -cne "$version.0") { throw "Wrong Windows version resources: $name" }
+            }
+            [ordered]@{Name=$name; Bytes=$file.Length; SHA256=(Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
+          })
+          [ordered]@{Status='PASS';Version=$version;Repository=$env:GITHUB_REPOSITORY;Branch=$env:GITHUB_REF_NAME;SourceCommit=$env:GITHUB_SHA;RunId=$env:GITHUB_RUN_ID;Files=$identities} | ConvertTo-Json -Depth 5 | Set-Content candidate-evidence/candidate-provenance.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eye-break-reminder-v1.4.2-candidate-${{ github.run_id }}
+          path: |
+            release/EyeBreakReminder.exe
+            release/EyeBreakReminder-Setup-x64.exe
+            release/EyeBreakReminder-Portable-x64.zip
+            release/EyeBreakReminder-Source.zip
+            release/EyeBreakReminder-SHA256.txt
+            candidate-evidence/candidate-provenance.json
+          if-no-files-found: error
+          retention-days: 90
+
+  updater-ui-visuals:
+    needs: build-candidate
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v4.3.0
+        with:
+          name: eye-break-reminder-v1.4.2-candidate-${{ github.run_id }}
+          path: candidate
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-openssl
+      - uses: nsis-dev/setup-nsis@99783963764acafc24a5e3335ddfce26d03c20a2 # v1
+        with:
+          version: '3.11'
+      - name: Build the isolated GUI application and local test signer
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          nsis_root="$(cygpath -u "$NSISDIR")"
+          make build/gui-test/EyeBreakReminder.exe build/updater-windows-tests.exe \
+            CROSS_CXX=x86_64-w64-mingw32-g++ HOST_CXX=g++ WINDRES=windres \
+            "MAKENSIS=$nsis_root/makensis.exe" PYTHON=python
+      - name: Download the exact public v1.4.1 predecessor
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'ebr-v1.4.1-predecessor'
+          New-Item -ItemType Directory -Path $root | Out-Null
+          foreach ($name in @('EyeBreakReminder.exe','EyeBreakReminder-Setup-x64.exe')) {
+            Invoke-WebRequest -Uri "https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/download/v1.4.1/$name" -OutFile (Join-Path $root $name)
+          }
+          if ((Get-Item (Join-Path $root 'EyeBreakReminder.exe')).VersionInfo.ProductVersion -cne '1.4.1' -or
+              (Get-Item (Join-Path $root 'EyeBreakReminder-Setup-x64.exe')).VersionInfo.ProductVersion -cne '1.4.1') { throw 'Downloaded predecessor version metadata mismatch.' }
+          "PREDECESSOR=$root" >> $env:GITHUB_ENV
+      - name: Capture and record focused native updater screenshots
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path build/v1.4.0-updater-evidence | Out-Null
+          $candidateSetup = (Resolve-Path candidate/release/EyeBreakReminder-Setup-x64.exe).Path
+          $candidateApp = (Resolve-Path candidate/release/EyeBreakReminder.exe).Path
+          & .\tests\windows_v1_4_updater_acceptance.ps1 `
+            -BaselineInstaller (Join-Path $env:PREDECESSOR 'EyeBreakReminder-Setup-x64.exe') `
+            -BaselineExecutable (Join-Path $env:PREDECESSOR 'EyeBreakReminder.exe') `
+            -UpdateInstaller $candidateSetup -UpdateExecutable $candidateApp `
+            -FailingInstaller $candidateSetup -Scenario VisualHotfix
+          if ($LASTEXITCODE -ne 0) { throw 'Focused visual acceptance did not pass.' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: eye-break-reminder-v1.4.2-updater-ui-screenshots-${{ github.run_id }}
+          path: |
+            build/v1.4.0-updater-evidence/*.png
+            build/v1.4.0-updater-evidence/updater-acceptance-results.json
+            build/v1.4.0-updater-evidence/updater-acceptance.log
+          if-no-files-found: warn
+          retention-days: 90

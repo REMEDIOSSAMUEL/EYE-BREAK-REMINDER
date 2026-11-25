@@ -14,8 +14,8 @@ FONT 9, "Segoe UI"
 BEGIN
 END
 1 VERSIONINFO
-FILEVERSION 1,4,1,0
-PRODUCTVERSION 1,4,1,0
+FILEVERSION 1,4,2,0
+PRODUCTVERSION 1,4,2,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0
 FILEOS VOS_NT_WINDOWS32
@@ -27,11 +27,11 @@ BEGIN
   BLOCK "040904b0"
   BEGIN
    VALUE "FileDescription", "Eye Break Reminder\0"
-   VALUE "FileVersion", "1.4.1.0\0"
+   VALUE "FileVersion", "1.4.2.0\0"
    VALUE "InternalName", "EyeBreakReminder\0"
    VALUE "OriginalFilename", "EyeBreakReminder.exe\0"
    VALUE "ProductName", "Eye Break Reminder\0"
-   VALUE "ProductVersion", "1.4.1\0"
+   VALUE "ProductVersion", "1.4.2\0"
   END
  END
  BLOCK "VarFileInfo"
