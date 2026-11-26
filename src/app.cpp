@@ -111,11 +111,12 @@ public:
   bool selected=SendMessageW(button,BM_GETCHECK,0,0)==BST_CHECKED,hot=(draw->uItemState&CDIS_HOT)!=0;
   if((id>=NAV_TIMER&&id<=NAV_SETTINGS)||(id>=SECTION_BASE&&id<SECTION_BASE+SECTION_COUNT))return drawTab(draw,button,id,selected,hot,pressed);
   bool primary=id==TAKE_BREAK||id==COMPLETE||id==PREVIEW||id==UPDATE_INSTALL_BUTTON||id==UPDATE_CONFIRM_BUTTON;
+  const bool disabledUpdateInstall=id==UPDATE_INSTALL_BUTTON&&!enabled;
   COLORREF accent=activeAccent();
-  COLORREF fill=(checkbox||radio)?colors.background:(primary?accent:(selected||hot?colors.hover:colors.surface));
-  COLORREF ink=enabled?colors.foreground:colors.secondary;if(primary)ink=activeButtonText();
-  COLORREF buttonBorder=primary||selected?accent:colors.line;
-  if(primary&&theme::contrastRatio(themeColor(accent),themeColor(colors.background))<3.0)buttonBorder=colors.foreground;
+  COLORREF fill=(checkbox||radio)?colors.background:(primary?(disabledUpdateInstall?colors.surface:accent):(selected||hot?colors.hover:colors.surface));
+  COLORREF ink=enabled?colors.foreground:colors.secondary;if(primary&&!disabledUpdateInstall)ink=activeButtonText();
+  COLORREF buttonBorder=(primary&&!disabledUpdateInstall)||selected?accent:colors.line;
+  if(primary&&!disabledUpdateInstall&&theme::contrastRatio(themeColor(accent),themeColor(colors.background))<3.0)buttonBorder=colors.foreground;
   if(pressed&&!checkbox)fill=colors.hover;
   if(pressed&&primary)ink=colors.foreground;
   RECT rect=draw->rc;FillRect(draw->hdc,&rect,backgroundBrush);
