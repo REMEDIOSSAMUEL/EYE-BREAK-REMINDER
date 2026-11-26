@@ -381,7 +381,10 @@ function Run-DialogThemes(){
 }
 function Run-VisualHotfix([string]$HotfixTestApplication){
   Reset-Installation
-  $testExe=Join-Path $installDir 'EyeBreakReminder.exe';Copy-Item -LiteralPath $HotfixTestApplication -Destination $testExe
+  Install-Baseline
+  # Keep the exact installed-app route for the visual offer and its installer
+  # size while exercising the v1.4.2 UI binary in the isolated installation.
+  $testExe=Join-Path $installDir 'EyeBreakReminder.exe';Copy-Item -LiteralPath $HotfixTestApplication -Destination $testExe -Force
   $notes=@'
 # Eye Break Reminder v1.4.3
 
