@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.2
+
+- Correct updater dialog theme painting, radio styling, release-note formatting, download size precision and clipped download instructions.
+- Show an unambiguous determinate completion state in the independent update coordinator and improve its typography and spacing.
+- Preserve update authentication, integrity, installation, recovery, rollback, settings/history and relaunch behavior.
+
 ## 1.4.1
 
 - Update the application and Windows package version identities to validate the authenticated in-app upgrade from v1.4.0. Preserve Settings retains settings and history.

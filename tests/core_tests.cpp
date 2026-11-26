@@ -1,6 +1,7 @@
 #include "../src/core.hpp"
 #include "../src/theme.hpp"
 #include "../src/update_checker.hpp"
+#include "../src/update_presentation.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <iomanip>
@@ -67,6 +68,16 @@ int main(int argc,char**argv){
    result=updates::evaluate({200,std::string(1024*1024+1,' '),updates::Failure::None,0},"1.2.0");combination();expect(result.state==updates::State::Failed&&result.error.find("oversized")!=std::string::npos,"oversized API responses are rejected");
   std::string foreign=body;const std::string official="https://github.com/REMEDIOSSAMUEL/EYE-BREAK-REMINDER/releases/tag/v1.2.0";auto at=foreign.find(official);if(at!=std::string::npos)foreign.replace(at,official.size(),"https://example.com/download");
   result=updates::evaluate({200,foreign,updates::Failure::None,0},"1.1.0");combination();expect(result.state==updates::State::Failed,"foreign release URLs are rejected");
+ }
+ block("updater release-note and download-size presentation");
+ {using eye::updates::presentation::formatDataSize;using eye::updates::presentation::markdownPlainText;using eye::updates::presentation::nativeLines;
+  combination();expect(nativeLines(L"first\nsecond\rthird\r\nfourth")==L"first\r\nsecond\r\nthird\r\nfourth","Win32 multiline text receives normalized CRLF line endings");
+  const auto notes=markdownPlainText(L"# Eye Break Reminder v1.4.1\n\nThis maintenance release **retains** v1.4.0.\n\n## Windows security\n\n- The manifest uses `ECDSA P-256`.\n- [Release details](https://untrusted.invalid) stay plain text.");
+  combination();expect(notes.find(L"Eye Break Reminder v1.4.1\r\n\r\nThis maintenance release retains v1.4.0.")!=std::wstring::npos,"release headings and paragraphs keep readable blank lines");
+  combination();expect(notes.find(L"Windows security\r\n\r\n• The manifest uses ECDSA P-256.")!=std::wstring::npos,"Markdown headings and list markers become plain readable text");
+  combination();expect(notes.find(L"Release details")!=std::wstring::npos&&notes.find(L"https://")==std::wstring::npos&&notes.find(L"**")==std::wstring::npos&&notes.find(L"# ")==std::wstring::npos,"untrusted links are displayed as plain text without raw Markdown or navigation");
+  combination();expect(formatDataSize(1468006)==L"1.4 MB","1.4 MB package sizes are shown with consistent one-decimal precision");
+  combination();expect(formatDataSize(UINT64_MAX).find(L" MB")!=std::wstring::npos,"large byte counts format without integer overflow");
  }
   {updates::Version a,b;expect(updates::detail::parseVersion("1.4.0",a)&&updates::detail::parseVersion("1.3.0",b)&&updates::detail::compare(a,b)>0,"1.3.0 is older than 1.4.0");
    expect(updates::detail::parseVersion("1.4.1",a)&&updates::detail::parseVersion("1.4.0",b)&&updates::detail::compare(a,b)>0,"1.4.1 is newer than 1.4.0");

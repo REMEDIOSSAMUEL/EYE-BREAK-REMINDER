@@ -270,12 +270,13 @@ inline bool authenticateReleaseMetadata(ReleaseDetails&release,std::string_view 
     release.manifestVerified=false;release.signedManifestBytes.clear();release.signedManifestSignature.clear();release.authenticatedManifest={};
     TrustedPublicKey trustedKey;bool testTrust=false;
 #ifdef EYEBREAK_TEST_BUILD
-    if(!ProductionUpdateKeyProvisioned){
-        std::vector<wchar_t> executablePath(32768);const DWORD pathLength=GetModuleFileNameW(nullptr,executablePath.data(),DWORD(executablePath.size()));
-        if(pathLength&&pathLength<executablePath.size()){
-            std::wstring directory(executablePath.data(),pathLength);const auto slash=directory.find_last_of(L"\\/");
-            if(slash!=std::wstring::npos){directory.resize(slash);testTrust=readTestPublicKey(directory,trustedKey);}
-        }
+    // The isolated GUI-test executable may also compile the production public
+    // key. Prefer its colocated disposable fixture key when present, matching
+    // verifyStagedManifest; production builds do not compile this path.
+    std::vector<wchar_t> executablePath(32768);const DWORD pathLength=GetModuleFileNameW(nullptr,executablePath.data(),DWORD(executablePath.size()));
+    if(pathLength&&pathLength<executablePath.size()){
+        std::wstring directory(executablePath.data(),pathLength);const auto slash=directory.find_last_of(L"\\/");
+        if(slash!=std::wstring::npos){directory.resize(slash);testTrust=readTestPublicKey(directory,trustedKey);}
     }
 #endif
     if(!testTrust){
