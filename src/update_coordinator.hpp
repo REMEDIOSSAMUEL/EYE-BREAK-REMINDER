@@ -158,7 +158,7 @@ inline LRESULT CALLBACK coordinatorWindowProc(HWND hwnd,UINT message,WPARAM w,LP
         if(state->progress){SendMessageW(state->progress,WM_SETFONT,reinterpret_cast<WPARAM>(state->normalFont),FALSE);}
         if(state->close){SendMessageW(state->close,WM_SETFONT,reinterpret_cast<WPARAM>(state->normalFont),FALSE);}
         if(state->dark&&!state->forcedColors&&state->progress)SetWindowTheme(state->progress,L"DarkMode_Explorer",nullptr);
-        if(!state->heading||!state->status||!state->progress||!state->close||!state->background||!state->normalFont||!state->headingFont||!update_accessibility::attach(state->heading,update_accessibility::Kind::Text)||!update_accessibility::attach(state->status,update_accessibility::Kind::Text)||!update_accessibility::attachActivityProgress(state->progress,L"Installation progress")||!update_accessibility::attachButton(state->close))return -1;
+        if(!state->heading||!state->status||!state->progress||!state->close||!state->background||!state->normalFont||!state->headingFont||!update_accessibility::attach(state->heading,update_accessibility::Kind::Text)||!update_accessibility::attach(state->status,update_accessibility::Kind::Text)||!update_accessibility::attachActivityProgress(state->progress,L"Installation progress")||!update_accessibility::attach(state->close,update_accessibility::Kind::Button,true))return -1;
         SendMessageW(state->progress,PBM_SETRANGE32,0,1000);SendMessageW(state->progress,PBM_SETMARQUEE,TRUE,80);EnableWindow(state->close,FALSE);SetWindowPos(hwnd,nullptr,0,0,coordinatorWindowWidth(*state),coordinatorWindowHeight(*state),SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);SetTimer(hwnd,1,150,nullptr);return 0;
     }
     case WM_SIZE:coordinatorLayout(hwnd,*state);return 0;
