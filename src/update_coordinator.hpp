@@ -154,7 +154,7 @@ inline LRESULT CALLBACK coordinatorWindowProc(HWND hwnd,UINT message,WPARAM w,LP
         state->heading=CreateWindowExW(0,L"STATIC",L"Updating Eye Break Reminder",WS_CHILD|WS_VISIBLE|SS_LEFT|SS_NOPREFIX,0,0,1,1,hwnd,reinterpret_cast<HMENU>(INT_PTR(CoordinatorStatus+10)),GetModuleHandleW(nullptr),nullptr);
         state->status=CreateWindowExW(0,L"STATIC",L"Preparing the update…",WS_CHILD|WS_VISIBLE|SS_LEFT|SS_NOPREFIX|SS_EDITCONTROL,0,0,1,1,hwnd,reinterpret_cast<HMENU>(INT_PTR(CoordinatorStatus)),GetModuleHandleW(nullptr),nullptr);
         state->progress=CreateWindowExW(0,PROGRESS_CLASSW,L"Installation progress",WS_CHILD|WS_VISIBLE|PBS_MARQUEE|PBS_SMOOTH,0,0,1,1,hwnd,reinterpret_cast<HMENU>(INT_PTR(CoordinatorProgress)),GetModuleHandleW(nullptr),nullptr);
-        if(state->progress&&!state->forcedColors&&!SetWindowSubclass(state->progress,coordinatorProgressProc,0xEB1422,reinterpret_cast<DWORD_PTR>(state)))return -1;
+        if(state->progress&&!state->forcedColors)SetWindowSubclass(state->progress,coordinatorProgressProc,0xEB1422,reinterpret_cast<DWORD_PTR>(state));
         state->close=CreateWindowExW(0,L"BUTTON",L"Close",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,1,1,hwnd,reinterpret_cast<HMENU>(INT_PTR(CoordinatorClose)),GetModuleHandleW(nullptr),nullptr);
         if(state->heading){SendMessageW(state->heading,WM_SETFONT,reinterpret_cast<WPARAM>(state->headingFont),FALSE);}
         if(state->status){SendMessageW(state->status,WM_SETFONT,reinterpret_cast<WPARAM>(state->normalFont),FALSE);}
